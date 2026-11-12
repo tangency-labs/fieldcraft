@@ -17,7 +17,8 @@
 //! 4. **Refinement interleaved with smoothing** (Tournois et al. 2009): rounds of constrained
 //!    Delaunay refinement ([`refine`], Shewchuk 1998, Si 2010) and ODT smoothing ([`smooth`],
 //!    Chen–Xu 2004, Alliez et al. 2005), boundary vertices kept on their faces by projection
-//!    ([`geometry`]).
+//!    ([`geometry`]): face vertices on the tessellation, curve vertices on the exact curves from
+//!    their insertion on (Boivin–Ollivier-Gooch 2002; Cheng–Dey–Shewchuk 2012).
 //! 5. **Aggressive improvement** ([`improve`], Klingner–Shewchuk 2007): smoothing, edge
 //!    removal, multi-face removal and vertex insertion, monotone in the worst dihedral sine.
 //! 6. **Gate and report**: every tetrahedron admissible by FieldCraft's one criterion, the volume
@@ -59,7 +60,7 @@ use crate::surface::BoundarySurface;
 use crate::{Error, Result};
 
 use complex::{IdMap, NONE, TetComplex, VertexKind, face_toward, sorted2, sorted3};
-use geometry::{AnalyticSurface, GradedSize, Tessellation};
+use geometry::{AnalyticSurface, ExactCurves, GradedSize, Tessellation};
 use improve::{ImproveOptions, ImproveStats};
 use refine::{Context, RefineOptions, RefineStats};
 
@@ -614,6 +615,25 @@ fn snap_sweep(cx: &mut TetComplex, ctx: &Context, guarded: bool, off: &mut Vec<u
     Ok(moved)
 }
 
+/// What refinement, smoothing and improvement place boundary vertices on (`plain`: the
+/// tessellation alone; `exact`: with the faces' exact surfaces).
+///
+/// Curve vertices go on the exact curves from the moment they are inserted, as Delaunay
+/// refinement on a curved boundary splits a boundary curve at a point of the curve itself
+/// (Boivin and Ollivier-Gooch 2002; Cheng, Dey and Shewchuk 2012 on piecewise-smooth
+/// complexes). Placed on the tessellation's chord instead, a curve vertex inserted below the
+/// facet size sits up to the chord's sag off its curve, the faces beside it are refined around
+/// it there, and the final snap has no room left to move it (#674).
+///
+/// Face vertices stay on the tessellation, a piecewise-flat surface whose creases they can mesh
+/// around; the finished mesh then moves them onto the exact surfaces ([`snap_to_geometry`]),
+/// and tet10 puts its mid-edge nodes there. Projected onto the exact surfaces while improving,
+/// face vertices on both sides of a blend's tangent edge (where two faces meet without a
+/// crease) come out too close to flat to separate.
+fn refinement_geometry<'a>(plain: &'a Tessellation, exact: &'a Tessellation) -> ExactCurves<'a> {
+    ExactCurves { faces: plain, curves: exact }
+}
+
 /// The volume enclosed by the boundary faces of a mesh ([`enclosed_volume`]).
 fn boundary_volume(points: &[[f64; 3]], tets: &[[u32; 4]], boundary: &[TaggedFace]) -> Result<f64> {
     let mut triangles = Vec::with_capacity(boundary.len());
@@ -645,13 +665,9 @@ pub fn quality_mesh(surface: &BoundarySurface, cdt: &TetMesh, analytic: Vec<Opti
     let (mut cx, curve_faces) = complex_from_cdt(surface, cdt, &analytic, o)?;
     let geometry = Tessellation::new(surface, analytic);
     let size = size_field(surface, &geometry, global, o);
-    // Refinement and improvement keep boundary vertices on the tessellation, a piecewise-flat
-    // surface whose creases they can mesh around; the finished mesh then moves its boundary
-    // vertices onto the exact surfaces (and tet10 puts its mid-edge nodes there). Projecting onto
-    // the exact surfaces while improving leaves vertices on both sides of a blend's tangent
-    // edge (where two faces meet without a crease) too close to flat to separate.
     let plain = Tessellation::new(surface, Vec::new());
-    let ctx = Context { size: &size, geometry: &plain, curve_faces: &curve_faces };
+    let refining = refinement_geometry(&plain, &geometry);
+    let ctx = Context { size: &size, geometry: &refining, curve_faces: &curve_faces };
     let exact = Context { size: &size, geometry: &geometry, curve_faces: &curve_faces };
     // Remove what rounding left flat first, so refinement starts from a valid mesh.
     let flat =

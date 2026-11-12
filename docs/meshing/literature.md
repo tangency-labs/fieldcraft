@@ -348,6 +348,21 @@ Delaunay methods with Voronoi/ODT improvement, then (2) all-hex and hex-dominant
 **A3.2 Cheng, Dey, Shewchuk, *Delaunay Mesh Generation* (CRC, 2012).** **Verdict: reference (the textbook).**
 - **Links.** DOI [10.1201/b12987](https://doi.org/10.1201/b12987).
 - **Use.** The consolidated treatment of 3D refinement, small-angle handling and sliver theory. Buy it.
+  Its chapters on smooth surfaces and piecewise-smooth complexes insert ridge (feature-curve) vertices on the exact
+  curve. `fieldcraft-mesh::tet` follows that for its feature curves (A3.2a).
+
+**A3.2a Boivin and Ollivier-Gooch 2002, refinement on curved boundaries.** **Verdict: build on (curve splits).**
+- **Citation.** C. Boivin, C. Ollivier-Gooch, *Guaranteed-quality triangular mesh generation for domains with curved
+  boundaries*, IJNME 55(10):1185–1213, 2002. DOI [10.1002/nme.542](https://doi.org/10.1002/nme.542).
+- **Method.** Ruppert-style Delaunay refinement whose boundary is curved: an encroached boundary segment is split at a
+  point of the true curve, not of its chord, and the encroachment and quality guarantees are kept for curves
+  discretized finely enough.
+- **Use in FieldCraft.** `fieldcraft-mesh::tet` (refinement, ODT smoothing and improvement) places every feature-curve
+  vertex on the exact curve from its insertion on, wherever both faces' exact surfaces are known (#674). Placed on the
+  tessellation's chord, a curve refined below the facet size left its vertices up to the chord's sag off the curve, with
+  the faces beside them meshed around that, and the final snap could not move them out without flattening elements.
+  Face vertices stay on the tessellation until the final snap: projected onto the exact surfaces during improvement,
+  vertices on both sides of a blend's tangent edge come out too close to flat to separate.
 
 **A3.3 Alliez, Cohen-Steiner, Yvinec, Desbrun 2005, Variational Tetrahedral Meshing.** **Verdict: build on (ODT smoothing).**
 - **Citation.** ACM TOG 24(3):617–625, 2005. DOI [10.1145/1073204.1073238](https://doi.org/10.1145/1073204.1073238).

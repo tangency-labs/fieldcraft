@@ -437,6 +437,53 @@ mod pipeline {
 
     /// Refined far below its tessellation's facets (8 facets round, sag 0.23, elements 0.5), a
     /// cylinder's boundary nodes lie on the exact cylinder and caps, mid-side nodes included:
+    /// Refinement splits a feature curve at a point of the exact curve, not of the
+    /// tessellation's chord, and smoothing keeps its curve vertices there: the bottom circle of
+    /// a cylinder tessellated with 8 facets has its chords' midpoints 0.23 mm inside it.
+    #[test]
+    fn a_curve_split_lands_on_the_exact_curve_and_stays_there() {
+        use super::super::complex::VertexKind;
+        use super::super::geometry::Tessellation;
+        use super::super::refine::{Context, split_edge};
+        use super::super::{complex_from_cdt, refinement_geometry, smooth};
+        use crate::size::UniformSize;
+        let (r, h) = (3.0, 1.5);
+        let s = crate::octree::tests::cylinder_surface(r, h, 8);
+        let cdt = tetrahedralize(&s, &CdtOptions::default()).unwrap();
+        let analytic = vec![
+            Some(AnalyticSurface::Plane { normal: [0.0, 0.0, -1.0], point: [0.0; 3] }),
+            Some(AnalyticSurface::Plane { normal: [0.0, 0.0, 1.0], point: [0.0, 0.0, h] }),
+            Some(AnalyticSurface::Cylinder { origin: [0.0; 3], axis: [0.0, 0.0, 1.0], radius: r }),
+        ];
+        let (mut cx, curve_faces) = complex_from_cdt(&s, &cdt, &analytic, &QualityOptions::default()).unwrap();
+        let (plain, exact) = (Tessellation::new(&s, Vec::new()), Tessellation::new(&s, analytic));
+        let geometry = refinement_geometry(&plain, &exact);
+        let ctx = Context { size: &UniformSize(0.5), geometry: &geometry, curve_faces: &curve_faces };
+        // Off the bottom circle, in millimetres.
+        let off = |x: [f64; 3]| x[0].hypot(x[1]) - r;
+        let bottom = |cx: &super::super::complex::TetComplex| -> Vec<u32> {
+            (0..cx.point_count() as u32)
+                .filter(|&v| cx.is_used(v) && matches!(cx.kind(v), VertexKind::Curve(_)) && cx.xyz(v).unwrap()[2] == 0.0)
+                .collect()
+        };
+        let ((a, b), _) = cx.curve_edges().into_iter().find(|&((a, b), _)| [a, b].iter().all(|&v| cx.xyz(v).unwrap()[2] == 0.0)).unwrap();
+        let w = split_edge(&mut cx, &ctx, a, b, 0, 0.0).unwrap().unwrap();
+        assert!(matches!(cx.kind(w), VertexKind::Curve(_)), "{:?}", cx.kind(w));
+        assert!(off(cx.xyz(w).unwrap()).abs() < 1e-9, "the split is {} mm off the circle", off(cx.xyz(w).unwrap()));
+        // Smoothing moves the curve's vertices along it, and keeps them on it.
+        let before: Vec<[f64; 3]> = bottom(&cx).iter().map(|&v| cx.xyz(v).unwrap()).collect();
+        for _ in 0..3 {
+            smooth::odt_pass(&mut cx, &ctx).unwrap();
+        }
+        let after = bottom(&cx);
+        assert!(after.iter().zip(&before).any(|(&v, x)| cx.xyz(v).unwrap() != *x), "smoothing moved no vertex of the circle");
+        for v in after {
+            let x = cx.xyz(v).unwrap();
+            assert!(off(x).abs() < 1e-9, "curve vertex {v} at {x:?} is {} mm off the circle", off(x));
+        }
+        cx.validate().unwrap();
+    }
+
     /// the nodes refinement adds on a facet move out together (#674).
     #[test]
     fn nodes_added_below_the_facet_size_lie_on_the_exact_faces() {
