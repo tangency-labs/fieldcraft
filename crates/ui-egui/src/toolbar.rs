@@ -108,7 +108,10 @@ fn state(app: &ModelApp, c: &Capability) -> State {
 pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
     let mut start: Option<&'static str> = None;
-    egui::Panel::top("fc_toolbar").exact_size(HEIGHT).show_separator_line(false).frame(egui::Frame::NONE.fill(t.toolbar)).show(ui, |ui| {
+    // The ribbon is a chrome surface (the workspace switcher and the ribbon cards).
+    let host = kit::Container::new(ui.ctx(), kit::Surface::Chrome);
+    let panel = host.edge("fc_toolbar", kit::Edge::Top).exact_size(HEIGHT).show_separator_line(false);
+    host.show_edge(ui, panel, host.edge_frame(t.toolbar), |ui| {
         let r = ui.max_rect();
         app.place("ribbon", r);
         app.toolbar_rects.clear();

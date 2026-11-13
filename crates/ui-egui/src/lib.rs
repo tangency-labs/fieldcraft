@@ -2361,7 +2361,8 @@ impl ModelApp {
             browser::browser(self, ui);
         }
         context::panel(self, ui);
-        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| viewport::show(self, ui));
+        let host = solidcraft_ui_kit::Container::new(ui.ctx(), solidcraft_ui_kit::Surface::Viewport);
+        solidcraft_ui_kit::Container::show_central(ui, host.central(), egui::Frame::NONE, |ui| viewport::show(self, ui));
         palette::popup(self, ui.ctx());
         files::show(self, ui.ctx());
         report::show(self, ui.ctx());
@@ -3082,6 +3083,22 @@ mod tests {
         assert!(app.dialog.is_none());
         assert!(app.session.model.node(7).is_some());
         assert!(app.start("no.such").is_err());
+    }
+
+    /// The window's outer hosts (title bar, ribbon, History, status bar, command search, viewport)
+    /// are the kit's `Container`s with a semantic `Surface`, never raw egui panels or areas
+    /// (SolidCraft docs/ui-container-audit.md).
+    #[test]
+    fn outer_hosts_are_kit_containers() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let raw = ["egui::Panel::", "egui::CentralPanel", "egui::Area::new", "egui::TopBottomPanel", "egui::SidePanel"];
+        let mut bad = Vec::new();
+        for file in ["appbar.rs", "toolbar.rs", "timeline.rs", "palette.rs", "lib.rs", "viewport.rs"] {
+            let text = std::fs::read_to_string(dir.join(file)).unwrap();
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            bad.extend(raw.iter().filter(|r| code.contains(*r)).map(|r| format!("{file}: {r}")));
+        }
+        assert!(bad.is_empty(), "raw outer hosts: {bad:?}");
     }
 
     /// A command whose schema has no fields runs on click, whatever its parameter doc says: an

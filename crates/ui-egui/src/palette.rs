@@ -150,9 +150,6 @@ fn placeholder(ui: &egui::Ui, width: f32) -> &'static str {
     PLACEHOLDERS.iter().copied().find(|p| crate::elide::width(ui, p, &font) <= room).unwrap_or(shortest)
 }
 
-/// The command line's inner margin (points).
-const MARGIN: egui::Vec2 = egui::vec2(8.0, 3.0);
-
 /// A rule between two of the status bar's items, as SolidCraft's status bar divides its own.
 pub(crate) fn rule(ui: &mut egui::Ui) {
     let k = solidcraft_theme::Tokens::get();
@@ -166,51 +163,54 @@ pub(crate) fn rule(ui: &mut egui::Ui) {
 pub fn command_line(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
     let k = solidcraft_theme::Tokens::get();
-    egui::Panel::bottom("fc_command_line")
-        .exact_size(HEIGHT)
-        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(MARGIN.x as i8, MARGIN.y as i8)))
-        .show(ui, |ui| {
-            app.place("command_line", ui.max_rect());
-            let bar = ui.max_rect().expand2(MARGIN);
-            ui.painter().hline(bar.x_range(), bar.top() + 0.5, k.primary_border(k.border));
-            ui.horizontal_centered(|ui| {
-                ui.label(RichText::new("›").strong().color(t.accent_ink));
-                // The rest of the bar keeps room for the status and the model's size.
-                let width = (ui.available_width() * 0.4).clamp(MIN_LINE_W, MAX_LINE_W);
-                let hint = if app.command_line.is_empty() { placeholder(ui, width) } else { "" };
-                let r = ui
-                    .allocate_ui(egui::vec2(width, kit::row_height()), |ui| {
-                        kit::cell_editor(ui, egui::Id::unique("fc_command_line_text"), &mut app.command_line, hint, false)
-                    })
-                    .inner;
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    let line = std::mem::take(&mut app.command_line);
-                    submit(app, &line);
+    // The status bar is an application-bar surface along the window's bottom edge, as
+    // SolidCraft's (docs/ui-container-audit.md).
+    let host = kit::Container::new(ui.ctx(), kit::Surface::ApplicationBar);
+    let panel = host.edge("fc_command_line", kit::Edge::Bottom).exact_size(HEIGHT);
+    let margin = egui::vec2(k.space_8, k.space_3);
+    let frame = host.edge_frame(t.panel).inner_margin(egui::Margin::symmetric(margin.x as i8, margin.y as i8));
+    host.show_edge(ui, panel, frame, |ui| {
+        app.place("command_line", ui.max_rect());
+        let bar = ui.max_rect().expand2(margin);
+        ui.painter().hline(bar.x_range(), bar.top() + 0.5, k.primary_border(k.border));
+        ui.horizontal_centered(|ui| {
+            ui.label(RichText::new("›").strong().color(t.accent_ink));
+            // The rest of the bar keeps room for the status and the model's size.
+            let width = (ui.available_width() * 0.4).clamp(MIN_LINE_W, MAX_LINE_W);
+            let hint = if app.command_line.is_empty() { placeholder(ui, width) } else { "" };
+            let r = ui
+                .allocate_ui(egui::vec2(width, kit::row_height()), |ui| {
+                    kit::cell_editor(ui, egui::Id::unique("fc_command_line_text"), &mut app.command_line, hint, false)
+                })
+                .inner;
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                let line = std::mem::take(&mut app.command_line);
+                submit(app, &line);
+            }
+            let (nodes, elements) = (app.session.model.nodes().len(), app.session.model.elements().len());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let item = |text: &str| RichText::new(text).size(k.font_body).color(t.text_dim);
+                ui.label(item(app.gpu_info.as_deref().unwrap_or("CPU renderer")));
+                rule(ui);
+                ui.label(item(if app.ui.perspective { "Perspective" } else { "Orthographic" }));
+                rule(ui);
+                ui.label(item(&format!("{nodes} nodes  {elements} elements")));
+                rule(ui);
+                crate::updates::notice(app, ui);
+                let (text, color) = match &app.status {
+                    Some(s) => (s.text.as_str(), if s.error { t.error } else { t.text }),
+                    None => ("Ready", t.text_dim),
+                };
+                // Elided in the middle (both the subject and the outcome stay), whole on hover.
+                let font = FontId::proportional(k.font_body);
+                let shown = crate::elide::middle_in(ui, text, &font, ui.available_width());
+                let r = ui.add(egui::Label::new(RichText::new(shown.as_ref()).font(font).color(color)));
+                if shown != text {
+                    r.backing_on_hover_text(text);
                 }
-                let (nodes, elements) = (app.session.model.nodes().len(), app.session.model.elements().len());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let item = |text: &str| RichText::new(text).size(k.font_body).color(t.text_dim);
-                    ui.label(item(app.gpu_info.as_deref().unwrap_or("CPU renderer")));
-                    rule(ui);
-                    ui.label(item(if app.ui.perspective { "Perspective" } else { "Orthographic" }));
-                    rule(ui);
-                    ui.label(item(&format!("{nodes} nodes  {elements} elements")));
-                    rule(ui);
-                    crate::updates::notice(app, ui);
-                    let (text, color) = match &app.status {
-                        Some(s) => (s.text.as_str(), if s.error { t.error } else { t.text }),
-                        None => ("Ready", t.text_dim),
-                    };
-                    // Elided in the middle (both the subject and the outcome stay), whole on hover.
-                    let font = FontId::proportional(k.font_body);
-                    let shown = crate::elide::middle_in(ui, text, &font, ui.available_width());
-                    let r = ui.add(egui::Label::new(RichText::new(shown.as_ref()).font(font).color(color)));
-                    if shown != text {
-                        r.backing_on_hover_text(text);
-                    }
-                });
             });
         });
+    });
 }
 
 /// Where the open search field's top left goes over the title bar's closed `field` in `screen`:
@@ -240,7 +240,9 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
         .unwrap_or_else(|| Rect::from_center_size(egui::pos2(screen.center().x, 60.0), egui::vec2(width, 26.0)));
     let at = open_field_at(screen, field);
     let key = crate::appbar::shortcut("K");
-    let shown = egui::Area::new(egui::Id::unique("fc_search")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
+    // An anchored popup host over the title bar's field.
+    let host = kit::Container::new(ctx, kit::Surface::Popup);
+    let shown = host.area(egui::Id::unique("fc_search")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
         ui.set_width(width);
         ui.spacing_mut().item_spacing.y = 0.0;
         let geometry = kit::SearchFieldGeometry { height: field.height(), radius: kit::CommandSearch::field_radius(1.0, false), progress: 1.0 };
