@@ -131,6 +131,29 @@ fn submit_line(app: &mut ModelApp, line: &str) {
 const MIN_LINE_W: f32 = 150.0;
 const MAX_LINE_W: f32 = 440.0;
 
+/// The command line's width: 40 % of the bar while it is in use; idle (empty, not focused) it
+/// gives the status message the room it needs to show whole, down to [`MIN_LINE_W`].
+fn line_width(app: &ModelApp, ui: &egui::Ui) -> f32 {
+    let full = (ui.available_width() * 0.4).clamp(MIN_LINE_W, MAX_LINE_W);
+    let focused = ui.memory(|m| m.has_focus(egui::Id::unique("fc_command_line_text")));
+    if focused || !app.command_line.is_empty() {
+        return full;
+    }
+    let k = solidcraft_theme::Tokens::get();
+    let font = FontId::proportional(k.font_body);
+    let (nodes, elements) = (app.session.model.nodes().len(), app.session.model.elements().len());
+    let items = [
+        app.gpu_info.as_deref().unwrap_or("CPU renderer").to_string(),
+        (if app.ui.perspective { "Perspective" } else { "Orthographic" }).to_string(),
+        format!("{nodes} nodes  {elements} elements"),
+        app.status.as_ref().map_or("Ready", |s| s.text.as_str()).to_string(),
+    ];
+    let gap = ui.spacing().item_spacing.x;
+    // Each item, and a rule with its gaps between them.
+    let needed: f32 = items.iter().map(|text| crate::elide::width(ui, text, &font) + 2.0 * gap + 1.0).sum::<f32>() + gap;
+    (ui.available_width() - needed).clamp(MIN_LINE_W, full)
+}
+
 /// The command line's placeholders, longest first: the longest that fits whole is shown.
 const PLACEHOLDERS: [&str; 5] = [
     r#"Type a command, e.g. mesh.node.add {"label": 1, "xyz": [0, 0, 0]} — or press S to search"#,
@@ -176,13 +199,14 @@ pub fn command_line(app: &mut ModelApp, ui: &mut egui::Ui) {
         ui.horizontal_centered(|ui| {
             ui.label(RichText::new("›").strong().color(t.accent_ink));
             // The rest of the bar keeps room for the status and the model's size.
-            let width = (ui.available_width() * 0.4).clamp(MIN_LINE_W, MAX_LINE_W);
+            let width = line_width(app, ui);
             let hint = if app.command_line.is_empty() { placeholder(ui, width) } else { "" };
             let r = ui
                 .allocate_ui(egui::vec2(width, kit::row_height()), |ui| {
                     kit::cell_editor(ui, egui::Id::unique("fc_command_line_text"), &mut app.command_line, hint, false)
                 })
                 .inner;
+            app.place("command_line:field", r.rect);
             if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 let line = std::mem::take(&mut app.command_line);
                 submit(app, &line);
@@ -362,5 +386,27 @@ mod tests {
         assert_eq!(typed_command(r#"  mesh.node.add{"label": 1}"#), Some("mesh.node.add"));
         assert_eq!(typed_command("mesh.node.add"), None, "an id alone is searched for");
         assert_eq!(typed_command("material steel"), None);
+    }
+
+    /// Idle (empty, not focused) the command line gives a long status message its room; typed
+    /// in, it takes its usual share of the bar (A3-17).
+    #[test]
+    fn an_idle_command_line_yields_to_the_status() {
+        let field = |typed: &str| {
+            let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+            app.set_status("Model Info: 315 nodes, 1200 elements, 2 steps and 4 materials (details in the panel)", false);
+            app.command_line = typed.to_string();
+            let ctx = egui::Context::default();
+            for _ in 0..2 {
+                let raw =
+                    egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 700.0))), ..Default::default() };
+                let mut out = ctx.run_ui(raw, |ui| command_line(&mut app, ui));
+                out.textures_delta.clear();
+            }
+            app.layout.get("command_line:field").copied().unwrap_or(Rect::NOTHING)
+        };
+        let (idle, typing) = (field(""), field("mesh.node.add"));
+        assert!(idle.width() < typing.width(), "idle {idle:?}, typing {typing:?}");
+        assert!(idle.width() >= MIN_LINE_W - 0.5, "{idle:?}");
     }
 }
