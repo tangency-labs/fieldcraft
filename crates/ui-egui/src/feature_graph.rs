@@ -89,7 +89,7 @@ fn input(key: &str, v: f64, unit: &str) -> String {
     }
 }
 
-fn plural(n: usize, one: &str, many: &str) -> String {
+pub(crate) fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
