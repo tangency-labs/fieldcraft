@@ -1139,7 +1139,7 @@ mod tests {
                 let mut params = start.as_object().cloned().unwrap_or_default();
                 let before = params.clone();
                 let mut outcome = Outcome::default();
-                let width = crate::context::WIDTH - 16.0;
+                let width = crate::context::inner_width();
                 let mut used = 0.0;
                 let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                     let touched = BTreeSet::new();
@@ -1177,7 +1177,7 @@ mod tests {
             || egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))), ..Default::default() };
         let one = |c: Collection| vec![format!("{} with a long name", c.label())];
         let mut checked = 0;
-        for width in [crate::context::WIDTH - 16.0, 200.0] {
+        for width in [crate::context::inner_width(), 200.0] {
             for c in fieldcraft_engine::commands() {
                 let Some(form) = c.form else { continue };
                 let mut params = schema::prefill(form, &json!({})).as_object().cloned().unwrap_or_default();
