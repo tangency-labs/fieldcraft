@@ -12,9 +12,9 @@
 
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
-use solidcraft_ui_kit::BackingTooltipExt as _;
 use solidcraft_ui_kit::app_bar::{self, BarAction, BarButton};
 use solidcraft_ui_kit::window_chrome;
+use solidcraft_ui_kit::{self as kit, BackingTooltipExt as _};
 
 use crate::ModelApp;
 use crate::icons::{self, Look};
@@ -90,7 +90,10 @@ const SOLVE_NARROW: f32 = 30.0;
 
 pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
-    egui::Panel::top("fc_appbar").exact_size(HEIGHT).show_separator_line(false).frame(egui::Frame::NONE.fill(t.app_bar)).show(ui, |ui| {
+    // The title bar is an application-bar surface: flat and full width whatever the layout.
+    let host = kit::Container::new(ui.ctx(), kit::Surface::ApplicationBar);
+    let panel = host.edge("fc_appbar", kit::Edge::Top).exact_size(HEIGHT).show_separator_line(false);
+    host.show_edge(ui, panel, host.edge_frame(t.app_bar), |ui| {
         let r = ui.max_rect();
         app.place("app_bar", r);
         let chrome =
