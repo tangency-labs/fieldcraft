@@ -141,6 +141,9 @@ pub enum Status {
     /// Runs `deck.write` with this `format` once `fieldcraft_decks::FORMATS` has a writer for it;
     /// until then coming in `milestone`.
     Deck { format: &'static str, milestone: &'static str },
+    /// Runs `command` (another entry's), its form preset to one variant: `preset` is the JSON
+    /// object it starts with (`{"hyperelastic": {"type": "neo_hookean"}}`; a test parses each).
+    Variant { command: &'static str, preset: &'static str },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,6 +171,7 @@ impl Capability {
             Status::Ready => Some(self.id),
             Status::Planned { .. } => None,
             Status::Deck { format, .. } => fieldcraft_decks::format(format).map(|_| crate::cmd::deck::WRITE.id),
+            Status::Variant { command, .. } => Some(command),
         }
     }
 
@@ -175,6 +179,9 @@ impl Capability {
     pub fn preset(&self) -> serde_json::Value {
         match self.status {
             Status::Deck { format, .. } => serde_json::json!({ "format": format }),
+            Status::Variant { preset, .. } => {
+                serde_json::from_str(preset).ok().filter(serde_json::Value::is_object).unwrap_or_else(|| serde_json::json!({}))
+            }
             Status::Ready | Status::Planned { .. } => serde_json::json!({}),
         }
     }
@@ -184,7 +191,7 @@ impl Capability {
         match self.status {
             Status::Planned { milestone } => Some(milestone),
             Status::Deck { milestone, .. } if self.command().is_none() => Some(milestone),
-            Status::Ready | Status::Deck { .. } => None,
+            Status::Ready | Status::Deck { .. } | Status::Variant { .. } => None,
         }
     }
 
@@ -225,6 +232,20 @@ const fn covering(
 
 const fn soon(id: &'static str, label: &'static str, tab: Tab, panel: &'static str, milestone: &'static str, tip: &'static str) -> Capability {
     Capability { id, label, tab, panel, tip, status: Status::Planned { milestone }, more: &[], covers: &[] }
+}
+
+/// An entry running another entry's `command`, its form preset to one variant (`preset`, a JSON
+/// object as text).
+const fn variant(
+    id: &'static str,
+    label: &'static str,
+    tab: Tab,
+    panel: &'static str,
+    tip: &'static str,
+    command: &'static str,
+    preset: &'static str,
+) -> Capability {
+    Capability { id, label, tab, panel, tip, status: Status::Variant { command, preset }, more: &[], covers: &[] }
 }
 
 const fn deck(id: &'static str, label: &'static str, format: &'static str, tip: &'static str) -> Capability {
@@ -317,14 +338,18 @@ pub static CATALOGUE: &[Capability] = &[
         "Split a face along a datum plane for meshing only: two faces on its surface, the cut an edge between them",
         &["geometry.face.split.delete"],
     ),
-    covering(
-        "geometry.defeature",
-        "Defeature",
-        Geometry,
-        "Prepare",
-        "Take small holes, fillets, chamfers and bosses out for meshing, from a proposal list with each one on or off",
-        &["geometry.defeature.propose", "geometry.defeature.delete"],
-    ),
+    // Propose lists the candidates with each one on or off (the live list Defeature is made from).
+    Capability {
+        more: &["geometry.defeature.propose"],
+        ..covering(
+            "geometry.defeature",
+            "Defeature",
+            Geometry,
+            "Prepare",
+            "Take small holes, fillets, chamfers and bosses out for meshing, from a proposal list with each one on or off",
+            &["geometry.defeature.delete"],
+        )
+    },
     covering(
         "geometry.stitch",
         "Stitch",
@@ -486,9 +511,25 @@ pub static CATALOGUE: &[Capability] = &[
         ],
     ),
     ready("model.material.plasticity", "Plasticity", Properties, "Materials", "Von Mises plasticity: bilinear, hardening table or Johnson–Cook"),
-    soon("model.material.hyperelastic", "Hyperelastic", Properties, "Materials", "M8", "Hyperelastic material models"),
+    variant(
+        "model.material.hyperelastic",
+        "Hyperelastic",
+        Properties,
+        "Materials",
+        "A rubber-like material for nonlinear steps: neo-Hookean, Mooney–Rivlin or Yeoh on the isotropic constants",
+        "model.material.create",
+        r#"{"hyperelastic": {"type": "neo_hookean"}}"#,
+    ),
     ready("model.material.damage", "Damage", Properties, "Materials", "Johnson–Cook damage and element erosion"),
-    soon("model.material.thermal", "Thermal", Properties, "Materials", "M8", "Conductivity, specific heat and expansion"),
+    variant(
+        "model.material.thermal",
+        "Thermal",
+        Properties,
+        "Materials",
+        "A material with conductivity, specific heat and expansion, for heat transfer and thermal stress",
+        "model.material.create",
+        r#"{"thermal": {}}"#,
+    ),
     soon(
         "model.material.eos",
         "Equation of State",
@@ -530,9 +571,33 @@ pub static CATALOGUE: &[Capability] = &[
     ready("model.step.activate", "Activate", Steps, "Steps", "Choose which loads and boundary conditions act in a step"),
     ready("model.activity", "Step Table", Steps, "Steps", "The step by load and boundary condition table"),
     soon("model.amplitude", "Amplitude", Steps, "Procedures", "M7", "Time and frequency amplitudes"),
-    soon("model.step.nonlinear", "Nonlinear", Steps, "Procedures", "M7", "Nonlinear static steps"),
-    soon("model.step.explicit", "Explicit", Steps, "Procedures", "M8", "Explicit dynamic steps"),
-    soon("model.step.heat", "Heat Transfer", Steps, "Procedures", "M8", "Heat transfer steps"),
+    variant(
+        "model.step.nonlinear",
+        "Nonlinear",
+        Steps,
+        "Procedures",
+        "A nonlinear static step: large deformation, increments and load paths",
+        "model.step.create",
+        r#"{"procedure": {"type": "nonlinear_static"}}"#,
+    ),
+    variant(
+        "model.step.explicit",
+        "Explicit",
+        Steps,
+        "Procedures",
+        "An explicit dynamic step: impact and fast transients by central differences",
+        "model.step.create",
+        r#"{"procedure": {"type": "explicit_dynamic"}}"#,
+    ),
+    variant(
+        "model.step.heat",
+        "Heat Transfer",
+        Steps,
+        "Procedures",
+        "A steady or transient heat transfer step",
+        "model.step.create",
+        r#"{"procedure": {"type": "heat_transfer"}}"#,
+    ),
     // ---- Loads & BCs ----
     ready_more(
         "model.boundary_condition.create",
@@ -749,15 +814,18 @@ pub static CATALOGUE: &[Capability] = &[
         &["file.recovery.list", "file.recovery.discard"],
     ),
     // Hide, show and isolate act on the browser's items, from their eyes and item menus; saved
-    // views are saved and shown from the Results panel's Views row.
-    covering(
-        "view.show_all",
-        "Show All",
-        Tools,
-        "View",
-        "Show every item hidden in the viewport (hide, show and isolate items from the browser)",
-        &["view.hide", "view.show", "view.isolate", "view.save", "view.restore", "view.delete", "view.list"],
-    ),
+    // views are also saved and shown from the Results panel's Views row.
+    Capability {
+        more: &["view.save", "view.restore", "view.delete", "view.list"],
+        ..covering(
+            "view.show_all",
+            "Show All",
+            Tools,
+            "View",
+            "Show every item hidden in the viewport (hide, show and isolate items from the browser)",
+            &["view.hide", "view.show", "view.isolate"],
+        )
+    },
     ready("edit.undo", "Undo", Tools, "History", "Undo the last command that changed the model"),
     ready("edit.redo", "Redo", Tools, "History", "Redo the command undone last"),
     ready_more(
@@ -766,9 +834,15 @@ pub static CATALOGUE: &[Capability] = &[
         Tools,
         "Help",
         "Draft a GitHub bug report with the version, the OS and the last error; you review it, and nothing is sent until you submit it",
-        &["diagnostics.crash_reports", "diagnostics.crash_report", "diagnostics.crash_reports.delete", "diagnostics.crash_test", "app.update.check"],
+        &["diagnostics.crash_reports", "diagnostics.crash_report", "diagnostics.crash_reports.delete", "app.update.check"],
     ),
 ];
+
+/// Registered commands no entry claims, so neither the ribbon nor the command search lists them:
+/// the command line, scripts, the control channel and MCP still run them. The crash test is a
+/// developer's check of crash reporting, refused without `FIELDCRAFT_CRASH_TEST=1` and a crash
+/// with it (docs/crash-reports.md).
+pub static UNLISTED: &[&str] = &["diagnostics.crash_test"];
 
 /// The catalogue entry with this id.
 pub fn find(id: &str) -> Option<&'static Capability> {
@@ -847,7 +921,7 @@ mod tests {
         assert_eq!(Workspace::showing(Tab::Results, Workspace::Prepare), Workspace::Results);
         assert_eq!(Workspace::showing(Tab::Tools, Workspace::Model), Workspace::Model);
         for c in commands() {
-            assert!(entry_of(c.id).is_some(), "{} has no catalogue entry", c.id);
+            assert!(entry_of(c.id).is_some() || UNLISTED.contains(&c.id), "{} has no catalogue entry", c.id);
         }
         assert_eq!(entry_of("model.material.edit").map(|c| c.id), Some("model.material.create"));
         for tab in Tab::ALL {
@@ -909,9 +983,10 @@ mod tests {
                 claimed.push(m);
             }
         }
+        claimed.extend(UNLISTED);
         for spec in commands() {
             let n = claimed.iter().filter(|c| **c == spec.id).count();
-            assert!(n >= 1, "command `{}` has no catalogue entry (a ready entry or an entry's `more`)", spec.id);
+            assert!(n >= 1, "command `{}` has no catalogue entry (a ready entry or an entry's `more`) and is not UNLISTED", spec.id);
         }
     }
 
@@ -957,6 +1032,82 @@ mod tests {
             let names: Vec<&str> = panels(tab).filter_map(|p| p.first().map(|c| c.panel)).collect();
             assert!(!names.is_empty(), "{tab:?} has no entries");
             assert!(names.iter().enumerate().all(|(i, n)| !names[..i].contains(n)), "{tab:?}: a panel's entries are together: {names:?}");
+        }
+    }
+
+    /// A1-07: the material and step variants that run today are ready entries opening their
+    /// command's form preset to that variant; the form as it starts (the schema's defaults, a
+    /// name and what the variant needs typed) runs.
+    #[test]
+    fn variant_entries_open_their_command_preset_to_that_variant() {
+        let elastic = serde_json::json!({"type": "isotropic", "young": 1000, "poisson": 0.3});
+        let cases = [
+            ("model.material.hyperelastic", "model.material.create", "hyperelastic", serde_json::json!({"elastic": elastic})),
+            // The thermal group starts empty: one property is typed in it.
+            ("model.material.thermal", "model.material.create", "thermal", serde_json::json!({"elastic": elastic, "thermal": {"conductivity": 50}})),
+            ("model.step.nonlinear", "model.step.create", "procedure", serde_json::json!({})),
+            // An explicit step's end time is typed.
+            ("model.step.explicit", "model.step.create", "procedure", serde_json::json!({"procedure": {"end_time": 0.001}})),
+            ("model.step.heat", "model.step.create", "procedure", serde_json::json!({})),
+        ];
+        for (id, command, key, typed) in cases {
+            let c = find(id).unwrap_or_else(|| panic!("{id} is in the catalogue"));
+            assert_eq!(c.command(), Some(command), "{id}");
+            assert_eq!(c.milestone(), None, "{id} is ready");
+            let preset = c.preset();
+            assert!(preset.get(key).is_some(), "{id}: preset {preset} sets `{key}`");
+            let spec = find_command(command).unwrap();
+            let mut params = crate::schema::prefill(spec.form.unwrap_or_default(), &preset);
+            let o = params.as_object_mut().unwrap();
+            o.insert("name".into(), serde_json::json!("It"));
+            // What is typed goes into the form's objects, the preset's variant kept.
+            for (k, v) in typed.as_object().cloned().unwrap_or_default() {
+                match (o.get_mut(&k).and_then(serde_json::Value::as_object_mut), v) {
+                    (Some(inner), serde_json::Value::Object(v)) => inner.extend(v),
+                    (_, v) => {
+                        o.insert(k, v);
+                    }
+                }
+            }
+            let mut s = crate::Session::default();
+            s.execute(command, &params).unwrap_or_else(|e| panic!("{id}: {params} runs: {e}"));
+        }
+        let tag = |id: &str| find(id).map(|c| c.preset()["procedure"]["type"].clone());
+        assert_eq!(tag("model.step.nonlinear"), Some(serde_json::json!("nonlinear_static")));
+        assert_eq!(tag("model.step.explicit"), Some(serde_json::json!("explicit_dynamic")));
+        assert_eq!(tag("model.step.heat"), Some(serde_json::json!("heat_transfer")));
+        // Every preset is an object that parses (it is JSON text in the table).
+        for c in CATALOGUE {
+            if let Status::Variant { preset, .. } = c.status {
+                assert!(serde_json::from_str::<serde_json::Value>(preset).is_ok_and(|v| v.as_object().is_some_and(|o| !o.is_empty())), "{}", c.id);
+            }
+        }
+    }
+
+    /// A1-04, A1-05: Defeature's proposal list and the saved views' list and delete are rows of
+    /// a drop-down, not only reachable from the command search.
+    #[test]
+    fn proposal_and_saved_view_commands_are_ribbon_rows() {
+        assert!(find("geometry.defeature").is_some_and(|c| c.more.contains(&"geometry.defeature.propose")));
+        let views = find("view.show_all").map(|c| c.more).unwrap_or_default();
+        for id in ["view.save", "view.restore", "view.delete", "view.list"] {
+            assert!(views.contains(&id), "{id} is a row of Show All's drop-down");
+        }
+    }
+
+    /// A1-14: the crash test (refused without FIELDCRAFT_CRASH_TEST=1, a crash with it) is no
+    /// ribbon row and no search hit; the command line and scripts still run it.
+    #[test]
+    fn the_crash_test_is_listed_nowhere() {
+        assert!(UNLISTED.contains(&"diagnostics.crash_test"));
+        assert!(entry_of("diagnostics.crash_test").is_none());
+        for c in CATALOGUE {
+            for m in c.more.iter().chain(c.covers) {
+                assert!(!UNLISTED.contains(m), "{}: `{m}` is unlisted", c.id);
+            }
+        }
+        for id in UNLISTED {
+            assert!(find_command(id).is_some(), "{id} is a registered command");
         }
     }
 

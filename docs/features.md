@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-92 ready, 32 coming soon.
+97 ready, 27 coming soon.
 
 ## Geometry
 
@@ -25,7 +25,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Prepare | Merge Faces — Mesh adjacent faces as one (virtual topology): a fillet in pieces, a face split by an imprint; the B-rep is unchanged | ready | `geometry.faces.merge`, (`geometry.faces.merge.delete`) |
 | Prepare | Absorb Faces — Absorb tiny and sliver faces into a neighbour for meshing, one picked or every one Check Geometry found | ready | `geometry.face.absorb` |
 | Prepare | Split Face — Split a face along a datum plane for meshing only: two faces on its surface, the cut an edge between them | ready | `geometry.face.split`, (`geometry.face.split.delete`) |
-| Prepare | Defeature — Take small holes, fillets, chamfers and bosses out for meshing, from a proposal list with each one on or off | ready | `geometry.defeature`, (`geometry.defeature.propose`), (`geometry.defeature.delete`) |
+| Prepare | Defeature — Take small holes, fillets, chamfers and bosses out for meshing, from a proposal list with each one on or off | ready | `geometry.defeature`, `geometry.defeature.propose`, (`geometry.defeature.delete`) |
 | Prepare | Stitch — Close an imported surface's gaps under a tolerance: open points welded, T-junctions split | ready | `geometry.stitch`, (`geometry.stitch.delete`) |
 | Prepare | Midsurface — Extract midsurfaces of thin parts for shell meshes | coming soon (M8) |  |
 
@@ -74,9 +74,9 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 |---|---|---|---|
 | Materials | Material — Elastic (isotropic, orthotropic) material with density; neo-Hookean hyperelasticity for nonlinear steps; Tait PVT behaviour; latent heat for a fluid that melts and freezes | ready | `model.material.create`, `model.material.edit`, `model.material.delete`, `model.material.pvt`, `model.material.specific_volume`, `model.material.phase_change`, `model.material.library.add`, `model.material.library.list` |
 | Materials | Plasticity — Von Mises plasticity: bilinear, hardening table or Johnson–Cook | ready | `model.material.plasticity` |
-| Materials | Hyperelastic — Hyperelastic material models | coming soon (M8) |  |
+| Materials | Hyperelastic — A rubber-like material for nonlinear steps: neo-Hookean, Mooney–Rivlin or Yeoh on the isotropic constants | ready | `model.material.create {"hyperelastic":{"type":"neo_hookean"}}` |
 | Materials | Damage — Johnson–Cook damage and element erosion | ready | `model.material.damage` |
-| Materials | Thermal — Conductivity, specific heat and expansion | coming soon (M8) |  |
+| Materials | Thermal — A material with conductivity, specific heat and expansion, for heat transfer and thermal stress | ready | `model.material.create {"thermal":{}}` |
 | Materials | Equation of State — Polynomial, ideal gas, Mie–Grüneisen, JWL and tabulated equations of state | coming soon (M11) |  |
 | Sections | Section — Solid, shell, beam, rod or 2D (plane stress, plane strain, axisymmetric) section assigned to a set, with its element formulation | ready | `model.section.create`, `model.section.edit`, `model.section.delete` |
 | Sections | Composite — Composite layups and continuum shells | coming soon (M8) |  |
@@ -98,9 +98,9 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Steps | Activate — Choose which loads and boundary conditions act in a step | ready | `model.step.activate` |
 | Steps | Step Table — The step by load and boundary condition table | ready | `model.activity` |
 | Procedures | Amplitude — Time and frequency amplitudes | coming soon (M7) |  |
-| Procedures | Nonlinear — Nonlinear static steps | coming soon (M7) |  |
-| Procedures | Explicit — Explicit dynamic steps | coming soon (M8) |  |
-| Procedures | Heat Transfer — Heat transfer steps | coming soon (M8) |  |
+| Procedures | Nonlinear — A nonlinear static step: large deformation, increments and load paths | ready | `model.step.create {"procedure":{"type":"nonlinear_static"}}` |
+| Procedures | Explicit — An explicit dynamic step: impact and fast transients by central differences | ready | `model.step.create {"procedure":{"type":"explicit_dynamic"}}` |
+| Procedures | Heat Transfer — A steady or transient heat transfer step | ready | `model.step.create {"procedure":{"type":"heat_transfer"}}` |
 
 ## Loads & BCs
 
@@ -177,7 +177,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | File | Save — Save the model to its .fieldcraft file | ready | `file.save` |
 | File | Save As — Save the model to a new .fieldcraft file | ready | `file.save_as` |
 | File | Recover — Open a model autosaved by an app that crashed or closed with unsaved changes | ready | `file.recover`, `file.recovery.list`, `file.recovery.discard` |
-| View | Show All — Show every item hidden in the viewport (hide, show and isolate items from the browser) | ready | `view.show_all`, (`view.hide`), (`view.show`), (`view.isolate`), (`view.save`), (`view.restore`), (`view.delete`), (`view.list`) |
+| View | Show All — Show every item hidden in the viewport (hide, show and isolate items from the browser) | ready | `view.show_all`, `view.save`, `view.restore`, `view.delete`, `view.list`, (`view.hide`), (`view.show`), (`view.isolate`) |
 | History | Undo — Undo the last command that changed the model | ready | `edit.undo` |
 | History | Redo — Redo the command undone last | ready | `edit.redo` |
-| Help | Report a Bug — Draft a GitHub bug report with the version, the OS and the last error; you review it, and nothing is sent until you submit it | ready | `diagnostics.bug_report`, `diagnostics.crash_reports`, `diagnostics.crash_report`, `diagnostics.crash_reports.delete`, `diagnostics.crash_test`, `app.update.check` |
+| Help | Report a Bug — Draft a GitHub bug report with the version, the OS and the last error; you review it, and nothing is sent until you submit it | ready | `diagnostics.bug_report`, `diagnostics.crash_reports`, `diagnostics.crash_report`, `diagnostics.crash_reports.delete`, `app.update.check` |
