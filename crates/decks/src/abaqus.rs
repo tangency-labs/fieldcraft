@@ -157,7 +157,7 @@ use fieldcraft_model::units::Preset;
 use crate::{Error, Result, unsupported};
 
 pub mod read;
-pub use read::{Limits, Read, Unknown, read, read_in, read_limited};
+pub use read::{Limits, Read, Unknown, read, read_analysis_limited, read_in, read_limited};
 
 const FORMAT: &str = "Abaqus";
 

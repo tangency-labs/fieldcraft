@@ -137,7 +137,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Decks | Abaqus Input — Write an Abaqus input file (.inp) | ready | `deck.write {"format":"abaqus"}` |
 | Decks | Nastran Deck — Write Nastran bulk data (SOL 101, 103) | ready | `deck.write {"format":"nastran"}` |
 | Decks | LS-DYNA Deck — Write an LS-DYNA keyword file | ready | `deck.write {"format":"lsdyna"}` |
-| Decks | Read Deck — Read an Abaqus input deck's model data: mesh, sets, materials and sections; unread keywords are listed, not kept | ready | `deck.read` |
+| Decks | Read Deck — Read an Abaqus input deck's model data and the current writer's linear history: mesh, sets, materials, sections, static/frequency/buckling steps, boundary conditions and concentrated loads; unread keywords are listed, not kept | ready | `deck.read` |
 | Implicit | Static — Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling and heat transfer in the drop-down | ready | `solve.static`, `solve.nonlinear`, `solve.buckle`, `solve.heat` |
 | Implicit | Frequency — Natural frequencies and mode shapes of a frequency step | ready | `solve.frequency` |
 | Explicit | Explicit — Transient dynamics of an explicit step by central differences (contact and erosion coming in M10) | ready | `solve.explicit` |
