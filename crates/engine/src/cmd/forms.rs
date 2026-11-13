@@ -2183,6 +2183,13 @@ pub const SOLVE_SETTINGS: &[Field] = &[
         .help("Where a GPU preference falls back on a machine with no suitable GPU.")
         .hint("CPU"),
 ];
+pub const IMAGE_SAVE: &[Field] = &[
+    path("path", "File", true).help("The PNG picture to write.").req(),
+    tuple("size", "Size", &["Width", "Height"], 2, true).help("The picture's width and height in pixels, each 16 to 4096.").hint("1600 × 1000"),
+    json("camera", "Camera")
+        .help("ui.camera's parameters: yaw and pitch in degrees, distance and target in the display units; the viewport's camera when empty.")
+        .hint(r#"{"yaw": -70, "pitch": 18, "fit": true}"#),
+];
 pub const VIEW_NAME: &[Field] = &[text("name", "View").help("The saved view.").req()];
 pub const RENDER_SAVE: &[Field] = &[
     text("name", "Name").help("The render's name; a render of that name is replaced.").req(),
@@ -3161,5 +3168,12 @@ mod tests {
         assert!(matches!(field_of("results.path", "field").kind, Kind::Choice(c) if c.len() == ids.len()));
         assert!(!problems(RESULTS_PATH, &json!({"field": "nope", "points": [[0, 0, 0], [1, 0, 0]]})).is_empty());
         assert!(matches!(field_of("results.render.save", "step").kind, Kind::Ref(C::Step)));
+    }
+
+    /// A1-13: a picture of the viewport is saved from any workspace's View drop-down.
+    #[test]
+    fn image_form_types_its_size() {
+        assert!(matches!(field_of("view.image.save", "size").kind, Kind::Tuple { min_len: 2, whole: true, .. }));
+        assert!(matches!(field_of("view.image.save", "path").kind, Kind::Path { save: true }));
     }
 }
