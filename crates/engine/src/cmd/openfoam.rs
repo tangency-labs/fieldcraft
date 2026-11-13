@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use fieldcraft_decks::openfoam::{CaseOptions, FieldValues, Gas, ObstacleSurface, RefineBox, read_field, write_case};
+use fieldcraft_decks::openfoam::{CaseOptions, FieldValues, Gas, ObstacleSurface, PressureBox, RefineBox, read_field, write_case};
 use fieldcraft_io::roots::Access;
 use fieldcraft_lbm::solve::{FluidResult, FluidStats, Frame};
 use fieldcraft_lbm::voxel::Grid;
@@ -21,7 +21,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session, StepResult};
 pub const WRITE: CommandSpec = CommandSpec {
     id: "deck.openfoam",
     label: "Write OpenFOAM Case",
-    params: r#"{"path": "case_dir", "step"?: "Flow", "cell_factor"?: 2, "processes"?: 1, "max_courant"?: 0.8, "refine_boxes"?: [{"min": [x,y,z], "max": [x,y,z], "spacing"?: 0.1}], "location"?: [x,y,z], "compressible"?: true | {"ambient"?: 0.101325, "temperature"?: 20, "molar_mass"?: 0.0289647, "specific_heat"?: 1004.5, "prandtl"?: 0.71}} — writes a fluid step (the only one when `step` is left out) as an OpenFOAM case directory: blockMesh background of spacing × cell_factor (1, 2, 4, 8), snappyHexMesh around the obstacles (one patch per named face, refined back to the spacing; `refine_boxes` to theirs, rounded to the background over a power of two), ASCII fields, decomposeParDict for `processes` ranks and an Allrun script (mesh, cell centres, solve, reconstruct). Incompressible by default: pimpleFoam with Smagorinsky LES, an adaptive time step (max_courant). `compressible`: rhoCentralFoam, a laminar ideal gas (air by default): pressure faces above 0 are total-pressure inlets at `ambient` + their gauge pressure and the total `temperature`, the others non-reflecting outlets at `ambient`; walls adiabatic; `specific_heat` from the material's thermal data when left out, else air's; molar mass in kg/mol. Lengths, pressures and temperatures in the input units. `location` is a point in the fluid (found when left out). Fails naming what OpenFOAM cannot be given yet (heat, porous zones, fans, baffles, free surface, periodic faces, parabolic inlets, non-Newtonian fluids). Writes SI; nothing of the model changes; `results.openfoam` reads the results back"#,
+    params: r#"{"path": "case_dir", "step"?: "Flow", "cell_factor"?: 2, "processes"?: 1, "max_courant"?: 0.8, "refine_boxes"?: [{"min": [x,y,z], "max": [x,y,z], "spacing"?: 0.1}], "location"?: [x,y,z], "initial_pressure"?: [{"min": [x,y,z], "max": [x,y,z], "pressure": 29.9}], "compressible"?: true | {"ambient"?: 0.101325, "temperature"?: 20, "molar_mass"?: 0.0289647, "specific_heat"?: 1004.5, "prandtl"?: 0.71}} — writes a fluid step (the only one when `step` is left out) as an OpenFOAM case directory: blockMesh background of spacing × cell_factor (1, 2, 4, 8), snappyHexMesh around the obstacles (one patch per named face, refined back to the spacing; `refine_boxes` to theirs, rounded to the background over a power of two), ASCII fields, decomposeParDict for `processes` ranks and an Allrun script (mesh, cell centres, solve, reconstruct). Incompressible by default: pimpleFoam with Smagorinsky LES, an adaptive time step (max_courant, 0.8; compressible 0.2). `compressible`: rhoCentralFoam, a laminar ideal gas (air by default): pressure faces above 0 are total-pressure inlets at `ambient` + their gauge pressure and the total `temperature`, the others non-reflecting outlets at `ambient`; walls adiabatic; `specific_heat` from the material's thermal data when left out, else air's; molar mass in kg/mol. Lengths, pressures and temperatures in the input units. `location` is a point in the fluid (found when left out). `initial_pressure` (compressible): boxes that start at that gauge pressure (setFields), such as the bore behind a high-pressure inlet, which would otherwise start as a shock at the inlet face. Fails naming what OpenFOAM cannot be given yet (heat, porous zones, fans, baffles, free surface, periodic faces, parabolic inlets, non-Newtonian fluids). Writes SI; nothing of the model changes; `results.openfoam` reads the results back"#,
     form: None,
     kind: CommandKind::Session,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -38,6 +38,9 @@ pub const READ: CommandSpec = CommandSpec {
     run: read,
 };
 
+/// The Courant number a compressible case adapts its time step to unless told otherwise.
+const COMPRESSIBLE_COURANT: f64 = 0.2;
+
 /// What FieldCraft wrote beside the case, for reading it back.
 const MARKER: &str = "fieldcraft.json";
 
@@ -48,6 +51,14 @@ struct BoxParam {
     max: [f64; 3],
     #[serde(default)]
     spacing: Option<f64>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PressureParam {
+    min: [f64; 3],
+    max: [f64; 3],
+    pressure: f64,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -91,6 +102,13 @@ fn write(s: &mut Session, p: &Value) -> Result<Value> {
         let spacing = b.spacing.map(|h| si(s, "refine_boxes", Quantity::Length, h)).transpose()?;
         options.refine_boxes.push(RefineBox { min: length("refine_boxes", b.min)?, max: length("refine_boxes", b.max)?, spacing });
     }
+    for b in opt::<Vec<PressureParam>>(p, "initial_pressure")?.unwrap_or_default() {
+        options.initial_pressure.push(PressureBox {
+            min: length("initial_pressure", b.min)?,
+            max: length("initial_pressure", b.max)?,
+            pressure: si(s, "initial_pressure", Quantity::Pressure, b.pressure)?,
+        });
+    }
     if let Some(l) = opt::<[f64; 3]>(p, "location")? {
         options.location = Some(length("location", l)?);
     }
@@ -115,6 +133,10 @@ fn write(s: &mut Session, p: &Value) -> Result<Value> {
                 .unwrap_or(air.specific_heat),
             prandtl: g.prandtl.unwrap_or(air.prandtl),
         });
+        // The central scheme through strong expansions wants a smaller Courant number.
+        if p.get("max_courant").is_none() {
+            options.max_courant = COMPRESSIBLE_COURANT;
+        }
     }
 
     // The obstacles, tessellated as the lattice solver does, in metres.

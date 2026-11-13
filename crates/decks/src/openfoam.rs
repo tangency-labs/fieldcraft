@@ -57,6 +57,15 @@ pub struct RefineBox {
     pub spacing: Option<f64>,
 }
 
+/// A box of the fluid that starts at a gauge pressure (Pa; compressible cases: a charged
+/// reservoir or bore, so a high-pressure inlet does not start as a shock at its face).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PressureBox {
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+    pub pressure: f64,
+}
+
 /// An ideal gas for a compressible case (SI).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Gas {
@@ -111,11 +120,21 @@ pub struct CaseOptions {
     pub max_courant: f64,
     /// Compressible flow of this gas (`rhoCentralFoam`) instead of incompressible (`pimpleFoam`).
     pub gas: Option<Gas>,
+    /// Boxes that start at their own pressure (`setFields`; compressible only).
+    pub initial_pressure: Vec<PressureBox>,
 }
 
 impl Default for CaseOptions {
     fn default() -> Self {
-        CaseOptions { cell_factor: 2, refine_boxes: Vec::new(), location: None, processes: 1, max_courant: 0.8, gas: None }
+        CaseOptions {
+            cell_factor: 2,
+            refine_boxes: Vec::new(),
+            location: None,
+            processes: 1,
+            max_courant: 0.8,
+            gas: None,
+            initial_pressure: Vec::new(),
+        }
     }
 }
 
@@ -257,7 +276,15 @@ pub fn write_case(model: &Model, step: Option<&str>, obstacles: &[ObstacleSurfac
     files.insert("system/surfaceFeatureExtractDict".into(), feature_extract(&surfaces));
     files.insert("system/snappyHexMeshDict".into(), snappy(&surfaces, level, &boxes, location));
     let frames = (*frames).max(1);
+    for b in &options.initial_pressure {
+        if b.min.iter().chain(&b.max).chain([&b.pressure]).any(|v| !v.is_finite()) || (0..3).any(|i| b.min[i] >= b.max[i]) {
+            return Err(unsupported("an initial pressure box whose min is not below its max, or whose pressure is not finite"));
+        }
+    }
     let solver = match options.gas {
+        None if !options.initial_pressure.is_empty() => {
+            return Err(unsupported("initial pressure boxes in an incompressible case (give a gas)"));
+        }
         None => {
             for (field, text) in fields(domain, density, &surfaces) {
                 files.insert(format!("0/{field}"), text);
@@ -284,12 +311,15 @@ pub fn write_case(model: &Model, step: Option<&str>, obstacles: &[ObstacleSurfac
             files.insert("constant/turbulenceProperties".into(), dictionary("turbulenceProperties", "simulationType laminar;\n"));
             files.insert("system/fvSchemes".into(), dictionary("fvSchemes", GAS_SCHEMES));
             files.insert("system/fvSolution".into(), dictionary("fvSolution", GAS_SOLUTION));
+            if !options.initial_pressure.is_empty() {
+                files.insert("system/setFieldsDict".into(), set_fields(&gas, &options.initial_pressure));
+            }
             "rhoCentralFoam"
         }
     };
     files.insert("system/controlDict".into(), control(solver, duration, frames, options.max_courant));
     files.insert("system/decomposeParDict".into(), dictionary("decomposeParDict", &format!("numberOfSubdomains {processes};\nmethod scotch;\n")));
-    files.insert("Allrun".into(), allrun(&step.name, solver, processes));
+    files.insert("Allrun".into(), allrun(&step.name, solver, processes, !options.initial_pressure.is_empty()));
     files.insert("case.foam".into(), String::new());
 
     Ok(Case { files, patches, background_cells: cells, location, solver, notes })
@@ -707,6 +737,28 @@ fn gas_fields(d: &FluidDomain, gas: &Gas, surfaces: &Surfaces) -> [(&'static str
     ]
 }
 
+/// The initial pressure of each box (absolute; the rest of the fluid at the ambient).
+fn set_fields(gas: &Gas, boxes: &[PressureBox]) -> String {
+    let mut regions = String::new();
+    for b in boxes {
+        let _ = writeln!(
+            regions,
+            "    boxToCell {{ box {} {}; fieldValues ( volScalarFieldValue p {} ); }}",
+            vector(b.min),
+            vector(b.max),
+            num(gas.ambient + b.pressure)
+        );
+    }
+    dictionary(
+        "setFieldsDict",
+        &format!(
+            "defaultFieldValues ( volScalarFieldValue p {} volScalarFieldValue T {} );\n\nregions\n(\n{regions});\n",
+            num(gas.ambient),
+            num(gas.temperature)
+        ),
+    )
+}
+
 fn thermophysical(gas: &Gas, viscosity: f64) -> String {
     dictionary(
         "thermophysicalProperties",
@@ -807,7 +859,7 @@ const FV_SOLUTION: &str = "solvers\n{\n    p { solver GAMG; smoother DIC; tolera
     \"(U|UFinal)\" { solver smoothSolver; smoother symGaussSeidel; tolerance 1e-6; relTol 0; }\n}\n\n\
 PIMPLE\n{\n    momentumPredictor yes;\n    nOuterCorrectors 1;\n    nCorrectors 2;\n    nNonOrthogonalCorrectors 1;\n}\n";
 
-fn allrun(step: &str, solver: &str, processes: u32) -> String {
+fn allrun(step: &str, solver: &str, processes: u32, set_fields: bool) -> String {
     let step: String = step.chars().filter(|c| !c.is_control()).collect();
     let mut s = format!(
         "#!/bin/sh\n# FieldCraft fluid step `{step}` as an OpenFOAM case: mesh, solve, reconstruct.\n\
@@ -817,6 +869,9 @@ run() {{ log=\"log.$1\"; echo \"$*  > $log\"; \"$@\" > \"$log\" 2>&1; }}\n\
 run blockMesh\nrun surfaceFeatureExtract\nrun snappyHexMesh -overwrite\nrun checkMesh\n\
 run postProcess -func writeCellCentres -time 0\n"
     );
+    if set_fields {
+        s.push_str("run setFields\n");
+    }
     let _ = write!(
         s,
         "if [ \"$NP\" -gt 1 ]; then\n    rm -rf processor*\n    run decomposePar -force\n\
@@ -1124,6 +1179,16 @@ mod tests {
         // 1 mm background over 0.125 mm: level 3.
         assert!(case.files["system/snappyHexMeshDict"].contains("levels ((1e15 3))"));
         assert!(case.notes.iter().any(|n| n.contains("laminar")), "{:?}", case.notes);
+        assert!(!case.files.contains_key("system/setFieldsDict"));
+        let charged =
+            CaseOptions { initial_pressure: vec![PressureBox { min: [-1.0; 3], max: [0.003, 1.0, 1.0], pressure: 2.99e7 }], ..options.clone() };
+        let case = write(&m, &charged).unwrap();
+        let set = &case.files["system/setFieldsDict"];
+        assert!(set.contains("box (-1e0 -1e0 -1e0) (3e-3 1e0 1e0); fieldValues ( volScalarFieldValue p 3e7 );"), "{set}");
+        assert!(set.contains("volScalarFieldValue T 2.9315e2"), "{set}");
+        assert!(case.files["Allrun"].contains("run setFields\n"));
+        let incompressible = CaseOptions { gas: None, ..charged };
+        assert!(write(&m, &incompressible).unwrap_err().to_string().contains("initial pressure"));
         let bad = CaseOptions { gas: Some(Gas { molar_mass: 0.0, ..Gas::AIR }), ..CaseOptions::default() };
         assert!(write(&m, &bad).is_err());
     }

@@ -38,6 +38,48 @@ is used.
 Everything is SI, as the model stores it and OpenFOAM reads it. The lengths of `refine_boxes` and
 `location` are given in the input units.
 
+## Compressible cases
+
+`"compressible": true` (air at 1 atm and 20 °C) or `{ambient, temperature, molar_mass,
+specific_heat, prandtl}` writes a `rhoCentralFoam` case: a laminar ideal gas (Kurganov's central
+scheme), for flows the lattice cannot run, such as a choked nozzle and its underexpanded jet.
+
+| Model | Compressible case |
+|---|---|
+| `pressure` face above 0 | inlet: total pressure `ambient` + gauge, total temperature `temperature` |
+| `pressure` face at or below 0 | non-reflecting outlet (`waveTransmissive`) at `ambient` + gauge |
+| `velocity` face | `U` fixed, `T` at `temperature` |
+| walls, obstacle faces | no-slip, adiabatic |
+| material | viscosity; `specific_heat` from its thermal data unless given (else air's); the density is not used |
+| time step | adapts to `max_courant`, 0.2 unless given |
+
+A high-pressure inlet against still ambient air starts as a shock tube at the inlet face, and a
+strong pressure jump that crosses snapped wall cells can drive the temperature negative in the
+first steps. `initial_pressure: [{min, max, pressure}]` (gauge, input units) starts boxes of the
+fluid at their own pressure (`setFields`). Charge the reservoir and nozzle up to the exit plane, so
+the jump starts where the wall is a grid-aligned face:
+
+```json
+{"command": "deck.openfoam", "params": {"path": "blast_case", "processes": 8,
+  "compressible": {"ambient": 0.1, "temperature": 20},
+  "initial_pressure": [{"min": [-1, -1, -1], "max": [70, 100, 100], "pressure": 29.9}],
+  "refine_boxes": [{"min": [65, 0, 0], "max": [112, 12, 12], "spacing": 0.4},
+                   {"min": [55, 0, 0], "max": [100, 4, 4], "spacing": 0.2}]}}
+```
+
+## Reading the results back
+
+`results.openfoam {"path": "blast_case"}` reads every written time of a reconstructed case as
+a frame of the step's fluid results, sampled at the centres of a lattice over the domain box (the
+domain's spacing, or `spacing`) from the nearest OpenFOAM cell; the obstacles' cells are solid. The
+slices, probes, lines and measurements of fluid results then show OpenFOAM's flow:
+- velocity
+- gauge pressure: above the ambient (compressible), or the kinematic pressure times the density
+- temperature (compressible)
+
+The reply gives the peak speed and, compressible, the peak Mach number. The cell centres come
+from `0/C`, which `Allrun` writes; fields must be ASCII, as the case is written.
+
 ## Not written yet
 
 The command fails and names what it cannot write yet:
