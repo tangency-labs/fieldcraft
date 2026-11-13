@@ -3102,6 +3102,26 @@ mod tests {
         assert!(bad.is_empty(), "raw outer hosts: {bad:?}");
     }
 
+    /// The hosts, overlays and badges these files draw take their text sizes from the theme's
+    /// `font_*` tokens, never a literal point size.
+    #[test]
+    fn host_text_sizes_come_from_the_theme() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut bad = Vec::new();
+        for file in ["appbar.rs", "toolbar.rs", "timeline.rs", "palette.rs", "lib.rs", "viewport.rs", "files.rs", "updates.rs", "report.rs"] {
+            let text = std::fs::read_to_string(dir.join(file)).unwrap();
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            for call in ["proportional(", "monospace(", ".size("] {
+                for (at, _) in code.match_indices(call) {
+                    if code[at + call.len()..].starts_with(|c: char| c.is_ascii_digit()) {
+                        bad.push(format!("{file}: {call}…"));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "literal text sizes: {bad:?}");
+    }
+
     /// A command whose schema has no fields runs on click, whatever its parameter doc says: an
     /// empty form that needs OK is a dead step.
     #[test]
