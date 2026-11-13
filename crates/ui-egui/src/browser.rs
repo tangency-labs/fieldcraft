@@ -1058,7 +1058,23 @@ fn resize(app: &mut ModelApp, ui: &egui::Ui, id: egui::Id, card: Rect, width: f3
     }
 }
 
-/// The header: the title, the number of bodies and a chevron that folds the card to just this
+/// What the header counts: the parts the view shows, as SolidCraft's header counts the bodies it
+/// places. The design's bodies and imported surfaces when the model has geometry, else the mesh's
+/// elements (a deck or a mesh read on its own); nothing for an empty model.
+fn header_count(app: &ModelApp) -> String {
+    use crate::feature_graph::plural;
+    let bodies = app.session.design.as_ref().map_or(0, |d| d.bodies.len()) + app.session.surfaces.len();
+    let elements = app.session.model.elements().len();
+    if bodies > 0 {
+        plural(bodies, "body", "bodies")
+    } else if elements > 0 {
+        plural(elements, "element", "elements")
+    } else {
+        String::new()
+    }
+}
+
+/// The header: the title, what the model holds (`header_count`) and a chevron that folds the card to just this
 /// row. The whole row is the button.
 fn header(app: &mut ModelApp, ui: &mut egui::Ui) {
     let k = solidcraft_theme::Tokens::get();
@@ -1075,9 +1091,7 @@ fn header(app: &mut ModelApp, ui: &mut egui::Ui) {
     painter.galley(pos2(rect.left() + k.space_6, rect.center().y - title.size().y / 2.0), title, k.text);
     let right = rect.right() - k.space_6;
     kit::disclosure(painter, pos2(right - k.form_section_icon_size / 2.0, rect.center().y), !collapsed, k.text_dim);
-    let bodies = app.session.design.as_ref().map_or(0, |d| d.bodies.len());
-    let count = format!("{bodies} {}", if bodies == 1 { "body" } else { "bodies" });
-    let count = painter.layout_no_wrap(count, FontId::proportional(k.font_body), k.text_dim);
+    let count = painter.layout_no_wrap(header_count(app), FontId::proportional(k.font_body), k.text_dim);
     let right = right - k.form_section_icon_size - k.space_6;
     painter.galley(pos2(right - count.size().x, rect.center().y - count.size().y / 2.0), count, k.text_dim);
     let tip = if collapsed { "Expand the browser" } else { "Collapse the browser" };
@@ -1814,6 +1828,30 @@ pub(crate) mod tests {
             assert!(drag(&mut app, gap), "a drag from the gap at {gap:?} turns the view");
         }
         assert!(!drag(&mut app, card.center()), "a drag on the browser card leaves the view");
+    }
+
+    /// The header counts the bodies of a model with geometry, else its elements.
+    #[test]
+    fn the_header_counts_bodies_else_elements() {
+        let mut app = ModelApp::new(Session::default());
+        assert_eq!(header_count(&app), "");
+        app.run_script(&fieldcraft_engine::sample::cantilever()).unwrap();
+        assert_eq!(header_count(&app), "160 elements");
+    }
+
+    /// A sample opened in the window is framed in the view the cards leave free.
+    #[test]
+    fn an_opened_sample_is_framed_beside_the_cards() {
+        let ctx = egui::Context::default();
+        let size = vec2(1400.0, 900.0);
+        let mut app = ModelApp::new(Session::default());
+        settle(&mut app, &ctx, size);
+        app.open_sample("cantilever");
+        app.wait_loaded();
+        for _ in 0..8 {
+            draw(&mut app, &ctx, size, Vec::new());
+        }
+        assert!(app.framed(), "{:?} {:?}", app.cam, app.viewport.overlays);
     }
 
     /// The header's chevron folds the card to its header, and unfolds it.
