@@ -3690,6 +3690,19 @@ mod tests {
         }
     }
 
+    /// The selection bar's "Select" sits on the middle of its drop-down, not on its top (A3-11).
+    #[test]
+    fn the_selection_bar_label_is_centred_on_its_drop_down() {
+        let mut app = ModelApp::new(Session::default());
+        let ctx = egui::Context::default();
+        app.run("file.sample", json!({"name": "cantilever"})).unwrap();
+        for _ in 0..3 {
+            draw(&mut app, &ctx, 1280.0, 800.0);
+        }
+        let (label, filter) = (region(&app, "selection_bar:label"), region(&app, "selection_bar:filter"));
+        assert!((label.center().y - filter.center().y).abs() <= 0.5, "label {label:?}, drop-down {filter:?}");
+    }
+
     /// #610: resizing a clamped 24-band plot keeps the complete legend clear of navigation.
     #[test]
     fn the_full_legend_fits_when_the_window_shrinks() {

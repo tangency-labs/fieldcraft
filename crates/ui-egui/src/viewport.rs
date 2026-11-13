@@ -370,9 +370,11 @@ fn selection_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
             .corner_radius(k.space_24 as u8)
             .inner_margin(egui::Margin::symmetric(k.space_8 as i8, k.space_3 as i8));
         card.show_frame(ui, frame, rect, |ui| {
-            ui.horizontal(|ui| {
-                kit::text(ui, "Select", kit::Text::Inline);
-                kit::bounded_dropdown_menu(ui, "fc_selection_filter", app.pick.filter.label(), 110.0, |ui| {
+            // Centred on one line: the label sits on the taller drop-down's middle.
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let label = kit::text(ui, "Select", kit::Text::Inline).rect;
+                app.place("selection_bar:label", label);
+                let filter = kit::bounded_dropdown_menu(ui, "fc_selection_filter", app.pick.filter.label(), 110.0, |ui| {
                     for (i, f) in Filter::ALL.into_iter().enumerate() {
                         // Geometry, then the mesh.
                         if i > 0 && Filter::ALL.get(i - 1).is_some_and(|p| p.geometry() != f.geometry()) {
@@ -385,6 +387,7 @@ fn selection_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
                         }
                     }
                 });
+                app.place("selection_bar:filter", filter.rect);
                 let boxes = app.pick.filter.boxes();
                 let tip = if boxes {
                     "Box selection: a left drag selects the visible items inside the box (right or middle drag pans)"
