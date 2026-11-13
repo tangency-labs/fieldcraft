@@ -1,8 +1,9 @@
 //! Unstructured all-hexahedral meshing (`mesh.hex.octree`) of the open design's bodies or of
 //! imported surfaces.
 
-use fieldcraft_mesh::octree::{OctreeHexMesh, OctreeOptions, octree_hex_mesh};
+use fieldcraft_mesh::octree::{OctreeHexMesh, OctreeOptions, octree_hex_mesh_exact};
 use fieldcraft_mesh::surface::BoundarySurface;
+use fieldcraft_mesh::tet::geometry::Tessellation;
 use fieldcraft_model::{ElementKind, GeometryRef, MAX_ELEMENTS};
 use serde_json::{Value, json};
 
@@ -59,13 +60,17 @@ fn hex_octree(s: &mut Session, p: &Value) -> Result<Value> {
         let surface_options = super::mesh::surface_options(p, &b.mesh)?;
         // A design body's faces with exact surfaces are smooth inside: a fold of their
         // tessellation is no crease to refine to.
-        let analytic = s.design.as_ref().and_then(|d| d.body(&b.name)).map(super::mesh::analytic_surfaces).unwrap_or_default();
+        let shape = s.design.as_ref().and_then(|d| d.body(&b.name));
+        let analytic = shape.map(super::mesh::analytic_surfaces).unwrap_or_default();
         let surface = BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &surface_options)
             .map_err(|e| EngineError::context(format!("body `{}`", b.name), e))?
             .smooth_inside(&super::mesh::smooth_faces(&analytic));
+        // A design body's boundary vertices go onto its exact faces and curves; an imported
+        // surface keeps to its triangles.
+        let exact = shape.map(|shape| Tessellation::new(&surface, analytic.clone()).with_pieces(&surface, super::mesh::pieces(shape, &b.pieces)));
         let left = OctreeOptions { max_elements: options.max_elements.saturating_sub(total).max(1), ..options.clone() };
         let field = sizing.field(&b.name, h)?;
-        let mesh = octree_hex_mesh(&surface, &field, &left).map_err(|e| EngineError::of_body(&b.name, e))?;
+        let mesh = octree_hex_mesh_exact(&surface, exact.as_ref(), &field, &left).map_err(|e| EngineError::of_body(&b.name, e))?;
         total += mesh.hexes.len();
         meshes.push((b, mesh));
     }

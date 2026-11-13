@@ -97,6 +97,7 @@ use crate::message::{Message, length};
 use crate::quality::{GateOptions, Metric, Validity, element_quality, validity_gate_checks};
 use crate::size::{SizeField, checked_size};
 use crate::surface::BoundarySurface;
+use crate::tet::geometry::Tessellation;
 use crate::vec3::{P, cross, dot, norm, sub};
 use crate::{Error, Result};
 
@@ -245,8 +246,19 @@ enum Attempt {
 /// part's box; cells are refined where the field is smaller than they are; finer cells follow the part's curvature,
 /// thickness and narrow faces). See the module docs.
 pub fn octree_hex_mesh(surface: &BoundarySurface, field: &dyn SizeField, options: &OctreeOptions) -> Result<OctreeHexMesh> {
+    octree_hex_mesh_exact(surface, None, field, options)
+}
+
+/// [`octree_hex_mesh`] with the boundary vertices on the exact surfaces and curves of `exact`
+/// (a projection target built on `surface`), not on the chords of its tessellation.
+pub fn octree_hex_mesh_exact(
+    surface: &BoundarySurface,
+    exact: Option<&Tessellation>,
+    field: &dyn SizeField,
+    options: &OctreeOptions,
+) -> Result<OctreeHexMesh> {
     check_options(options)?;
-    let g = Geometry::new(surface, options.sharp_angle, options.blade_angle)?;
+    let g = Geometry::new(surface, options.sharp_angle, options.blade_angle)?.with_exact(exact);
     let thickness = triangle_thickness(&g, field);
     let ctx = plan(&g, field, options, &thickness)?;
     let mut hints: Vec<P> = Vec::new();

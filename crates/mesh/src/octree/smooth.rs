@@ -275,8 +275,10 @@ impl<'a> Optimizer<'a> {
         match self.constraint.get(v as usize).copied().unwrap_or(Constraint::Free) {
             Constraint::Free => None,
             Constraint::Corner(c) => Some(self.geom.xyz(c)),
-            Constraint::Curve(c) => self.geom.nearest_on_curve(c, p).map(|x| x.0),
-            Constraint::Patch(pt) => self.geom.nearest(p, |t| self.geom.tri_patch.get(t as usize) == Some(&pt)).map(|x| x.1),
+            Constraint::Curve(c) => self.geom.nearest_on_curve(c, p).map(|(q, i, _)| self.geom.on_curve(c, i, p, q)),
+            Constraint::Patch(pt) => {
+                self.geom.nearest(p, |t| self.geom.tri_patch.get(t as usize) == Some(&pt)).map(|x| self.geom.on_face(x.0, p, x.1))
+            }
         }
     }
 

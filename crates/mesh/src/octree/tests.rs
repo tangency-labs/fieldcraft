@@ -89,6 +89,36 @@ fn a_cylinder_meshes_with_its_rims_captured() {
     assert_eq!(faces.len(), 3);
 }
 
+/// With the exact surfaces given, the boundary nodes lie on the cylinder and on its rims, not on
+/// the chords of its 24 facets (which stray up to 0.043 from it).
+#[test]
+fn boundary_nodes_lie_on_the_exact_surfaces_when_given() {
+    use crate::tet::geometry::{AnalyticSurface, Tessellation};
+    let (r, h) = (5.0, 8.0);
+    let s = cylinder_surface(r, h, 24);
+    let analytic = vec![
+        Some(AnalyticSurface::Plane { normal: [0.0, 0.0, -1.0], point: [0.0; 3] }),
+        Some(AnalyticSurface::Plane { normal: [0.0, 0.0, 1.0], point: [0.0, 0.0, h] }),
+        Some(AnalyticSurface::Cylinder { origin: [0.0; 3], axis: [0.0, 0.0, 1.0], radius: r }),
+    ];
+    let exact = Tessellation::new(&s, analytic);
+    let side = |m: &OctreeHexMesh| -> Vec<f64> {
+        let mut nodes: BTreeSet<u32> = BTreeSet::new();
+        for b in m.boundary.iter().filter(|b| b.brep_face == 2) {
+            nodes.extend(topo::FACES[(b.face - 1) as usize].map(|i| m.hexes[b.element as usize][i]));
+        }
+        nodes.iter().map(|&v| (m.nodes[v as usize][0].hypot(m.nodes[v as usize][1]) - r).abs()).collect()
+    };
+    let chords = octree_hex_mesh(&s, &UniformSize(2.0), &OctreeOptions::default()).unwrap();
+    assert!(side(&chords).iter().fold(0.0f64, |a, &d| a.max(d)) > 1e-3);
+    let m = octree_hex_mesh_exact(&s, Some(&exact), &UniformSize(2.0), &OctreeOptions::default()).unwrap();
+    let off = side(&m);
+    assert!(off.len() > 50, "{} side nodes", off.len());
+    let worst = off.iter().fold(0.0f64, |a, &d| a.max(d));
+    assert!(worst < 1e-9 * r, "a side node {worst} off the cylinder");
+    assert!(m.report.min_scaled_jacobian > 0.3, "{:?}", m.report);
+}
+
 #[test]
 fn a_sphere_meshes() {
     let s = sphere_surface(5.0, 48);
