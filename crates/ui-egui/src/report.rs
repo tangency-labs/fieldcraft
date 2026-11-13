@@ -9,7 +9,6 @@
 //! submit it there, or not); files too big for the link are saved to a folder to attach from, and
 //! a long session is also put on the clipboard.
 
-use egui::RichText;
 use fieldcraft_engine::bug_report::{self, Draft, Input};
 use fieldcraft_engine::crash::{self, Summary};
 use serde_json::{Value, json};
@@ -239,7 +238,6 @@ fn kind_label(kind: &str) -> &'static str {
 
 /// The crash question and the Report a Bug form, when open.
 pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
-    let t = crate::theme::Tokens::get(app.ui.dark);
     match app.prompt.clone() {
         Some(Prompt::Crashed(reports)) => {
             let Some(first) = reports.first() else {
@@ -385,23 +383,11 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                 app.include_model_if_asked(&mut form);
                 let draft = form.draft().clone();
                 kit::section(ui, "fc_report_sent", "What is sent", true, |ui| {
-                    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                        ui.label(RichText::new(format!("Title: {}", draft.title)).monospace().size(11.0));
-                        for (k, v) in &draft.fields {
-                            if !v.is_empty() {
-                                ui.label(RichText::new(format!("{k}:")).strong().size(11.0));
-                                ui.label(RichText::new(v).monospace().size(11.0));
-                            }
-                        }
-                        for a in &draft.attachments {
-                            ui.label(
-                                RichText::new(format!("Attach {} ({}): {}", a.name, size(a.bytes.len()), a.what)).size(11.0).color(t.accent_ink),
-                            );
-                        }
-                        if draft.clipboard.is_some() {
-                            note(ui, "The session goes on the clipboard too, to paste.");
-                        }
-                    });
+                    // The kit's read-only report lines (virtualised, its mono font and height).
+                    kit::text_lines(ui, "fc_report_sent_lines", &sent_text(&draft));
+                    if draft.clipboard.is_some() {
+                        note(ui, "The session goes on the clipboard too, to paste.");
+                    }
                 });
             });
             let draft = form.draft().clone();
@@ -415,6 +401,17 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         }
         _ => {}
     }
+}
+
+/// What the report sends, as plain lines: the title, each filled field and each attachment.
+fn sent_text(draft: &Draft) -> String {
+    let mut lines = vec![format!("Title: {}", draft.title)];
+    for (k, v) in draft.fields.iter().filter(|(_, v)| !v.is_empty()) {
+        lines.push(format!("{k}:"));
+        lines.extend(v.lines().map(str::to_string));
+    }
+    lines.extend(draft.attachments.iter().map(|a| format!("Attach {} ({}): {}", a.name, size(a.bytes.len()), a.what)));
+    lines.join("\n")
 }
 
 #[cfg(test)]

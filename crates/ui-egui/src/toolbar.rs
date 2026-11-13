@@ -82,11 +82,13 @@ pub fn panel_key(tab: Tab, panel: &str) -> String {
 
 /// A milestone badge ("M5") with its top right corner at `corner`.
 fn badge(p: &egui::Painter, t: &Tokens, corner: egui::Pos2, m: &str) {
-    let text = p.layout_no_wrap(m.to_string(), FontId::proportional(9.0), t.text_dim);
-    let r = Rect::from_min_size(pos2(corner.x - text.size().x - 4.0, corner.y), text.size() + vec2(4.0, 0.0));
-    p.rect_filled(r, 3.0, t.panel_header);
-    p.rect_stroke(r, 3.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-    p.galley(r.min + vec2(2.0, 0.0), text, t.text_dim);
+    let k = solidcraft_theme::Tokens::get();
+    let text = p.layout_no_wrap(m.to_string(), FontId::proportional(k.font_badge), t.text_dim);
+    let pad = k.space_2;
+    let r = Rect::from_min_size(pos2(corner.x - text.size().x - 2.0 * pad, corner.y), text.size() + vec2(2.0 * pad, 0.0));
+    p.rect_filled(r, k.radius_sm, t.panel_header);
+    p.rect_stroke(r, k.radius_sm, k.primary_border(t.border), egui::StrokeKind::Inside);
+    p.galley(r.min + vec2(pad, 0.0), text, t.text_dim);
 }
 
 /// One entry as the ribbon shows it: can it run now, is its form open, and its hover text.
