@@ -33,7 +33,7 @@ Trunk on every merge to `develop` that touches code, without deploying it.
 Everything that runs on a model: opening samples, opening SolidCraft designs and 3MF tagged
 meshes, every mesher, materials, sections, steps, loads and boundary conditions, the implicit,
 explicit and lattice Boltzmann solvers, the results display (contours, deformed shape, probe,
-reaction sums), undo and redo, the command line and command search, and writing Abaqus, Nastran
+reaction sums), undo and redo, the command search, and writing Abaqus, Nastran
 and LS-DYNA decks. The solvers run on one thread in the browser; `fieldcraft-parallel` gives the
 same numbers for any thread count (docs/adr/0001), so results are the desktop's.
 
@@ -53,7 +53,7 @@ The browser has no file system the app can reach, so files live in the page
 
 A `.fieldcraft` model refers to its design and meshes by path. Paths in the model's own folder
 are stored relative to it, so picking or dropping the model with those files opens them again; a
-model whose geometry is elsewhere opens without it and says so in the status bar.
+model whose geometry is elsewhere opens without it and says so in a message in the view.
 
 ## What doesn't
 
@@ -65,7 +65,7 @@ model whose geometry is elsewhere opens without it and says so in the status bar
 - **No control channel or MCP bridge**: a page cannot listen on a socket. Agents use the desktop
   app or `fieldcraft-cli mcp`.
 - **Autosave space is small**: local storage holds a few megabytes per site, so the autosave of a
-  large mesh may not fit; the status bar then says so, and saving (a download) keeps the work.
+  large mesh may not fit; a message in the view then says so, and saving (a download) keeps the work.
 - **Two tabs share one store**: a tab offers the autosave of another FieldCraft tab that is still
   open as recoverable (recovering it opens a copy).
 - **A lost GPU is not recovered**: if the browser takes the graphics device away, reload the page

@@ -302,27 +302,28 @@ impl ModelApp {
     }
 }
 
-/// The status bar's notice: an update offered, or one downloading; in the browser, a new
-/// deployment to reload into.
+/// The status bar's notice, after a rule from the bar's other items (laid out right to left): an
+/// update offered, or one downloading; in the browser, a new deployment to reload into.
 pub fn notice(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get(app.ui.dark);
     let small = |s: &str| RichText::new(s).size(solidcraft_theme::Tokens::get().font_body);
     if let Some(reload) = &app.reload {
+        crate::status_bar::rule(ui);
         let tip = if app.has_unsaved_work() { "Reloads the page; you are asked about the unsaved changes first" } else { "Reloads the page" };
         if ui.add(egui::Link::new(small("Reload to update"))).backing_on_hover_text(tip).clicked() {
             reload();
         }
         ui.label(small("A new version of FieldCraft is available —").color(t.text));
-        crate::palette::rule(ui);
         return;
     }
     let Some(u) = &app.updates else { return };
     if let Some(busy) = &u.busy {
+        crate::status_bar::rule(ui);
         ui.label(small(busy).color(t.text_dim));
-        crate::palette::rule(ui);
         return;
     }
     let Some(release) = u.available.clone() else { return };
+    crate::status_bar::rule(ui);
     // Right to left: the links, then the sentence.
     let skip = ui.add(egui::Link::new(small("Skip"))).backing_on_hover_text("Don't offer this version again (Help › Settings)").clicked();
     ui.label(small("·").color(t.text_dim));
@@ -331,7 +332,6 @@ pub fn notice(app: &mut ModelApp, ui: &mut egui::Ui) {
     ui.label(small("·").color(t.text_dim));
     let notes = ui.add(egui::Link::new(small("What's new"))).backing_on_hover_text(release.url.as_str()).clicked();
     ui.label(small(&format!("FieldCraft {} is available —", release.version)).color(t.text));
-    crate::palette::rule(ui);
     if notes {
         app.open_link(ui.ctx(), &release.url);
     }

@@ -959,7 +959,7 @@ pub(crate) fn panel_bounds(available: Rect, width: f32, gap: f32) -> Rect {
 }
 
 /// The browser: a card at the top left of the viewport, as SolidCraft's, laid out by the kit's
-/// shared `Container`. It hugs its rows up to the space above the command line, folds to its
+/// shared `Container`. It hugs its rows up to the space above History, folds to its
 /// header, is as wide as the user dragged it, and is translucent over the view when the user
 /// chose so. The viewport is drawn under it and keeps the space beside and below it.
 pub fn browser(app: &mut ModelApp, ui: &mut egui::Ui) {

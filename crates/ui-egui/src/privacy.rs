@@ -191,6 +191,8 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                     section(ui, "Interface");
                     kit::checkbox(ui, "Translucent browser", &mut app.ui.browser_float)
                         .backing_on_hover_text("Show the view through the browser card");
+                    kit::checkbox(ui, "Status bar", &mut app.ui.status_bar)
+                        .backing_on_hover_text("Show the model's size, the projection and the graphics device along the window's bottom");
                     if app.updates_available() {
                         section(ui, "Updates");
                         updates = update_check(ui, app.prefs.update_check);
