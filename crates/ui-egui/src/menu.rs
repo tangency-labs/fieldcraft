@@ -368,6 +368,9 @@ pub struct DeleteAsk {
     pub name: String,
     /// What uses it.
     pub users: Vec<String>,
+    /// For a boundary condition or load in use: the steps it is active in, where deactivating it
+    /// lets it go.
+    pub steps: Vec<String>,
 }
 
 impl DeleteAsk {
@@ -380,6 +383,18 @@ impl DeleteAsk {
     /// Whether it can be deleted at all.
     pub fn allowed(&self) -> bool {
         self.users.is_empty() || self.cascades()
+    }
+
+    /// The prompt's way to the fix when it is refused only for the steps it is active in:
+    /// "Deactivate in step Load" ("… in 2 steps").
+    pub fn deactivate_label(&self) -> Option<String> {
+        if self.allowed() || self.steps.len() != self.users.len() {
+            return None;
+        }
+        match self.steps.as_slice() {
+            [one] => Some(format!("Deactivate in step {one}")),
+            many => Some(format!("Deactivate in {} steps", many.len())),
+        }
     }
 
     /// The question, in words.
@@ -399,8 +414,15 @@ impl ModelApp {
         if !kind.exists(&self.session.model, name) {
             return;
         }
-        let users = kind.users(&self.session.model, name);
-        self.prompt = Some(crate::files::Prompt::Delete(DeleteAsk { kind: Deletable::Def(kind), name: name.to_string(), users }));
+        let m = &self.session.model;
+        let users = kind.users(m, name);
+        let active = |s: &fieldcraft_model::Step| match kind {
+            Def::BoundaryCondition => s.boundary_conditions.contains(name),
+            Def::Load => s.loads.contains(name),
+            _ => false,
+        };
+        let steps = m.steps().iter().filter(|s| active(s)).map(|s| s.name.clone()).collect();
+        self.prompt = Some(crate::files::Prompt::Delete(DeleteAsk { kind: Deletable::Def(kind), name: name.to_string(), users, steps }));
     }
 
     /// Ask before deleting saved view or render `name` (the browser's item menu): view state is
@@ -414,7 +436,24 @@ impl ModelApp {
             Saved::Render if view.render(name).is_some() => Vec::new(),
             Saved::View | Saved::Render => return,
         };
-        self.prompt = Some(crate::files::Prompt::Delete(DeleteAsk { kind: Deletable::Saved(kind), name: name.to_string(), users }));
+        self.prompt =
+            Some(crate::files::Prompt::Delete(DeleteAsk { kind: Deletable::Saved(kind), name: name.to_string(), users, steps: Vec::new() }));
+    }
+
+    /// Answer [`crate::files::Prompt::Delete`] for a boundary condition or load in use with
+    /// [`DeleteAsk::deactivate_label`]: switch it off in each step that uses it
+    /// (`model.step.activate`), then ask again, now with Delete.
+    pub fn answer_deactivate(&mut self) {
+        let Some(crate::files::Prompt::Delete(ask)) = self.prompt.clone() else { return };
+        let (Some(_), Deletable::Def(kind)) = (ask.deactivate_label(), ask.kind) else { return };
+        let key = if kind == Def::Load { "loads" } else { "boundary_conditions" };
+        self.prompt = None;
+        for step in &ask.steps {
+            if self.run("model.step.activate", json!({"step": step, key: [ask.name], "active": false})).is_err() {
+                return;
+            }
+        }
+        self.ask_delete(kind, &ask.name);
     }
 
     /// Answer [`crate::files::Prompt::Delete`]: delete (with its partitions, for a datum in use)
@@ -628,6 +667,25 @@ mod tests {
         apply(&mut app, Target::Seed(seed.on.clone()), Action::Delete);
         assert!(app.session.model.seeds().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A load in use is not deleted, but its prompt offers the way there: deactivate it in the
+    /// steps that use it, after which the same prompt deletes it (A4-10).
+    #[test]
+    fn a_load_in_use_is_deactivated_then_deleted() {
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        app.run_script(&fieldcraft_engine::sample::cantilever()).unwrap();
+        let (load, step) = ("Push", "Load");
+        app.ask_delete(Def::Load, load);
+        let Some(crate::files::Prompt::Delete(ask)) = app.prompt.clone() else { panic!("{:?}", app.prompt) };
+        assert!(!ask.allowed() && ask.steps == [step], "{ask:?}");
+        assert_eq!(ask.deactivate_label().as_deref(), Some("Deactivate in step Load"));
+        app.answer_deactivate();
+        assert!(app.session.model.steps().iter().all(|s| !s.loads.contains(load)));
+        let Some(crate::files::Prompt::Delete(ask)) = app.prompt.clone() else { panic!("{:?}", app.prompt) };
+        assert!(ask.allowed() && ask.steps.is_empty(), "{ask:?}");
+        app.answer_delete(true);
+        assert!(!app.session.model.loads().contains_key(load));
     }
 
     /// Delete… on every item the browser lists runs its kind's delete command once confirmed,

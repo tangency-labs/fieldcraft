@@ -302,7 +302,9 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 crate::files::Prompt::Samples => json!("samples"),
                 crate::files::Prompt::Design(p) => json!({"design": p}),
                 crate::files::Prompt::ReplaceMesh(r) => json!({"replace_mesh": r.question, "warnings": r.warnings}),
-                crate::files::Prompt::Delete(d) => json!({"delete": d.question(), "kind": d.kind, "name": d.name, "users": d.users, "allowed": d.allowed()}),
+                crate::files::Prompt::Delete(d) => {
+                    json!({"delete": d.question(), "kind": d.kind, "name": d.name, "users": d.users, "allowed": d.allowed(), "deactivate": d.deactivate_label()})
+                }
                 crate::files::Prompt::Crashed(r) => json!({"crashed": r}),
                 crate::files::Prompt::CrashReports(r) => json!({"crash_reports": r}),
                 crate::files::Prompt::ReportBug => json!({"report_bug": app.report.as_ref().and_then(|f| f.drafted_json())}),
@@ -479,6 +481,13 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 }
                 // A refused delete (in use) says why and stays up, as its only button is Close.
                 (crate::files::Prompt::Delete(ask), Some("delete")) if !ask.allowed() => err(format!("not allowed: {}", ask.question())),
+                (crate::files::Prompt::Delete(ask), Some("deactivate")) => match ask.deactivate_label() {
+                    Some(_) => {
+                        app.answer_deactivate();
+                        ok(json!({"status": app.status, "prompt": app.prompt.is_some()}))
+                    }
+                    None => err("nothing to deactivate: this prompt's item is not held by steps"),
+                },
                 (crate::files::Prompt::Delete(_), Some(a @ ("delete" | "cancel" | "close"))) => {
                     app.answer_delete(a == "delete");
                     ok(json!({"status": app.status}))
@@ -1085,6 +1094,12 @@ mod tests {
         assert!(app.session.model.loads().contains_key(&load) && app.prompt.is_some());
         assert_eq!(call(&mut app, "ui.prompt", json!({"answer": "close"}))["ok"], true);
         assert!(app.prompt.is_none() && app.session.model.loads().contains_key(&load));
+        // Its way there: deactivate, then the same prompt deletes it.
+        app.ask_delete(crate::browser::Def::Load, &load);
+        assert!(call(&mut app, "ui.inspect", json!({}))["result"]["prompt"]["deactivate"].is_string());
+        assert_eq!(call(&mut app, "ui.prompt", json!({"answer": "deactivate"}))["ok"], true);
+        assert_eq!(call(&mut app, "ui.prompt", json!({"answer": "delete"}))["ok"], true);
+        assert!(!app.session.model.loads().contains_key(&load));
     }
 
     /// A sample opens as a job however it is asked for (the Samples window, `engine.execute`):
