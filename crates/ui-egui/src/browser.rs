@@ -184,10 +184,16 @@ pub enum Def {
     Stitch,
     /// Features of the design taken out for meshing (`geometry.defeature`).
     Defeature,
+    /// The temperature or stress the nodes start from (`model.initial_field.map`).
+    InitialField,
+    /// A body's saved hex-meshing plan (`mesh.plan`), applied by `mesh.plan.apply`.
+    MeshPlan,
+    /// A relaxation field kept by `mesh.node.relax`, applied by `mesh.node.relax.apply`.
+    Relaxation,
 }
 
 impl Def {
-    pub const ALL: [Def; 20] = [
+    pub const ALL: [Def; 23] = [
         Def::Set,
         Def::Material,
         Def::Section,
@@ -208,6 +214,9 @@ impl Def {
         Def::FaceSplit,
         Def::Stitch,
         Def::Defeature,
+        Def::InitialField,
+        Def::MeshPlan,
+        Def::Relaxation,
     ];
 
     /// The kind `model.rename` takes for it; `None` for a partition (its cut faces are named
@@ -228,7 +237,15 @@ impl Def {
             Def::Datum => "datum",
             Def::Mass => "point_mass",
             Def::Spring => "spring",
-            Def::Partition | Def::SizeControl | Def::FaceMerge | Def::FaceSplit | Def::Stitch | Def::Defeature => return None,
+            Def::Partition
+            | Def::SizeControl
+            | Def::FaceMerge
+            | Def::FaceSplit
+            | Def::Stitch
+            | Def::Defeature
+            | Def::InitialField
+            | Def::MeshPlan
+            | Def::Relaxation => return None,
         })
     }
 
@@ -255,7 +272,10 @@ impl Def {
             | Def::FaceMerge
             | Def::FaceSplit
             | Def::Stitch
-            | Def::Defeature => return None,
+            | Def::Defeature
+            | Def::InitialField
+            | Def::MeshPlan
+            | Def::Relaxation => return None,
         })
     }
 
@@ -282,6 +302,9 @@ impl Def {
             Def::FaceSplit => Collection::FaceSplit,
             Def::Stitch => Collection::Stitch,
             Def::Defeature => Collection::Defeature,
+            Def::InitialField => Collection::InitialField,
+            Def::MeshPlan => Collection::MeshPlan,
+            Def::Relaxation => Collection::Relaxation,
         }
     }
 
@@ -309,6 +332,9 @@ impl Def {
             Def::FaceSplit => "face_split",
             Def::Stitch => "stitch",
             Def::Defeature => "defeature",
+            Def::InitialField => "initial_field",
+            Def::MeshPlan => "mesh_plan",
+            Def::Relaxation => "relaxation",
         }
     }
 
@@ -334,6 +360,9 @@ impl Def {
             Def::FaceSplit => "Face Split",
             Def::Stitch => "Stitch",
             Def::Defeature => "Defeature",
+            Def::InitialField => "Initial Field",
+            Def::MeshPlan => "Mesh Plan",
+            Def::Relaxation => "Relaxation Field",
         }
     }
 
@@ -360,6 +389,10 @@ impl Def {
             Def::FaceSplit => "geometry.face.split",
             Def::Stitch => "geometry.stitch",
             Def::Defeature => "geometry.defeature",
+            // Mapped from the Loads entry (the catalogue has no entry of its own for it).
+            Def::InitialField => "model.load.create",
+            Def::MeshPlan => "mesh.plan",
+            Def::Relaxation => "mesh.node.relax",
         }
     }
 
@@ -367,15 +400,19 @@ impl Def {
     /// interactions, created as pairs or general contact; datums and partitions are geometry
     /// (a datum's edit command depends on its kind: [`Def::edit`]). A size control and a
     /// defeature are edited by making them again under their name, and size controls are
-    /// deleted by `mesh.size.clear` ([`Def::delete_params`]). Face merges, splits and stitches
-    /// cannot be edited ([`Def::edit_command`]).
+    /// deleted by `mesh.size.clear` ([`Def::delete_params`]). Face merges, splits, stitches,
+    /// initial fields, mesh plans and relaxation fields cannot be edited ([`Def::edit_command`]);
+    /// plans and fields are applied instead ([`Def::apply`]).
     pub fn command(self, verb: &str) -> String {
         match (self, verb) {
             (Def::SizeControl, "create" | "edit") => "mesh.size.set".into(),
             (Def::SizeControl, "delete") => "mesh.size.clear".into(),
             (Def::Defeature, "create" | "edit") => "geometry.defeature".into(),
-            (Def::FaceMerge | Def::FaceSplit | Def::Stitch, "create") => self.icon().into(),
-            (Def::FaceMerge | Def::FaceSplit | Def::Stitch | Def::Defeature | Def::SizeControl, _) => format!("{}.{verb}", self.icon()),
+            (Def::FaceMerge | Def::FaceSplit | Def::Stitch | Def::MeshPlan | Def::Relaxation, "create") => self.icon().into(),
+            (Def::FaceMerge | Def::FaceSplit | Def::Stitch | Def::Defeature | Def::SizeControl | Def::MeshPlan | Def::Relaxation, _) => {
+                format!("{}.{verb}", self.icon())
+            }
+            (Def::InitialField, "create") => "model.initial_field.map".into(),
             (Def::Contact, "create") => "interaction.contact.pair".into(),
             (Def::Contact, _) => format!("interaction.contact.{verb}"),
             (Def::Tie, "create") => "interaction.tie".into(),
@@ -395,11 +432,27 @@ impl Def {
         }
     }
 
+    /// The command that applies definition `name` to the mesh, filled in (`mesh.plan.apply`,
+    /// `mesh.node.relax.apply`); `None` for kinds that are not applied, or when it is gone.
+    pub fn apply(self, m: &Model, name: &str) -> Option<(&'static str, Value)> {
+        match self {
+            Def::MeshPlan => m.mesh_plan(name).map(|_| ("mesh.plan.apply", json!({"plan": name}))),
+            Def::Relaxation => m.relaxation(name).map(|_| ("mesh.node.relax.apply", json!({"field": name}))),
+            _ => None,
+        }
+    }
+
+    /// Whether definitions of this kind can be edited at all (by an edit command, or by making
+    /// them again under their name).
+    fn editable(self) -> bool {
+        !matches!(self, Def::Partition | Def::FaceMerge | Def::FaceSplit | Def::Stitch | Def::InitialField | Def::MeshPlan | Def::Relaxation)
+    }
+
     /// The command that edits definition `name` (without building its parameters); `None` when
     /// it is gone or cannot be edited.
     pub fn edit_command(self, m: &Model, name: &str) -> Option<String> {
         match self {
-            Def::Partition | Def::FaceMerge | Def::FaceSplit | Def::Stitch => None,
+            _ if !self.editable() => None,
             Def::Datum => m.datum(name).map(|d| fieldcraft_engine::cmd::datum_edit_params(name, d).0.to_string()),
             _ => self.exists(m, name).then(|| self.command("edit")),
         }
@@ -409,7 +462,7 @@ impl Def {
     /// edit form, filled in); `None` when it is gone or cannot be edited (a partition).
     pub fn edit(self, m: &Model, name: &str, units: &fieldcraft_model::DisplaySystem) -> Option<(String, Value)> {
         let (command, params) = match self {
-            Def::Partition | Def::FaceMerge | Def::FaceSplit | Def::Stitch => return None,
+            _ if !self.editable() => return None,
             Def::Datum => m.datum(name).map(|d| {
                 let (command, params) = fieldcraft_engine::cmd::datum_edit_params(name, d);
                 (command.to_string(), params)
@@ -458,7 +511,10 @@ impl Def {
             | Def::FaceMerge
             | Def::FaceSplit
             | Def::Stitch
-            | Def::Defeature => Vec::new(),
+            | Def::Defeature
+            | Def::InitialField
+            | Def::MeshPlan
+            | Def::Relaxation => Vec::new(),
         }
     }
 
@@ -485,6 +541,9 @@ impl Def {
             Def::FaceSplit => m.face_splits().len(),
             Def::Stitch => m.stitches().len(),
             Def::Defeature => m.defeatures().len(),
+            Def::InitialField => m.initial_fields().len(),
+            Def::MeshPlan => m.mesh_plans().len(),
+            Def::Relaxation => m.relaxations().len(),
         }
     }
 
@@ -511,6 +570,9 @@ impl Def {
             Def::FaceSplit => m.face_splits().iter().any(|f| f.name == name),
             Def::Stitch => m.stitches().iter().any(|f| f.name == name),
             Def::Defeature => m.defeatures().iter().any(|f| f.name == name),
+            Def::InitialField => m.initial_field(name).is_some(),
+            Def::MeshPlan => m.mesh_plan(name).is_some(),
+            Def::Relaxation => m.relaxation(name).is_some(),
         }
     }
 
@@ -537,6 +599,9 @@ impl Def {
             Def::FaceSplit => m.face_splits().iter().map(|f| f.name.clone()).collect(),
             Def::Stitch => m.stitches().iter().map(|f| f.name.clone()).collect(),
             Def::Defeature => m.defeatures().iter().map(|f| f.name.clone()).collect(),
+            Def::InitialField => m.initial_fields().keys().cloned().collect(),
+            Def::MeshPlan => m.mesh_plans().keys().cloned().collect(),
+            Def::Relaxation => m.relaxations().keys().cloned().collect(),
         }
     }
 }
@@ -553,6 +618,20 @@ pub fn definition(m: &Model, kind: Def, name: &str) -> Option<Value> {
         }
         Def::Stitch => serde_json::to_value(m.stitches().iter().find(|f| f.name == name)?),
         Def::Defeature => serde_json::to_value(m.defeatures().iter().find(|f| f.name == name)?),
+        // What they are, not their values (a value per node, a cell per relaxed element): their
+        // making commands' parameters that they keep.
+        Def::InitialField => {
+            let f = m.initial_field(name)?;
+            Ok(json!({"quantity": f.kind(), "nodes": f.len(), "source": f.source()}))
+        }
+        Def::MeshPlan => {
+            let p = m.mesh_plan(name)?;
+            Ok(json!({"body": p.body, "layers": p.layers}))
+        }
+        Def::Relaxation => {
+            let r = m.relaxation(name)?;
+            Ok(json!({"bodies": r.bodies, "reapply": r.reapply}))
+        }
         Def::Mass => serde_json::to_value(m.mass(name)?),
         Def::Spring => serde_json::to_value(m.spring(name)?),
         Def::Set => serde_json::to_value(m.sets().get(name)?),
@@ -984,10 +1063,12 @@ fn geometry_items(m: &Model) -> Vec<Item> {
     out
 }
 
-/// What Mesh lists after the seeds: the local size controls, by where they apply.
+/// What Mesh lists after the seeds: the local size controls, by where they apply, the saved
+/// mesh plans, by body, and the relaxation fields.
 fn mesh_items(m: &Model) -> Vec<Item> {
     use fieldcraft_model::{Entity, SizeRegion};
-    m.size_controls()
+    let mut out: Vec<Item> = m
+        .size_controls()
         .iter()
         .map(|(n, c)| {
             let on = match &c.region {
@@ -998,7 +1079,13 @@ fn mesh_items(m: &Model) -> Vec<Item> {
             };
             Item::def(m, Def::SizeControl, n, Some(on.into()))
         })
-        .collect()
+        .collect();
+    out.extend(m.mesh_plans().iter().map(|(n, p)| Item::def(m, Def::MeshPlan, n, Some(format!("for {}", p.body)))));
+    out.extend(m.relaxations().iter().map(|(n, r)| {
+        let note = if r.bodies.is_empty() { None } else { Some(format!("on {}", r.bodies.join(", "))) };
+        Item::def(m, Def::Relaxation, n, note)
+    }));
+    out
 }
 
 /// The definition groups below Mesh: key, label and the kinds each lists.
@@ -1007,7 +1094,7 @@ const GROUPS: [(&str, &str, &[Def]); 7] = [
     ("materials", "Materials", &[Def::Material]),
     ("sections", "Sections", &[Def::Section]),
     ("steps", "Steps", &[Def::Step]),
-    ("loads", "Loads & BCs", &[Def::BoundaryCondition, Def::Load]),
+    ("loads", "Loads & BCs", &[Def::BoundaryCondition, Def::Load, Def::InitialField]),
     ("interactions", "Interactions", &[Def::ReferencePoint, Def::Coupling, Def::Contact, Def::Tie, Def::Spring, Def::Mass]),
     ("fluids", "Fluid Domains", &[Def::FluidDomain]),
 ];
@@ -1020,6 +1107,7 @@ fn group_items(m: &Model, key: &str, kinds: &[Def]) -> Vec<Item> {
         for name in kind.names(m) {
             let note = match kind {
                 Def::Spring => m.spring(&name).map(|s| s.kind().to_string()),
+                Def::InitialField => m.initial_field(&name).map(|f| format!("initial {}", f.kind())),
                 _ => None,
             };
             out.push(Item::def(m, *kind, &name, note));
@@ -1342,6 +1430,11 @@ pub(crate) mod tests {
             .unwrap();
         m.add_stitch(fieldcraft_model::Stitch { name: "Gaps".into(), surface: "Mesh1".into(), tolerance: 0.05 }).unwrap();
         m.set_defeature(fieldcraft_model::Defeature { name: "Small".into(), features: vec![3, 7] }).unwrap();
+        let warm = fieldcraft_model::InitialField::Temperature { values: [(1, 300.0)].into(), source: "moulding.fieldcraft".into() };
+        m.set_initial_field("Warm", warm).unwrap();
+        m.set_relaxation("Relax1", fieldcraft_model::Relaxation { bodies: vec!["Base".into()], cells: Vec::new(), reapply: false }).unwrap();
+        let plan = json!({"body": "Base", "size": 2.0, "layers": 2, "mesher": "sweep"});
+        m.set_mesh_plan("Plan-Base", serde_json::from_value(plan).unwrap()).unwrap();
         app.run("view.save", json!({"name": "Front", "camera": {"yaw": 0, "pitch": 0}, "results": false})).unwrap();
         app.run("results.render.save", json!({"name": "Clip", "view": "Front", "step": "Impact"})).unwrap();
         app
@@ -1377,14 +1470,27 @@ pub(crate) mod tests {
                 .collect();
             assert_eq!(rows, names.iter().collect::<Vec<_>>(), "{kind:?}");
         }
-        for kind in [Def::Mass, Def::Spring, Def::SizeControl, Def::FaceMerge, Def::FaceSplit, Def::Stitch, Def::Defeature, Def::Datum] {
+        for kind in [
+            Def::Mass,
+            Def::Spring,
+            Def::SizeControl,
+            Def::FaceMerge,
+            Def::FaceSplit,
+            Def::Stitch,
+            Def::Defeature,
+            Def::Datum,
+            Def::InitialField,
+            Def::MeshPlan,
+            Def::Relaxation,
+        ] {
             assert!(!kind.names(&app.session.model).is_empty(), "the fixture has a {kind:?}");
         }
         assert!(listed.contains(&Target::RigidWall { step: "Impact".into(), index: 0 }), "{listed:?}");
         assert!(listed.contains(&Target::View("Front".into())) && listed.contains(&Target::Render("Clip".into())));
         // Each kind sits in one place.
         let mut placed: Vec<Def> = GROUPS.iter().flat_map(|(_, _, k)| k.iter().copied()).collect();
-        placed.extend([Def::Datum, Def::Partition, Def::FaceMerge, Def::FaceSplit, Def::Stitch, Def::Defeature, Def::SizeControl]);
+        placed.extend([Def::Datum, Def::Partition, Def::FaceMerge, Def::FaceSplit, Def::Stitch, Def::Defeature]);
+        placed.extend([Def::SizeControl, Def::MeshPlan, Def::Relaxation]);
         placed.sort_by_key(|k| format!("{k:?}"));
         let mut all = Def::ALL.to_vec();
         all.sort_by_key(|k| format!("{k:?}"));
@@ -1515,7 +1621,7 @@ pub(crate) mod tests {
         assert!(steel.get("elastic").is_some(), "{steel}");
         assert!(definition(m, Def::Load, "nope").is_none());
         for kind in Def::ALL {
-            let no_edit = [Def::Partition, Def::FaceMerge, Def::FaceSplit, Def::Stitch];
+            let no_edit = [Def::Partition, Def::FaceMerge, Def::FaceSplit, Def::Stitch, Def::InitialField, Def::MeshPlan, Def::Relaxation];
             let verbs: &[&str] = if no_edit.contains(&kind) { &["create", "delete"] } else { &["create", "edit", "delete"] };
             for verb in verbs {
                 assert!(fieldcraft_engine::find_command(&kind.command(verb)).is_some(), "{kind:?} {verb}");
