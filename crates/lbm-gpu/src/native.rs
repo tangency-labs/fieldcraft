@@ -83,6 +83,35 @@ const DEVICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 /// How long a readback waits for its mapping callback before it polls the device again.
 const CALLBACK_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
 
+/// Wait for the mapping callback itself, not just the submission: another thread may have
+/// collected the callback in its poll but not invoked it yet (#800). The polling closure keeps
+/// this wait testable without a GPU or a scheduler-dependent race.
+fn wait_for_readback(
+    rx: &std::sync::mpsc::Receiver<std::result::Result<(), wgpu::BufferAsyncError>>,
+    timeout: std::time::Duration,
+    mut poll: impl FnMut(std::time::Duration) -> Result<()>,
+) -> Result<()> {
+    let start = std::time::Instant::now();
+    let deadline = start + timeout;
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        poll(left)?;
+        match rx.recv_timeout(CALLBACK_WAIT.min(left)) {
+            Ok(mapped) => return mapped.map_err(gpu_error),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) if std::time::Instant::now() < deadline => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                return Err(gpu_error(format!("the readback did not complete: mapping callback timed out after {} s", timeout.as_secs())));
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(gpu_error(format!(
+                    "the readback did not complete: mapping callback disconnected after {:.3} s",
+                    start.elapsed().as_secs_f64()
+                )));
+            }
+        }
+    }
+}
+
 /// Seconds in a nanosecond: GPU timestamp periods are in nanoseconds (wgpu).
 const NANOSECOND: f64 = 1e-9; // unit-factors: wall-clock profiling time, not a model quantity
 
@@ -1366,18 +1395,12 @@ impl GpuFlow {
         // callback and run it just after this poll returns (#800), so the callback is waited for
         // too, polling again until it has run. Each poll waits for this copy's submission only, not
         // for whatever another solve submitted since.
-        let deadline = std::time::Instant::now() + DEVICE_TIMEOUT;
-        loop {
-            let left = deadline.saturating_duration_since(std::time::Instant::now());
-            if let Err(e) = self.device.poll(wgpu::PollType::Wait { submission_index: Some(copied.clone()), timeout: Some(left) }) {
-                return Err(gpu_error(format!("the device did not answer within {} s: {e}", DEVICE_TIMEOUT.as_secs())));
-            }
-            match rx.recv_timeout(CALLBACK_WAIT.min(left)) {
-                Ok(mapped) => break mapped.map_err(gpu_error)?,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if std::time::Instant::now() < deadline => {}
-                Err(_) => return Err(gpu_error("the readback did not complete")),
-            }
-        }
+        wait_for_readback(&rx, DEVICE_TIMEOUT, |left| {
+            self.device
+                .poll(wgpu::PollType::Wait { submission_index: Some(copied.clone()), timeout: Some(left) })
+                .map(|_| ())
+                .map_err(|e| gpu_error(format!("the device did not answer within {} s: {e}", DEVICE_TIMEOUT.as_secs())))
+        })?;
         let bytes = slice.get_mapped_range().map_err(gpu_error)?.to_vec();
         staging.unmap();
         Ok(bytes)
@@ -1724,6 +1747,72 @@ impl Backend for GpuFlow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reproduce the ownership window from #800 deterministically: the first poll returns
+    /// before another collector delivers the callback, and the next poll delivers it.
+    #[test]
+    fn readback_waits_for_a_callback_collected_by_another_poll() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut polls = 0;
+        wait_for_readback(&rx, std::time::Duration::from_secs(5), |_| {
+            polls += 1;
+            if polls == 2 {
+                tx.send(Ok(())).unwrap();
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(polls, 2);
+    }
+
+    #[test]
+    fn readback_reports_a_dropped_callback() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        drop(tx);
+        let error = wait_for_readback(&rx, DEVICE_TIMEOUT, |_| Ok(())).unwrap_err().to_string();
+        assert!(error.contains("disconnected"), "{error}");
+        assert!(!error.contains("timed out"), "{error}");
+    }
+
+    #[test]
+    fn readback_reports_callback_deadline_expiration() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut polls = 0;
+        let error = wait_for_readback(&rx, std::time::Duration::ZERO, |_| {
+            polls += 1;
+            Ok(())
+        })
+        .unwrap_err()
+        .to_string();
+        drop(tx);
+        assert_eq!(polls, 1);
+        assert!(error.contains("timed out"), "{error}");
+        assert!(!error.contains("disconnected"), "{error}");
+    }
+
+    #[test]
+    fn readback_preserves_mapping_errors() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Err(wgpu::BufferAsyncError)).unwrap();
+        let error = wait_for_readback(&rx, DEVICE_TIMEOUT, |_| Ok(())).unwrap_err();
+        assert_eq!(error, Error::Backend(format!("GPU: {}", wgpu::BufferAsyncError)));
+    }
+
+    #[test]
+    fn readback_preserves_poll_errors() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let expected = Error::Backend("GPU: controlled poll failure".into());
+        let error = wait_for_readback(&rx, DEVICE_TIMEOUT, |_| Err(expected.clone())).unwrap_err();
+        drop(tx);
+        assert_eq!(error, expected);
+    }
+
+    #[test]
+    fn readback_accepts_a_callback_ready_at_the_deadline() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Ok(())).unwrap();
+        wait_for_readback(&rx, std::time::Duration::ZERO, |_| Ok(())).unwrap();
+    }
 
     #[test]
     fn pressure_staging_refuses_oversized_buffers_before_allocation() {
