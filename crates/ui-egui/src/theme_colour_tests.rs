@@ -258,3 +258,16 @@ fn the_kits_accent_text_reads() {
         }
     }
 }
+
+/// The selected document tab stands out from the title bar as much in the light theme as in the
+/// dark one (the bar is dark in both), and its name reads on it.
+#[test]
+fn the_document_tab_stands_out_on_the_title_bar() {
+    for (name, dark) in [("light", false), ("dark", true)] {
+        let k = super::kit(dark);
+        let ratio = contrast(k.app_bar_tab_active, k.app_bar);
+        assert!(ratio >= 1.35, "{name}: the active tab on the bar is {ratio:.2}:1");
+        let ratio = contrast(k.app_bar_text, k.app_bar_tab_active);
+        assert!(ratio >= 4.5, "{name}: the tab's name on it is {ratio:.2}:1");
+    }
+}
