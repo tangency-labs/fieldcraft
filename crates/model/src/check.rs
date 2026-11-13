@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::loads::Distribution;
-use crate::{BoundaryCondition, Elastic, ElementKind, Error, Extent, Load, Model, Procedure, Result, SectionKind, Target};
+use crate::{BoundaryCondition, Elastic, ElementKind, Error, Extent, FluidDomain, Load, Model, Procedure, Result, SectionKind, Target};
 
 /// How serious a [`Diagnostic`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -573,8 +573,14 @@ impl Model {
                         d.warning(&subject, "nothing loads or moves the model in this step");
                     }
                 }
-                // The fluid domain holds its own conditions; nothing structural applies.
-                Procedure::Fluid { .. } => continue,
+                // The fluid domain holds its own conditions; nothing structural applies but the
+                // symmetry of a half model.
+                Procedure::Fluid { domain, .. } => {
+                    for w in self.fluid_domains.get(domain).map(FluidDomain::symmetry_warnings).unwrap_or_default() {
+                        d.warning(&subject, w);
+                    }
+                    continue;
+                }
                 Procedure::HeatTransfer { .. } | Procedure::CoupledTemperatureDisplacement {} => {
                     let bcs = s.boundary_conditions.iter().filter_map(|b| self.boundary_conditions.get(b));
                     let loads: Vec<&Load> = s.loads.iter().filter_map(|l| self.loads.get(l)).collect();

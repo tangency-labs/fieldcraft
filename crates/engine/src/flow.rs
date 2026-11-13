@@ -816,6 +816,48 @@ pub(crate) mod tests {
         assert!(e.contains("thermal contact `Body1–Lid`") && e.contains("positive"), "{e}");
     }
 
+    /// The plate (z 0..10 mm) conducting and generating 200 W in the tank, solved whole and as its
+    /// lower half with a symmetry plane at z = 5 mm through the plate, both given the plate's
+    /// whole power through commands: the half reports half the power generated with
+    /// `power_share` ½, and its `whole_model` gives the power entered back and the whole tank's
+    /// heat to the water. An obstacle the plane cuts off its middle is warned about.
+    #[test]
+    fn a_half_tank_gives_back_the_power_entered() {
+        let mut s = plate_in_a_tank();
+        let script = json!([
+            {"command": "model.material.edit", "params": {"name": "Water", "density": 1e-9, "fluid": {"type": "newtonian", "viscosity": 1e-7}, "thermal": {"conductivity": 400, "specific_heat": 4e9}}},
+            {"command": "model.material.create", "params": {"name": "Alu", "density": 2.7e-9, "thermal": {"conductivity": 237, "specific_heat": 9e8}}},
+        ]);
+        s.run_script(&script).unwrap();
+        let domain = |top: f64, faces: Value| {
+            json!({"name": "Tank", "material": "Water", "min": [-20, -20, -20], "max": [60, 50, top], "spacing": 5, "obstacles": ["Body1"], "faces": faces,
+                "thermal": {"initial_temperature": 20, "solids": [{"body": "Body1", "material": "Alu", "power": 2e5}]}})
+        };
+        let ends = json!({"x_min": {"type": "velocity", "velocity": [10, 0, 0]}, "x_max": {"type": "pressure", "pressure": 0}});
+        s.execute("model.fluid_domain.edit", &domain(30.0, ends.clone())).unwrap();
+        let whole = s.execute("solve.fluid", &json!({})).unwrap();
+        let mut half_faces = ends.clone();
+        half_faces["z_max"] = json!({"type": "symmetry"});
+        s.execute("model.fluid_domain.edit", &domain(5.0, half_faces)).unwrap();
+        let half = s.execute("solve.fluid", &json!({})).unwrap();
+        let (w, h, wm) = (&whole["solids"][0], &half["solids"][0], &half["whole_model"]["solids"][0]);
+        let num = |v: &Value| v.as_f64().unwrap();
+        assert!(w["power_share"].is_null() && (num(&w["power"]) - 2e5).abs() < 1e-6 * 2e5, "{w}");
+        assert_eq!(h["power_share"], 0.5, "{h}");
+        assert!((num(&h["power"]) - 1e5).abs() < 1e-6 * 1e5, "half of the plate's power is in the half: {h}");
+        assert!((num(&wm["power"]) - 2e5).abs() < 1e-6 * 2e5, "the whole model's is the power entered: {wm}");
+        let (given, back) = (num(&w["heat_to_fluid"]["final"]), num(&wm["heat_to_fluid"]["final"]));
+        assert!(given > 0.0 && (back - given).abs() < 1e-9 * given, "{given} {back}");
+        assert!(!half["warnings"].to_string().contains("symmetry plane"), "{}", half["warnings"]);
+
+        // The plane at y = 10 mm cuts the plate (y 0..30 mm) off its middle.
+        let mut off = ends;
+        off["y_max"] = json!({"type": "symmetry"});
+        s.execute("model.fluid_domain.edit", &json!({"name": "Tank", "material": "Water", "min": [-20, -20, -20], "max": [60, 10, 30], "spacing": 5, "obstacles": ["Body1"], "faces": off})).unwrap();
+        let r = s.execute("solve.fluid", &json!({})).unwrap();
+        assert!(r["warnings"].to_string().contains("symmetry plane y_max: it cuts obstacle `Body1` off its middle"), "{}", r["warnings"]);
+    }
+
     /// A thin wall through commands: its position and conductance are typed in the display system
     /// (mm-t-s) or with their unit and stored in SI, the solve reports each side's temperature and
     /// heat flux in the display units (the side-to-side difference is the flux over the

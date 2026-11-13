@@ -44,7 +44,8 @@ wall is measured by momentum exchange.
 | `wall` | — | box, obstacle | No-slip wall at rest. Every box face and every obstacle face is one unless given. |
 | `moving_wall` | `velocity: [u, v, w]` | box, obstacle | No-slip wall sliding with this velocity. On a box face the normal component must be 0. On an obstacle face it is the tangential motion of a rotating or sliding surface; the body does not move. |
 | `slip` | — | box | Frictionless wall: no flow through it, no shear. |
-| `velocity` | `velocity: [u, v, w]`, `profile: "uniform" \| "parabolic"` (default uniform) | box | Velocity inlet, or outlet if the velocity points out of the box. `parabolic` multiplies the velocity by 4 s (1 − s) across each direction of the face that ends at walls (not periodic), s from 0 to 1 across the box: fully developed flow between plates (one such direction), or in a rectangular duct approximated by the product (two). The given velocity is the peak. |
+| `symmetry` | — | box | Symmetry plane of a half model: the flow of a slip face, and no heat through it, in the fluid and in every conducting solid it cuts. Setting it makes the face's thermal condition adiabatic; a held temperature or flux on it is refused. |
+| `velocity` | `velocity: [u, v, w]`, `profile: "uniform" \| "parabolic"` (default uniform) | box | Velocity inlet, or outlet if the velocity points out of the box. `parabolic` multiplies the velocity by 4 s (1 − s) across each direction of the face that ends at walls (not periodic), s from 0 to 1 across the box: fully developed flow between plates (one such direction), or in a rectangular duct approximated by the product (two). The given velocity is the peak. A direction that ends at a symmetry plane is the half of the whole model's: the profile peaks at the plane. |
 | `pressure` | `pressure: p` (gauge), `outflow: "uniform" \| "convective"` (default uniform) | box | Pressure outlet (or inlet). `uniform`: the face at the pressure, the flow crossing it normally. `convective`: each cell at the pressure, the flow leaving as it arrives; for outlets a wake or vortices reach. |
 | `periodic` | — | box | What leaves through this face enters through the opposite one, which must be periodic too. |
 
@@ -82,6 +83,53 @@ q comes from the cell in the same layer, shifted tangentially, in the mirrored d
 component of c_q reversed). Where a link crosses more than one face (an edge or a corner), or the
 mirror source is not a fluid cell, the slip face bounces back instead. A slip face takes normal
 momentum only.
+
+### Symmetry planes
+
+A symmetry plane solves half of a model that is symmetric about a box face. To the flow it is a slip
+face, with one difference: where the mirror source of a reflected population is an obstacle cell (a
+body the plane cuts), the population bounces back off the obstacle's mirror image and its momentum
+is the obstacle's, as in the whole model. No heat crosses it: the fluid's populations bounce back
+(adiabatic), and a conducting solid's cell on the plane faces its own mirror image, at its own
+temperature. That face still counts in the solid's explicit stability limit, so the half sub-steps
+as the whole does and the transient matches too. A parabolic inlet treats the plane as the middle of
+its profile.
+
+Enter the whole model's inputs. A conducting solid, fan or porous zone that reaches the plane is
+half of one body or zone of the whole model, continued across the plane as its mirror image. That
+holds whether its geometry ends at the plane (the usual half model, with the body cut there) or
+reaches past it. Its power or curve is that whole body's or fan's:
+
+- **A powered solid** spreads its power over its cells and their mirror images, so the half generates
+  half of it (a quarter in the corner of a quarter model).
+- **A fan** reads its curve at the whole fan's flow, twice its flow in the box.
+- **A solid, fan or zone clear of every plane** keeps all of its power or curve, because its mirror
+  image is a second one.
+
+The whole-model cell count follows from the box (twice the cells per plane reached), so no extra
+grid is built. The reply states the share: `solids[].power` is the power generated in the box,
+with `power_share` (½ per plane reached) beside it, and a fan or zone carries `share`.
+
+Every input that crosses the plane breaks the symmetry, and the model check, the boundary command's
+reply and the solve's `warnings` name each one: a body acceleration, buoyancy gravity or initial
+velocity with a component normal to the plane; a velocity inlet or moving wall on another face whose
+velocity crosses it; a fan the plane cuts that blows through it or is cut off its middle. A fan
+that blows toward the plane without reaching it is fine: its mirror image is a second fan blowing the
+other way. The solve's setup also warns about an obstacle the plane cuts off its middle, whose
+extent across the plane is not symmetric about it. The half model solves the obstacle's part in the
+box and that part's mirror image, so the result is not the obstacle's. Only the obstacle's
+bounding box is checked, so an asymmetric shape with a symmetric extent passes. An obstacle that
+ends at the plane is the half the model is meant to solve and gets no warning.
+
+`solve.fluid` adds `whole_model` to its reply: the totals of the whole symmetric model, `factor`
+(2 per plane) times this one, clearly labelled. These are every wall's force (its components
+along the planes times the factor, its component normal to a plane zero, because the mirror images
+cancel), every wall's heat, each conducting solid's power and heat to the fluid, and each fan's or
+porous zone's flow. Each entry keeps its name in this model but stands for it and its mirror
+images together: the box face opposite a plane, for instance, is that wall and its image across the
+plane, two walls of the whole model, its heat summed over both and its normal force zero because the
+two cancel. The planes' own faces are inside the whole model and are left out. There is no
+whole model when both faces of an axis are planes (an unbounded strip).
 
 ### Periodic faces
 
@@ -293,7 +341,10 @@ the closed form.
 | The same run 20 s (60 000 steps) | Stable, mass bounded | | | `a_convective_outlet_stays_stable_with_backflow_for_long` (heavy) |
 | Schäfer–Turek 2D-2 (Re 100), convective outlet at 7.5 D and 21 D, D/Δx 20 | c_D,max 3.22–3.24, c_L,max 0.99–1.01, St 0.295–0.305 (benchmark) | 7.5 D: 3.356, 1.072, 0.2989; 21 D: 3.446, 1.102, 0.2984 | the two within 4 %; c_D 8 %, c_L 12 %, St 2 % of the benchmark | `schafer_turek_2d2_does_not_depend_on_the_outlet_distance` (heavy) |
 | Coarse 2D-2, D/Δx 10, τ = 0.51 | Uniform outlet diverges (step 6699), convective runs 24 000 steps | St within 2 % of 0.30 | 2 % | `a_coarse_cylinder_at_re_100_runs_with_a_convective_outlet_where_the_uniform_one_diverges` (heavy) |
-| Every condition on the GPU | The CPU | | [GPU backend](gpu.md) | `zou_he_channel_matches_the_cpu`, `convective_outlet_matches_the_cpu_with_a_vortex_and_backflow`, `edges_of_two_pressure_faces_match_the_cpu`, `couette_wall_forces_match_the_cpu` |
+| Heated channel, a powered conducting block across the middle: the lower half with a symmetry plane through the block, given the block's whole power, against the whole | The whole channel | velocity 3.6e-15 of the peak, temperature 1.0e-15 of the rise, 2 × half drag and the floor heat equal to 7 digits | 1e-12 | `a_half_channel_with_a_symmetry_plane_is_half_the_whole` |
+| The same half with a slip roof, its parabola ending at the roof | The whole channel | velocity 35 % off | must miss | (same test) |
+| A fan loop driven by a fan across the channel: the lower half with a symmetry plane through the fan, given the whole fan's curve, against the whole | The whole loop | 2 × half flow and the pressure rise equal to 7 digits, velocity 3e-16 | 1e-12 | `a_fan_cut_by_a_symmetry_plane_runs_on_the_whole_fans_curve` |
+| Every condition on the GPU | The CPU | | [GPU backend](gpu.md) | `zou_he_channel_matches_the_cpu`, `convective_outlet_matches_the_cpu_with_a_vortex_and_backflow`, `edges_of_two_pressure_faces_match_the_cpu`, `couette_wall_forces_match_the_cpu`, `a_half_channel_on_a_symmetry_plane_matches_the_cpu` |
 
 The 20-cell staircase cylinder puts c_D,max 4–7 % and c_L,max 7–10 % above the 2D-2 benchmark (2D-1 at
 this resolution: c_D 3.4 % above).
@@ -302,7 +353,9 @@ this resolution: c_D 3.4 % above).
 
 - Walls are staircase; there is no interpolated (curved) bounce-back.
 - Obstacles do not move: a moving wall is tangential motion of a fixed surface.
-- Slip faces are box faces only; obstacle faces take walls and moving walls.
+- Slip faces and symmetry planes are box faces only; obstacle faces take walls and moving walls.
+- A symmetry plane's results are those of the half: they are not mirrored for display yet, and only
+  the reply's `whole_model` totals stand for the whole model.
 - A uniform pressure outlet distorts the last cell layer where an unrecovered wake reaches it. The
   reported speed extremes (`max_speed`, slice ranges) leave every inlet and outlet layer out for
   this reason, convective outlets included.

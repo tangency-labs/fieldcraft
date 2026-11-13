@@ -7,7 +7,8 @@
 //!   between two cells is `g (T_b − T_a)` with `g` the harmonic mean of their conductivities
 //!   along the face's axis (Patankar §4.2-4: the series resistance of the two half cells, which
 //!   keeps the flux continuous across a change of material), a held box face adds `2 k (T_w − T)`
-//!   (half a cell to the wall), a flux face its flux. Explicit in time, sub-cycled so that every
+//!   (half a cell to the wall), a flux face its flux; across a symmetry plane a cell faces its
+//!   own mirror image, so no heat crosses it. Explicit in time, sub-cycled so that every
 //!   cell's sum of conductances over its heat capacity stays below one (the explicit limit). The
 //!   heat a held or flux box face takes from the solid is counted as that face's heat.
 //!   Conductivities may differ per axis (a board's in-plane and through-thickness values):
@@ -34,7 +35,8 @@
 //!   interface conditions for the thermal lattice equation, the
 //!   conjugate interface among them: L. Li, R. Mei, J. F. Klausner, *Boundary conditions for
 //!   thermal lattice Boltzmann equation method*, J. Comput. Phys. 237:366, 2013.
-//! - **Heat sources:** a solid's power is spread evenly over its cells.
+//! - **Heat sources:** a solid's power is spread evenly over its cells, those of the whole model
+//!   when a symmetry plane cuts it (its share in the box is generated there).
 //! - **Radiation to the surroundings:** a solid that radiates loses `ε σ (T⁴ − T_amb⁴)` per area
 //!   through each face it shares with the fluid (the fluid taken as transparent, the faces seeing
 //!   only the surroundings: no view factors), on the absolute temperature `T = θ + zero`. The
@@ -162,6 +164,9 @@ pub struct SolidHeat {
     pub cell: Vec<Cell>,
     /// The fluid links into conducting cells, in fluid cell order.
     pub interface: Vec<Interface>,
+    /// Per solid, the share of its power generated in the box (less than 1 when a symmetry
+    /// plane cuts it).
+    pub power_share: Vec<f64>,
     /// Sub-steps of the conduction per lattice step.
     pub substeps: u32,
     /// Per conducting cell, the heat its fluid links take this step, `a − b T` summed over them.
@@ -190,6 +195,11 @@ pub struct Layout<'a> {
     pub conducting: &'a [u32],
     /// Each box face's thermal condition when it is a wall (`None`: open or periodic).
     pub walls: [Option<ThermalCondition>; 6],
+    /// The box faces that are symmetry planes: a solid cell on one faces its own mirror image.
+    pub mirrors: [bool; 6],
+    /// Per solid, its cells in the whole model about the symmetry planes, which its power is
+    /// spread over (its cells in the box when missing or fewer).
+    pub whole_cells: &'a [usize],
     /// The fluid's lattice conductivity.
     pub kf: f64,
     /// The thermal interface layers between solids.
@@ -207,6 +217,7 @@ impl SolidHeat {
             + bytes(&self.by_solid)
             + self.by_solid.iter().map(bytes).sum::<u64>()
             + bytes(&self.cell)
+            + bytes(&self.power_share)
             + bytes(&self.interface)
             + bytes(&self.link_a)
             + bytes(&self.link_b)
@@ -276,6 +287,13 @@ impl SolidHeat {
                 if !layout.periodic[axis] && !(0..dims[axis]).contains(&nb[axis]) {
                     let face = BoxFace::of(axis, nb[axis] >= dims[axis]);
                     let wall = face.index() as u8;
+                    // Its mirror image is at its own temperature, so nothing crosses the plane;
+                    // the face still counts in the explicit limit, so the sub-steps (and the
+                    // transient) are the whole model's.
+                    if layout.mirrors.get(face.index()).copied().unwrap_or(false) {
+                        *slot = Face::Solid { other: own as u32, g: series(ks, ks) };
+                        continue;
+                    }
                     *slot = match layout.walls.get(face.index()).copied().flatten() {
                         Some(ThermalCondition::Temperature { value }) => Face::Held { t: value, g: 2.0 * ks, wall },
                         Some(ThermalCondition::Flux { value }) => Face::Flux { q: value, wall },
@@ -300,7 +318,7 @@ impl SolidHeat {
                 }
             }
             let s = solids.get(k);
-            let count = by_solid.get(k).map_or(1, |l| l.len().max(1)) as f64;
+            let count = by_solid.get(k).map_or(1, |l| l.len()).max(layout.whole_cells.get(k).copied().unwrap_or(0)).max(1) as f64;
             let (emit, ambient4) = s.and_then(|s| s.radiation).map_or((0.0, 0.0), |r| (r.emit, r.ambient.powi(4)));
             let cell = Cell {
                 capacity: s.map_or(1.0, |s| s.capacity),
@@ -359,6 +377,14 @@ impl SolidHeat {
             wall_heat: [0.0; 6],
             temperature: vec![initial; m],
             next: vec![initial; m],
+            power_share: by_solid
+                .iter()
+                .enumerate()
+                .map(|(k, l)| match layout.whole_cells.get(k) {
+                    Some(&whole) if whole > l.len() => l.len() as f64 / whole as f64,
+                    _ => 1.0,
+                })
+                .collect(),
             cells,
             by_solid,
             cell: cell_data,

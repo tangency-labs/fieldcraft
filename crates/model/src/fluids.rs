@@ -37,6 +37,8 @@ pub const MAX_CELLS_PER_SIDE: u64 = 1 << 20;
 
 /// How far the box extent may be from a whole number of spacings, relative to the spacing.
 const WHOLE_CELLS_TOLERANCE: f64 = 1e-6; // unit-factors: relative to the spacing
+/// How far off a fan's middle a symmetry plane may cut it, relative to its extent.
+const SYMMETRIC_CUT: f64 = 1e-9; // unit-factors: relative to the fan's extent
 
 /// A face of the domain box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -119,7 +121,8 @@ pub enum Profile {
     /// The velocity times `4 s (1 − s)` across each direction of the face that ends at walls
     /// (not periodic), `s` from 0 to 1 across the box: fully developed laminar flow between
     /// plates (one such direction) or in a rectangular duct approximated by the product (two).
-    /// The given velocity is the peak.
+    /// The given velocity is the peak. A direction that ends at a symmetry plane is the half of
+    /// the whole model's: the profile peaks at the plane.
     Parabolic,
 }
 
@@ -134,6 +137,11 @@ pub enum FaceCondition {
     MovingWall { velocity: [f64; 3] },
     /// A frictionless wall: no flow through it, no shear.
     Slip {},
+    /// A symmetry plane: half of a symmetric model is solved, the box face its mirror plane. The
+    /// flow is the slip face's (no flow through it, no shear), and no heat crosses it, neither
+    /// in the fluid nor in a conducting solid it cuts: its thermal condition is adiabatic, always
+    /// ([`FluidDomain::symmetry_warnings`] lists the inputs that would break the symmetry).
+    Symmetry {},
     /// A velocity inlet (or outlet, if the velocity points out of the box).
     Velocity {
         velocity: [f64; 3],
@@ -183,21 +191,32 @@ impl Default for FaceCondition {
 }
 
 impl FaceCondition {
-    /// `wall`, `moving_wall`, `slip`, `velocity`, `pressure` or `periodic`.
+    /// `wall`, `moving_wall`, `slip`, `symmetry`, `velocity`, `pressure` or `periodic`.
     pub fn name(&self) -> &'static str {
         match self {
             FaceCondition::Wall {} => "wall",
             FaceCondition::MovingWall { .. } => "moving_wall",
             FaceCondition::Slip {} => "slip",
+            FaceCondition::Symmetry {} => "symmetry",
             FaceCondition::Velocity { .. } => "velocity",
             FaceCondition::Pressure { .. } => "pressure",
             FaceCondition::Periodic {} => "periodic",
         }
     }
 
+    /// Whether the flow slips along the face without crossing it: a slip face or a symmetry
+    /// plane.
+    pub fn is_slip(&self) -> bool {
+        matches!(self, FaceCondition::Slip {} | FaceCondition::Symmetry {})
+    }
+
+    pub fn is_symmetry(&self) -> bool {
+        matches!(self, FaceCondition::Symmetry {})
+    }
+
     fn validate(&self, face: BoxFace) -> Result<()> {
         match *self {
-            FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Periodic {} => Ok(()),
+            FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Symmetry {} | FaceCondition::Periodic {} => Ok(()),
             FaceCondition::MovingWall { velocity } => {
                 vector("wall velocity", velocity)?;
                 if velocity.get(face.axis()).is_some_and(|v| *v != 0.0) {
@@ -812,6 +831,72 @@ impl FluidDomain {
         self.thermal.iter().flat_map(|t| t.solids.iter())
     }
 
+    /// The box faces that are symmetry planes, in [`BoxFace::ALL`] order.
+    pub fn symmetry_planes(&self) -> impl Iterator<Item = BoxFace> + '_ {
+        BoxFace::ALL.into_iter().filter(|f| self.faces.get(*f).is_symmetry())
+    }
+
+    /// The inputs that are not symmetric about the domain's symmetry planes, one message each:
+    /// a body force, a buoyancy gravity or an initial velocity with a component normal to a
+    /// plane, a velocity inlet or moving wall on another face whose velocity crosses it, a fan it
+    /// cuts that blows through it or is cut off its middle. The solution of the half is then not
+    /// half of the whole model's.
+    /// (Obstacles are geometry the model does not hold: the fluid solve's setup warns about one
+    /// a plane cuts off its middle.)
+    pub fn symmetry_warnings(&self) -> Vec<String> {
+        let (mut out, mut off_middle) = (Vec::new(), Vec::new());
+        for plane in self.symmetry_planes() {
+            let a = plane.axis();
+            let normal = |v: [f64; 3]| v.get(a).is_some_and(|c| *c != 0.0);
+            let axis = ["x", "y", "z"].get(a).copied().unwrap_or("normal");
+            let mut warn = |what: String| {
+                out.push(format!(
+                    "symmetry plane {}: {what} has a {axis} component, normal to the plane, so the model is not symmetric about it",
+                    plane.name()
+                ))
+            };
+            if normal(self.acceleration) {
+                warn("the acceleration".into());
+            }
+            if normal(self.initial_velocity) {
+                warn("the initial velocity".into());
+            }
+            if let Some(t) = &self.thermal
+                && normal(t.gravity)
+            {
+                warn("the buoyancy's gravity".into());
+            }
+            for face in BoxFace::ALL.into_iter().filter(|f| f.axis() != a) {
+                match *self.faces.get(face) {
+                    FaceCondition::Velocity { velocity, .. } if normal(velocity) => warn(format!("the inlet velocity on {}", face.name())),
+                    FaceCondition::MovingWall { velocity } if normal(velocity) => warn(format!("the wall velocity on {}", face.name())),
+                    _ => {}
+                }
+            }
+            // A fan the plane cuts: its mirror image must be its part beyond the plane, and blow
+            // the same way. (One that ends at the plane is half of one fan; one short of it mirrors
+            // into a second fan.)
+            let at = if plane.is_max() { self.max.get(a) } else { self.min.get(a) }.copied().unwrap_or(0.0);
+            for fan in &self.fans {
+                let (lo, hi) = (fan.min.get(a).copied().unwrap_or(0.0), fan.max.get(a).copied().unwrap_or(0.0));
+                if !(lo < at && at < hi) {
+                    continue;
+                }
+                if fan.direction.axis_sign().0 == a {
+                    warn(format!("the direction of fan `{}`, which it cuts,", fan.name));
+                } else if ((at - lo) - (hi - at)).abs() > SYMMETRIC_CUT * (hi - lo) {
+                    off_middle.push(format!(
+                        "symmetry plane {}: it cuts fan `{}` off its middle ({lo} to {hi} about {at}), so the fan is not symmetric about it",
+                        plane.name(),
+                        fan.name
+                    ));
+                }
+            }
+            out.append(&mut off_middle);
+        }
+        out
+    }
+
     /// Check everything that does not need the rest of the model.
     pub fn validate(&self) -> Result<()> {
         for (what, v) in [("min", self.min), ("max", self.max), ("initial velocity", self.initial_velocity), ("acceleration", self.acceleration)] {
@@ -843,6 +928,13 @@ impl FluidDomain {
         }
         if let Some(t) = &self.thermal {
             t.validate(&self.obstacles).map_err(|e| context("thermal", "settings", e))?;
+            if let Some(face) = self.symmetry_planes().find(|f| *t.faces.get(*f) != ThermalCondition::Adiabatic {}) {
+                return Err(Error::Invalid(format!(
+                    "box face {} is a symmetry plane, so no heat crosses it: its thermal condition is adiabatic, not {}",
+                    face.name(),
+                    t.faces.get(face).name()
+                )));
+            }
         }
         if self.baffles.len() > MAX_BAFFLES {
             return Err(Error::Limit(format!("a fluid domain holds at most {MAX_BAFFLES} baffles")));
@@ -903,7 +995,6 @@ impl FluidDomain {
         Ok(())
     }
 
-    /// Set the condition on one boundary: a box face, or a named face of an obstacle, which
     /// Set one boundary's thermal condition (an adiabatic obstacle face removes its entry,
     /// adiabatic being the default). Needs the domain's thermal settings; the caller validates
     /// the result ([`Model::set_fluid_thermal_boundary`] does).
@@ -923,11 +1014,18 @@ impl FluidDomain {
         Ok(())
     }
 
+    /// Set the condition on one boundary: a box face, or a named face of an obstacle, which
     /// takes a wall or a moving wall (a wall there removes the entry, walls being the default).
-    /// The caller validates the result ([`Model::set_fluid_boundary`] does).
+    /// A symmetry plane sets the face's thermal condition too (adiabatic). The caller validates
+    /// the result ([`Model::set_fluid_boundary`] does).
     pub fn set_boundary(&mut self, at: FluidBoundary, condition: FaceCondition) -> Result<()> {
         match at {
-            FluidBoundary::Box(face) => *self.faces.get_mut(face) = condition,
+            FluidBoundary::Box(face) => {
+                *self.faces.get_mut(face) = condition;
+                if let (FaceCondition::Symmetry {}, Some(t)) = (condition, &mut self.thermal) {
+                    *t.faces.get_mut(face) = ThermalCondition::Adiabatic {};
+                }
+            }
             FluidBoundary::Surface(face) => {
                 let c = match condition {
                     FaceCondition::Wall {} => SurfaceCondition::Wall {},
@@ -1651,5 +1749,115 @@ mod tests {
         assert_eq!(c, FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective });
         assert_eq!(serde_json::to_value(c).unwrap(), convective);
         assert!(serde_json::from_value::<FaceCondition>(serde_json::json!({"type": "pressure", "pressure": 0, "outflow": "sponge"})).is_err());
+    }
+
+    /// A symmetry plane is one choice: the slip flow and no heat through it, for the fluid and
+    /// the solids it cuts. Setting it makes the face adiabatic; a held temperature or a flux on
+    /// it is refused; obstacle faces cannot take it.
+    #[test]
+    fn a_symmetry_plane_sets_its_face_adiabatic_and_keeps_it() {
+        let mut m = Model::default();
+        let heat = crate::Thermal { conductivity: Some(Directional::Isotropic(0.6)), specific_heat: Some(4180.0), ..Default::default() };
+        m.add_material("Water", Material { thermal: Some(heat), ..water() }).unwrap();
+        let mut d = channel();
+        d.obstacles = vec!["Ball".into()];
+        let mut t = FluidThermal::default();
+        t.faces.y_max = ThermalCondition::Temperature { value: 350.0 };
+        d.thermal = Some(t);
+        m.add_fluid_domain("Flow", d).unwrap();
+        let sym = FaceCondition::Symmetry {};
+        m.set_fluid_boundary("Flow", FluidBoundary::Box(BoxFace::YMax), sym).unwrap();
+        let d = m.fluid_domain("Flow").unwrap();
+        assert_eq!((d.faces.y_max, d.thermal.as_ref().unwrap().faces.y_max), (sym, ThermalCondition::Adiabatic {}));
+        assert!(d.faces.y_max.is_slip() && FaceCondition::Slip {}.is_slip() && !FaceCondition::Wall {}.is_slip());
+        assert_eq!(d.symmetry_planes().collect::<Vec<_>>(), [BoxFace::YMax]);
+        let before = m.clone();
+        for held in [ThermalCondition::Temperature { value: 300.0 }, ThermalCondition::Flux { value: 10.0 }] {
+            let e = m.set_fluid_thermal_boundary("Flow", FluidBoundary::Box(BoxFace::YMax), held).unwrap_err().to_string();
+            assert!(e.contains("y_max is a symmetry plane"), "{e}");
+        }
+        let face = GeometryRef::face("Ball", "F1").unwrap();
+        assert!(m.set_fluid_boundary("Flow", FluidBoundary::Surface(face), sym).is_err(), "obstacle faces are walls");
+        assert_eq!(m, before);
+        let mut edited = m.fluid_domain("Flow").unwrap().clone();
+        edited.thermal.as_mut().unwrap().faces.y_max = ThermalCondition::Temperature { value: 300.0 };
+        assert!(m.replace_fluid_domain("Flow", edited).is_err(), "a whole domain is checked the same way");
+        assert_eq!(serde_json::to_value(sym).unwrap(), serde_json::json!({"type": "symmetry"}));
+        assert_eq!(serde_json::from_value::<FaceCondition>(serde_json::json!({"type": "symmetry"})).unwrap(), sym);
+    }
+
+    /// The inputs that break the symmetry about the plane are each named; tangential ones are not.
+    #[test]
+    fn inputs_that_cross_a_symmetry_plane_are_warned_about() {
+        let mut d = channel();
+        d.faces.y_max = FaceCondition::Symmetry {};
+        assert!(d.symmetry_warnings().is_empty(), "the channel is symmetric about y_max");
+        d.acceleration = [0.1, 0.0, 0.0];
+        d.initial_velocity = [1.0, 0.0, 0.5];
+        assert!(d.symmetry_warnings().is_empty(), "along the plane: symmetric");
+        d.acceleration = [0.0, -9.81, 0.0];
+        d.initial_velocity = [1.0, 0.2, 0.0];
+        d.faces.x_min = FaceCondition::Velocity { velocity: [1.0, 0.1, 0.0], profile: Profile::Uniform };
+        d.faces.y_min = FaceCondition::Velocity { velocity: [0.0, 1.0, 0.0], profile: Profile::Uniform };
+        let w = d.symmetry_warnings();
+        assert_eq!(w.len(), 3, "{w:?}");
+        for (w, what) in w.iter().zip(["the acceleration", "the initial velocity", "the inlet velocity on x_min"]) {
+            assert!(w.starts_with("symmetry plane y_max: ") && w.contains(what) && w.contains("y component"), "{w}");
+        }
+        // A model with such a domain reports them in its check, on the step.
+        let mut m = Model::default();
+        m.add_material("Water", water()).unwrap();
+        m.add_fluid_domain("Flow", d).unwrap();
+        m.add_step(
+            Step::new(
+                "Run",
+                Procedure::Fluid {
+                    domain: "Flow".into(),
+                    end_time: Some(1.0),
+                    steps: None,
+                    time_step: None,
+                    frames: 2,
+                    magic: None,
+                    sigma: None,
+                    collision: None,
+                    turbulence: None,
+                    steady: None,
+                },
+            ),
+            None,
+        )
+        .unwrap();
+        let found: Vec<_> = m.check().into_iter().filter(|c| c.message.starts_with("symmetry plane")).collect();
+        assert_eq!(found.len(), 3, "{found:?}");
+        assert!(found.iter().all(|c| c.severity == crate::Severity::Warning && c.subject == "step `Run`"), "{found:?}");
+    }
+
+    /// A fan is warned about where the plane cuts it blowing through it or off its middle; one
+    /// that blows toward the plane without reaching it mirrors into a second fan, which is fine.
+    #[test]
+    fn fans_are_warned_about_where_the_plane_cuts_them() {
+        use crate::fluid_zones::FanDirection;
+        let fan = |name: &str, min: [f64; 3], max: [f64; 3], direction| Fan {
+            name: name.into(),
+            min,
+            max,
+            direction,
+            curve: vec![[0.0, 10.0], [1.0, 0.0]],
+            relaxation: None,
+        };
+        let mut d = channel();
+        d.faces.y_max = FaceCondition::Symmetry {};
+        d.fans = vec![
+            fan("Toward", [4.0, 0.5, 0.0], [4.5, 1.5, 1.0], FanDirection::YPlus),
+            fan("Across", [6.0, 1.0, 0.0], [6.5, 3.0, 1.0], FanDirection::XPlus),
+            fan("Ending", [2.0, 1.0, 0.0], [2.5, 2.0, 1.0], FanDirection::XPlus),
+        ];
+        assert!(d.symmetry_warnings().is_empty(), "{:?}", d.symmetry_warnings());
+        d.fans.push(fan("Through", [4.0, 1.5, 0.0], [4.5, 2.5, 1.0], FanDirection::YPlus));
+        d.fans.push(fan("Lopsided", [8.0, 1.0, 0.0], [8.5, 2.5, 1.0], FanDirection::XPlus));
+        let w = d.symmetry_warnings();
+        assert_eq!(w.len(), 2, "{w:?}");
+        assert!(w[0].starts_with("symmetry plane y_max: the direction of fan `Through`, which it cuts, has a y component"), "{}", w[0]);
+        assert!(w[1].starts_with("symmetry plane y_max: it cuts fan `Lopsided` off its middle"), "{}", w[1]);
     }
 }
