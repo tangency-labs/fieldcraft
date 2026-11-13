@@ -221,6 +221,9 @@ fn cut(mesh: &mut SurfaceMesh, c: &Cut) {
         }
         let mut piece: Vec<[f64; 3]> = Vec::new();
         let mut piece_side = 0;
+        // Where the piece last touched the plane after a point on a side (its index in `piece`):
+        // a polyline that goes on to the other side from there is cut at that point.
+        let mut on_plane: Option<usize> = None;
         let mut flush = |piece: &mut Vec<[f64; 3]>, sg: i32| {
             if piece.len() >= 2 {
                 let on = if sg > 0 { c.b } else { c.a };
@@ -241,10 +244,26 @@ fn cut(mesh: &mut SurfaceMesh, c: &Cut) {
                     piece.push(x);
                     flush(&mut piece, piece_side);
                     piece.push(x);
+                } else if sp != 0
+                    && piece_side != 0
+                    && sp != piece_side
+                    && let Some(i) = on_plane
+                {
+                    // Crossed through a point on the plane (an edge sampled there): the piece
+                    // ends at it and the next starts from it.
+                    let rest = piece.split_off(i);
+                    if let Some(&x) = rest.first() {
+                        piece.push(x);
+                    }
+                    flush(&mut piece, piece_side);
+                    piece = rest;
                 }
             }
             if sp != 0 {
                 piece_side = sp;
+                on_plane = None;
+            } else if piece_side != 0 && on_plane.is_none() {
+                on_plane = Some(piece.len());
             }
             piece.push(p);
         }
@@ -381,6 +400,24 @@ mod tests {
         // The top's rim edges along x are cut at x = 30: four pieces where there were two.
         let rim = edges.iter().filter(|e| e.faces.iter().any(|&f| f == fa || f == fb) && !(e.faces.contains(&fa) && e.faces.contains(&fb))).count();
         assert_eq!(rim, 2 + 2 + 2 + 1, "four sides, the two along x in two pieces, and the hole's rim circle");
+    }
+
+    /// An edge that crosses the plane through one of its own points (an edge sampled there) is
+    /// cut there, a piece on each side: the plate's top edges along x, sampled at x = 30 by the
+    /// analysis tessellation, stayed whole.
+    #[test]
+    fn an_edge_crossing_the_plane_at_its_own_point_is_cut_there() {
+        let mut mesh = SurfaceMesh {
+            edges: vec![vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [30.0, 0.0, 0.0], [40.0, 0.0, 0.0]]],
+            edge_faces: vec![vec![0, 1]],
+            ..SurfaceMesh::default()
+        };
+        let c = Cut { a: 0, b: 2, point: [30.0, 0.0, 0.0], normal: [1.0, 0.0, 0.0] };
+        cut(&mut mesh, &c);
+        assert_eq!(mesh.edges.len(), 2, "{:?}", mesh.edges);
+        assert_eq!(mesh.edges[0], vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [30.0, 0.0, 0.0]]);
+        assert_eq!(mesh.edges[1], vec![[30.0, 0.0, 0.0], [40.0, 0.0, 0.0]]);
+        assert_eq!(mesh.edge_faces, vec![vec![0, 1], vec![2, 1]]);
     }
 
     #[test]
