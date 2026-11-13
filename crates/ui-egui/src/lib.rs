@@ -754,6 +754,8 @@ impl ModelApp {
         }
         match &r {
             Ok(v) if v.is_null() || (changed && id != "deck.read") || display => self.set_status(reply::done(id, label, &params, v), false),
+            // Saving and writing a deck say what they wrote, in a sentence (A4-6).
+            Ok(v) if let Some(line) = reply::sentence(id, v) => self.set_status(line, false),
             // A reply reads as one line; the whole of a rich one shows in the context panel (the
             // reaction sums have their own place in the results panel).
             Ok(v) => {
