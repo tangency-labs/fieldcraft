@@ -1394,25 +1394,32 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
             None => "Drop to open: .fieldcraft models, .solidcraft designs, .3mf tagged meshes, .msh orphan meshes".into(),
         };
         let mut cancel = false;
-        egui::Area::new(egui::Id::unique("fc_loading"))
-            .order(egui::Order::Foreground)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).fill(t.overlay).inner_margin(egui::Margin::symmetric(16, 12)).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        if app.loading.is_some() {
-                            ui.spinner();
-                        }
-                        ui.label(egui::RichText::new(text).color(t.overlay_text));
-                        if app.loading.is_some() {
-                            cancel = kit::button(ui, "Cancel", kit::Button::Normal).clicked();
-                        }
-                    });
-                    if let Some(f) = fraction {
-                        ui.add(egui::ProgressBar::new(f as f32).desired_height(4.0).fill(t.accent));
+        // A notification surface (the kit's Toast), independent of the workspace layout, with the
+        // kit's progress meter while the fraction is known.
+        let k = solidcraft_theme::Tokens::get();
+        let host = kit::Container::new(ctx, kit::Surface::Toast);
+        let loading = app.loading.is_some();
+        host.area(egui::Id::unique("fc_loading")).order(egui::Order::Foreground).anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO).show(
+            ctx,
+            |ui| {
+                let frame =
+                    host.frame(ctx, k.panel, kit::frame::Side::Left).inner_margin(egui::Margin::symmetric(k.space_16 as i8, k.space_12 as i8));
+                host.show_frame(ui, frame, ctx.content_rect(), |ui| match fraction.filter(|_| loading) {
+                    Some(f) => cancel = kit::progress_action(ui, "fc_loading", &text, "", f as f32, "Cancel").clicked(),
+                    None => {
+                        ui.horizontal(|ui| {
+                            if loading {
+                                ui.add(egui::Spinner::new().size(k.space_14).color(k.text));
+                            }
+                            kit::text(ui, &text, kit::Text::Inline);
+                            if loading {
+                                cancel = kit::button(ui, "Cancel", kit::Button::Normal).clicked();
+                            }
+                        });
                     }
                 });
-            });
+            },
+        );
         if let Some(l) = app.loading.as_mut() {
             l.shown = true;
         }
