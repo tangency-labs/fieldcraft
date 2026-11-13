@@ -24,7 +24,7 @@ const SAME_AXIS: f64 = 1e-6; // unit-factors: relative to the body's size
 pub const OPEN: CommandSpec = CommandSpec {
     id: "geometry.open",
     label: "Open Design",
-    params: r#"{"path": "part.solidcraft", "model"?: "keep"} — rebuilds the SolidCraft design and makes its bodies the geometry. `model`: "keep" (default) keeps the mesh and every definition, so opening the same design again after an edit picks up the change and sets follow their persistent face names; "new" starts a new model with the design (no mesh, sets, materials, sections, BCs, loads or steps; the unit system stays; the model is untitled until saved, and undo restores the previous file). The reply's `related` is false when the model (before the open) refers to bodies (mesh tags, set geometry) and the design has none of them, and `stale` lists what no longer resolves: `mesh_bodies` (bodies the mesh is tagged with that the design lacks) `sets` (sets naming a body or face it lacks) and `seeds` (seeds on edges or faces it lacks), and `references` every definition naming a face, edge or vertex of a body the design has but not that entity ({owner, reference, why}). Such a name is first looked for again as file.open does (`renamed`, `mismatched`). `errors` lists the features that failed to rebuild with the `bodies` each may change, and `warnings` says so in one line each. One undo step"#,
+    params: r#"{"path": "part.solidcraft", "model"?: "keep"} — rebuilds the SolidCraft design and makes its bodies the geometry. `model`: "keep" (default) keeps the mesh and every definition, so opening the same design again after an edit picks up the change and sets follow their persistent face names; "new" starts a new model with the design (no mesh, sets, materials, sections, BCs, loads or steps; the unit system stays; the model is untitled until saved, and undo restores the previous file). The reply's `related` is false when the model (before the open) refers to bodies (mesh tags, set geometry) and the design has none of them, or refers to none but has a mesh or definitions and its design (if any) shares no body with this one, and `stale` lists what no longer resolves: `mesh_bodies` (bodies the mesh is tagged with that the design lacks) `sets` (sets naming a body or face it lacks) and `seeds` (seeds on edges or faces it lacks), and `references` every definition naming a face, edge or vertex of a body the design has but not that entity ({owner, reference, why}). Such a name is first looked for again as file.open does (`renamed`, `mismatched`). `errors` lists the features that failed to rebuild with the `bodies` each may change, and `warnings` says so in one line each. One undo step"#,
     form: Some(super::forms::OPEN_DESIGN),
     kind: CommandKind::Model,
     requires: &[],
@@ -152,8 +152,9 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// How the model's geometry references fit a design about to become the geometry.
 struct Fit {
-    /// Whether the design (or an imported surface) has a body the model refers to, or the model
-    /// refers to none: `false` means the model is of another part.
+    /// Whether the design (or an imported surface) has a body the model refers to; for a model
+    /// that refers to none, whether it is empty or its previous design shares a body with this
+    /// one. `false` means the model is of another part.
     related: bool,
     /// Bodies the mesh is tagged with that neither the design nor a surface has.
     mesh_bodies: Vec<String>,
@@ -185,8 +186,17 @@ fn fit(s: &Session, design: &Design) -> Fit {
     let tagged: BTreeSet<&str> = s.model.classification().entities().iter().map(|r| r.body.as_str()).collect();
     let mut referenced = tagged.clone();
     referenced.extend(s.model.sets().values().flat_map(|set| set.geometry.iter().map(|r| r.body.as_str())));
+    // A model that refers to no body (a sample's or an imported deck's untagged mesh, label sets,
+    // definitions alone) is of the same part only when it has nothing to lose, or when the design
+    // it was built on (before this open) shares a body with this one.
+    let related = if referenced.is_empty() {
+        let empty = s.model.elements().is_empty() && s.model.nodes().is_empty() && s.model.definition_counts().iter().all(|(_, n)| *n == 0);
+        empty || s.design.as_deref().is_some_and(|before| before.bodies.iter().any(|b| has(&b.name)))
+    } else {
+        referenced.iter().any(|b| has(b))
+    };
     Fit {
-        related: referenced.is_empty() || referenced.iter().any(|b| has(b)),
+        related,
         mesh_bodies: tagged.into_iter().filter(|b| !has(b)).map(str::to_string).collect(),
         sets: s.model.sets().iter().filter(|(_, set)| !set.geometry.iter().all(resolves)).map(|(n, _)| n.clone()).collect(),
         seeds: s
@@ -599,6 +609,36 @@ pub(crate) mod tests {
 
     fn kinds(r: &Value) -> Vec<&str> {
         r["findings"].as_array().unwrap().iter().map(|f| f["kind"].as_str().unwrap()).collect()
+    }
+
+    /// A model that refers to no body is related to a design only when it has nothing to lose or
+    /// its previous design shares a body with it: a sample's untagged mesh is of another part.
+    #[test]
+    fn a_model_without_body_references_is_unrelated_unless_empty_or_the_same_part() {
+        let block = |name: &str| {
+            let bytes = fieldcraft_geometry::script_design(
+                &json!({"commands": [{"command": "solid.box", "params": {"length": 40, "width": 20, "height": 10, "body_name": name}}]}).to_string(),
+            )
+            .unwrap();
+            crate::tests::design_file(&bytes)
+        };
+        let ((_a, base), (_b, other)) = (block("Base"), block("Case"));
+        let related = |s: &mut Session, path: &str| s.execute("geometry.open", &json!({"path": path})).unwrap()["related"].as_bool();
+
+        let mut empty = Session::default();
+        assert_eq!(related(&mut empty, &base), Some(true), "an empty model has nothing to lose");
+
+        let mut sample = Session::default();
+        sample.execute("file.sample", &json!({"name": "cantilever"})).unwrap();
+        assert_eq!(related(&mut sample, &other), Some(false), "a sample's untagged mesh and label sets");
+
+        let mut defined = Session::default();
+        assert_eq!(related(&mut defined, &base), Some(true));
+        defined
+            .execute("model.material.create", &json!({"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}}))
+            .unwrap();
+        assert_eq!(related(&mut defined, &base), Some(true), "the same part opened again");
+        assert_eq!(related(&mut defined, &other), Some(false), "another part over a defined model");
     }
 
     /// A plain block is clean at a size it can be meshed with; a 0.4 mm step on its top is a
