@@ -58,7 +58,7 @@ fn scaling_over_threads() {
     let steps: u64 = std::env::var("FIELDCRAFT_SCALING_STEPS").ok().and_then(|v| v.parse().ok()).unwrap_or(200);
     let mut d = domain([0.0; 3], [96.0, 48.0, 40.0], 1.0);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: fieldcraft_model::Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Uniform, sigma: None };
     for f in [BoxFace::YMin, BoxFace::YMax, BoxFace::ZMax] {
         *d.faces.get_mut(f) = FaceCondition::Slip {};
     }

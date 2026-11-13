@@ -5,7 +5,7 @@ use fieldcraft_model::{Axis, FaceCondition, Fan, FanDirection, Outflow, PorousZo
 pub fn neighbor(collision: Collision, fan: bool) -> (Setup, Flow) {
     let mut d = domain([0.0; 3], [8.0, 2.0, 2.0], 1.0);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.03, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     for f in [&mut d.faces.y_min, &mut d.faces.y_max, &mut d.faces.z_min, &mut d.faces.z_max] {
         *f = FaceCondition::Periodic {};
     }

@@ -146,6 +146,10 @@ pub enum FaceCondition {
         /// How the flow leaves through the face (default: uniform).
         #[serde(default, skip_serializing_if = "Outflow::is_uniform")]
         outflow: Outflow,
+        /// A characteristic outflow's relaxation σ, above 0 and at most 1 (left out:
+        /// [`Outflow::CHARACTERISTIC_SIGMA`]); refused with any other outflow.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sigma: Option<f64>,
     },
     /// What leaves through this face enters through the opposite one, which must be periodic too.
     Periodic {},
@@ -164,9 +168,17 @@ pub enum Outflow {
     /// tangential, is carried out from inside by a convective outflow condition. Where the flow
     /// comes back in, as the uniform outlet. For outlets that a wake or vortices reach.
     Convective,
+    /// As the uniform outlet, but partially non-reflecting: each cell's density and normal
+    /// velocity follow a characteristic balance, so an outgoing pressure wave leaves instead of
+    /// coming back, while the pressure relaxes towards the given one at a rate set by `sigma`.
+    /// For acoustic waves and start-up transients; CPU only, without checkpoints.
+    Characteristic,
 }
 
 impl Outflow {
+    /// A characteristic outflow's σ when the face gives none.
+    pub const CHARACTERISTIC_SIGMA: f64 = 0.25;
+
     pub fn is_uniform(&self) -> bool {
         *self == Outflow::Uniform
     }
@@ -209,7 +221,18 @@ impl FaceCondition {
                 Ok(())
             }
             FaceCondition::Velocity { velocity, .. } => vector("inlet velocity", velocity).map(|_| ()),
-            FaceCondition::Pressure { pressure, .. } => finite("pressure", pressure).map(|_| ()),
+            FaceCondition::Pressure { pressure, outflow, sigma } => {
+                finite("pressure", pressure)?;
+                match (outflow, sigma) {
+                    (Outflow::Characteristic, Some(s)) if !(s > 0.0 && s <= 1.0) => {
+                        Err(Error::Invalid(format!("the characteristic outflow's sigma is {s}: give one above 0 and at most 1")))
+                    }
+                    (Outflow::Uniform | Outflow::Convective, Some(_)) => Err(Error::Invalid(
+                        "sigma belongs to a characteristic outflow only: give `\"outflow\": \"characteristic\"` or leave sigma out".into(),
+                    )),
+                    _ => Ok(()),
+                }
+            }
         }
     }
 }
@@ -770,6 +793,20 @@ impl FluidDomain {
         !self.baffles.is_empty()
     }
 
+    /// The first box face with a characteristic outflow and its σ (the default when it gives
+    /// none).
+    pub fn characteristic_outlet(&self) -> Option<(BoxFace, f64)> {
+        self.characteristic_outlets().next()
+    }
+
+    /// Every box face with a characteristic outflow and its σ.
+    pub fn characteristic_outlets(&self) -> impl Iterator<Item = (BoxFace, f64)> + '_ {
+        BoxFace::ALL.into_iter().filter_map(|f| match *self.faces.get(f) {
+            FaceCondition::Pressure { outflow: Outflow::Characteristic, sigma, .. } => Some((f, sigma.unwrap_or(Outflow::CHARACTERISTIC_SIGMA))),
+            _ => None,
+        })
+    }
+
     /// The lattice face `position` lies on along `axis`, counted in cells from `min`: an
     /// interior face (1 to cells − 1), within a millionth of a spacing.
     pub fn face_layer(&self, axis: crate::Axis, position: f64) -> Result<u64> {
@@ -1054,7 +1091,7 @@ mod tests {
             spacing: 0.5,
             faces: BoxFaces {
                 x_min: FaceCondition::Velocity { velocity: [1.0, 0.0, 0.0], profile: Profile::Parabolic },
-                x_max: FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform },
+                x_max: FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None },
                 z_min: FaceCondition::Periodic {},
                 z_max: FaceCondition::Periodic {},
                 ..BoxFaces::default()
@@ -1327,7 +1364,7 @@ mod tests {
             bad(&|d| d.faces.z_max = FaceCondition::Wall {}),
             bad(&|d| d.faces.y_min = FaceCondition::MovingWall { velocity: [1.0, 1.0, 0.0] }),
             bad(&|d| d.faces.x_min = FaceCondition::Velocity { velocity: [f64::NAN, 0.0, 0.0], profile: Profile::Uniform }),
-            bad(&|d| d.faces.x_max = FaceCondition::Pressure { pressure: f64::INFINITY, outflow: Outflow::Convective }),
+            bad(&|d| d.faces.x_max = FaceCondition::Pressure { pressure: f64::INFINITY, outflow: Outflow::Convective, sigma: None }),
             bad(&|d| d.obstacles = vec!["A".into(), "A".into()]),
             bad(&|d| d.obstacles = vec![String::new()]),
             bad(&|d| d.surfaces = vec![SurfaceBoundary { face: GeometryRef::face("B", "f").unwrap(), condition: SurfaceCondition::Wall {} }]),
@@ -1643,13 +1680,57 @@ mod tests {
         assert!(matches!(at, FluidBoundary::Surface(_)));
         assert!(serde_json::from_value::<FaceCondition>(serde_json::json!({"type": "wall", "velocity": [1, 0, 0]})).is_err());
         // A pressure face is uniform unless it says otherwise, and writes `outflow` only then.
-        let uniform = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        let uniform = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
         assert_eq!(serde_json::from_value::<FaceCondition>(serde_json::json!({"type": "pressure", "pressure": 0})).unwrap(), uniform);
         assert_eq!(serde_json::to_value(uniform).unwrap(), serde_json::json!({"type": "pressure", "pressure": 0.0}));
         let convective = serde_json::json!({"type": "pressure", "pressure": 0.0, "outflow": "convective"});
         let c: FaceCondition = serde_json::from_value(convective.clone()).unwrap();
-        assert_eq!(c, FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective });
+        assert_eq!(c, FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective, sigma: None });
         assert_eq!(serde_json::to_value(c).unwrap(), convective);
         assert!(serde_json::from_value::<FaceCondition>(serde_json::json!({"type": "pressure", "pressure": 0, "outflow": "sponge"})).is_err());
+    }
+
+    /// A characteristic outflow writes its σ only when given; σ is refused outside (0, 1] and with
+    /// any other outflow; faces saved without it load as before.
+    #[test]
+    fn a_characteristic_outflow_carries_its_sigma() {
+        let json = serde_json::json!({"type": "pressure", "pressure": 0.0, "outflow": "characteristic", "sigma": 0.5});
+        let c: FaceCondition = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(c, FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Characteristic, sigma: Some(0.5) });
+        assert_eq!(serde_json::to_value(c).unwrap(), json);
+        let bare = serde_json::json!({"type": "pressure", "pressure": 0.0, "outflow": "characteristic"});
+        let c: FaceCondition = serde_json::from_value(bare.clone()).unwrap();
+        assert_eq!(serde_json::to_value(c).unwrap(), bare);
+
+        let mut d = channel();
+        assert_eq!(d.characteristic_outlet(), None);
+        d.faces.x_max = c;
+        d.validate().unwrap();
+        assert_eq!(d.characteristic_outlet(), Some((BoxFace::XMax, Outflow::CHARACTERISTIC_SIGMA)));
+        for sigma in [1e-9, 1.0] {
+            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Characteristic, sigma: Some(sigma) };
+            d.validate().unwrap();
+            assert_eq!(d.characteristic_outlet(), Some((BoxFace::XMax, sigma)));
+        }
+        for sigma in [0.0, -0.25, 1.0 + 1e-12, f64::NAN, f64::INFINITY] {
+            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Characteristic, sigma: Some(sigma) };
+            assert!(d.validate().unwrap_err().to_string().contains("above 0 and at most 1"), "{sigma}");
+        }
+        for outflow in [Outflow::Uniform, Outflow::Convective] {
+            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow, sigma: Some(0.25) };
+            assert!(d.validate().unwrap_err().to_string().contains("characteristic outflow only"), "{outflow:?}");
+        }
+        // Two faces are the solver's limit, not the model's.
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Characteristic, sigma: None };
+        d.faces.x_min = d.faces.x_max;
+        d.validate().unwrap();
+        assert_eq!(d.characteristic_outlets().count(), 2);
+
+        // A domain saved before the option loads to the same faces and writes the same JSON.
+        let saved = serde_json::to_value(channel()).unwrap();
+        assert!(saved["faces"]["x_max"].get("sigma").is_none() && saved["faces"]["x_max"].get("outflow").is_none());
+        let loaded: FluidDomain = serde_json::from_value(saved.clone()).unwrap();
+        assert_eq!(loaded, channel());
+        assert_eq!(serde_json::to_value(loaded).unwrap(), saved);
     }
 }

@@ -244,7 +244,7 @@ fn shedding(end_time: f64, tolerance: f64, start: Option<f64>) -> FluidResult {
     let dx = d / cells;
     let mut dom = domain([0.0; 3], [l, h, dx], dx);
     dom.faces.x_min = FaceCondition::Velocity { velocity: [um, 0.0, 0.0], profile: fieldcraft_model::Profile::Parabolic };
-    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Convective };
+    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Convective, sigma: None };
     dom.faces.z_min = PERIODIC;
     dom.faces.z_max = PERIODIC;
     dom.initial_velocity = [2.0 / 3.0 * um, 0.0, 0.0];

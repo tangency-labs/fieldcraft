@@ -106,6 +106,12 @@ pub trait Backend {
     fn viscosity_clamps(&self) -> Option<crate::rheology::Clamps> {
         None
     }
+    /// With a characteristic outlet: how many cell updates kept their last state because its
+    /// balance was not finite and positive. A backend without one refuses such a flow when it is
+    /// made, so the default is none.
+    fn characteristic_held(&self) -> u64 {
+        0
+    }
     fn groups(&self) -> &[Group];
     fn fluid_cells(&self) -> usize;
     fn is_fluid(&self, cell: usize) -> bool;
@@ -186,6 +192,9 @@ pub fn backend(choice: Choice, flow: Flow, setup: &Setup) -> Result<Box<dyn Back
         Choice::Cpu => Ok(Box::new(flow)),
         // No device backend has the sheets' exchange yet: refused before one is asked for.
         Choice::Device if flow.has_baffles() => Err(Error::Invalid("baffles are not supported on the GPU yet: solve on the CPU".into())),
+        Choice::Device if setup.domain.characteristic_outlet().is_some() => {
+            Err(Error::Invalid("the characteristic outflow is not supported on the GPU yet: solve on the CPU".into()))
+        }
         Choice::Device => match backend_factory() {
             Some(make) => make(&flow, setup),
             None => Err(Error::Backend("no GPU backend is available in this build: solve on the CPU (`backend: \"cpu\"`)".into())),

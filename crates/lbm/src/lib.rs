@@ -12,7 +12,9 @@
 //!   momentum-exchange force on every wall; fans (a pressure–flow curve) and porous zones
 //!   (Darcy–Forchheimer resistance) as body forces.
 //! - [`bounce`]: Han, Ooka and Kikumoto's on-node wall-function bounce (their eq. 14).
-//! - [`outlet`]: convective pressure outlets, which carry a wake or vortices out of the box.
+//! - [`outlet`]: convective pressure outlets, which carry a wake or vortices out of the box, and
+//!   characteristic ones, which let an outgoing pressure wave leave.
+//! - [`reflection`]: the plane-pulse check of the characteristic outlet's reflection.
 //! - [`solve`]: the time loop, output frames and force histories in model units.
 //! - [`steady`]: the steady-state monitor and stop rule of a run.
 //! - [`rheology`]: shear-dependent viscosity (power law, Carreau–Yasuda, Cross, Cross-WLF), each
@@ -72,6 +74,7 @@ pub mod memory;
 pub mod mrt;
 pub mod outlet;
 pub mod ports;
+pub mod reflection;
 pub mod regularized;
 pub mod rheology;
 pub mod setup;

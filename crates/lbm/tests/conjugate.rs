@@ -372,7 +372,7 @@ fn a_heated_block_in_a_flow_conserves_heat() {
     let dx = 1.0 / n as f64;
     let mut d = domain([0.0; 3], [3.0, 1.0, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Parabolic };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     d.obstacles = vec!["Block".into()];
@@ -412,7 +412,7 @@ fn heated_block(capacity: f64, end_time: f64, steady: Option<fieldcraft_model::S
     let dx = 1.0 / n as f64;
     let mut d = domain([0.0; 3], [3.0, 1.0, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Parabolic };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     d.obstacles = vec!["Block".into()];

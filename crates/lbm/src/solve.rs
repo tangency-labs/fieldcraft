@@ -447,6 +447,9 @@ fn run_checkpointed(
     if store.is_some() && setup.domain.has_baffles() {
         return Err(Error::Invalid("baffles do not support checkpoint/resume yet".into()));
     }
+    if let Some((face, _)) = setup.domain.characteristic_outlet().filter(|_| store.is_some()) {
+        return Err(Error::Invalid(format!("not supported yet: a checkpoint of a characteristic outflow (box face {})", face.name())));
+    }
     let checkpoint_every = store.as_ref().map_or(0, |s| s.every());
     if store.is_some() && (checkpoint_every == 0 || flow.name() != "cpu") {
         return Err(Error::Invalid("checkpointing needs a positive step interval and the CPU backend".into()));
@@ -669,6 +672,12 @@ fn run_checkpointed(
     warnings.extend(flow.wall_y_plus().and_then(crate::wall::unresolved_wall));
     if let (Some(clamps), Some(r)) = (flow.viscosity_clamps(), &setup.rheology) {
         warnings.extend(clamps.warning(flow.fluid_cells(), r.tau));
+    }
+    let held = flow.characteristic_held();
+    if held > 0 {
+        warnings.push(format!(
+            "the characteristic outlet kept its last state in {held} cell updates, where its balance was not finite and positive: it stopped absorbing there; check the run for divergence"
+        ));
     }
     for body in flow.empty_obstacles() {
         warnings.push(format!("obstacle `{body}` covers no cell centre: it is smaller than the spacing or outside the box"));

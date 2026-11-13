@@ -575,6 +575,12 @@ pub struct Flow {
     pub(crate) block: usize,
     /// Each open cell's populations after its boundary, in the step (kept for its capacity).
     open_scratch: Vec<[f64; Q]>,
+    /// The characteristic outlet ([`Flow::characteristic_outlet`]): its cells in open-cell order
+    /// (empty without one), its relaxation rate K, and how many cell updates kept their last state
+    /// because the balance was not finite and positive.
+    characteristic: Vec<crate::outlet::Characteristic>,
+    characteristic_rate: f64,
+    characteristic_held: u64,
     /// The free surface: which fluid cells hold liquid, with a free surface.
     pub(crate) surface: Option<Surface>,
 }
@@ -935,8 +941,11 @@ impl Flow {
                             }
                             Target::Velocity(setup.to_lattice(velocity).map(|v| v * scale))
                         }
-                        FaceCondition::Pressure { pressure, outflow: Outflow::Uniform } => Target::Density(setup.lattice_density(pressure)),
-                        FaceCondition::Pressure { pressure, outflow: Outflow::Convective } => Target::Convective(setup.lattice_density(pressure)),
+                        // A characteristic outlet starts as a uniform one ([`Flow::characteristic_outlet`]).
+                        FaceCondition::Pressure { pressure, outflow: Outflow::Uniform | Outflow::Characteristic, .. } => {
+                            Target::Density(setup.lattice_density(pressure))
+                        }
+                        FaceCondition::Pressure { pressure, outflow: Outflow::Convective, .. } => Target::Convective(setup.lattice_density(pressure)),
                         _ => break,
                     };
                     if let Some(t) = taken.get_mut(cell) {
@@ -1177,9 +1186,15 @@ impl Flow {
             outlets: Outlets::default(),
             block: block_cells(n),
             open_scratch: Vec::new(),
+            characteristic: Vec::new(),
+            characteristic_rate: 0.0,
+            characteristic_held: 0,
             surface,
         };
         flow.outlets = Outlets::new(&flow.open, &View { flow: &flow, f: &flow.f });
+        if let Some((face, sigma)) = setup.domain.characteristic_outlet() {
+            flow.characteristic_outlet(face, sigma)?;
+        }
         if let Some(s) = &mut flow.surface {
             s.initial_mass = s.total_mass(&flow.f, flow.stride);
         }
@@ -1395,6 +1410,7 @@ impl Flow {
             + bytes(&self.gradient_u)
             + bytes(&self.zone_of)
             + bytes(&self.open_scratch)
+            + bytes(&self.characteristic)
             + bytes(&self.baffles)
             + self.zone_cells.iter().map(bytes).sum::<u64>()
             + self.outlets.heap_bytes();
@@ -1948,6 +1964,124 @@ impl Flow {
         let Some(mut walls) = self.walls.take() else { return };
         walls.sample(|cell| self.moments(cell).map_or([0.0; 3], |m| m.1));
         self.walls = Some(walls);
+    }
+
+    /// A characteristic (partially non-reflecting) pressure outlet on `face`, opt-in, before the
+    /// first step, on a uniform pressure outlet. Instead of holding the reference density ρ₀ with
+    /// the inner cell's normal velocity, each outlet cell carries its own density ρ_b and outward
+    /// normal velocity u_b, advanced by the linearised characteristic (LODI) balance of T. J.
+    /// Poinsot, S. K. Lele, *Boundary conditions for direct simulations of compressible viscous
+    /// flows*, J. Comput. Phys. 101:104–129, 1992, in density units (p = c_s² ρ): the outgoing
+    /// wave `L₅ = (u_b + c_s)[(ρ_b − ρ₁) + (ρ₀/c_s)(u_b − u₁)]`, one-sided from the inner cell, and
+    /// the incoming wave only the relaxation of the pressure, `L₁ = K (ρ_b − ρ₀)`, K = σ c_s / L
+    /// (L the box's extent along the face's axis, in cells; their σ, without their 1 − M² factor):
+    /// `ρ_b ← ρ_b − ½ (L₅ + L₁)`, `u_b ← u_b − (c_s / 2ρ₀)(L₅ − L₁)`. The cell then takes the
+    /// equilibrium at ρ_b and u_b (no tangential velocity, as the uniform outlet) plus the inner
+    /// cell's non-equilibrium part (Guo, Zheng & Shi). Returns the outlet's cell count.
+    pub fn characteristic_outlet(&mut self, face: BoxFace, sigma: f64) -> Result<usize> {
+        if self.steps_done > 0 {
+            return Err(Error::Invalid("the characteristic outlet is set before the first step".into()));
+        }
+        if !self.characteristic.is_empty() {
+            return Err(Error::Invalid(format!(
+                "not supported yet: a characteristic outlet on more than one face (`{}` would be the second)",
+                face.name()
+            )));
+        }
+        if !(sigma > 0.0 && sigma <= 1.0) {
+            return Err(Error::Invalid(format!("the characteristic outlet's σ is {sigma}: give one above 0 and at most 1")));
+        }
+        let axis = face.axis();
+        let on = |oc: &OpenCell| oc.axis == axis && (oc.inward < 0.0) == face.is_max();
+        let mut cells = Vec::with_capacity(self.open.iter().filter(|oc| on(oc)).count());
+        for (k, oc) in self.open.iter().enumerate() {
+            if !on(oc) {
+                continue;
+            }
+            let Target::Density(rho0) = oc.target else {
+                return Err(Error::Invalid(format!(
+                    "the characteristic outlet replaces a uniform pressure outlet; `{}` is not one (a convective outlet keeps its own closure)",
+                    face.name()
+                )));
+            };
+            let open = u32::try_from(k).map_err(|_| Error::Limit("too many open cells".into()))?;
+            cells.push(crate::outlet::Characteristic { open, density: rho0, velocity: f64::NAN });
+        }
+        if cells.is_empty() {
+            return Err(Error::Invalid(format!("the characteristic outlet goes on a pressure outlet; `{}` has none", face.name())));
+        }
+        let extent = self.grid.cells.get(axis).copied().unwrap_or(1).max(1);
+        self.characteristic_rate = sigma * crate::lattice::CS2.sqrt() / extent as f64;
+        self.characteristic = cells;
+        Ok(self.characteristic.len())
+    }
+
+    /// Advance the characteristic outlet's boundary state ([`Flow::characteristic_outlet`]) by
+    /// one step from the streamed inner cells, before any open cell is written.
+    fn advance_characteristic(&mut self) {
+        let mut cells = std::mem::take(&mut self.characteristic);
+        let mut held = 0;
+        for cell in &mut cells {
+            let Some(oc) = self.open.get(cell.open as usize) else { continue };
+            let Target::Density(rho0) = oc.target else { continue };
+            let Some((_, fi, inner_half)) = self.inner_cell(oc) else { continue };
+            let (mut rho1, mut j) = (0.0, 0.0);
+            for (q, f) in fi.iter().enumerate() {
+                rho1 += f;
+                j += f * c(q).get(oc.axis).copied().unwrap_or(0.0);
+            }
+            // The inner cell's outward physical velocity, as the closure reads it.
+            let u1 = -oc.inward * (j / rho1 + inner_half.get(oc.axis).copied().unwrap_or(0.0));
+            if !cell.advance(rho1, u1, rho0, self.characteristic_rate) {
+                held += 1;
+            }
+        }
+        self.characteristic = cells;
+        self.characteristic_held += held;
+    }
+
+    /// The streamed inner cell of pressure-outlet cell `oc` (one layer inside, when fluid): its
+    /// index, populations and half force per mass, with a fan's, a porous zone's or a mushy
+    /// cell's action as the collision applies it. Both pressure closures read it.
+    fn inner_cell(&self, oc: &OpenCell) -> Option<(usize, [f64; Q], [f64; 3])> {
+        let s = self.stride;
+        let [nx, ny, _] = self.grid.cells;
+        let step = [1, nx, nx * ny].get(oc.axis).copied().unwrap_or(0);
+        let cell = oc.cell as usize;
+        let inside = if oc.inward > 0.0 { cell.checked_add(step) } else { cell.checked_sub(step) };
+        let inner = inside.filter(|&i| self.is_fluid(i))?;
+        let fi = std::array::from_fn(|q| self.g.get(q * s + inner).copied().unwrap_or(0.0));
+        let mut inner_half = self.force_at(inner).map(|v| 0.5 * v);
+        let action = cell_action(self.action_at(inner), self.liquid_fraction(inner));
+        if action.is_some() {
+            let inner_rho: f64 = fi.iter().sum();
+            let mut j = [0.0; 3];
+            for (q, f) in fi.iter().enumerate() {
+                for (ja, ca) in j.iter_mut().zip(c(q)) {
+                    *ja += f * ca;
+                }
+            }
+            let (_, force) = velocity_force(inner_rho, j, self.force_at(inner), action.as_ref());
+            inner_half = force.map(|f| 0.5 * f / inner_rho);
+        }
+        Some((inner, fi, inner_half))
+    }
+
+    /// How many cell updates of the characteristic outlet kept their last state because its
+    /// balance was not finite and positive (0 without one): where it stopped absorbing.
+    pub fn characteristic_held(&self) -> u64 {
+        self.characteristic_held
+    }
+
+    /// The characteristic outlet's state of open cell `k`, once it has one.
+    fn characteristic_at(&self, k: usize) -> Option<crate::outlet::Characteristic> {
+        let i = self.characteristic.binary_search_by_key(&k, |c| c.open as usize).ok()?;
+        self.characteristic.get(i).copied().filter(|c| c.density.is_finite() && c.velocity.is_finite())
+    }
+
+    /// The characteristic outlet's cell count (0 without one).
+    pub fn characteristic_outlet_cells(&self) -> usize {
+        self.characteristic.len()
     }
 
     /// With the wall-function bounce: each wall cell's stress from its own density and velocity
@@ -2507,6 +2641,9 @@ impl Flow {
         let mut done = std::mem::take(&mut self.open_scratch);
         done.clear();
         done.resize(self.open.len(), [0.0; Q]);
+        // The characteristic outlet's boundary state this step, from the streamed inner cells
+        // before any open cell is written.
+        self.advance_characteristic();
         {
             let (flow, outlets) = (&*self, &outlets);
             parallel::chunks_mut(&mut done, OPEN_BLOCK, |b, chunk| {
@@ -2521,27 +2658,15 @@ impl Flow {
                     let (axis, sign) = (oc.axis, oc.inward);
                     // Guo, Zheng & Shi's non-equilibrium extrapolation. Read the streamed
                     // inner cell before any open boundary is written, including at edges.
-                    if let Target::Density(rho) = oc.target {
-                        let step = [1, nx, nx * ny].get(axis).copied().unwrap_or(0);
-                        let inside = if sign > 0.0 { cell.checked_add(step) } else { cell.checked_sub(step) };
-                        if let Some(inner) = inside.filter(|&i| flow.is_fluid(i)) {
-                            let fi = std::array::from_fn(|q| flow.g.get(q * s + inner).copied().unwrap_or(0.0));
-                            let mut inner_half = flow.force_at(inner).map(|v| 0.5 * v);
-                            let action = cell_action(flow.action_at(inner), flow.liquid_fraction(inner));
-                            if action.is_some() {
-                                let inner_rho: f64 = fi.iter().sum();
-                                let mut j = [0.0; 3];
-                                for (q, f) in fi.iter().enumerate() {
-                                    for (ja, ca) in j.iter_mut().zip(c(q)) {
-                                        *ja += f * ca;
-                                    }
-                                }
-                                let (_, force) = velocity_force(inner_rho, j, flow.force_at(inner), action.as_ref());
-                                inner_half = force.map(|f| 0.5 * f / inner_rho);
-                            }
-                            *p = crate::outlet::extrapolate_pressure(fi, rho, axis, inner_half, a_half);
-                            continue;
-                        }
+                    if let Target::Density(rho) = oc.target
+                        && let Some((_, fi, inner_half)) = flow.inner_cell(oc)
+                    {
+                        let (density, normal) = match flow.characteristic_at(k) {
+                            Some(b) => (b.density, crate::outlet::Normal::Given(-sign * b.velocity)),
+                            None => (rho, crate::outlet::Normal::Extrapolated(inner_half)),
+                        };
+                        *p = crate::outlet::pressure_closure(fi, density, axis, normal, a_half);
+                        continue;
                     }
                     // The cell's populations alone: direction stride 1, cell 0.
                     match (oc.target, outlets.action(k)) {
@@ -2706,6 +2831,9 @@ impl crate::backend::Backend for Flow {
 
     fn checkpoint(&mut self, a: &mut dyn crate::checkpoint::Archive) -> Result<()> {
         use crate::checkpoint::{boolean, doubles, f64, fixed, u64, vectors};
+        if !self.characteristic.is_empty() {
+            return Err(Error::Invalid("not supported yet: a checkpoint of a characteristic outlet".into()));
+        }
         // Streaming targets are allocated once, not cloned into a separate snapshot.
         self.targets()?;
         // Every field is named here, without `..`: a new field does not compile until it is
@@ -2762,6 +2890,10 @@ impl crate::backend::Backend for Flow {
             block: _,
             // Overwritten before use; its capacity is not state.
             open_scratch: _,
+            // `checkpoint` refuses a characteristic outlet until it has a restart layout.
+            characteristic: _,
+            characteristic_rate: _,
+            characteristic_held: _,
             surface,
         } = self;
         let n = *n;
@@ -3040,6 +3172,10 @@ impl crate::backend::Backend for Flow {
 
     fn viscosity_clamps(&self) -> Option<Clamps> {
         Flow::viscosity_clamps(self)
+    }
+
+    fn characteristic_held(&self) -> u64 {
+        Flow::characteristic_held(self)
     }
 
     fn empty_obstacles(&self) -> &[String] {

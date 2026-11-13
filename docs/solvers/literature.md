@@ -665,6 +665,27 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
 - **Limits.** Holding each cell at the face's pressure still reflects part of a strong vortex's pressure field;
   a characteristic (non-reflecting) outlet would pass it.
 
+**C3.5 Poinsot & Lele 1992, characteristic (LODI) boundary conditions.** **Verdict: build on (characteristic
+outlets, #904).**
+- **Citation.** T. J. Poinsot, S. K. Lele, *Boundary conditions for direct simulations of compressible viscous
+  flows*, J. Comput. Phys. 101:104–129, 1992. DOI [10.1016/0021-9991(92)90046-2](https://doi.org/10.1016/0021-9991(92)90046-2).
+- **Method.** At a subsonic outlet the wave leaving the domain is computed from the interior, and the wave entering
+  it is prescribed; a partially non-reflecting outlet sets the incoming wave to a relaxation of the pressure towards
+  its target, `L₁ = K (p − p∞)`, `K = σ (1 − M²) c / L`.
+- **Used as.** `Outflow::Characteristic` on a pressure face (`Flow::characteristic_outlet`): the linearised balance in
+  density units advances each outlet cell's density and normal velocity, without the 1 − M² factor, and the cell
+  takes the Guo, Zheng & Shi closure (C3.3a) at that state. Implementation is independent, from the paper.
+- **Reflection.** L. Selle, F. Nicoud, T. Poinsot, *Actual impedance of nonreflecting boundary conditions: implications
+  for computation of resonators*, AIAA J. 42(5):958–964, 2004, derive the relaxed outlet's `R(ω) = −1/(1 − 2iω/K)`, so
+  `|R| = K/√(K² + 4ω²)`: a one-pole low-pass of rate K/2 on a fully reflected wave. The oracle case
+  [`characteristic-outlet-reflection`](../../tests/oracle/characteristic-outlet-reflection/) checks that response in time. **σ.** D. H. Rudy, J. C. Strikwerda, *A
+  nonreflecting outflow boundary condition for subsonic Navier–Stokes calculations*, J. Comput. Phys. 36:55–70, 1980
+  (σ ≈ 0.25, the default).
+- **Limits.** One-dimensional along the face's normal (no transverse terms); through the relaxation, waves slower than
+  about K / 2 come back (|R| → 1 as ω → 0); besides it, the closure reflects directly 0.23 % of an incident pulse's
+  peak at σ 0.25, 0.5 and 1.0. Where the flow comes back in, the outflow treatment is kept (a subsonic inflow needs more
+  prescribed waves).
+
 ### C4. Grid refinement
 
 **C4.1 Filippova & Hänel 1998; Dupuis & Chopard 2003.** **Verdict: build on (Dupuis–Chopard cell-vertex refinement).**

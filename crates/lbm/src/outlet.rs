@@ -1,8 +1,9 @@
-//! Convective pressure outlets: each outlet cell holds the face's pressure, and its velocity is
-//! carried out to it by the flow instead of following from a uniform-pressure balance.
+//! Convective and characteristic pressure outlets: each convective outlet cell holds the face's
+//! pressure, and its velocity is carried out to it by the flow instead of following from a
+//! uniform-pressure balance; each characteristic outlet cell lets an outgoing pressure wave leave.
 //!
 //! A uniform pressure face extrapolates its normal velocity and non-equilibrium populations
-//! from the inner cell ([`extrapolate_pressure`]), imposing density and zero tangential velocity.
+//! from the inner cell ([`pressure_closure`]), imposing density and zero tangential velocity.
 //! A convective outlet instead lets the wake's populations leave at the local flow speed.
 //!
 //! # The condition
@@ -43,6 +44,31 @@
 //! 2013; Z. Yang, *Lattice Boltzmann outflow treatments: convective conditions and others*,
 //! Comput. Math. Appl. 65(2):160–171, 2013 (both DOIs not checked; no code read).
 //!
+//! # The characteristic outlet
+//! A uniform outlet holds the face's density, so an outgoing pressure wave comes back almost
+//! whole. A characteristic outlet cell ([`Characteristic`]) instead carries its own density ρ_b and
+//! outward normal velocity u_b, advanced every step after streaming by the linearised
+//! one-dimensional characteristic (LODI) balance of T. J. Poinsot, S. K. Lele, *Boundary
+//! conditions for direct simulations of compressible viscous flows*, J. Comput. Phys.
+//! 101:104–129, 1992, in density units (p = c_s² ρ), with ρ₁, u₁ the inner cell's state (the
+//! physical velocity, as the closure reads it) and ρ₀ the face's density:
+//!
+//! `L₅ = (u_b + c_s) [(ρ_b − ρ₁) + (ρ₀/c_s)(u_b − u₁)]`, the outgoing wave, one-sided from the
+//! inner cell, its speed limited to [0, 1] cells per step; `L₁ = K (ρ_b − ρ₀)`, `K = σ c_s / L`
+//! (L the box's extent along the face's axis, in cells; their σ, without their 1 − M² factor;
+//! σ ≈ 0.25 after D. H. Rudy, J. C. Strikwerda, *A nonreflecting outflow boundary condition for
+//! subsonic Navier–Stokes calculations*, J. Comput. Phys. 36:55–70, 1980),
+//! the incoming wave only the relaxation of the pressure; `ρ_b ← ρ_b − ½ (L₅ + L₁)`,
+//! `u_b ← u_b − (c_s / 2ρ₀)(L₅ − L₁)`.
+//!
+//! The cell then takes the uniform outlet's closure ([`pressure_closure`]) at ρ_b and u_b. The
+//! linearised balance reflects `|R| = K / √(K² + 4ω²)` of a normal wave of angular frequency ω,
+//! as derived by L. Selle, F. Nicoud, T. Poinsot, *Actual impedance of nonreflecting boundary
+//! conditions: implications for computation of resonators*, AIAA J. 42(5):958–964, 2004: σ trades
+//! the reflection of slow waves against how far the mean pressure drifts from the face's.
+//! The plane-pulse check of that response is [`crate::reflection`]. Where the flow comes back in
+//! (u_b < 0) the cell keeps this outflow treatment.
+//!
 //! # Determinism
 //! Every cell's update reads only populations streamed before any open cell changes, and writes
 //! only its own: the order of the cells does not matter.
@@ -70,6 +96,15 @@ pub fn unknowns(axis: usize, inward: f64) -> [usize; UNKNOWN] {
     out
 }
 
+/// The normal velocity a pressure-outlet cell takes in [`pressure_closure`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Normal {
+    /// The inner cell's physical normal velocity: its bare velocity plus this half force per mass.
+    Extrapolated([f64; 3]),
+    /// A given physical normal velocity along the axis (the characteristic outlet's).
+    Given(f64),
+}
+
 /// Pressure closure from the streamed inner cell: Guo, Zheng & Shi, *Non-equilibrium
 /// extrapolation method for velocity and pressure boundary conditions in the lattice Boltzmann
 /// method*, Chinese Physics 11:366–374 (2002), doi:10.1088/1009-1963/11/4/310.
@@ -78,7 +113,8 @@ pub fn unknowns(axis: usize, inward: f64) -> [usize; UNKNOWN] {
 /// to a local Zou–He pressure balance, the outgoing normal stress is not fed back into the same
 /// cell's reconstructed normal velocity (#819). Force offsets are applied to the bare velocities
 /// used by the populations, as in the other open boundaries.
-pub(crate) fn extrapolate_pressure(f: [f64; Q], density: f64, axis: usize, inside_half: [f64; 3], boundary_half: [f64; 3]) -> [f64; Q] {
+/// The characteristic outlet gives its own normal velocity ([`Normal::Given`]).
+pub(crate) fn pressure_closure(f: [f64; Q], density: f64, axis: usize, normal: Normal, boundary_half: [f64; 3]) -> [f64; Q] {
     use crate::lattice::{c, equilibrium};
     let rho: f64 = f.iter().sum();
     let mut momentum = [0.0; 3];
@@ -90,9 +126,46 @@ pub(crate) fn extrapolate_pressure(f: [f64; Q], density: f64, axis: usize, insid
     let inside = momentum.map(|j| j / rho);
     let mut boundary = boundary_half.map(|a| -a);
     if let Some(u) = boundary.get_mut(axis) {
-        *u += inside.get(axis).copied().unwrap_or(0.0) + inside_half.get(axis).copied().unwrap_or(0.0);
+        *u += match normal {
+            Normal::Extrapolated(inside_half) => inside.get(axis).copied().unwrap_or(0.0) + inside_half.get(axis).copied().unwrap_or(0.0),
+            Normal::Given(along) => along,
+        };
     }
     std::array::from_fn(|q| equilibrium(q, density, boundary) + (f[q] - equilibrium(q, rho, inside)))
+}
+
+/// A characteristic outlet cell ([module docs](self)): its open cell and boundary state.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Characteristic {
+    /// Its index among the flow's open cells.
+    pub open: u32,
+    /// Its boundary density ρ_b.
+    pub density: f64,
+    /// Its outward normal velocity u_b (NaN until the first step sets it from the inner cell).
+    pub velocity: f64,
+}
+
+impl Characteristic {
+    /// Advance the state by one step of the linearised balance from the streamed inner cell's
+    /// density `rho1` and outward normal velocity `u1`, towards the face's density `rho0` at the
+    /// relaxation rate `k`. False, with the state kept, when the inner cell or the update is not
+    /// finite and positive.
+    pub(crate) fn advance(&mut self, rho1: f64, u1: f64, rho0: f64, k: f64) -> bool {
+        if !(rho1 > 0.0 && rho1.is_finite() && u1.is_finite()) {
+            return false;
+        }
+        let cs = crate::lattice::CS2.sqrt();
+        let (rho_b, u_b) = (self.density, if self.velocity.is_finite() { self.velocity } else { u1 });
+        let l5 = (u_b + cs).clamp(0.0, 1.0) * ((rho_b - rho1) + rho0 / cs * (u_b - u1));
+        let l1 = k * (rho_b - rho0);
+        let rho_next = rho_b - 0.5 * (l5 + l1);
+        let u_next = u_b - cs / (2.0 * rho0) * (l5 - l1);
+        if !(rho_next > 0.0 && rho_next.is_finite() && u_next.is_finite()) {
+            return false;
+        }
+        (self.density, self.velocity) = (rho_next, u_next);
+        true
+    }
 }
 
 /// `(f_N + λ f_{N−1}) / (1 + λ)`.
@@ -269,7 +342,7 @@ mod tests {
         // A shear-carrying, off-equilibrium state with zero residual mass and momentum.
         let f = std::array::from_fn(|q| equilibrium(q, rho, bare) + 9.0 * W[q] * c(q)[0] * c(q)[1] * 0.001);
         for axis in 0..3 {
-            let out = extrapolate_pressure(f, 0.98, axis, inside_half, boundary_half);
+            let out = pressure_closure(f, 0.98, axis, Normal::Extrapolated(inside_half), boundary_half);
             let density: f64 = out.iter().sum();
             assert!((density - 0.98).abs() < 1e-14);
             let mut expected = boundary_half.map(|a| -a);

@@ -677,7 +677,7 @@ pub static CATALOGUE: &[Capability] = &[
         Solve,
         "Fluids",
         "Lattice Boltzmann flow of a fluid step on the CPU or a GPU, with wall forces, and the heat it carries",
-        &["solve.settings"],
+        &["solve.settings", "solve.outlet_reflection"],
     ),
     soon("solve.fsi", "Fluid–Structure", Solve, "Fluids", "M13", "Coupled fluid and structure solve"),
     // ---- Results ----

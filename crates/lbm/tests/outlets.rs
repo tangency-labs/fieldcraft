@@ -42,7 +42,7 @@ fn channel_model(l: f64, dx: f64, um: f64, outflow: Outflow, procedure: Procedur
     let (h, d, nu) = (0.41, 0.1, 1e-3);
     let mut dom = domain([0.0; 3], [l, h, dx], dx);
     dom.faces.x_min = FaceCondition::Velocity { velocity: [um, 0.0, 0.0], profile: Profile::Parabolic };
-    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow };
+    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow, sigma: None };
     dom.faces.z_min = PERIODIC;
     dom.faces.z_max = PERIODIC;
     if initial {
@@ -156,8 +156,8 @@ fn pressure_driven_poiseuille_holds_its_end_pressures_with_convective_faces() {
     let dx = h / n as f64;
     let dp = 12.0 * nu * (2.0 / 3.0 * umax) * l / (h * h);
     let mut d = domain([0.0; 3], [l, h, dx], dx);
-    d.faces.x_min = FaceCondition::Pressure { pressure: dp, outflow: Outflow::Convective };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+    d.faces.x_min = FaceCondition::Pressure { pressure: dp, outflow: Outflow::Convective, sigma: None };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective, sigma: None };
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     let r = solve_fluid(&model(1.0, nu, d, fluid(4.0 * h * h / nu, 0.1 / 3.0 * dx * dx / nu, 1)), None, &[], &Limits::default()).unwrap();
@@ -187,8 +187,8 @@ fn an_edge_of_two_pressure_faces_holds_the_outlet_density() {
     {
         let mut d = domain([0.0; 3], [16.0, 8.0, 1.0], 1.0);
         d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: x_max };
-        d.faces.y_max = FaceCondition::Pressure { pressure: 0.0, outflow: y_max };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: x_max, sigma: None };
+        d.faces.y_max = FaceCondition::Pressure { pressure: 0.0, outflow: y_max, sigma: None };
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         let m = model(1.0, 0.05, d, fluid(800.0, 1.0, 1));
@@ -215,7 +215,7 @@ fn vortex(l: f64, outflow: Outflow, swirl: f64) -> (Setup, Flow) {
     let dx = h / n as f64;
     let mut d = domain([0.0; 3], [l, h, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [u0, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow, sigma: None };
     for f in [BoxFace::YMin, BoxFace::YMax, BoxFace::ZMin, BoxFace::ZMax] {
         *d.faces.get_mut(f) = PERIODIC;
     }

@@ -723,11 +723,14 @@ const FACE_CONDITION: &[Variant] = &[
         "Pressure outlet",
         &[
             num("pressure", "Pressure", D::Stress).help("Pressure at the outlet, relative to the domain's reference.").req().def("0"),
-            choice("outflow", "Outflow", &[("uniform", "Uniform"), ("convective", "Convective")])
+            choice("outflow", "Outflow", &[("uniform", "Uniform"), ("convective", "Convective"), ("characteristic", "Characteristic")])
                 .help(
-                    "Uniform: the flow crosses the outlet normally. Convective: the flow leaves as it arrives, for outlets a wake or vortices reach.",
+                    "Uniform: the flow crosses the outlet normally. Convective: the flow leaves as it arrives, for outlets a wake or vortices reach. Characteristic: as uniform, but outgoing pressure waves leave instead of reflecting (CPU only, no checkpoints).",
                 )
                 .def("\"uniform\""),
+            above("sigma", "Relaxation σ", D::None, 0.0, 1.0)
+                .help("A characteristic outflow only: how fast its pressure relaxes to the outlet's (above 0, at most 1). Smaller reflects less of the slow waves but lets the mean pressure drift further.")
+                .hint("0.25"),
         ],
     ),
     variant("periodic", "Periodic", &[]),
@@ -2493,6 +2496,14 @@ pub const SOLVE_HISTORY: &[Field] = &[
     references("sets", "Sets", C::Set)
         .help("Nonlinear static steps: the sets whose mean displacement and reaction sum to give per frame; the boundary-condition sets when none."),
     int("node", "Node", 1, 4_294_967_295).help("Nonlinear static steps: a node whose displacement to give per frame."),
+];
+pub const OUTLET_REFLECTION: &[Field] = &[
+    above("sigma", "Relaxation σ", D::None, 0.0, 1.0)
+        .help("The characteristic outlet's relaxation, above 0 and at most 1 (0.25 is the outflow's default).")
+        .req(),
+    json("omegas", "Angular frequencies")
+        .help("Optional JSON list of at most 16 angular frequencies, above 0 and at most π radians per lattice step; defaults to [0.01, 0.02, 0.04].")
+        .hint("[0.01, 0.02, 0.04]"),
 ];
 pub const SOLVE_FLUID: &[Field] = &[
     STEP,

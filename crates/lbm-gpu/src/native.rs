@@ -670,6 +670,9 @@ impl GpuFlow {
         if flow.has_baffles() {
             return Err(Error::Invalid("baffles are not supported on the GPU yet: solve on the CPU".into()));
         }
+        if flow.characteristic_outlet_cells() > 0 {
+            return Err(Error::Invalid("the characteristic outlet is not supported on the GPU yet: solve on the CPU".into()));
+        }
         if let Some(r) = flow.rheology() {
             return Err(Error::Invalid(format!(
                 "the GPU backend does not step a shear-dependent viscosity yet (a {} fluid): solve on the CPU (`backend: \"cpu\"`)",
