@@ -878,6 +878,19 @@ impl ModelApp {
                     _ => Some(session.names(c)).filter(|n| n.len() == 1).and_then(|n| n.into_iter().next()),
                 };
                 form::preselect(form, obj, &pick);
+                // The model's first step starts with every boundary condition and load active: a
+                // step accepted as it opens otherwise constrains and loads nothing (A4-3).
+                if spec.id == "model.step.create" && self.session.model.steps().is_empty() {
+                    let model = &self.session.model;
+                    for (key, names) in [
+                        ("boundary_conditions", model.boundary_conditions().keys().cloned().collect::<Vec<_>>()),
+                        ("loads", model.loads().keys().cloned().collect()),
+                    ] {
+                        if !names.is_empty() && obj.get(key).is_none_or(Value::is_null) {
+                            obj.insert(key.into(), json!(names));
+                        }
+                    }
+                }
                 // A new datum or partition starts with the next free name (Datum-1, …), editable.
                 if let Some(name) = self.default_name(spec.id)
                     && obj.get("name").and_then(Value::as_str).is_none_or(str::is_empty)
@@ -3699,6 +3712,27 @@ mod tests {
                 assert!(!legend.contains(at) && view.contains(at), "{w}×{h}: corner {k} at {at:?}, legend {legend:?}");
             }
         }
+    }
+
+    /// The first step's form starts with every boundary condition and load active, so the step
+    /// a person accepts is not one that constrains nothing (A4-3); a later step starts empty.
+    #[test]
+    fn the_first_step_form_activates_every_bc_and_load() {
+        let mut app = ModelApp::new(Session::default());
+        let script: Vec<Value> =
+            fieldcraft_engine::sample::cantilever().as_array().unwrap().iter().filter(|c| c["command"] != "model.step.create").cloned().collect();
+        app.run_script(&Value::Array(script)).unwrap();
+        assert!(app.session.model.steps().is_empty() && !app.session.model.loads().is_empty());
+        app.start("model.step.create").unwrap();
+        let params: Value = serde_json::from_str(&app.dialog.as_ref().unwrap().text).unwrap();
+        let bcs: Vec<&String> = app.session.model.boundary_conditions().keys().collect();
+        let loads: Vec<&String> = app.session.model.loads().keys().collect();
+        assert_eq!((params["boundary_conditions"].clone(), params["loads"].clone()), (json!(bcs), json!(loads)), "{params}");
+        app.dialog = None;
+        app.run("model.step.create", json!({"name": "Load", "procedure": {"type": "static"}})).unwrap();
+        app.start("model.step.create").unwrap();
+        let params: Value = serde_json::from_str(&app.dialog.as_ref().unwrap().text).unwrap();
+        assert!(params.get("loads").is_none_or(|l| l.as_array().is_some_and(Vec::is_empty)), "{params}");
     }
 
     /// A window made smaller frames a model it would cut off, and another mode shown frames its
