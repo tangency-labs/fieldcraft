@@ -318,7 +318,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
             c if SOLVES.contains(&c) => solve_summary(ui, t, &reply.value, units),
             "model.activity" => activity(ui, t, &reply.value),
             "geometry.bodies" => bodies(ui, t, &reply.value, app.session.units(), &mut acts),
-            "mesh.quality" => quality(ui, t, &reply.value, &mut acts),
+            "mesh.quality" => quality(ui, t, &reply.value, app.session.units(), &mut acts),
             "geometry.defeature.propose" => defeature_list(ui, t, &reply.value, app.session.units(), &mut acts),
             "geometry.features" => {
                 let hovered = feature_graph(ui, t, &reply.value, &app.features_open, &mut acts);
@@ -621,11 +621,32 @@ const METRICS: [(&str, &str, bool); 4] = [
 /// Elements a Select button selects at most.
 const MAX_SELECT: usize = 10_000;
 
+/// `mesh.quality`'s count rows, then the mesh's volume (a surface mesh's area) in the display
+/// units, as the Bodies panel writes them: key, text and whether it is an error.
+fn quality_rows(v: &Value, units: &DisplaySystem) -> Vec<(&'static str, String, bool)> {
+    use fieldcraft_model::units::Quantity as Q;
+    let n = |k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let (invalid, undetermined) =
+        (v.pointer("/invalid/count").and_then(Value::as_u64).unwrap_or(0), v.pointer("/undetermined/count").and_then(Value::as_u64).unwrap_or(0));
+    let mut rows = vec![("Elements", count(n("measured")), false), ("Valid", count(n("valid")), false), ("Invalid", count(invalid), invalid > 0)];
+    if undetermined > 0 {
+        rows.push(("Undetermined", count(undetermined), false));
+    }
+    let measure = |x: f64, q: Q| format!("{} {}", crate::describe::quantity(sig(x)), units.symbol(q));
+    if let Some(vol) = v.get("volume").and_then(Value::as_f64).filter(|x| *x > 0.0) {
+        rows.push(("Volume", measure(vol, Q::Volume), false));
+    }
+    // A surface mesh's area; a solid mesh has none to show.
+    if let Some(area) = v.get("area").and_then(Value::as_f64).filter(|x| *x > 0.0) {
+        rows.push(("Area", measure(area, Q::Area), false));
+    }
+    rows
+}
+
 /// `mesh.quality`'s reply: the counts, then each metric's range, histogram and worst element (a
 /// click selects and frames it), buttons selecting the invalid and undetermined elements, and
 /// Relax around worst element (#398).
-fn quality(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
-    let n = |k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
+fn quality(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySystem, acts: &mut Vec<Act>) {
     let labels = |k: &str| -> Vec<u32> {
         v.pointer(&format!("/{k}/labels"))
             .and_then(Value::as_array)
@@ -635,23 +656,8 @@ fn quality(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
             .take(MAX_SELECT)
             .collect()
     };
-    let (invalid, undetermined) =
-        (v.pointer("/invalid/count").and_then(Value::as_u64).unwrap_or(0), v.pointer("/undetermined/count").and_then(Value::as_u64).unwrap_or(0));
-    let row = |ui: &mut egui::Ui, k: &str, text: &str, error: bool| {
-        kit::row(ui, k, |ui| kit::text(ui, text, kit::Text::Value("fc_quality_counts", error)));
-    };
-    row(ui, "Elements", &count(n("measured")), false);
-    row(ui, "Valid", &count(n("valid")), false);
-    row(ui, "Invalid", &count(invalid), invalid > 0);
-    if undetermined > 0 {
-        row(ui, "Undetermined", &count(undetermined), false);
-    }
-    if let Some(vol) = v.get("volume").and_then(Value::as_f64).filter(|x| *x > 0.0) {
-        row(ui, "Volume", &number(vol), false);
-    }
-    // A surface mesh's area; a solid mesh has none to show.
-    if let Some(area) = v.get("area").and_then(Value::as_f64).filter(|x| *x > 0.0) {
-        row(ui, "Area", &number(area), false);
+    for (k, text, error) in quality_rows(v, units) {
+        kit::row(ui, k, |ui| kit::text(ui, &text, kit::Text::Value("fc_quality_counts", error)));
     }
     for (key, what) in [("invalid", "invalid"), ("undetermined", "undetermined")] {
         let l = labels(key);
@@ -1196,6 +1202,15 @@ mod tests {
         app.show_elements(&[worst]);
         assert_eq!(app.pick.selection.summary(), "1 element");
         assert_ne!(app.cam, before, "framed");
+    }
+
+    /// Mesh Quality's volume and area carry their unit and read as the Bodies panel's do (A4-11).
+    #[test]
+    fn mesh_quality_measures_have_units() {
+        let units = DisplaySystem::default();
+        let rows = quality_rows(&json!({"measured": 3125, "valid": 3125, "volume": 9552.3, "area": 0.0}), &units);
+        let text: Vec<(&str, &str)> = rows.iter().map(|(k, v, _)| (*k, v.as_str())).collect();
+        assert_eq!(text, [("Elements", "3,125"), ("Valid", "3,125"), ("Invalid", "0"), ("Volume", "9\u{2009}550 mm³")]);
     }
 
     /// A3-5: a reply's key/value rows share one value column, sized to its longest key.
