@@ -935,25 +935,24 @@ fn json_name<T: serde::Serialize>(v: &T) -> String {
 pub fn browser(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
     let mut acts: Vec<Act> = Vec::new();
-    egui::Panel::left("fc_browser")
-        .exact_size(WIDTH)
-        .resizable(false)
-        .show_separator_line(true)
-        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
-        .show(ui, |ui| {
-            app.place("browser", ui.max_rect());
-            // The title band as the kit's tree cards draw theirs (`solidcraft_ui_kit::tree_header`).
-            let k = solidcraft_theme::Tokens::get();
-            let (band, _) = ui.allocate_exact_size(vec2(ui.available_width(), k.form_header_height), Sense::hover());
-            let title = Rect::from_min_max(band.min + vec2(k.space_12, 0.0), band.max);
-            kit::paint_text(ui, title, "Browser", kit::type_face::semibold(k.font_heading), k.text, false);
-            k.secondary_hline(ui.painter(), band.x_range(), band.bottom(), k.dialog_rule);
-            ui.add_space(4.0);
-            egui::ScrollArea::vertical().id_salt("fc_browser_scroll").auto_shrink([false, false]).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                rows(app, ui, &mut acts);
-            });
+    let k = solidcraft_theme::Tokens::get();
+    // The kit's workspace panel along the left edge.
+    let host = kit::Container::new(ui.ctx(), kit::Surface::Panel);
+    let edge = host.edge("fc_browser", kit::Edge::Left).exact_size(WIDTH).resizable(false).show_separator_line(true);
+    let frame = host.edge_frame(t.panel).inner_margin(egui::Margin::same(k.space_6 as i8));
+    host.show_edge(ui, edge, frame, |ui| {
+        app.place("browser", ui.max_rect());
+        // The title band as the kit's tree cards draw theirs (`solidcraft_ui_kit::tree_header`).
+        let (band, _) = ui.allocate_exact_size(vec2(ui.available_width(), k.form_header_height), Sense::hover());
+        let title = Rect::from_min_max(band.min + vec2(k.space_12, 0.0), band.max);
+        kit::paint_text(ui, title, "Browser", kit::type_face::semibold(k.font_heading), k.text, false);
+        k.secondary_hline(ui.painter(), band.x_range(), band.bottom(), k.dialog_rule);
+        ui.add_space(k.space_4);
+        egui::ScrollArea::vertical().id_salt("fc_browser_scroll").auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            rows(app, ui, &mut acts);
         });
+    });
     for a in acts {
         match a {
             Act::Fold(key) => {
