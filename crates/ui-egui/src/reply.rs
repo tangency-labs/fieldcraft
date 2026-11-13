@@ -270,15 +270,16 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     let Some(reply) = app.reply.clone() else { return };
     let mut acts = Vec::new();
     kit::panel::header(ui, &reply.command, &reply.label, || acts.push(Act::Close));
-    ui.add_space(4.0);
-    if kit::button(ui, "Run again", kit::Button::Small).backing_on_hover_text(reply.command.as_str()).clicked() {
-        acts.push(Act::Rerun);
-    }
-    ui.add_space(4.0);
-    kit::status_line(ui, &summary_in(&reply.command, &reply.value, Some(app.session.units())), kit::StatusTone::Dim);
-    ui.add_space(4.0);
-    // One form: the reply's rows share one label column, sized to its longest key.
+    // One form: the kit's buttons and rows, the rows sharing one label column sized to the
+    // longest key.
     kit::scope(ui, |ui| {
+        ui.add_space(4.0);
+        if kit::button(ui, "Run again", kit::Button::Normal).backing_on_hover_text(reply.command.as_str()).clicked() {
+            acts.push(Act::Rerun);
+        }
+        ui.add_space(4.0);
+        kit::status_line(ui, &summary_in(&reply.command, &reply.value, Some(app.session.units())), kit::StatusTone::Dim);
+        ui.add_space(4.0);
         let units = Some(app.session.units());
         match reply.command.as_str() {
             "deck.read" => {
@@ -1176,6 +1177,21 @@ mod tests {
         for row in ["elements", "boundary conditions", "steps"] {
             assert_eq!(left(row), Some(first), "{row}'s value starts elsewhere");
         }
+    }
+
+    /// A3-18: "Run again" is the kit's ordinary button, as tall and as rounded as the others,
+    /// not its small square one.
+    #[test]
+    fn run_again_is_the_kits_ordinary_button() {
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        app.reply = Some(Reply { command: "model.info".into(), label: "Model Info".into(), params: json!({}), value: json!({"nodes": 1}) });
+        let t = Tokens::get(false);
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| show(&mut app, ui, &t));
+        out.textures_delta.clear();
+        let button = solidcraft_ui_registry::rect_of("dialog:button::Run again").expect("the Run again button");
+        let height = solidcraft_theme::Tokens::get().control_height;
+        assert!(button.height() >= height - 0.5, "Run again is {} pt tall, the kit's buttons {height}", button.height());
     }
 
     #[test]
