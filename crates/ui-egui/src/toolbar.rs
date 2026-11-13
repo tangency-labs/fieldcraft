@@ -26,8 +26,8 @@ use crate::theme::Tokens;
 /// The ribbon card's height: the tab row, then the panels with their buttons' labels (the kit's;
 /// SolidCraft's `RIBBON_HEIGHT`).
 pub const CARD_HEIGHT: f32 = TABS_HEIGHT + ribbon::GROUP_HEIGHT + 1.0;
-/// The band the ribbon keeps under the app bar: the kit's shell gap above the cards, then the
-/// cards. What is below (the browser card) starts its own gap under them.
+/// The band the cards take under the app bar: the kit's shell gap above them, then the cards.
+/// What is below them (the browser card) starts its own gap under them.
 pub const HEIGHT: f32 = kit::SHELL_GAP + CARD_HEIGHT;
 /// The tab row's height (the kit's).
 const TABS_HEIGHT: f32 = ribbon::TAB_ROW_HEIGHT;
@@ -147,26 +147,31 @@ fn state(app: &ModelApp, c: &Capability) -> State {
 pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
     let mut start: Option<&'static str> = None;
-    // The workspace switcher and the ribbon are two chrome cards over a clear band, as
-    // SolidCraft's floating shell lays them out (`toolbar::toolbar`, `ui_kit::Cards`).
+    // The workspace switcher and the ribbon are two chrome cards over the viewport, as
+    // SolidCraft's floating shell lays them out (`toolbar::toolbar`, `ui_kit::Cards`): `ui`'s
+    // available space is the window below the application bar, which the viewport fills.
     let host = kit::Container::new(ui.ctx(), kit::Surface::Chrome);
     let available = ui.available_rect_before_wrap();
-    let height = host.gap() + CARD_HEIGHT;
     let cards = kit::Cards::new(available, kit::LayoutMode::current(ui.ctx()), CARD_HEIGHT, WORKSPACE_WIDTH);
+    // The band the cards take, from the application bar down to the cards' bottom.
+    let band = Rect::from_min_max(available.min, pos2(available.right(), cards.ribbon.bottom()));
     let frame = host.frame(ui.ctx(), t.toolbar, kit::frame::Side::Left);
-    let panel = host.edge("fc_toolbar", kit::Edge::Top).exact_size(height).show_separator_line(false);
-    host.show_edge(ui, panel, host.edge_frame(egui::Color32::TRANSPARENT), |ui| {
-        let band = ui.max_rect();
-        app.place("ribbon", band);
-        app.place("ribbon:card", cards.ribbon);
-        app.toolbar_rects.clear();
-        app.panel_rects.clear();
-        for card in [cards.workspace, cards.ribbon] {
-            host.paint_background(ui.painter(), frame, card);
-            // Blank card space owns clicks as well as its buttons.
-            let _ = ui.interact(card, ui.scope_id().with(("fc_shell_card", card.left().to_bits())), egui::Sense::click_and_drag());
-        }
+    app.place("ribbon", band);
+    app.place("ribbon:card", cards.ribbon);
+    app.shell.cards = vec![cards.workspace, cards.ribbon];
+    app.toolbar_rects.clear();
+    app.panel_rects.clear();
+    // One area per card, each exactly its card (an area takes the clicks over all of its rect):
+    // the gaps around the cards are the view's, as SolidCraft shields only its cards from the
+    // view's input (`shell::covered_rects`).
+    host.area(egui::Id::unique("fc_toolbar_workspace")).fixed_pos(cards.workspace.min).show(ui.ctx(), |ui| {
+        ui.set_min_size(cards.workspace.size());
+        host.paint_background(ui.painter(), frame, cards.workspace);
         workspace_switcher(app, ui, cards.workspace);
+    });
+    host.area(egui::Id::unique("fc_toolbar")).fixed_pos(cards.ribbon.min).show(ui.ctx(), |ui| {
+        ui.set_min_size(cards.ribbon.size());
+        host.paint_background(ui.painter(), frame, cards.ribbon);
         let r = cards.ribbon;
         // Tabs: the kit's tab row, in the main accent.
         let tabs = app.ui.workspace.tabs();
@@ -626,7 +631,8 @@ mod tests {
     /// The workspace switcher and the ribbon are SolidCraft's two cards (`ui_kit::Cards`): inset
     /// from the window's edges and from the app bar by the kit's shell gap, the switcher
     /// SolidCraft's width and the ribbon a gap right of it, both the ribbon's height. The band they
-    /// keep ends at the cards, so what is below starts a gap under them.
+    /// take ends at the cards, so what is below starts a gap under them; the viewport runs under
+    /// them, so they are recorded as the shell's cards.
     #[test]
     fn the_switcher_and_the_ribbon_are_inset_cards() {
         let mut app = ModelApp::new(fieldcraft_engine::Session::default());
@@ -646,6 +652,7 @@ mod tests {
         assert!(near(ws.left(), gap) && near(ws.top(), gap) && near(ws.width(), WORKSPACE_WIDTH), "{ws:?}");
         assert!(near(card.left(), ws.right() + gap) && near(card.top(), gap) && near(card.right(), screen.right() - gap), "{card:?}");
         assert!(near(card.height(), CARD_HEIGHT) && near(ws.bottom(), card.bottom()), "{ws:?} {card:?}");
+        assert_eq!(app.shell.cards, vec![ws, card], "the viewport keeps its overlays clear of both cards");
         let buttons: Vec<Rect> = app.toolbar_rects.iter().filter(|(.., f)| *f == Fit::Full).map(|(_, r, _)| *r).collect();
         assert!(!buttons.is_empty() && buttons.iter().all(|r| card.contains_rect(*r)), "{buttons:?} outside {card:?}");
     }
