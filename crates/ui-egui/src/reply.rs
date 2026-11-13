@@ -106,6 +106,29 @@ pub fn summary_in(command: &str, v: &Value, units: Option<&DisplaySystem>) -> St
     if line.is_empty() { "done".into() } else { one_line(&line) }
 }
 
+/// The sentence a file or history command finishes with, in place of its reply's fields: "Saved
+/// box.fieldcraft (with results)", "Wrote box.k (LS-DYNA, mm-t-s-N-MPa)", "Undid Octree Hex
+/// Mesh". `None` for other commands.
+pub fn sentence(command: &str, v: &Value) -> Option<String> {
+    let file = || v.get("path").and_then(Value::as_str).map(crate::files::file_name);
+    match command {
+        "file.save" | "file.save_as" => {
+            let results = v["contents"].as_array().into_iter().flatten().filter_map(Value::as_str).any(|c| c.starts_with("the results of"));
+            Some(format!("Saved {}{}", file()?, if results { " (with results)" } else { "" }))
+        }
+        "deck.write" => {
+            let format = v["format"].as_str()?;
+            let entry = fieldcraft_engine::catalogue::find(&format!("deck.write.{format}"));
+            let name = entry.map_or(format, |c| c.label.trim_end_matches(" Deck"));
+            let units = v["units"].as_str().map(|u| format!(", {u}")).unwrap_or_default();
+            Some(format!("Wrote {} ({name}{units})", file()?))
+        }
+        "edit.undo" => v["undone"].as_str().map(|c| format!("Undid {}", crate::command_label(c))),
+        "edit.redo" => v["redone"].as_str().map(|c| format!("Redid {}", crate::command_label(c))),
+        _ => None,
+    }
+}
+
 /// The status line after `command` changed the model or the display, written for the person
 /// rather than from the command's label: "Showing Load deformed ×2", "Mode 2: 1637 Hz", "Added
 /// load Push". Commands without a sentence of their own say "<label> done".
@@ -162,6 +185,7 @@ pub fn done(command: &str, label: &str, params: &Value, v: &Value) -> String {
             label.map(|l| format!("Opened the {l} sample"))
         }
         "solve.run" => v.get("steps").and_then(Value::as_array).map(|s| format!("Solved {}", plural(s.len() as u64, "step"))),
+        "edit.undo" | "edit.redo" => sentence(command, v),
         c if c.starts_with("solve.") => Some(format!("Solved {step}", step = params["step"].as_str().unwrap_or("the step"))),
         _ => None,
     };
@@ -1066,6 +1090,22 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// Saving, writing a deck, undo and redo say what they did in one sentence, never the
+    /// reply's raw fields (A4-6).
+    #[test]
+    fn files_and_history_say_what_they_did() {
+        let saved = json!({"path": "/tmp/x/box.fieldcraft", "bytes": 1725091, "contents": ["the model", "the results of 2 steps (Load, Modes)"]});
+        assert_eq!(sentence("file.save_as", &saved).as_deref(), Some("Saved box.fieldcraft (with results)"));
+        let plain = json!({"path": "/tmp/x/box.fieldcraft", "bytes": 10, "contents": ["the model"]});
+        assert_eq!(sentence("file.save", &plain).as_deref(), Some("Saved box.fieldcraft"));
+        let deck = json!({"format": "lsdyna", "path": "/tmp/x/box.k", "bytes": 735896, "units": "mm-t-s-N-MPa", "warnings": []});
+        assert_eq!(sentence("deck.write", &deck).as_deref(), Some("Wrote box.k (LS-DYNA, mm-t-s-N-MPa)"));
+        assert_eq!(sentence("edit.undo", &json!({"undone": "mesh.hex.octree", "undo": 0, "redo": 1})).as_deref(), Some("Undid Octree Hex Mesh"));
+        assert_eq!(sentence("edit.redo", &json!({"redone": "mesh.hex.octree", "undo": 1, "redo": 0})).as_deref(), Some("Redid Octree Hex Mesh"));
+        assert_eq!(done("edit.undo", "Undo", &json!({}), &json!({"undone": "mesh.hex.octree"})), "Undid Octree Hex Mesh");
+        assert_eq!(sentence("model.info", &json!({})), None);
+    }
 
     /// Propose Defeaturing stays in the panel and follows the model: switching the plate's hole
     /// off fills it in the viewport's bodies and the list shows it off; on again brings it back.

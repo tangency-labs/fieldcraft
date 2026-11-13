@@ -826,7 +826,17 @@ impl ModelApp {
 
     fn submit_background(&mut self, command: &'static str, params: Value) {
         let label = crate::command_label(command).to_string();
-        if self.begin_job(command, params, label.clone(), format!("{label} done"), None)
+        // A file opened from its form says so as a dropped one does ("Opened box.fieldcraft"),
+        // and is a recent file too (A4-6).
+        let path = kind_of_command(command).and(params.get("path")).and_then(Value::as_str).map(str::to_string);
+        let (title, done) = match (kind_of_command(command), &path) {
+            (Some(kind), Some(path)) => {
+                let (doing, done) = kind.verbs();
+                (format!("{doing} {}", file_name(path)), format!("{done} {}", file_name(path)))
+            }
+            _ => (label.clone(), format!("{label} done")),
+        };
+        if self.begin_job(command, params, title, done, path)
             && let Some(l) = self.loading.as_mut()
         {
             l.form = Some(command);
@@ -2345,6 +2355,37 @@ pub(crate) mod tests {
         app.run("model.set.create", serde_json::json!({"name": "plate", "geometry": [{"body": "Body1"}]})).unwrap();
         opened(&mut app);
         assert!(app.prompt.is_none() && app.session.model.set("plate").is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file opened from its form reads as a dropped one does: "Opened plate.solidcraft" (A4-6).
+    #[test]
+    fn a_file_opened_from_its_form_says_which() {
+        let dir = temp("form-open");
+        let path = dir.join("plate.solidcraft").to_string_lossy().to_string();
+        std::fs::write(&path, fieldcraft_geometry::sample::plate_design(&fieldcraft_geometry::sample::Plate::default()).unwrap()).unwrap();
+        let mut app = ModelApp::new(Session::default());
+        app.submit_background("geometry.open", serde_json::json!({"path": path}));
+        app.wait_loaded();
+        assert_eq!(app.status.as_ref().map(|s| s.text.as_str()), Some("Opened plate.solidcraft"));
+        assert_eq!(app.recent.paths, vec![path.clone()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Saving and writing a deck finish with their sentence in the status bar, not the reply's
+    /// fields (A4-6).
+    #[test]
+    fn a_save_and_a_deck_say_what_they_wrote() {
+        let dir = temp("sentences");
+        let mut app = ModelApp::new(Session::default());
+        app.run_script(&fieldcraft_engine::sample::cantilever()).unwrap();
+        let status = |app: &ModelApp| app.status.as_ref().map(|s| s.text.clone()).unwrap_or_default();
+        let model = dir.join("beam.fieldcraft").to_string_lossy().to_string();
+        app.run("file.save_as", serde_json::json!({"path": model})).unwrap();
+        assert_eq!(status(&app), "Saved beam.fieldcraft");
+        let deck = dir.join("beam.inp").to_string_lossy().to_string();
+        app.run("deck.write", serde_json::json!({"format": "abaqus", "path": deck})).unwrap();
+        assert!(status(&app).starts_with("Wrote beam.inp (Abaqus"), "{}", status(&app));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
