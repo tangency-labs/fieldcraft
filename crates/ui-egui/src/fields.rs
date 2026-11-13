@@ -17,6 +17,8 @@ use solidcraft_ui_kit::BackingTooltipExt as _;
 pub struct Style {
     /// The label column.
     pub label_width: f32,
+    /// The room every row keeps after its field for a unit.
+    pub unit_gutter: f32,
     pub dim: Color32,
     pub error: Color32,
     /// The mark of a required field.
