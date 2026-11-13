@@ -98,11 +98,12 @@ pub fn unit_width(ui: &Ui, unit: Option<&str>) -> f32 {
     unit.map_or(0.0, |u| crate::elide::width(ui, u, &egui::TextStyle::Small.resolve(ui.style())).ceil() + ui.spacing().item_spacing.x)
 }
 
-/// A message under a field, aligned with the fields.
+/// A message under a field, aligned with the fields, at the kit's caption size.
 pub fn note(ui: &mut Ui, s: &Style, text: &str, color: Color32) {
+    let size = solidcraft_theme::Tokens::get().font_caption;
     ui.horizontal(|ui| {
         ui.add_space(s.label_width + ui.spacing().item_spacing.x);
-        ui.add(egui::Label::new(RichText::new(text).small().color(color)).wrap());
+        ui.add(egui::Label::new(RichText::new(text).size(size).color(color)).wrap());
     });
 }
 
@@ -316,6 +317,22 @@ mod tests {
         for bad in ["4", "4:", ":3", "0:1", "4:0", "4:256", "1-200:1", "x:1"] {
             assert_eq!(parse_sides(bad, 100), None, "{bad}");
         }
+    }
+
+    /// A note under a field is at the kit's caption size, not egui's small text (A3-8).
+    #[test]
+    fn notes_read_at_caption_size() {
+        let ctx = egui::Context::default();
+        let s = Style { label_width: 100.0, unit_gutter: 0.0, dim: Color32::GRAY, error: Color32::RED, required: Color32::BLUE };
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| note(ui, &s, "walls by default", s.dim));
+        out.textures_delta.clear();
+        let sizes: Vec<f32> = out
+            .shapes
+            .iter()
+            .filter_map(|c| if let egui::Shape::Text(t) = &c.shape { t.galley.job.sections.first().map(|x| x.format.font_id.size) } else { None })
+            .collect();
+        let caption = solidcraft_theme::Tokens::get().font_caption;
+        assert!(!sizes.is_empty() && sizes.iter().all(|&x| (x - caption).abs() < 0.01), "{sizes:?} against {caption}");
     }
 
     #[test]
