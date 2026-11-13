@@ -69,7 +69,7 @@ The events:
 |---|---|---|
 | `app_started` | — | the app starts with sharing on, or you turn it on |
 | `app_closed` | `duration_s`: seconds since `app_started` | the window closes (the page is closed or left) |
-| `command_run` | `command`: the command's id (`mesh.tet.generate`); `kind`: `model` or `session`; `duration_ms`; `ok`: whether it succeeded; `error` (when it failed): the class of the error, one of `unknown_command`, `params`, `model`, `geometry`, `mesh`, `file`, `deck`, `solver`, `explicit`, `fluid`, `unavailable`, `internal`; `from`: `ui` (a click, a form, a menu), `palette` (the command search or command line), `script` (a script or the control channel) or `mcp` (an AI agent) | a command ends; a command run by another (a script's steps inside it) is not counted on its own |
+| `command_run` | `command`: the command's id (`mesh.tet.generate`); `kind`: `model` or `session`; `duration_ms`; `ok`: whether it succeeded; `error` (when it failed): the class of the error, one of `unknown_command`, `params`, `model`, `geometry`, `mesh`, `file`, `deck`, `solver`, `explicit`, `fluid`, `unavailable`, `internal`; `from`: `ui` (a click, a form, a menu), `palette` (the command search), `script` (a script or the control channel) or `mcp` (an AI agent) | a command ends; a command run by another (a script's steps inside it) is not counted on its own |
 | `milestone` | `name`: `design_opened` (a design, mesh or model opened), `meshed` (a mesher made elements), `solved` (a solve finished), `results_viewed` (results shown) | the first time in a run |
 | `sample_opened` | `name`: the sample's name (`cantilever`) | a sample opens |
 | `form_cancelled` | `command`: the form's command id | a command's form closes without running it |

@@ -321,6 +321,8 @@ pub struct Prefs {
     pub browser_collapsed: bool,
     /// The browser card translucent over the view.
     pub browser_float: bool,
+    /// The status bar shown.
+    pub status_bar: bool,
 }
 
 impl Default for Prefs {
@@ -338,6 +340,7 @@ impl Default for Prefs {
             browser_width: crate::browser::WIDTH,
             browser_collapsed: false,
             browser_float: false,
+            status_bar: false,
         }
     }
 }

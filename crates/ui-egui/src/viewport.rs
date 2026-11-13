@@ -102,6 +102,41 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     crate::path_panel::overlay(app, &painter, rect, &t);
     axis_view(app, ui, content);
     navigation::bar(app, ui, content);
+    status_toast(app, ui, content);
+}
+
+/// How long an information message stays in the view (seconds), SolidCraft's six.
+const STATUS_TOAST_SECONDS: f64 = 6.0;
+
+/// The status message as the kit's view toast, above the navigation bar in the view's content, as
+/// SolidCraft's (`viewport.rs` `transient_messages`). Information goes by itself after
+/// [`STATUS_TOAST_SECONDS`], its countdown ring shrinking round the ×; an error stays until its ×
+/// is clicked.
+fn status_toast(app: &mut ModelApp, ui: &egui::Ui, content: Rect) {
+    let Some(status) = app.status.clone() else { return };
+    let shown_for = app.now - status.at;
+    // A clock that went back, or no clock (headless tests), shows it as new.
+    let shown_for = if shown_for.is_finite() && shown_for >= 0.0 { shown_for } else { 0.0 };
+    if !status.error && shown_for >= STATUS_TOAST_SECONDS {
+        app.status = None;
+        return;
+    }
+    let k = solidcraft_theme::Tokens::get();
+    let nav = navigation::bar_rect(content);
+    let free = Rect::from_min_max(content.min, pos2(content.right(), nav.top().min(content.bottom()))).shrink(k.space_8);
+    let countdown = (!status.error).then(|| (kit::toast::countdown_left(0.0, shown_for, STATUS_TOAST_SECONDS), STATUS_TOAST_SECONDS));
+    let extras = kit::toast::Extras { close: Some("toast:status:close"), countdown, ..Default::default() };
+    let lead = kit::toast::Lead::Dot(status.error);
+    if let Some(toast) = kit::toast::show(ui, free, kit::toast::Place::Corner, status.text, lead, &[], extras) {
+        app.place("toast", toast.rect);
+        if toast.closed {
+            app.status = None;
+        }
+    }
+    if !status.error {
+        // One frame when it is due to go, not a frame every half second while it shows.
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(STATUS_TOAST_SECONDS - shown_for + 0.01));
+    }
 }
 
 /// The part of the viewport `rect` clear of the cards over it, a shell gap from each: below the
@@ -802,5 +837,41 @@ mod tests {
         let view = egui::Rect::from_min_size(egui::pos2(300.0, 80.0), egui::vec2(900.0, 700.0));
         let w = sampled_note_width(view);
         assert!(view.left() + 10.0 + w < crate::navigation::bar_rect(view).left());
+    }
+
+    /// A status message is the kit's toast in the view, above the navigation bar: information goes
+    /// after six seconds, an error stays until its × is clicked.
+    #[test]
+    fn status_messages_are_a_toast_that_information_leaves_and_an_error_keeps() {
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        let ctx = egui::Context::default();
+        let draw = |app: &mut ModelApp, events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+            out.textures_delta.clear();
+        };
+        app.now = 10.0;
+        app.set_status("Saved", false);
+        draw(&mut app, vec![]);
+        let toast = app.layout.get("toast").copied().expect("the toast");
+        let view = app.layout.get("viewport").copied().unwrap_or(egui::Rect::NOTHING);
+        assert!(toast.bottom() < crate::navigation::bar_rect(super::beside_card(&app, view)).top(), "{toast:?}");
+        app.now = 16.5;
+        draw(&mut app, vec![]);
+        assert!(app.status.is_none() && !app.layout.contains_key("toast"), "information goes");
+        app.set_status("No such node", true);
+        app.now = 100.0;
+        draw(&mut app, vec![]);
+        assert!(app.status.is_some() && app.layout.contains_key("toast"), "an error stays");
+        let close = solidcraft_ui_registry::handle_at("toast:status:close").expect("its ×");
+        let press = |pressed| egui::Event::PointerButton { pos: close, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        draw(&mut app, vec![egui::Event::PointerMoved(close)]);
+        draw(&mut app, vec![press(true)]);
+        draw(&mut app, vec![press(false)]);
+        assert!(app.status.is_none(), "the × dismisses it");
     }
 }

@@ -56,6 +56,7 @@ pub mod samples;
 pub mod scene;
 pub mod selection;
 pub mod shell;
+pub mod status_bar;
 pub mod theme;
 pub mod timeline;
 pub mod titlebar;
@@ -123,6 +124,9 @@ pub struct UiState {
     pub browser_float: bool,
     /// The journal timeline (bottom).
     pub show_timeline: bool,
+    /// The status bar along the window's bottom edge (Settings › Interface; off by default,
+    /// remembered per user).
+    pub status_bar: bool,
     /// The mouse navigation preset ([`navigation::NAV_PRESETS`] id; remembered per user).
     pub nav_preset: String,
     /// The wheel zooms the other way (remembered per user).
@@ -156,6 +160,7 @@ impl Default for UiState {
             browser_collapsed: false,
             browser_float: false,
             show_timeline: true,
+            status_bar: false,
             nav_preset: navigation::DEFAULT_PRESET.into(),
             reverse_zoom: false,
             workspace: Workspace::default(),
@@ -249,6 +254,9 @@ pub struct Back {
 pub struct Status {
     pub text: String,
     pub error: bool,
+    /// The app time (seconds) it was set at: an information toast goes after a while.
+    #[serde(skip)]
+    pub at: f64,
 }
 
 /// Selection by picking in the viewport ([`selection`]): the filter, what is selected and what
@@ -520,9 +528,8 @@ pub struct ModelApp {
     pub custom_titlebar: bool,
     /// The title bar runs under the macOS traffic lights.
     pub integrated_titlebar: bool,
-    /// The command search's query and the command line's text.
+    /// The command search's query.
     pub palette_text: String,
-    pub command_line: String,
     /// Browser sections that are unfolded.
     pub tree_open: std::collections::BTreeSet<String>,
     /// The History runs shown one command at a time (their first journal position).
@@ -642,7 +649,6 @@ impl ModelApp {
             custom_titlebar: false,
             integrated_titlebar: false,
             palette_text: String::new(),
-            command_line: String::new(),
             tree_open: ["mesh", "results"].into_iter().map(str::to_string).collect(),
             timeline_open: Default::default(),
             selected: None,
@@ -677,6 +683,7 @@ impl ModelApp {
         self.ui.browser_width = self.prefs.browser_width;
         self.ui.browser_collapsed = self.prefs.browser_collapsed;
         self.ui.browser_float = self.prefs.browser_float;
+        self.ui.status_bar = self.prefs.status_bar;
         self.services = services;
         self
     }
@@ -1129,14 +1136,14 @@ impl ModelApp {
             log::warn!("{text}");
             self.last_error = Some(text.clone());
         }
-        self.status = Some(Status { text, error });
+        self.status = Some(Status { text, error, at: self.now });
     }
 
     /// Move an error the graphics device reported into the status bar.
     fn show_gpu_errors(&mut self) {
         let error = self.viewport.gpu_errors.lock().ok().and_then(|mut e| e.take());
         if let Some(e) = error {
-            self.status = Some(Status { text: format!("Graphics: {e}"), error: true });
+            self.status = Some(Status { text: format!("Graphics: {e}"), error: true, at: self.now });
         }
     }
 
@@ -2415,7 +2422,7 @@ impl ModelApp {
         self.show_gpu_errors();
         self.layout.clear();
         appbar::app_bar(self, ui);
-        palette::command_line(self, ui);
+        status_bar::show(self, ui);
         self.shell(ui);
         palette::popup(self, ui.ctx());
         files::show(self, ui.ctx());
@@ -2496,12 +2503,14 @@ impl ModelApp {
             || u.browser_width != p.browser_width
             || u.browser_collapsed != p.browser_collapsed
             || u.browser_float != p.browser_float
+            || u.status_bar != p.status_bar
         {
             self.prefs.nav_preset = self.ui.nav_preset.clone();
             self.prefs.reverse_zoom = self.ui.reverse_zoom;
             self.prefs.browser_width = self.ui.browser_width;
             self.prefs.browser_collapsed = self.ui.browser_collapsed;
             self.prefs.browser_float = self.ui.browser_float;
+            self.prefs.status_bar = self.ui.status_bar;
             self.prefs.save(self.services.prefs.as_ref());
         }
     }
@@ -4183,8 +4192,8 @@ mod tests {
         app.layout.get(name).copied().unwrap_or_else(|| panic!("no {name} in {:?}", app.layout.keys()))
     }
 
-    /// The family layout: title bar, ribbon, browser left, viewport, command line and timeline at
-    /// the bottom; the context panel on the right only while there is context.
+    /// The family layout: title bar, ribbon, browser left, viewport and the History card at the
+    /// bottom; the context panel on the right only while there is context.
     #[test]
     fn the_window_is_laid_out_like_the_other_crafts() {
         let mut app = ModelApp::new(Session::default());
@@ -4205,17 +4214,17 @@ mod tests {
         };
         frame(&mut app);
         let (bar, ribbon, browser, view) = (region(&app, "app_bar"), region(&app, "ribbon"), region(&app, "browser"), region(&app, "viewport"));
-        let (line, timeline) = (region(&app, "command_line"), region(&app, "timeline"));
+        let timeline = region(&app, "timeline");
         assert_eq!((bar.top(), bar.height()), (0.0, appbar::HEIGHT));
         assert!((ribbon.top() - bar.bottom()).abs() < 1.0 && (ribbon.height() - toolbar::HEIGHT).abs() < 1.0, "{ribbon:?}");
-        // The browser is a card over the viewport's top left; the viewport fills the space between
-        // the app bar and the command line, under the ribbon's cards too.
+        // The browser is a card over the viewport's top left; the viewport fills the window below
+        // the app bar (the status bar is off), under the ribbon's cards and History too.
         assert!(browser.left() < 8.0 && (browser.width() - browser::WIDTH).abs() < 0.5, "{browser:?}");
         assert!(
-            view.contains_rect(browser) && view.left() <= 0.5 && view.top() <= ribbon.top() + 1.0 && view.bottom() <= line.top() + 1.0,
-            "{view:?} {browser:?} {ribbon:?} {line:?}"
+            view.contains_rect(browser) && view.left() <= 0.5 && view.top() <= ribbon.top() + 1.0 && view.bottom() >= 900.0 - 1.0,
+            "{view:?} {browser:?} {ribbon:?}"
         );
-        assert!((line.bottom() - 900.0).abs() < 4.0 && timeline.bottom() <= line.top() + 4.0, "{timeline:?} {line:?}");
+        assert!((timeline.bottom() - (900.0 - solidcraft_ui_kit::SHELL_GAP)).abs() < 1.0 && view.contains_rect(timeline), "{timeline:?}");
         assert!((view.right() - 1400.0).abs() < 1.0, "no context: the viewport reaches the right edge");
         assert!(!app.layout.contains_key("context"));
         for chrome in ["nav_bar", "axis_view", "workspace_switcher", "document_tab", "app_bar:solve"] {
@@ -4380,7 +4389,7 @@ mod tests {
             *e = Some("Out of Memory".into());
         }
         app.show_gpu_errors();
-        assert_eq!(app.status, Some(Status { text: "Graphics: Out of Memory".into(), error: true }));
+        assert_eq!(app.status, Some(Status { text: "Graphics: Out of Memory".into(), error: true, at: app.now }));
         assert!(app.viewport.gpu_errors.lock().unwrap().is_none(), "each error is shown once");
     }
 

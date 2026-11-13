@@ -1,24 +1,20 @@
-//! The command line (bottom) and the command search (S or Cmd/Ctrl+K).
+//! The command search (S or Cmd/Ctrl+K), where commands are typed, as SolidCraft's.
 //!
-//! The command line runs `id {json}` (`mesh.node.add {"label": 1, "xyz": [0, 0, 0]}`), starts a
-//! command given by its id alone, or starts the best match for a name. Beside it, the status and
-//! the model's size. The search lists every catalogue entry and related command by name, id or
-//! tip; coming-soon entries are listed greyed with their milestone, and commands missing what
-//! they need greyed with what is missing. Adapted from SolidCraft's
-//! `crates/ui-egui/src/palette.rs` (MIT OR Apache-2.0), see ATTRIBUTION.md.
+//! The search lists every catalogue entry and related command by name, id or tip; coming-soon
+//! entries are listed greyed with their milestone, and commands missing what they need greyed
+//! with what is missing. Enter starts the first that can run. A command typed with its parameters
+//! (`mesh.node.add {"label": 1, "xyz": [0, 0, 0]}`) is offered to run as typed. Adapted from
+//! SolidCraft's `crates/ui-egui/src/palette.rs` (MIT OR Apache-2.0), see ATTRIBUTION.md.
 
-use egui::{FontId, Rect, RichText};
+use egui::Rect;
 use fieldcraft_engine::catalogue::{self, CATALOGUE};
 use serde_json::Value;
 use solidcraft_ui_kit::BackingTooltipExt as _;
 
 use crate::ModelApp;
 
-use crate::theme::Tokens;
 use solidcraft_ui_kit as kit;
 
-/// The command line's height: the kit's field (28 points) and a 3 point margin above and below.
-pub const HEIGHT: f32 = 34.0;
 /// Most results the search lists.
 const MAX_RESULTS: usize = 60;
 /// The longest query the search field takes, in characters.
@@ -74,8 +70,8 @@ pub fn matches(query: &str) -> Vec<Hit> {
     hits.into_iter().map(|(_, h)| h).collect()
 }
 
-/// Run a line of command-line input: `id {json}` runs the command with those parameters, `id`
-/// starts it, anything else starts the best match.
+/// Run a typed line: `id {json}` runs the command with those parameters, `id` starts it, anything
+/// else starts the best match.
 pub fn submit(app: &mut ModelApp, line: &str) {
     app.with_origin(fieldcraft_engine::usage::Origin::Palette, |app| submit_line(app, line));
 }
@@ -127,117 +123,7 @@ fn submit_line(app: &mut ModelApp, line: &str) {
     }
 }
 
-/// The command line's width: 40 % of the bar, within these.
-const MIN_LINE_W: f32 = 150.0;
-const MAX_LINE_W: f32 = 440.0;
-
-/// The command line's width: 40 % of the bar while it is in use; idle (empty, not focused) it
-/// gives the status message the room it needs to show whole, down to [`MIN_LINE_W`].
-fn line_width(app: &ModelApp, ui: &egui::Ui) -> f32 {
-    let full = (ui.available_width() * 0.4).clamp(MIN_LINE_W, MAX_LINE_W);
-    let focused = ui.memory(|m| m.has_focus(egui::Id::unique("fc_command_line_text")));
-    if focused || !app.command_line.is_empty() {
-        return full;
-    }
-    let k = solidcraft_theme::Tokens::get();
-    let font = FontId::proportional(k.font_body);
-    let (nodes, elements) = (app.session.model.nodes().len(), app.session.model.elements().len());
-    let items = [
-        app.gpu_info.as_deref().unwrap_or("CPU renderer").to_string(),
-        (if app.ui.perspective { "Perspective" } else { "Orthographic" }).to_string(),
-        format!("{nodes} nodes  {elements} elements"),
-        app.status.as_ref().map_or("Ready", |s| s.text.as_str()).to_string(),
-    ];
-    let gap = ui.spacing().item_spacing.x;
-    // Each item, and a rule with its gaps between them.
-    let needed: f32 = items.iter().map(|text| crate::elide::width(ui, text, &font) + 2.0 * gap + 1.0).sum::<f32>() + gap;
-    (ui.available_width() - needed).clamp(MIN_LINE_W, full)
-}
-
-/// The command line's placeholders, longest first: the longest that fits whole is shown.
-const PLACEHOLDERS: [&str; 5] = [
-    r#"Type a command, e.g. mesh.node.add {"label": 1, "xyz": [0, 0, 0]} — or press S to search"#,
-    "Type a command, e.g. mesh.tet.generate — or press S to search",
-    "Type a command — or press S to search",
-    "Command, or S to search",
-    "Command",
-];
-
-/// The longest [`PLACEHOLDERS`] that fits a command line `width` wide, so it is never cut.
-fn placeholder(ui: &egui::Ui, width: f32) -> &'static str {
-    // The kit's field: monospace text, its inset on each side.
-    let t = solidcraft_theme::Tokens::get();
-    let font = egui::FontId::monospace(t.font_label);
-    let room = width - 2.0 * t.form_inset;
-    let shortest = PLACEHOLDERS[PLACEHOLDERS.len() - 1];
-    PLACEHOLDERS.iter().copied().find(|p| crate::elide::width(ui, p, &font) <= room).unwrap_or(shortest)
-}
-
-/// A rule between two of the status bar's items, as SolidCraft's status bar divides its own.
-pub(crate) fn rule(ui: &mut egui::Ui) {
-    let k = solidcraft_theme::Tokens::get();
-    let (r, _) = ui.allocate_exact_size(egui::vec2(1.0, ui.available_height()), egui::Sense::hover());
-    k.secondary_vline(ui.painter(), r.center().x, (r.top() + k.space_6)..=(r.bottom() - k.space_6), k.border);
-}
-
-/// The command line, the status and the model's size, above the timeline. The status items
-/// follow SolidCraft's status bar (its body text, a hairline along the top, rules between the
-/// items); the kit has no status bar of its own, and the command line is FieldCraft's.
-pub fn command_line(app: &mut ModelApp, ui: &mut egui::Ui) {
-    let t = Tokens::get(app.ui.dark);
-    let k = solidcraft_theme::Tokens::get();
-    // The status bar is an application-bar surface along the window's bottom edge, as
-    // SolidCraft's (docs/ui-container-audit.md).
-    let host = kit::Container::new(ui.ctx(), kit::Surface::ApplicationBar);
-    let panel = host.edge("fc_command_line", kit::Edge::Bottom).exact_size(HEIGHT);
-    let margin = egui::vec2(k.space_8, k.space_3);
-    let frame = host.edge_frame(t.panel).inner_margin(egui::Margin::symmetric(margin.x as i8, margin.y as i8));
-    host.show_edge(ui, panel, frame, |ui| {
-        app.place("command_line", ui.max_rect());
-        let bar = ui.max_rect().expand2(margin);
-        ui.painter().hline(bar.x_range(), bar.top() + 0.5, k.primary_border(k.border));
-        ui.horizontal_centered(|ui| {
-            ui.label(RichText::new("›").strong().color(t.accent_ink));
-            // The rest of the bar keeps room for the status and the model's size.
-            let width = line_width(app, ui);
-            let hint = if app.command_line.is_empty() { placeholder(ui, width) } else { "" };
-            let r = ui
-                .allocate_ui(egui::vec2(width, kit::row_height()), |ui| {
-                    kit::cell_editor(ui, egui::Id::unique("fc_command_line_text"), &mut app.command_line, hint, false)
-                })
-                .inner;
-            app.place("command_line:field", r.rect);
-            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                let line = std::mem::take(&mut app.command_line);
-                submit(app, &line);
-            }
-            let (nodes, elements) = (app.session.model.nodes().len(), app.session.model.elements().len());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let item = |text: &str| RichText::new(text).size(k.font_body).color(t.text_dim);
-                ui.label(item(app.gpu_info.as_deref().unwrap_or("CPU renderer")));
-                rule(ui);
-                ui.label(item(if app.ui.perspective { "Perspective" } else { "Orthographic" }));
-                rule(ui);
-                ui.label(item(&format!("{nodes} nodes  {elements} elements")));
-                rule(ui);
-                crate::updates::notice(app, ui);
-                let (text, color) = match &app.status {
-                    Some(s) => (s.text.as_str(), if s.error { t.error } else { t.text }),
-                    None => ("Ready", t.text_dim),
-                };
-                // Elided in the middle (both the subject and the outcome stay), whole on hover.
-                let font = FontId::proportional(k.font_body);
-                let shown = crate::elide::middle_in(ui, text, &font, ui.available_width());
-                let r = ui.add(egui::Label::new(RichText::new(shown.as_ref()).font(font).color(color)));
-                if shown != text {
-                    r.backing_on_hover_text(text);
-                }
-            });
-        });
-    });
-}
-
-/// Where the open search field's top left goes over the title bar's closed `field` in `screen`:
+/// Where the open search field's top left goes over the ribbon's closed `field` in `screen`:
 /// its right edge kept, inside the window. The title bar keeps its document tab clear of it.
 pub fn open_field_at(screen: Rect, field: Rect) -> egui::Pos2 {
     let k = solidcraft_theme::Tokens::get();
@@ -270,8 +156,10 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
         ui.set_width(width);
         ui.spacing_mut().item_spacing.y = 0.0;
         let geometry = kit::SearchFieldGeometry { height: field.height(), radius: kit::CommandSearch::field_radius(1.0, false), progress: 1.0 };
-        let r = kit::CommandSearch::field(ui, &mut app.palette_text, false, true, true, geometry, Some(&key), MAX_QUERY);
-        let entered = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        kit::CommandSearch::field(ui, &mut app.palette_text, false, true, true, geometry, Some(&key), MAX_QUERY);
+        // Enter while the search is open, as SolidCraft's search reads it: the field holds the focus
+        // (it asks for it every frame), so its own lost-focus never reports the key.
+        let entered = ui.input(|i| i.key_pressed(egui::Key::Enter));
         // Searched again only when the query changes.
         if app.search.as_ref().is_none_or(|(q, _)| *q != app.palette_text) {
             app.search = Some((app.palette_text.clone(), std::sync::Arc::new(matches(&app.palette_text))));
@@ -365,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn the_command_line_runs_ids_with_json_and_starts_names() {
+    fn a_typed_line_runs_ids_with_json_and_starts_names() {
         let mut app = ModelApp::new(Session::default());
         submit(&mut app, r#"mesh.node.add {"label": 4, "xyz": [1, 2, 3]}"#);
         assert!(app.session.model.node(4).is_some());
@@ -388,25 +276,29 @@ mod tests {
         assert_eq!(typed_command("material steel"), None);
     }
 
-    /// Idle (empty, not focused) the command line gives a long status message its room; typed
-    /// in, it takes its usual share of the bar (A3-17).
+    /// Commands are typed in the search, as SolidCraft's: Enter runs a command typed with its
+    /// parameters, and starts the first match for a name.
     #[test]
-    fn an_idle_command_line_yields_to_the_status() {
-        let field = |typed: &str| {
-            let mut app = ModelApp::new(fieldcraft_engine::Session::default());
-            app.set_status("Model Info: 315 nodes, 1200 elements, 2 steps and 4 materials (details in the panel)", false);
-            app.command_line = typed.to_string();
+    fn enter_in_the_search_runs_a_typed_command_or_starts_the_first_match() {
+        let enter = |app: &mut ModelApp, line: &str| {
             let ctx = egui::Context::default();
-            for _ in 0..2 {
-                let raw =
-                    egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 700.0))), ..Default::default() };
-                let mut out = ctx.run_ui(raw, |ui| command_line(&mut app, ui));
+            app.ui.palette = true;
+            app.palette_text = line.into();
+            let key = egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() };
+            for events in [vec![], vec![], vec![key]] {
+                let raw = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))),
+                    events,
+                    ..Default::default()
+                };
+                let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
                 out.textures_delta.clear();
             }
-            app.layout.get("command_line:field").copied().unwrap_or(Rect::NOTHING)
         };
-        let (idle, typing) = (field(""), field("mesh.node.add"));
-        assert!(idle.width() < typing.width(), "idle {idle:?}, typing {typing:?}");
-        assert!(idle.width() >= MIN_LINE_W - 0.5, "{idle:?}");
+        let mut app = ModelApp::new(Session::default());
+        enter(&mut app, r#"mesh.node.add {"label": 4, "xyz": [1, 2, 3]}"#);
+        assert!(app.session.model.node(4).is_some() && !app.ui.palette);
+        enter(&mut app, "material");
+        assert_eq!(app.dialog.as_ref().map(|d| d.command), Some("model.material.create"));
     }
 }
