@@ -275,7 +275,7 @@ impl Form<'_> {
                 out
             }
             Kind::Integer { .. } => self.number(ui, id, value, f.hint, true, fill(ui)),
-            Kind::Text | Kind::Path { .. } => {
+            Kind::Text | Kind::Path { .. } | Kind::Topology { .. } => {
                 let mut text = value.and_then(Value::as_str).unwrap_or_default().to_string();
                 let changed = fields::text(ui, id, &mut text, f.hint, fill(ui));
                 // Definition names go into solver decks, which take no spaces: a typed space
@@ -332,7 +332,8 @@ impl Form<'_> {
                     None => Some(Value::Null),
                 })
             }
-            Kind::Json => self.json(ui, id, value, f.hint),
+            // Edited as JSON until their own widgets land.
+            Kind::Json | Kind::List { .. } | Kind::NameOrValue { .. } => self.json(ui, id, value, f.hint),
             Kind::Labels(of) => self.labels(ui, id, value, of, f.hint),
             Kind::Sides(side) => self.sides(ui, id, value, side, f.hint),
             Kind::Points { columns, max, .. } => self.points(ui, id, value, f, columns, max),

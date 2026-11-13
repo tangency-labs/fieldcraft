@@ -130,12 +130,14 @@ pub enum Kind {
         min: Option<f64>,
         labels: &'static [&'static str],
     },
-    /// A list of `min_len` to `labels.len()` positive numbers, one per label in order (a block's
-    /// divisions: 3 in 3D, 2 in 2D); `whole` numbers only when set.
+    /// A list of `min_len` to `labels.len()` numbers, one per label in order (a block's
+    /// divisions: 3 in 3D, 2 in 2D); `whole` numbers only when set. Each is positive, or at least
+    /// `min` when it is set (a frame range from 0).
     Tuple {
         labels: &'static [&'static str],
         min_len: usize,
         whole: bool,
+        min: Option<f64>,
     },
     /// A name (`name`, a [`Kind::Ref`] or [`Kind::Choice`] whose key is unused) as a bare
     /// string, or an object of `fields` (`object` labels that choice): a mirror plane is a datum
@@ -151,8 +153,44 @@ pub enum Kind {
     /// A list of element faces or edges, `{"element", "face"}` or `{"element", "edge"}` (at most
     /// [`MAX_LABELS`]).
     Sides(Side),
+    /// A list whose every element is `item`'s value (`item.key` is unused), at most `max` long:
+    /// a mesh outline's holes, a probe's walls.
+    List {
+        item: &'static Field,
+        max: usize,
+    },
+    /// A name (`name`, a [`Kind::Ref`] or [`Kind::Choice`] whose key is unused) as a bare string,
+    /// or `value`'s value (its key unused): a render's frames are `"all"` or `[from, to]`.
+    NameOrValue {
+        name: &'static Field,
+        value: &'static Field,
+    },
+    /// A persistent B-rep name (`F3`) of a face, edge or vertex of the body the sibling field
+    /// `body_key` names; it checks as text, and a form fills it from the view's selection.
+    Topology {
+        entity: Side3,
+        body_key: &'static str,
+    },
     /// Any JSON: what the schema does not describe.
     Json,
+}
+
+/// What a [`Kind::Topology`] name names: a face, an edge or a vertex of a body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side3 {
+    Face,
+    Edge,
+    Vertex,
+}
+
+impl Side3 {
+    pub fn label(self) -> &'static str {
+        match self {
+            Side3::Face => "face",
+            Side3::Edge => "edge",
+            Side3::Vertex => "vertex",
+        }
+    }
 }
 
 /// What a [`Kind::Labels`] list labels.
@@ -660,7 +698,23 @@ pub const fn per_axis(key: &'static str, label: &'static str, dim: Dim, min: Opt
 }
 /// `min_len` to `labels.len()` positive numbers, whole ones when `whole`.
 pub const fn tuple(key: &'static str, label: &'static str, labels: &'static [&'static str], min_len: usize, whole: bool) -> Field {
-    field(key, label, Kind::Tuple { labels, min_len, whole })
+    field(key, label, Kind::Tuple { labels, min_len, whole, min: None })
+}
+/// `min_len` to `labels.len()` numbers of at least `min`, whole ones when `whole`.
+pub const fn tuple_from(key: &'static str, label: &'static str, labels: &'static [&'static str], min_len: usize, whole: bool, min: f64) -> Field {
+    field(key, label, Kind::Tuple { labels, min_len, whole, min: Some(min) })
+}
+/// A list of `item`'s values, at most `max`.
+pub const fn list(key: &'static str, label: &'static str, item: &'static Field, max: usize) -> Field {
+    field(key, label, Kind::List { item, max })
+}
+/// A name as `name` gives it, or a value as `value` gives it.
+pub const fn name_or_value(key: &'static str, label: &'static str, name: &'static Field, value: &'static Field) -> Field {
+    field(key, label, Kind::NameOrValue { name, value })
+}
+/// A persistent name of a face, edge or vertex of the body the sibling `body_key` names.
+pub const fn topology(key: &'static str, label: &'static str, entity: Side3, body_key: &'static str) -> Field {
+    field(key, label, Kind::Topology { entity, body_key })
 }
 /// A name as `name` gives it, or an object of `fields` (labelled `object`).
 pub const fn name_or(key: &'static str, label: &'static str, name: &'static Field, object: &'static str, fields: &'static [Field]) -> Field {
@@ -1137,7 +1191,7 @@ fn value_problem(f: &'static Field, v: &Value, path: &str, out: &mut Vec<Problem
             Some(x) if (min..=max).contains(&x) => None,
             _ => Some(ProblemKind::NotAWholeNumber { min, max }),
         },
-        Kind::Text | Kind::Path { .. } | Kind::Ref(_) => match v.as_str() {
+        Kind::Text | Kind::Path { .. } | Kind::Ref(_) | Kind::Topology { .. } => match v.as_str() {
             Some(s) if f.required && s.trim().is_empty() => Some(ProblemKind::Required),
             Some(_) => None,
             None => Some(ProblemKind::NotText),
@@ -1250,13 +1304,15 @@ fn value_problem(f: &'static Field, v: &Value, path: &str, out: &mut Vec<Problem
                 None => Some(ProblemKind::Invalid(format!("a number, or {} numbers (one per axis)", labels.len()))),
             }
         }
-        Kind::Tuple { labels, min_len, whole } => match v.as_array() {
+        Kind::Tuple { labels, min_len, whole, min } => match v.as_array() {
             Some(a) if (min_len..=labels.len()).contains(&a.len()) => {
-                let ok = |x: &Value| x.as_f64().is_some_and(|x| x.is_finite() && x > 0.0 && (!whole || x.fract() == 0.0));
-                (!a.iter().all(ok)).then_some(if whole {
-                    ProblemKind::Invalid("whole numbers of at least 1".into())
-                } else {
-                    ProblemKind::NotPositive
+                let above = |x: f64| min.map_or(x > 0.0, |lo| x >= lo);
+                let ok = |x: &Value| x.as_f64().is_some_and(|x| x.is_finite() && above(x) && (!whole || x.fract() == 0.0));
+                (!a.iter().all(ok)).then(|| match (whole, min) {
+                    (true, None) => ProblemKind::Invalid("whole numbers of at least 1".into()),
+                    (true, Some(lo)) => ProblemKind::Invalid(format!("whole numbers of at least {lo}")),
+                    (false, None) => ProblemKind::NotPositive,
+                    (false, Some(lo)) => ProblemKind::Below(lo),
                 })
             }
             _ => Some(ProblemKind::Invalid(if min_len == labels.len() {
@@ -1265,6 +1321,24 @@ fn value_problem(f: &'static Field, v: &Value, path: &str, out: &mut Vec<Problem
                 format!("{min_len} to {} numbers", labels.len())
             })),
         },
+        Kind::List { item, max } => match v.as_array() {
+            Some(a) if a.len() <= max && depth <= MAX_DEPTH => {
+                for (i, x) in a.iter().enumerate() {
+                    let at = format!("{path}/{i}");
+                    if let Some(kind) = value_problem(item, x, &at, out, depth + 1) {
+                        out.push(Problem::new(at, item, kind));
+                    }
+                }
+                None
+            }
+            Some(a) if a.len() <= max => None,
+            _ => Some(ProblemKind::NotAList { max, what: "entries" }),
+        },
+        Kind::NameOrValue { name, value } if depth <= MAX_DEPTH => match v {
+            Value::String(_) => value_problem(name, v, path, out, depth + 1),
+            _ => value_problem(value, v, path, out, depth + 1),
+        },
+        Kind::NameOrValue { .. } => None,
         Kind::Rows { fields, max } => match v.as_array() {
             Some(a) if a.len() <= max => {
                 for (i, row) in a.iter().enumerate() {
@@ -1350,6 +1424,7 @@ fn field_schema(f: &Field, depth: usize) -> Value {
         }
         Kind::Integer { min, max } => json!({"type": "integer", "minimum": min, "maximum": max}),
         Kind::Text | Kind::Path { .. } => json!({"type": "string"}),
+        Kind::Topology { entity, body_key } => json!({"type": "string", "x-topology": entity.label(), "x-body": body_key}),
         Kind::Bool => json!({"type": "boolean"}),
         Kind::Choice(options) => json!({"enum": options.iter().map(|(o, _)| *o).collect::<Vec<_>>()}),
         Kind::Vector { labels, nullable, .. } => {
@@ -1374,6 +1449,10 @@ fn field_schema(f: &Field, depth: usize) -> Value {
             _ => json!({"type": "object", "properties": {o.key: field_schema(o, depth + 1)}, "required": [o.key], "additionalProperties": false}),
         }).collect::<Vec<_>>()}),
         Kind::Rows { fields, max } if depth <= MAX_DEPTH => json!({"type": "array", "items": object_schema(fields, depth + 1), "maxItems": max}),
+        Kind::List { item, max } if depth <= MAX_DEPTH => json!({"type": "array", "items": field_schema(item, depth + 1), "maxItems": max}),
+        Kind::NameOrValue { name, value } if depth <= MAX_DEPTH => {
+            json!({"oneOf": [field_schema(name, depth + 1), field_schema(value, depth + 1)]})
+        }
         Kind::Unit => json!({"const": f.key}),
         Kind::Sides(side) => json!({
             "type": "array",
@@ -1399,8 +1478,13 @@ fn field_schema(f: &Field, depth: usize) -> Value {
         Kind::Multi(options) => {
             json!({"type": "array", "items": {"enum": options.iter().map(|(o, _)| multi_value(o)).collect::<Vec<_>>()}, "uniqueItems": true})
         }
-        Kind::Tuple { labels, min_len, whole } => {
-            let item = if whole { json!({"type": "integer", "minimum": 1}) } else { json!({"type": "number", "exclusiveMinimum": 0}) };
+        Kind::Tuple { labels, min_len, whole, min } => {
+            let item = match (whole, min) {
+                (true, None) => json!({"type": "integer", "minimum": 1}),
+                (true, Some(lo)) => json!({"type": "integer", "minimum": lo}),
+                (false, None) => json!({"type": "number", "exclusiveMinimum": 0}),
+                (false, Some(lo)) => json!({"type": "number", "minimum": lo}),
+            };
             json!({"type": "array", "items": item, "minItems": min_len, "maxItems": labels.len(), "x-labels": labels})
         }
         Kind::NumberOrAuto { min, .. } => {
@@ -1443,6 +1527,56 @@ fn field_schema(f: &Field, depth: usize) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const HOLE: Field = table("", "Hole", Dim::Length, &["x", "y"], 100);
+    const FRAME_NAME: Field = choice("", "", &[("all", "All frames")]);
+    const FRAME_RANGE: Field = tuple_from("", "Range", &["from", "to"], 2, true, 0.0);
+    const LISTISH: &[Field] = &[
+        list("holes", "Holes", &HOLE, 3),
+        list("walls", "Walls", &text("", "Wall"), 10),
+        name_or_value("frames", "Frames", &FRAME_NAME, &FRAME_RANGE),
+        reference("body", "Body", Collection::Body),
+        topology("face", "Face", Side3::Face, "body"),
+    ];
+
+    /// A list checks each element as its item, at its own path; a name-or-value takes the name or
+    /// the value; a tuple from 0 takes 0; a topology name is text.
+    #[test]
+    fn lists_names_or_values_and_topology_names_check() {
+        let ok = json!({"holes": [[[0, 0], [1, 0], [1, 1]]], "walls": ["x_min", "F2:top"], "frames": [0, 4], "body": "Base", "face": "F3"});
+        assert!(problems(LISTISH, &ok).is_empty(), "{:?}", problems(LISTISH, &ok));
+        assert!(problems(LISTISH, &json!({"frames": "all"})).is_empty());
+        let at = |p: Value| problems(LISTISH, &p).into_iter().map(|p| p.path).collect::<Vec<_>>();
+        assert_eq!(at(json!({"walls": ["a", 3]})), ["walls/1"]);
+        assert_eq!(at(json!({"holes": [[[0, "x"]]]})), ["holes/0"]);
+        assert_eq!(at(json!({"walls": "a"})), ["walls"]);
+        assert_eq!(at(json!({"holes": [[], [], [], []]})), ["holes"], "more than max");
+        assert_eq!(at(json!({"frames": "some"})), ["frames"]);
+        assert_eq!(at(json!({"frames": [-1, 4]})), ["frames"]);
+        assert_eq!(at(json!({"frames": [0.5, 4]})), ["frames"]);
+        assert_eq!(at(json!({"frames": {"from": 0}})), ["frames"]);
+        assert_eq!(at(json!({"face": 3})), ["face"]);
+        // Positive tuples still refuse 0.
+        const DIVS: &[Field] = &[tuple("d", "Divisions", &["i", "j", "k"], 2, true)];
+        assert!(!problems(DIVS, &json!({"d": [0, 2]})).is_empty());
+        assert!(problems(DIVS, &json!({"d": [1, 2]})).is_empty());
+        // A hostile list is bounded: each element checked once, nothing nested past the depth.
+        let long = json!({"walls": vec![json!(1); 10]});
+        assert_eq!(problems(LISTISH, &long).len(), 10);
+    }
+
+    #[test]
+    fn lists_names_or_values_and_topology_names_have_a_json_schema() {
+        let s = json_schema(LISTISH);
+        let props = &s["properties"];
+        assert_eq!(props["walls"]["type"], "array");
+        assert_eq!(props["walls"]["maxItems"], 10);
+        assert_eq!(props["walls"]["items"]["type"], "string");
+        assert_eq!(props["holes"]["items"]["type"], "array");
+        assert_eq!(props["frames"]["oneOf"][0]["enum"], json!(["all"]));
+        assert_eq!(props["frames"]["oneOf"][1]["items"], json!({"type": "integer", "minimum": 0.0}));
+        assert_eq!(props["face"], json!({"type": "string", "x-topology": "face", "x-body": "body", "title": "Face"}));
+    }
 
     /// Initial fields, mesh plans, relaxation fields, saved views and renders are collections a
     /// reference field names, in the model's (or the view state's) order.
