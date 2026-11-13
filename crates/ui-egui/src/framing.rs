@@ -6,7 +6,9 @@
 //! free, with a margin, keeping the direction of view. The view frames itself
 //! ([`Reframe`]) when another model, sample or design is opened ([`fieldcraft_engine::Session::opened`];
 //! the same design opened again after an edit keeps the camera) and when the first model content
-//! appears (home view), and when results come up with part of the model out of the free part.
+//! appears (home view), and when results come up, another step or mode is shown or the viewport
+//! is resized with part of the model out of the free part (a resize only when the model was
+//! framed before it).
 //! Fit, home and the standard views frame on request.
 
 use egui::Rect;
@@ -28,6 +30,11 @@ impl Reframe {
         Some(a.map_or(b, |a| a.max(b)))
     }
 }
+
+/// After a resize or another step or mode shown, the frames in which the view checks again that
+/// the model is not cut off: the overlays (legend, selection bar) take their new size a frame or
+/// two later.
+pub const RECHECK_FRAMES: u8 = 3;
 
 /// The free part of `view`: the largest rectangle left after cutting each overlay off (largest
 /// overlays first, each cut along the side that keeps the most area), as fractions
