@@ -1923,6 +1923,7 @@ pub const NODE_RELAX_APPLY: &[Field] = &[
     references("bodies", "Bodies", C::Body).help("Only the nodes of these bodies.").hint("the field's bodies"),
     range("polish", "Polish", D::None, 0.0, 1.0).help("Strength of one guarded smoothing sweep after the field is applied; 0 for none.").def("0.3"),
 ];
+pub const NODE_RELAX_DELETE: &[Field] = existing!("Relaxation field", C::Relaxation);
 
 pub const RENUMBER: &[Field] = &[
     choice("what", "Renumber", &[("both", "Nodes and elements"), ("nodes", "Nodes"), ("elements", "Elements")])
@@ -2167,6 +2168,16 @@ pub const RIGID_WALL_DELETE: &[Field] = &[
     reference("step", "Step", C::Step).help("The explicit dynamics step.").req(),
     int("index", "Wall", 0, MAX_ROWS as i64).help("The wall's place in the step's rigid walls, from 0.").req(),
 ];
+pub const RIGID_WALL_EDIT: &[Field] = &[
+    reference("step", "Step", C::Step)
+        .help("The explicit dynamics step the wall acts in; the model's only one when empty.")
+        .hint("the explicit step"),
+    int("index", "Wall", 0, MAX_ROWS as i64).help("The wall's place in the step's rigid walls, from 0.").req(),
+    reference("set", "Set", C::Set).help("The nodes the wall stops.").hint("unchanged"),
+    xyz("point", "Point", D::Length).help("A point on the wall.").hint("unchanged"),
+    xyz("normal", "Normal", D::None).help("The wall's normal, pointing to the side the nodes stay on.").hint("unchanged"),
+    FRICTION,
+];
 pub const CENTRE: &[Field] = &[
     rows(
         "geometry",
@@ -2387,6 +2398,7 @@ pub const MESH_PLAN_APPLY: &[Field] = &[
         .def("true"),
     text("name", "Save as").help("The name a plan given as an object is saved under.").hint("Plan-<body>"),
 ];
+pub const MESH_PLAN_DELETE: &[Field] = existing!("Mesh plan", C::MeshPlan);
 pub const FEATURES: &[Field] = &[reference("body", "Body", C::Body).help("Only this body's features.").hint("every body")];
 pub const GEOMETRY_CHECK: &[Field] = &[
     reference("body", "Body", C::Body).help("The body to check; every body when empty.").hint("every body"),
