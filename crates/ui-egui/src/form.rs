@@ -208,7 +208,8 @@ impl Form<'_> {
 
     /// A value the fields cannot show: it stays as it is, editable in the JSON view.
     fn json_only(&self, ui: &mut Ui) {
-        ui.label(RichText::new("set in JSON").small().color(self.style.dim)).backing_on_hover_text("Edit it in the JSON view");
+        ui.label(RichText::new("set in JSON").size(solidcraft_theme::Tokens::get().font_caption).color(self.style.dim))
+            .backing_on_hover_text("Edit it in the JSON view");
     }
 
     fn names(&mut self, c: Collection) -> &[String] {
