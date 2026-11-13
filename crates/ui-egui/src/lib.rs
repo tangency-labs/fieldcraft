@@ -1759,7 +1759,9 @@ impl ModelApp {
         let merge = self.merge_preview();
         let relax_key = self.dialog.as_ref().filter(|d| d.command == "mesh.node.relax").map(|d| d.text.clone());
         let move_key = self.dialog.as_ref().filter(|d| d.command == node_move::COMMAND).map(|d| (d.text.clone(), self.node_move_pending()));
-        let selected = hash(&|h| (scene, self.pick.generation, &set, &cut, &*merge, &relax_key, &move_key).hash(h));
+        // Over result contours the selection is an outline, as the hover is (#207).
+        let fill = self.plot.1.is_none();
+        let selected = hash(&|h| (scene, self.pick.generation, &set, &cut, &*merge, &relax_key, &move_key, fill).hash(h));
         let key = hash(&|h| (selected, self.pick.hover_generation).hash(h));
         if self.pick.overlay.0 == Some(key) {
             return (key, self.pick.overlay.1.clone());
@@ -1770,6 +1772,9 @@ impl ModelApp {
             let sel = std::mem::take(&mut self.pick.selection);
             let mut s = self.with_picker(|p| p.overlay(&sel, None, theme::rgb(t.pick_selected), theme::rgb(t.pick_hover)));
             self.pick.selection = sel;
+            if !fill {
+                s.tris.clear();
+            }
             // The set selected in the browser: its members in the highlight of selected symbols.
             if let Some(items) = set.as_ref().and_then(|name| self.set_items(name)) {
                 let highlight = t.glyph_colors().highlight;
@@ -1807,8 +1812,6 @@ impl ModelApp {
         }
         let mut s = (*self.pick.selected_overlay.1).clone();
         if let Some(hover) = self.pick.hover.clone() {
-            // Over result contours the hover is an outline, so it never hides the result (#207).
-            let fill = self.plot.1.is_none();
             let h = self.with_picker(|p| p.hover(&hover, theme::rgb(t.pick_hover), fill));
             s.tris.extend(h.tris);
             s.lines.extend(h.lines);
@@ -3811,6 +3814,23 @@ mod tests {
                 assert!(app.framed(), "{} view, perspective {perspective}: {:?}", v.label(), app.cam);
             }
         }
+    }
+
+    /// A selection over result contours is drawn as an outline, as the hover is (#207): its
+    /// fill would hide the colours (A4-7). Without contours it is filled.
+    #[test]
+    fn a_selection_over_contours_is_an_outline() {
+        let mut app = solved_app();
+        let t = theme::Tokens::get(app.ui.dark);
+        let element = *app.session.model.elements().keys().next().unwrap();
+        app.select([selection::Item::Element(element)], selection::Mode::Replace);
+        let filled = |app: &mut ModelApp| app.overlay().1.tris.iter().filter(|x| x.color == theme::rgb(t.pick_selected)).count();
+        let outlined = |app: &mut ModelApp| app.overlay().1.lines.iter().filter(|x| x.color == theme::rgb(t.pick_selected)).count();
+        assert!(filled(&mut app) > 0 && outlined(&mut app) > 0);
+        app.run("results.contour", json!({"step": "Load", "field": "von_mises"})).unwrap();
+        assert!(app.plot().is_some());
+        assert_eq!(filled(&mut app), 0);
+        assert!(outlined(&mut app) > 0);
     }
 
     /// Rendered on the CPU from the front, undeformed, with Z displacement contours: the free end

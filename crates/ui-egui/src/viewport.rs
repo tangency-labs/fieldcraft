@@ -66,15 +66,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     if response.clicked()
         && let Some(at) = response.interact_pointer_pos()
     {
-        // With Relax Nodes open a plain click on the mesh places its sphere (#398); Shift or
-        // Ctrl picks faces to relax (#471), and so does every click once the form lists faces.
-        let plain = mode(ui.input(|i| i.modifiers)) == Mode::Replace;
-        let placed =
-            app.path_pick_at(at) || app.relaxing() && plain && !app.relax_by_faces() && app.surface_point(at).is_some_and(|p| app.relax_place(p));
-        if !placed {
-            let _ = app.select_at(at, mode(ui.input(|i| i.modifiers)));
-            probe_at(app, at, rect);
-        }
+        click(app, at, rect, mode(ui.input(|i| i.modifiers)));
     }
     if !app.capturing {
         hover(app, &response);
@@ -162,6 +154,24 @@ fn start_screen(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
         app.open_dialog(None);
     } else if let Some(n) = open {
         app.open_sample(n);
+    }
+}
+
+/// A click at `at` in the viewport `rect` with the modifier keys' `mode`.
+fn click(app: &mut ModelApp, at: Pos2, rect: Rect, mode: Mode) {
+    // With Relax Nodes open a plain click on the mesh places its sphere (#398); Shift or Ctrl
+    // picks faces to relax (#471), and so does every click once the form lists faces.
+    let plain = mode == Mode::Replace;
+    let placed =
+        app.path_pick_at(at) || app.relaxing() && plain && !app.relax_by_faces() && app.surface_point(at).is_some_and(|p| app.relax_place(p));
+    if placed {
+        return;
+    }
+    // On a results plot a plain click probes and keeps the selection; Shift or Ctrl selects.
+    if plain && app.plot().is_some() {
+        probe_at(app, at, rect);
+    } else {
+        let _ = app.select_at(at, mode);
     }
 }
 
@@ -892,7 +902,28 @@ pub fn to_screen(app: &ModelApp, p: Vec3) -> Option<Pos2> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cpu_size, nav_bar_rect, sampled_note_width};
+    use super::{click, cpu_size, nav_bar_rect, sampled_note_width};
+    use crate::ModelApp;
+    use crate::selection::Mode;
+
+    /// On a results plot a plain click probes and leaves the selection alone (its fill would hide
+    /// the contours being probed); Shift still selects, without probing (A4-7).
+    #[test]
+    fn a_click_on_results_probes_without_selecting() {
+        let mut app = ModelApp::new(crate::results::tests::solved_cantilever());
+        app.run("results.contour", serde_json::json!({"step": "Load", "field": "von_mises"})).unwrap();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
+        app.viewport.rect = Some(rect);
+        app.fit_view();
+        app.pick.filter = crate::selection::Filter::Elements; // the sample has no geometry faces
+        assert!(app.plot().is_some());
+        click(&mut app, rect.center(), rect, Mode::Replace);
+        assert!(app.probe.is_some(), "probed");
+        assert!(app.pick.selection.is_empty(), "nothing selected");
+        app.probe = None;
+        click(&mut app, rect.center(), rect, Mode::Add);
+        assert!(!app.pick.selection.is_empty() && app.probe.is_none(), "Shift selects");
+    }
 
     /// The CPU viewport never asks for a texture larger than the context takes (#237: a Retina
     /// window 2300 pixels wide on a 2048 limit).
