@@ -73,8 +73,18 @@ pub struct Services {
 
 enum PickerAction {
     Open,
-    Save { params: Value, next: Option<Replace> },
-    Export { command: String, params: Value, extension: &'static str, alternatives: &'static [&'static str] },
+    Save {
+        params: Value,
+        next: Option<Replace>,
+    },
+    Export {
+        command: String,
+        params: Value,
+        extension: &'static str,
+        alternatives: &'static [&'static str],
+    },
+    /// File › Run Script…: run the chosen JSON script.
+    Script,
 }
 
 /// The status when the native file chooser fails inside the host ([`ModelApp::poll_picker`]).
@@ -91,6 +101,9 @@ const MODEL: Filter = Filter { name: "FieldCraft model", extensions: &["fieldcra
 const DESIGN: Filter = Filter { name: "SolidCraft design", extensions: &["solidcraft"] };
 const MESH: Filter = Filter { name: "Face-tagged mesh (3MF)", extensions: &["3mf", "3MF"] };
 const ORPHAN: Filter = Filter { name: "Orphan mesh (Gmsh MSH 4.1)", extensions: &["msh", "MSH"] };
+const SCRIPT: Filter = Filter { name: "FieldCraft script (JSON)", extensions: &["json", "JSON"] };
+/// Largest script File › Run Script… reads (bytes), as `fieldcraft-cli run`.
+const MAX_SCRIPT_BYTES: u64 = 256 * 1024 * 1024;
 const ANY: Filter = Filter { name: "Models, designs and meshes", extensions: &["fieldcraft", "solidcraft", "3mf", "3MF", "msh", "MSH"] };
 
 /// The Open picker's filters: everything FieldCraft opens, then each type.
@@ -683,6 +696,7 @@ impl ModelApp {
                 self.open_path(&path);
                 false
             }
+            PickerAction::Script => self.run_script_file(&path).is_ok(),
             PickerAction::Save { mut params, next } => {
                 params["path"] = json!(with_extension(path, "fieldcraft"));
                 let saved = self.run("file.save_as", params).is_ok();
@@ -824,6 +838,34 @@ impl ModelApp {
             return;
         }
         self.pick_file(FilePicker::Open { filters: kind.map_or(OPEN_FILTERS, Kind::filters).to_vec() }, PickerAction::Open);
+    }
+
+    /// File › Run Script…: pick a JSON script (an array of `{"command", "params"}`, or a journal)
+    /// and run it, as `fieldcraft-cli run` does.
+    pub fn run_script_dialog(&mut self) {
+        if !self.has_open_picker() {
+            self.set_status("Run Script needs a file chooser; scripts also run with fieldcraft-cli run", true);
+            return;
+        }
+        self.pick_file(FilePicker::Open { filters: vec![SCRIPT] }, PickerAction::Script);
+    }
+
+    /// Read the script at `path` (bounded in size) and run it; the status says what happened.
+    pub fn run_script_file(&mut self, path: &str) -> Result<(), String> {
+        let name = file_name(path);
+        let script = std::fs::metadata(path)
+            .map_err(|e| e.to_string())
+            .and_then(|m| if m.len() > MAX_SCRIPT_BYTES { Err(format!("larger than {} MB", MAX_SCRIPT_BYTES / (1024 * 1024))) } else { Ok(()) })
+            .and_then(|()| std::fs::read_to_string(path).map_err(|e| e.to_string()))
+            .and_then(|text| serde_json::from_str::<Value>(&text).map_err(|e| format!("not a JSON script ({e})")));
+        match script {
+            Ok(script) => self.run_script(&script),
+            Err(e) => {
+                let e = format!("{name}: {e}");
+                self.set_status(e.clone(), true);
+                Err(e)
+            }
+        }
     }
 
     /// Whether replacing the model would lose work: edits, or a still-unsaved imported deck
@@ -1576,6 +1618,9 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
             let _ = app.start("deck.read");
         }));
     }
+    if row(ui, "file.script", "Run Script…", None) {
+        act = Some(Box::new(|app| app.run_script_dialog()));
+    }
     crate::frame::menu_heading(ui, "Write Deck");
     for c in fieldcraft_engine::catalogue::CATALOGUE.iter().filter(|c| c.panel == "Decks" && c.id != "deck.read") {
         let format = c.preset().get("format").and_then(Value::as_str).map(str::to_string);
@@ -2134,6 +2179,31 @@ mod tests {
         app.run("mesh.node.add", serde_json::json!({"label": 99999, "xyz": [0, 0, 0]})).unwrap();
         assert!(app.save());
         assert!(!app.session.is_dirty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// File › Run Script… runs a JSON script the picker chose, as `fieldcraft-cli run` and the
+    /// control channel's `engine.script` do; a file that is not a script says why and changes
+    /// nothing.
+    #[test]
+    fn run_script_runs_the_picked_json_script() {
+        let dir = temp("script");
+        let script = dir.join("beam.json");
+        std::fs::write(&script, serde_json::to_string(&fieldcraft_engine::sample::script()).unwrap()).unwrap();
+        let bad = dir.join("bad.json");
+        std::fs::write(&bad, "not json").unwrap();
+        let offered = Rc::new(RefCell::new(Vec::new()));
+        let mut app = ModelApp::new(Session::default());
+        app.services.pick_open = Some(answering(Some(script.to_string_lossy().into_owned()), offered.clone()));
+        app.run_script_dialog();
+        assert_eq!(offered.borrow()[0][0], SCRIPT, "a script picker offers JSON scripts");
+        assert!(!app.session.model.elements().is_empty(), "the script built the model");
+        assert_eq!(app.status.as_ref().map(|s| (s.text.as_str(), s.error)), Some(("Script done", false)));
+        let journal = app.session.journal.len();
+        app.services.pick_open = Some(answering(Some(bad.to_string_lossy().into_owned()), offered));
+        app.run_script_dialog();
+        assert_eq!(app.session.journal.len(), journal);
+        assert!(app.status.as_ref().is_some_and(|s| s.error && s.text.starts_with("bad.json:")), "{:?}", app.status);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
