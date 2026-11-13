@@ -13,7 +13,7 @@
 //! its tooltip says when it comes. The milestone badge is FieldCraft's; the drop-downs hang from
 //! their panel labels as SolidCraft's do (`crate::frame::surface_popup`), without its pinning.
 
-use egui::{FontId, Rect, Stroke, pos2, vec2};
+use egui::{FontId, Rect, pos2, vec2};
 use fieldcraft_engine::catalogue::{self, Capability, Tab, Workspace};
 use fieldcraft_engine::requirement::Unavailable;
 use serde::Serialize;
@@ -23,14 +23,18 @@ use solidcraft_ui_kit::{self as kit, BackingTooltipExt as _, app_bar, ribbon};
 use crate::ModelApp;
 use crate::theme::Tokens;
 
-/// The ribbon's height: the tab row, then the panels with their buttons' labels (the kit's).
-pub const HEIGHT: f32 = TABS_HEIGHT + ribbon::GROUP_HEIGHT + 1.0;
+/// The ribbon card's height: the tab row, then the panels with their buttons' labels (the kit's;
+/// SolidCraft's `RIBBON_HEIGHT`).
+pub const CARD_HEIGHT: f32 = TABS_HEIGHT + ribbon::GROUP_HEIGHT + 1.0;
+/// The band the ribbon keeps under the app bar: the kit's shell gap above the cards, then the
+/// cards. What is below (the browser card) starts its own gap under them.
+pub const HEIGHT: f32 = kit::SHELL_GAP + CARD_HEIGHT;
 /// The tab row's height (the kit's).
 const TABS_HEIGHT: f32 = ribbon::TAB_ROW_HEIGHT;
 /// Most buttons a panel shows; the rest are in its drop-down.
 pub const MAX_BUTTONS: usize = 4;
-/// Where the tabs and the panels start, right of the workspace switcher.
-const PANELS_X: f32 = 112.0;
+/// The workspace switcher card's width (SolidCraft's `WORKSPACE_WIDTH`).
+const WORKSPACE_WIDTH: f32 = 88.0;
 /// Room a group's label needs beside its text: the drop-down arrow and the group's insets.
 const LABEL_ROOM: f32 = 30.0;
 
@@ -143,15 +147,27 @@ fn state(app: &ModelApp, c: &Capability) -> State {
 pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
     let mut start: Option<&'static str> = None;
-    // The ribbon is a chrome surface (the workspace switcher and the ribbon cards).
+    // The workspace switcher and the ribbon are two chrome cards over a clear band, as
+    // SolidCraft's floating shell lays them out (`toolbar::toolbar`, `ui_kit::Cards`).
     let host = kit::Container::new(ui.ctx(), kit::Surface::Chrome);
-    let panel = host.edge("fc_toolbar", kit::Edge::Top).exact_size(HEIGHT).show_separator_line(false);
-    host.show_edge(ui, panel, host.edge_frame(t.toolbar), |ui| {
-        let r = ui.max_rect();
-        app.place("ribbon", r);
+    let available = ui.available_rect_before_wrap();
+    let height = host.gap() + CARD_HEIGHT;
+    let cards = kit::Cards::new(available, kit::LayoutMode::current(ui.ctx()), CARD_HEIGHT, WORKSPACE_WIDTH);
+    let frame = host.frame(ui.ctx(), t.toolbar, kit::frame::Side::Left);
+    let panel = host.edge("fc_toolbar", kit::Edge::Top).exact_size(height).show_separator_line(false);
+    host.show_edge(ui, panel, host.edge_frame(egui::Color32::TRANSPARENT), |ui| {
+        let band = ui.max_rect();
+        app.place("ribbon", band);
+        app.place("ribbon:card", cards.ribbon);
         app.toolbar_rects.clear();
         app.panel_rects.clear();
-        workspace_switcher(app, ui, r);
+        for card in [cards.workspace, cards.ribbon] {
+            host.paint_background(ui.painter(), frame, card);
+            // Blank card space owns clicks as well as its buttons.
+            let _ = ui.interact(card, ui.scope_id().with(("fc_shell_card", card.left().to_bits())), egui::Sense::click_and_drag());
+        }
+        workspace_switcher(app, ui, cards.workspace);
+        let r = cards.ribbon;
         // Tabs: the kit's tab row, in the main accent.
         let tabs = app.ui.workspace.tabs();
         let accent = TabAccent::current(ui.ctx());
@@ -162,11 +178,11 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
             menu_open_from: &|_| false,
             search_width: 0.0,
             buttons: Vec::new(),
-            floating: false,
+            floating: host.floating(),
             underline: None,
             handles: ribbon::TabHandles { tab: "tab:", tab_rect: "tab_rect:", add: "tab_add", action: "tab_action:" },
         };
-        let row_rect = Rect::from_min_max(pos2(r.left() + PANELS_X, r.top()), pos2(r.right(), r.top() + TABS_HEIGHT));
+        let row_rect = Rect::from_min_max(r.left_top(), pos2(r.right(), r.top() + TABS_HEIGHT));
         for action in ribbon::tabs(ui, &row, row_rect).actions {
             if let ribbon::TabAction::Select { index, .. } = action
                 && let Some(&tab) = tabs.get(index)
@@ -245,7 +261,7 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
             })
             .collect();
         let row = ribbon::Row { groups, labels: true, accent, exit: false, reveal: None, more_tip: "More toolbar panels", handles: HANDLES };
-        let out = ribbon::show(ui, &row, Rect::from_min_max(pos2(r.left() + PANELS_X, top), r.max), &mut |_, _| false);
+        let out = ribbon::show(ui, &row, Rect::from_min_max(pos2(r.left(), top), r.max), &mut |_, _| false);
         // FieldCraft's part of each button: its hover text and milestone badge.
         for d in &out.buttons {
             let Some(c) = shown.get(d.group).and_then(|s| s.get(d.index)) else { continue };
@@ -295,7 +311,9 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
                 app.place("toolbar_dropdown", shown.response.rect);
             }
         }
-        painter.line_segment([pos2(r.left(), r.bottom() - 0.5), pos2(r.right(), r.bottom() - 0.5)], Stroke::new(1.0, t.border));
+        for card in [cards.workspace, cards.ribbon] {
+            kit::Container::paint_inset(ui.painter(), frame.widget_rect(card), frame);
+        }
     });
     if let Some(id) = start {
         app.ui.menu = None;
@@ -315,10 +333,10 @@ pub fn workspace_ids(w: Workspace) -> (&'static str, &'static str) {
     }
 }
 
-/// The workspace switcher: the kit's switcher at the ribbon's left end, spanning its height; it
-/// opens the kit's workspace menu.
-fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect) {
-    let ws = Rect::from_min_max(r.left_top(), pos2(r.left() + PANELS_X - 4.0, r.bottom()));
+/// The workspace switcher: the kit's switcher on its card `ws`, left of the ribbon's; it opens the
+/// kit's workspace menu.
+fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, ws: Rect) {
+    let floating = kit::Container::new(ui.ctx(), kit::Surface::Chrome).floating();
     let w = app.ui.workspace;
     let switcher = app_bar::Switcher {
         name: w.label(),
@@ -326,7 +344,7 @@ fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect) {
         icon: w.icon(),
         tip: "Change workspace",
         open: app.ui.menu.as_deref() == Some("workspace"),
-        floating: false,
+        floating,
         labels: true,
         folded: false,
         stage: false,
@@ -603,6 +621,33 @@ mod tests {
         run(&mut app, Vec::new());
         assert_eq!(ctx.memory(|m| m.focused()), Some(menu_style(&ctx).focus_id(first)));
         assert_eq!(app.ui.menu.as_deref(), Some(key.as_str()));
+    }
+
+    /// The workspace switcher and the ribbon are SolidCraft's two cards (`ui_kit::Cards`): inset
+    /// from the window's edges and from the app bar by the kit's shell gap, the switcher
+    /// SolidCraft's width and the ribbon a gap right of it, both the ribbon's height. The band they
+    /// keep ends at the cards, so what is below starts a gap under them.
+    #[test]
+    fn the_switcher_and_the_ribbon_are_inset_cards() {
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx, true);
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(1400.0, 900.0));
+        for _ in 0..2 {
+            let raw = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| toolbar(&mut app, ui));
+            out.textures_delta.clear();
+        }
+        let at = |k: &str| app.layout.get(k).copied().unwrap_or_else(|| panic!("{k} not drawn"));
+        let (band, ws, card) = (at("ribbon"), at("workspace_switcher"), at("ribbon:card"));
+        let gap = kit::SHELL_GAP;
+        let near = |a: f32, b: f32| (a - b).abs() < 0.5;
+        assert!(near(band.top(), 0.0) && near(band.height(), HEIGHT) && near(band.bottom(), card.bottom()), "{band:?} {card:?}");
+        assert!(near(ws.left(), gap) && near(ws.top(), gap) && near(ws.width(), WORKSPACE_WIDTH), "{ws:?}");
+        assert!(near(card.left(), ws.right() + gap) && near(card.top(), gap) && near(card.right(), screen.right() - gap), "{card:?}");
+        assert!(near(card.height(), CARD_HEIGHT) && near(ws.bottom(), card.bottom()), "{ws:?} {card:?}");
+        let buttons: Vec<Rect> = app.toolbar_rects.iter().filter(|(.., f)| *f == Fit::Full).map(|(_, r, _)| *r).collect();
+        assert!(!buttons.is_empty() && buttons.iter().all(|r| card.contains_rect(*r)), "{buttons:?} outside {card:?}");
     }
 
     /// A milestone badge keeps clear of its button's icon, even on the narrowest button (A3-15).
