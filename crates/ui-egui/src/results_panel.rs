@@ -39,9 +39,11 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
     let Some(plot) = app.plot() else { return };
     let painter = ui.painter_at(rect);
     let bar = crate::viewport::selection_bar_rect(ui.ctx());
-    let extremes = legend(&plot, &painter, rect, bar, t);
+    // The legend sits beside the browser card.
+    let beside = crate::viewport::beside_card(app, rect);
+    let extremes = legend(&plot, &painter, beside, bar, t);
     // The markers and their labels keep off the legend: its Max and Min lines name a node under it.
-    let covered = plot.contour.as_ref().map(|_| legend_layout(&plot, &painter, rect, bar, t).frame);
+    let covered = plot.contour.as_ref().map(|_| legend_layout(&plot, &painter, beside, bar, t).frame);
     let placed = if app.ui.result_extremes { markers(app, &plot, &painter, rect, covered, t) } else { Vec::new() };
     probe(app, &plot, &painter, rect, covered, &placed, t);
     let mut focus = None;

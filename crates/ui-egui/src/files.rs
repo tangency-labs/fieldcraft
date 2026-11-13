@@ -315,6 +315,12 @@ pub struct Prefs {
     pub update_skip: String,
     /// The units numbers are shown and typed in, for a model without its own (docs/units.md).
     pub units: fieldcraft_model::DisplaySystem,
+    /// The browser card's width, in points.
+    pub browser_width: f32,
+    /// The browser card folded to its header.
+    pub browser_collapsed: bool,
+    /// The browser card translucent over the view.
+    pub browser_float: bool,
 }
 
 impl Default for Prefs {
@@ -329,6 +335,9 @@ impl Default for Prefs {
             update_checked_at: 0,
             update_skip: String::new(),
             units: fieldcraft_model::DisplaySystem::default(),
+            browser_width: crate::browser::WIDTH,
+            browser_collapsed: false,
+            browser_float: false,
         }
     }
 }
