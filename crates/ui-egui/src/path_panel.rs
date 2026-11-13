@@ -1,7 +1,7 @@
 //! Path editor, scalar-distance plot and viewport overlay. Numerical sampling is exclusively
 //! `results.path` on the existing background-job runner; editor coordinates remain SI.
 
-use egui::{Align2, FontId, Pos2, Rect, RichText, Stroke, pos2, vec2};
+use egui::{Align2, FontId, Pos2, Rect, Stroke, pos2, vec2};
 use fieldcraft_engine::results::{Field, Kind, Pick, Quantity};
 use fieldcraft_engine::{Session, StepResult};
 use fieldcraft_render::Vec3;
@@ -15,6 +15,8 @@ use solidcraft_ui_kit::BackingTooltipExt as _;
 
 const GRAPH_POINTS: usize = 400;
 const OVERLAY_POINTS: usize = 256;
+/// Point rows the Path Plot shows before its list scrolls.
+const VISIBLE_POINTS: usize = 4;
 const MIN_GRAPH_RELATIVE_RANGE: f64 = 1e-3; // unit-factors: a minimum plotted relative range, not a conversion
 
 #[derive(Debug, Clone)]
@@ -204,12 +206,7 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
     let Some(mut editor) = app.path_editor.take() else { return };
     let busy = app.busy().is_some();
     let mut close = false;
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Path Plot").strong());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            close = kit::button(ui, "×", kit::Button::Small).backing_on_hover_text("Close path plot").clicked();
-        });
-    });
+    kit::panel::header(ui, "results.path", "Path Plot", || close = true);
     if close {
         if app.loading.as_ref().is_some_and(|l| l.command == "results.path") {
             app.cancel_loading();
@@ -220,41 +217,50 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
     let mut export = false;
     ui.add_enabled_ui(!busy, |ui| {
         let current = editor.step.clone();
-        kit::bounded_dropdown_menu(ui, "fc_path_step", &current, ui.available_width() - 8.0, |ui| {
-            for step in app.session.solved_steps() {
-                if ui.selectable_label(editor.step == step, step).clicked() {
-                    editor.step = step.to_owned();
-                    editor.frame = None;
-                    editor.mode = app.session.result(step).filter(|r| matches!(r.kind(), Kind::Frequency(_))).map(|_| 1);
+        kit::row(ui, "Step", |ui| {
+            kit::bounded_dropdown_menu(ui, "fc_path_step", &current, ui.available_width(), |ui| {
+                for step in app.session.solved_steps() {
+                    if ui.selectable_label(editor.step == step, step).clicked() {
+                        editor.step = step.to_owned();
+                        editor.frame = None;
+                        editor.mode = app.session.result(step).filter(|r| matches!(r.kind(), Kind::Frequency(_))).map(|_| 1);
+                    }
                 }
-            }
+            })
         });
         let Some(result) = app.session.result(&editor.step) else {
-            ui.label(RichText::new("Result is stale; solve it again").color(t.error));
+            kit::status_line(ui, "Result is stale; solve it again", kit::StatusTone::Error);
             return;
         };
         let available = fields(result);
         if !available.contains(&editor.field) {
             editor.field = available.first().copied().unwrap_or(Field::Displacement);
         }
-        kit::bounded_dropdown_menu(ui, "fc_path_field", editor.field.label(), ui.available_width() - 8.0, |ui| {
-            for field in available {
-                ui.selectable_value(&mut editor.field, field, field.label());
-            }
-        });
-        ui.label(RichText::new(format!("Reference coordinates [{}]", app.session.units().symbol(Quantity::Length))).small().color(t.text_dim));
+        let mut field = available.iter().position(|f| *f == editor.field).unwrap_or(0);
+        let labels: Vec<&str> = available.iter().map(|f| f.label()).collect();
+        kit::choice_row(ui, "Field", "fc_path_field", &mut field, &labels);
+        if let Some(f) = available.get(field) {
+            editor.field = *f;
+        }
+        let length = app.session.units().symbol(Quantity::Length).to_string();
+        kit::status_line(ui, &format!("Reference coordinates [{length}]: x, y, z"), kit::StatusTone::Dim);
         let mut remove = None;
-        egui::ScrollArea::vertical().id_salt("fc_path_rows").max_height(130.0).show(ui, |ui| {
+        let rows = kit::table_row_height() * editor.points.len().min(VISIBLE_POINTS) as f32;
+        egui::ScrollArea::vertical().id_salt("fc_path_rows").max_height(rows).show(ui, |ui| {
             for (i, point) in editor.points.iter_mut().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 3.0;
-                    ui.label(format!("{}", i + 1));
-                    // Account for the remove button and all three remaining widget gaps.
-                    let width = ((ui.available_width() - 20.0 - 3.0 * ui.spacing().item_spacing.x) / 3.0).max(30.0);
-                    for (k, axis) in ["x", "y", "z"].into_iter().enumerate() {
-                        let mut value = app.session.units().express(Quantity::Length, point[k]).unwrap_or(f64::NAN);
-                        if ui.add_sized([width, 20.0], egui::DragValue::new(&mut value).speed(0.1).prefix(format!("{axis} "))).changed()
-                            && let Ok(stored) = app.session.units().to_si(Quantity::Length, value)
+                kit::row(ui, &format!("Point {}", i + 1), |ui| {
+                    let remove_width = kit::row_height() + ui.spacing().item_spacing.x;
+                    let mut shown: [f64; 3] = std::array::from_fn(|k| app.session.units().express(Quantity::Length, point[k]).unwrap_or(f64::NAN));
+                    let fields = ui
+                        .allocate_ui_with_layout(
+                            vec2((ui.available_width() - remove_width).max(0.0), kit::row_height()),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| kit::number_fields(ui, &mut shown, f64::MIN..=f64::MAX, 0.1, ""),
+                        )
+                        .inner;
+                    for (k, response) in fields.iter().enumerate() {
+                        if response.changed()
+                            && let Ok(stored) = app.session.units().to_si(Quantity::Length, shown[k])
                         {
                             point[k] = stored;
                         }
@@ -276,19 +282,13 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
                 .backing_on_hover_text("Click the visible mesh to add reference-coordinate points, including on deformed and curved element faces.");
         });
         if editor.picking && editor.step != view.view.step {
-            ui.label(RichText::new("Show this step before picking its surface").small().color(t.text_dim));
+            kit::status_line(ui, "Show this step before picking its surface", kit::StatusTone::Dim);
         }
-        ui.horizontal(|ui| {
-            ui.label("Samples");
-            ui.add(egui::DragValue::new(&mut editor.samples).range(2..=fieldcraft_engine::path::MAX_SAMPLES));
-        });
+        kit::row(ui, "Samples", |ui| kit::whole_number_field(ui, &mut editor.samples, 2..=fieldcraft_engine::path::MAX_SAMPLES, ""));
         match result.kind() {
             Kind::Frequency(f) => {
                 let mode = editor.mode.get_or_insert(1);
-                ui.horizontal(|ui| {
-                    ui.label("Mode");
-                    ui.add(egui::DragValue::new(mode).range(1..=f.modes.len().max(1)));
-                });
+                kit::row(ui, "Mode", |ui| kit::whole_number_field(ui, mode, 1..=f.modes.len().max(1), ""));
             }
             _ => {
                 let frames = stored_frames(result, editor.field);
@@ -297,13 +297,13 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
                     kit::checkbox(ui, "Stored frame (otherwise final)", &mut chosen);
                     if chosen {
                         let frame = editor.frame.get_or_insert(frames.saturating_sub(1));
-                        ui.add(egui::DragValue::new(frame).range(0..=frames.saturating_sub(1)));
+                        kit::row(ui, "Frame", |ui| kit::whole_number_field(ui, frame, 0..=frames.saturating_sub(1), ""));
                     } else {
                         editor.frame = None;
                     }
                 } else {
                     editor.frame = None;
-                    ui.label(RichText::new("Final state").small().color(t.text_dim));
+                    kit::status_line(ui, "Final state", kit::StatusTone::Dim);
                 }
             }
         }
@@ -313,15 +313,15 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
         });
     });
     if let Some(plot) = app.session.path_plot.as_ref() {
-        ui.separator();
+        kit::divider(ui, "fc_path_plot");
         let frame = plot.pick.frame.map_or_else(|| "final state".to_string(), |k| format!("frame {k}"));
         let mode = plot.mode.map(|mode| format!("mode {mode}"));
         let result = plot.result.upgrade();
         let title = result.as_ref().map_or_else(|| plot.field.label().to_owned(), |r| plot.field.title(r, app.session.units()));
-        ui.label(RichText::new(format!("{} · {}", plot.step, mode.as_deref().unwrap_or(&frame))).strong());
-        ui.label(RichText::new(title).small().color(t.text_dim));
+        kit::text(ui, &format!("{} · {}", plot.step, mode.as_deref().unwrap_or(&frame)), kit::Text::Heading("fc_path_plot_step"));
+        kit::status_line(ui, &title, kit::StatusTone::Dim);
         if !plot.current(&app.session) {
-            ui.label(RichText::new("Plotted result is stale; sample again after solving").color(t.error));
+            kit::status_line(ui, "Plotted result is stale; sample again after solving", kit::StatusTone::Error);
         } else if let Some(result) = result {
             let distance: Vec<_> =
                 plot.distance.iter().map(|v| fieldcraft_engine::results::shown(Quantity::Length, *v, app.session.units())).collect();
@@ -330,7 +330,7 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
                 editor.selected = Some(selected);
             }
             let valid = plot.values.iter().filter(|v| v.is_some()).count();
-            ui.label(RichText::new(format!("{valid}/{} values · {} gaps", plot.values.len(), plot.values.len() - valid)).small().color(t.text_dim));
+            kit::status_line(ui, &format!("{valid}/{} values · {} gaps", plot.values.len(), plot.values.len() - valid), kit::StatusTone::Dim);
         }
     }
     app.path_editor = Some(editor);
@@ -398,13 +398,15 @@ fn graph_range(lo: f64, hi: f64) -> (f64, [f64; 2]) {
 fn graph(ui: &mut egui::Ui, distance: &[f64], values: &[Option<f64>], unit: &str, t: &Tokens) -> Option<usize> {
     let finite: Vec<_> = values.iter().flatten().copied().filter(|v| v.is_finite()).collect();
     if finite.is_empty() {
-        ui.label("No defined values along this path");
+        kit::status_line(ui, "No defined values along this path", kit::StatusTone::Dim);
         return None;
     }
     let (outer, response) = ui.allocate_exact_size(vec2(ui.available_width(), 145.0), egui::Sense::click());
     let rect = Rect::from_min_max(outer.min + vec2(47.0, 4.0), outer.max - vec2(0.0, 19.0));
     let painter = ui.painter_at(outer);
-    painter.rect_filled(rect, 2.0, t.field);
+    let k = solidcraft_theme::Tokens::get();
+    let small = FontId::proportional(k.font_micro);
+    painter.rect_filled(rect, k.radius_sm, t.field);
     let lo = finite.iter().copied().fold(f64::INFINITY, f64::min);
     let hi = finite.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let (magnitude, [low, high]) = graph_range(lo, hi);
@@ -413,16 +415,10 @@ fn graph(ui: &mut egui::Ui, distance: &[f64], values: &[Option<f64>], unit: &str
         pos2(rect.left() + (x / total) as f32 * rect.width(), rect.bottom() - ((y / magnitude - low) / (high - low)) as f32 * rect.height())
     };
     for (y, label) in [(lo, Align2::RIGHT_BOTTOM), (hi, Align2::RIGHT_TOP)] {
-        painter.text(pos2(rect.left() - 4.0, at(0.0, y).y), label, number(y), FontId::proportional(10.0), t.text_dim);
+        painter.text(pos2(rect.left() - k.space_4, at(0.0, y).y), label, number(y), small.clone(), t.text_dim);
     }
-    painter.text(pos2(rect.left(), rect.bottom() + 2.0), Align2::LEFT_TOP, "0", FontId::proportional(10.0), t.text_dim);
-    painter.text(
-        pos2(rect.right(), rect.bottom() + 2.0),
-        Align2::RIGHT_TOP,
-        format!("s {} {unit}", number(total)),
-        FontId::proportional(10.0),
-        t.text_dim,
-    );
+    painter.text(pos2(rect.left(), rect.bottom() + k.space_2), Align2::LEFT_TOP, "0", small.clone(), t.text_dim);
+    painter.text(pos2(rect.right(), rect.bottom() + k.space_2), Align2::RIGHT_TOP, format!("s {} {unit}", number(total)), small, t.text_dim);
     let mut line = Vec::new();
     let flush = |line: &mut Vec<Pos2>| {
         if let [point] = line.as_slice() {
