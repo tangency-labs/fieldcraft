@@ -448,14 +448,23 @@ fn mesh_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     }
 }
 
-/// Rows of (label, text) as a two-column grid.
+/// The most of a card's width its name column takes; a longer name shows whole on hover.
+const NAME_SHARE: f32 = 0.45;
+
 /// A card's fields as the kit's form rows (name, then its value), as SolidCraft's cards show
-/// theirs; a value too long for its row shows whole on hover.
+/// theirs, with every value in one column after the longest name; a value too long for its row
+/// shows whole on hover.
 fn property_grid(ui: &mut egui::Ui, id: &str, rows: &[(String, String)]) {
+    let k = solidcraft_theme::Tokens::get();
+    let font = egui::FontId::proportional(k.font_label);
+    let longest = rows.iter().map(|(name, _)| crate::elide::width(ui, name, &font)).fold(0.0, f32::max);
+    let column = (longest.ceil() + k.space_4).min(ui.available_width() * NAME_SHARE);
     ui.push_id(id, |ui| {
-        for (name, text) in rows {
-            kit::row(ui, name, |ui| kit::text(ui, text, kit::Text::Cell).backing_on_hover_text(text.as_str()));
-        }
+        kit::settings_form(ui, column, |ui| {
+            for (name, text) in rows {
+                kit::row(ui, name, |ui| kit::text(ui, text, kit::Text::Cell).backing_on_hover_text(text.as_str()));
+            }
+        });
     });
 }
 
@@ -523,6 +532,27 @@ mod tests {
         let cancel = solidcraft_ui_registry::rect_of("dialog:cancel").expect("the kit's Cancel");
         click(cancel.center(), &mut app);
         assert!(app.dialog.is_none(), "Cancel closes the form");
+    }
+
+    /// A card's values start at one column, after its longest name (A3-5).
+    #[test]
+    fn card_values_share_one_column() {
+        let ctx = egui::Context::default();
+        let rows: Vec<(String, String)> =
+            [("Elasticity", "isotropic"), ("Young's modulus", "210000 MPa"), ("Poisson's ratio", "0.3"), ("Density", "7.85e-9 t/mm³")]
+                .iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_max_width(inner_width());
+            solidcraft_ui_registry::clear_handles();
+            property_grid(ui, "t", &rows);
+        });
+        out.textures_delta.clear();
+        let lefts: Vec<f32> =
+            rows.iter().filter_map(|(k, _)| solidcraft_ui_registry::rect_of(&format!("dialog:control:{k}"))).map(|r| r.left()).collect();
+        assert_eq!(lefts.len(), rows.len());
+        assert!(lefts.iter().all(|l| (l - lefts[0]).abs() < 0.5), "{lefts:?}");
     }
 
     #[test]
