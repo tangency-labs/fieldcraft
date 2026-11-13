@@ -92,6 +92,26 @@ fn badge(p: &egui::Painter, t: &Tokens, corner: egui::Pos2, m: &str) {
     p.galley(r.min + vec2(pad, 0.0), text, t.text_dim);
 }
 
+/// Widest a button grows to show its label whole: twice the kit's widest.
+const WHOLE_LABEL_MAX: f32 = 2.0 * ribbon::BUTTON_MAX_WIDTH;
+
+/// Whether `label` shows whole (two lines at most, nothing cut) on a button `width` wide.
+fn label_whole(painter: &egui::Painter, label: &str, width: f32) -> bool {
+    let shown: String = ribbon::button_lines(painter, label, width - ribbon::BUTTON_LABEL_PADDING).concat();
+    shown.chars().filter(|c| !c.is_whitespace()).eq(label.chars().filter(|c| !c.is_whitespace()))
+}
+
+/// A button's width: the kit's, widened only as far as its label needs to show whole on its two
+/// lines (FieldCraft's labels run longer than the kit's widest button). The ribbon still narrows
+/// buttons, and cuts their labels, when the window has no room for them.
+fn button_width(painter: &egui::Painter, label: &str) -> f32 {
+    let mut width = ribbon::button_width(painter, label);
+    while width < WHOLE_LABEL_MAX && !label_whole(painter, label, width) {
+        width = (width + 2.0).min(WHOLE_LABEL_MAX);
+    }
+    width
+}
+
 /// One entry as the ribbon shows it: can it run now, is its form open, and its hover text.
 struct State {
     enabled: bool,
@@ -161,7 +181,7 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
                 // A group is as wide as its buttons; its label (and its arrow) must fit under them,
                 // so a short group's buttons widen to its label ("Boundary Conditions" over one
                 // button would run into the next group's label).
-                let widths: Vec<f32> = shown.iter().map(|c| ribbon::button_width(&painter, c.label)).collect();
+                let widths: Vec<f32> = shown.iter().map(|c| button_width(&painter, c.label)).collect();
                 let k = solidcraft_theme::Tokens::get();
                 let label = painter.layout_no_wrap(panel.to_string(), kit::type_face::semibold(k.font_caption), k.text_dim).size().x;
                 let need = label + LABEL_ROOM;
@@ -511,6 +531,25 @@ mod tests {
             }
         }
         assert_eq!(panel_key(Tab::Loads, "Loads"), "loads/Loads");
+    }
+
+    /// Every ribbon label shows whole on its button while the toolbar has room (A3-2).
+    #[test]
+    fn ribbon_labels_show_whole() {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx, true);
+        let mut cut = Vec::new();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let painter = ui.painter();
+            for c in catalogue::CATALOGUE.iter() {
+                if !label_whole(painter, c.label, button_width(painter, c.label)) {
+                    cut.push(c.label);
+                }
+            }
+            assert!(!label_whole(painter, "Fluid Measurements", ribbon::BUTTON_MAX_WIDTH), "the kit's widest cuts it");
+        });
+        out.textures_delta.clear();
+        assert!(cut.is_empty(), "cut labels: {cut:?}");
     }
 
     /// A panel's drop-down is SolidCraft's: the kit's menu hanging from the panel's label, its rows
