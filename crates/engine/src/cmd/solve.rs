@@ -5,6 +5,7 @@ use crate::schema::ProblemKind;
 use fieldcraft_explicit::{ExplicitResult, solve_explicit};
 use fieldcraft_lbm::{FluidResult, Obstacle};
 use fieldcraft_mesh::surface::{BoundarySurface, SurfaceOptions};
+use fieldcraft_mesh::tet::geometry::AnalyticSurface;
 use fieldcraft_model::DisplaySystem;
 use fieldcraft_model::FluidDomain;
 use fieldcraft_model::units::Quantity;
@@ -557,11 +558,12 @@ fn obstacles(s: &Session, domain: &FluidDomain) -> Result<Vec<Obstacle>> {
     let tolerance = crate::units::to_geometry_length(domain.tolerance.unwrap_or(domain.spacing / 10.0));
     let mut out = Vec::with_capacity(domain.obstacles.len());
     for body in &domain.obstacles {
-        let (mesh, faces) = if let Some(shape) = s.design.as_deref().and_then(|d| d.body(body)) {
-            (std::borrow::Cow::Owned(shape.tessellate(tolerance)?), shape.faces().iter().map(|f| f.name.clone()).collect())
+        let (mesh, faces, exact) = if let Some(shape) = s.design.as_deref().and_then(|d| d.body(body)) {
+            let exact = super::mesh::analytic_surfaces(shape).into_iter().map(|a| a.map(analytic_in_model)).collect();
+            (std::borrow::Cow::Owned(shape.tessellate(tolerance)?), shape.faces().iter().map(|f| f.name.clone()).collect(), exact)
         } else if let Some(t) = s.surfaces.iter().find(|t| &t.name == body) {
             // Imported faces have no names: the solver calls them face0, face1, ….
-            (std::borrow::Cow::Borrowed(&t.mesh), Vec::new())
+            (std::borrow::Cow::Borrowed(&t.mesh), Vec::new(), Vec::new())
         } else {
             return Err(EngineError::Params(format!("obstacle `{body}` is neither a body of the open design nor an imported surface")));
         };
@@ -569,9 +571,24 @@ fn obstacles(s: &Session, domain: &FluidDomain) -> Result<Vec<Obstacle>> {
         let options = SurfaceOptions { weld_distance: crate::units::geometry_length(mesh.weld_distance), ..SurfaceOptions::default() };
         let surface = BoundarySurface::new(&positions, &mesh.triangles, &mesh.tri_face, &options)
             .map_err(|e| EngineError::context(format!("obstacle `{body}`: its surface cannot bound a solid"), e))?;
-        out.push(Obstacle { body: body.clone(), surface, faces });
+        out.push(Obstacle { body: body.clone(), surface, faces, exact });
     }
     Ok(out)
+}
+
+/// An exact surface of the geometry (millimetres) in the model's units, as the obstacles'
+/// surfaces are.
+fn analytic_in_model(a: AnalyticSurface) -> AnalyticSurface {
+    use crate::units::{geometry_length as length, geometry_point as point};
+    match a {
+        AnalyticSurface::Plane { normal, point: p } => AnalyticSurface::Plane { normal, point: point(p) },
+        AnalyticSurface::Cylinder { origin, axis, radius } => AnalyticSurface::Cylinder { origin: point(origin), axis, radius: length(radius) },
+        AnalyticSurface::Cone { apex, axis, half_angle } => AnalyticSurface::Cone { apex: point(apex), axis, half_angle },
+        AnalyticSurface::Sphere { center, radius } => AnalyticSurface::Sphere { center: point(center), radius: length(radius) },
+        AnalyticSurface::Torus { center, axis, major, minor } => {
+            AnalyticSurface::Torus { center: point(center), axis, major: length(major), minor: length(minor) }
+        }
+    }
 }
 
 /// A cap of a fluid solve that may be raised: its default when left out; when given, a whole
