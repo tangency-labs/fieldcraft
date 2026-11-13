@@ -1,0 +1,10 @@
+[
+ {"command": "model.units", "params": {"system": "m-kg-s-N-Pa"}},
+ {"command": "model.material.create", "params": {"name": "Fluid", "density": 1.0, "fluid": {"type": "newtonian", "viscosity": 0.001}}},
+ {"command": "model.fluid_domain.create", "params": {"name": "Pipe8", "material": "Fluid", "min": [-0.013125, -0.013125, 0], "max": [0.013125, 0.013125, 0.00125], "spacing": 0.00125, "acceleration": [0, 0, 9.6], "obstacles": ["Block"], "faces": {"z_min": {"type": "periodic"}, "z_max": {"type": "periodic"}}}},
+ {"command": "model.step.create", "params": {"name": "Run8", "procedure": {"type": "fluid", "domain": "Pipe8", "steps": 1920, "time_step": 2.6041666666666666e-4, "frames": 1, "walls": "interpolated"}}},
+ {"command": "model.fluid_domain.create", "params": {"name": "Pipe16", "material": "Fluid", "min": [-0.0115625, -0.0115625, 0], "max": [0.0115625, 0.0115625, 0.000625], "spacing": 0.000625, "acceleration": [0, 0, 9.6], "obstacles": ["Block"], "faces": {"z_min": {"type": "periodic"}, "z_max": {"type": "periodic"}}}},
+ {"command": "model.step.create", "params": {"name": "Run16", "procedure": {"type": "fluid", "domain": "Pipe16", "steps": 7680, "time_step": 6.5104166666666666e-5, "frames": 1, "walls": "interpolated"}}},
+ {"command": "solve.fluid", "params": {"step": "Run8", "backend": "cpu"}, "id": "solve8"},
+ {"command": "solve.fluid", "params": {"step": "Run16", "backend": "cpu"}, "id": "solve16"}
+]
