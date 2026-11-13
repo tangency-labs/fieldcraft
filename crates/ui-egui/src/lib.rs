@@ -4206,10 +4206,10 @@ mod tests {
         assert_eq!((bar.top(), bar.height()), (0.0, appbar::HEIGHT));
         assert!((ribbon.top() - bar.bottom()).abs() < 1.0 && (ribbon.height() - toolbar::HEIGHT).abs() < 1.0, "{ribbon:?}");
         // The browser is a card over the viewport's top left; the viewport fills the space between
-        // the ribbon and the command line under it.
+        // the app bar and the command line, under the ribbon's cards too.
         assert!(browser.left() < 8.0 && (browser.width() - browser::WIDTH).abs() < 0.5, "{browser:?}");
         assert!(
-            view.contains_rect(browser) && view.left() <= 0.5 && view.top() >= ribbon.bottom() - 1.0 && view.bottom() <= line.top() + 1.0,
+            view.contains_rect(browser) && view.left() <= 0.5 && view.top() <= ribbon.top() + 1.0 && view.bottom() <= line.top() + 1.0,
             "{view:?} {browser:?} {ribbon:?} {line:?}"
         );
         assert!((line.bottom() - 900.0).abs() < 4.0 && timeline.bottom() <= line.top() + 4.0, "{timeline:?} {line:?}");

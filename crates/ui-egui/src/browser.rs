@@ -1783,6 +1783,39 @@ pub(crate) mod tests {
         assert!(card.bottom() < floor && floor - card.bottom() < gap + 1.0, "{card:?} {floor}");
     }
 
+    /// The gaps around the shell's cards are the view's, as SolidCraft's (it shields only the
+    /// cards from the view's input): a drag that starts between the workspace and ribbon cards,
+    /// above them or left of the browser card orbits; one that starts on a card does not.
+    #[test]
+    fn the_gaps_around_the_cards_belong_to_the_view() {
+        let ctx = egui::Context::default();
+        let size = vec2(1400.0, 900.0);
+        let mut app = ModelApp::new(Session::default());
+        app.open_sample("cantilever");
+        app.wait_loaded();
+        settle(&mut app, &ctx, size);
+        let (ws, ribbon, card) = (region(&app, "workspace_switcher"), region(&app, "ribbon:card"), region(&app, "browser"));
+        let drag = |app: &mut ModelApp, from: Pos2| {
+            let before = format!("{:?}", app.cam);
+            draw(app, &ctx, size, vec![egui::Event::PointerMoved(from)]);
+            draw(app, &ctx, size, vec![press(from, true)]);
+            for step in 1..=6 {
+                draw(app, &ctx, size, vec![egui::Event::PointerMoved(from + vec2(15.0 * step as f32, 8.0 * step as f32))]);
+            }
+            draw(app, &ctx, size, vec![press(from + vec2(90.0, 48.0), false)]);
+            settle(app, &ctx, size);
+            format!("{:?}", app.cam) != before
+        };
+        for gap in [
+            pos2((ws.right() + ribbon.left()) / 2.0, ribbon.center().y),
+            pos2(ribbon.center().x, (region(&app, "ribbon").top() + ribbon.top()) / 2.0),
+            pos2(card.left() / 2.0, card.center().y),
+        ] {
+            assert!(drag(&mut app, gap), "a drag from the gap at {gap:?} turns the view");
+        }
+        assert!(!drag(&mut app, card.center()), "a drag on the browser card leaves the view");
+    }
+
     /// The header's chevron folds the card to its header, and unfolds it.
     #[test]
     fn folding_leaves_only_the_header() {
