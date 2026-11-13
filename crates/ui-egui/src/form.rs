@@ -426,8 +426,8 @@ impl Form<'_> {
         // Up to three components share a line when each still shows a value such as -12000
         // whole; otherwise each takes a line of its own.
         let gap = 3.0;
-        let small = egui::TextStyle::Small.resolve(ui.style());
-        let caption_w = labels.iter().map(|l| crate::elide::width(ui, &caption(l), &small)).fold(0.0, f32::max) + 2.0 * gap;
+        let font = fields::label_font(ui);
+        let caption_w = labels.iter().map(|l| crate::elide::width(ui, &caption(l), &font)).fold(0.0, f32::max) + 2.0 * gap;
         let room = fill(ui, &self.style);
         let three = labels.len().clamp(1, 3);
         let (per_line, width) = match cells {
@@ -442,13 +442,14 @@ impl Form<'_> {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = gap;
                     for &i in chunk {
-                        let hint = labels.get(i).copied().unwrap_or("");
+                        // The caption (or the table's column heading) names the component; the
+                        // empty field repeats nothing.
                         if cells.is_none() {
-                            fields::caption(ui, &self.style, &caption(hint));
+                            fields::caption(ui, &self.style, &caption(labels.get(i).copied().unwrap_or("")));
                         }
                         let slot = current.get(i).cloned().unwrap_or(Value::Null);
                         let shown = (!slot.is_null()).then_some(&slot);
-                        if let Some(v) = self.number(ui, id.with(i), shown, hint, false, width) {
+                        if let Some(v) = self.number(ui, id.with(i), shown, "", false, width) {
                             if let Some(n) = next.get_mut(i) {
                                 *n = v;
                             }
@@ -479,8 +480,8 @@ impl Form<'_> {
         };
         slots.resize(labels.len(), Value::Null);
         let gap = 3.0;
-        let small = egui::TextStyle::Small.resolve(ui.style());
-        let caption_w = labels.iter().map(|l| crate::elide::width(ui, &caption(l), &small)).fold(0.0, f32::max) + 2.0 * gap;
+        let font = fields::label_font(ui);
+        let caption_w = labels.iter().map(|l| crate::elide::width(ui, &caption(l), &font)).fold(0.0, f32::max) + 2.0 * gap;
         // All on one line when each still shows a value whole; otherwise one per line.
         let room = fill(ui, &self.style);
         let n = labels.len().max(1);
@@ -496,7 +497,7 @@ impl Form<'_> {
                 fields::caption(ui, &self.style, &caption(label));
                 let slot = slots.get(i).cloned().unwrap_or(Value::Null);
                 let shown = (!slot.is_null()).then_some(&slot);
-                if let Some(v) = self.number(ui, id.with(i), shown, label, whole, width) {
+                if let Some(v) = self.number(ui, id.with(i), shown, "", whole, width) {
                     if let Some(s) = slots.get_mut(i) {
                         *s = v;
                     }
@@ -1430,9 +1431,8 @@ mod tests {
 
     /// `id`'s form drawn once at the context panel's width from `params`, with the kit's
     /// registry holding what it drew.
-    fn drawn_in_panel(id: &str, params: Value) -> Vec<egui::Shape> {
+    fn drawn_in_panel(ctx: &egui::Context, id: &str, params: Value) -> Vec<egui::Shape> {
         let form = fieldcraft_engine::find_command(id).and_then(|c| c.form).unwrap();
-        let ctx = egui::Context::default();
         let mut params = params.as_object().cloned().unwrap_or_default();
         let names = |_: Collection| Vec::new();
         let touched = BTreeSet::new();
@@ -1461,7 +1461,7 @@ mod tests {
     /// line of whatever fits (A3-7).
     #[test]
     fn multi_choices_are_a_checkbox_grid() {
-        drawn_in_panel("model.step.create", json!({"name": "Load", "procedure": {"type": "static"}}));
+        drawn_in_panel(&egui::Context::default(), "model.step.create", json!({"name": "Load", "procedure": {"type": "static"}}));
         let boxes = solidcraft_ui_registry::rects("dialog:checkbox:");
         let labels = ["Displacement", "Reaction force", "Stress", "Strain", "Temperature", "Heat flux"];
         let rects: Vec<egui::Rect> =
@@ -1478,6 +1478,26 @@ mod tests {
         let columns = distinct(rects.iter().map(|r| r.left()).collect()).len();
         let rows = distinct(rects.iter().map(|r| r.top()).collect()).len();
         assert!(columns <= 2 && rows == labels.len().div_ceil(columns), "{columns} columns, {rows} rows: {rects:?}");
+    }
+
+    /// A vector's axis letters are at label size, centred on their fields, and the empty fields
+    /// do not repeat them as placeholders (A3-9).
+    #[test]
+    fn vector_captions_sit_beside_their_fields() {
+        let ctx = egui::Context::default();
+        let shapes = drawn_in_panel(&ctx, "mesh.node.add", json!({}));
+        let texts: Vec<&egui::epaint::TextShape> = shapes.iter().filter_map(|s| if let egui::Shape::Text(t) = s { Some(t) } else { None }).collect();
+        assert!(!texts.iter().any(|t| ["x", "y", "z"].contains(&t.galley.text())), "a placeholder repeats the axis");
+        let label = texts.iter().find(|t| t.galley.text() == "Position").expect("the row's label");
+        let size = |t: &egui::epaint::TextShape| t.galley.job.sections.first().map_or(0.0, |x| x.format.font_id.size);
+        for (i, axis) in ["X", "Y", "Z"].iter().enumerate() {
+            let t = texts.iter().find(|t| t.galley.text() == *axis).unwrap_or_else(|| panic!("{axis}"));
+            assert!((size(t) - size(label)).abs() < 0.01, "{axis} at {} against {}", size(t), size(label));
+            let r = t.galley.rect.translate(t.pos.to_vec2());
+            let field = ctx.read_response(Id::unique(("fc_form", Id::unique("t"), "xyz")).with(i)).expect("the component's field").rect;
+            assert!((r.center().y - field.center().y).abs() < 1.0, "{axis} at {r:?}, its field at {field:?}");
+            assert!(r.right() <= field.left(), "{axis} at {r:?} is before its field at {field:?}");
+        }
     }
 
     fn mm() -> DisplaySystem {
