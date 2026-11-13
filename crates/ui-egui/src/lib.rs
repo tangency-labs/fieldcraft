@@ -884,6 +884,8 @@ impl ModelApp {
                 }
             }
             self.forms_opened = self.forms_opened.wrapping_add(1);
+            // An earlier "not yet" card concerns another command: the new form replaces it.
+            self.refused = None;
             self.dialog = Some(ParamsDialog {
                 command: spec.id,
                 text: params.to_string(),
@@ -3096,6 +3098,17 @@ mod tests {
         assert!(app.dialog.is_none());
         assert!(app.session.model.node(7).is_some());
         assert!(app.start("no.such").is_err());
+    }
+
+    /// Opening a form drops the "not yet" card of an earlier attempt: it concerns another
+    /// command, and would sit under every later form (A3-4).
+    #[test]
+    fn a_new_form_drops_an_earlier_refusal() {
+        let mut app = ModelApp::new(Session::default());
+        assert!(app.start("model.section.create").is_err(), "a section needs a material first");
+        assert!(app.refused.is_some());
+        app.start("model.material.create").unwrap();
+        assert!(app.dialog.is_some() && app.refused.is_none(), "the earlier refusal is gone");
     }
 
     /// The window's outer hosts (title bar, ribbon, History, status bar, command search, viewport,
