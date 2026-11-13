@@ -67,6 +67,8 @@ pub enum Action {
     },
     /// Show a saved view.
     Restore,
+    /// Apply a mesh plan or a relaxation field to the mesh (its apply form, filled in).
+    Apply,
     Delete,
 }
 
@@ -94,6 +96,9 @@ pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action
         let edit = def.edit_command(&app.session.model, name);
         let tip = edit.clone().unwrap_or_else(|| "Not editable: delete it and make it again".to_string());
         entry(ui, edit.is_some(), "Edit…", &tip, Action::Edit);
+        if let Some((command, _)) = def.apply(&app.session.model, name) {
+            entry(ui, true, "Apply…", command, Action::Apply);
+        }
         if def.rename_kind().is_some() {
             entry(ui, true, "Rename…", "model.rename: every definition that refers to it follows", Action::Rename);
         }
@@ -196,6 +201,15 @@ pub fn apply(app: &mut ModelApp, target: Target, action: Action) {
             {
                 app.select_definition(Some((Def::Step, step.clone())));
                 app.open_form(&command, params);
+            }
+            Ok(Value::Null)
+        }
+        Action::Apply => {
+            if let Target::Def(def, name) = &target
+                && let Some((command, params)) = def.apply(&app.session.model, name)
+            {
+                app.select_definition(Some((*def, name.clone())));
+                app.open_form(command, params);
             }
             Ok(Value::Null)
         }
@@ -619,12 +633,23 @@ mod tests {
         assert!(!ask.allowed() && ask.users == ["render `Clip`"], "{ask:?}");
         app.answer_delete(true);
         assert!(app.session.view.saved("Front").is_some());
-        let new = [Def::Mass, Def::Spring, Def::SizeControl, Def::FaceMerge, Def::FaceSplit, Def::Stitch, Def::Defeature];
+        let new = [
+            Def::Mass,
+            Def::Spring,
+            Def::SizeControl,
+            Def::FaceMerge,
+            Def::FaceSplit,
+            Def::Stitch,
+            Def::Defeature,
+            Def::InitialField,
+            Def::MeshPlan,
+            Def::Relaxation,
+        ];
         let mut targets: Vec<Target> =
             crate::browser::tests::listed(&app).into_iter().filter(|t| !matches!(t, Target::Def(k, _) if !new.contains(k))).collect();
         // The render before the view it starts from.
         targets.sort_by_key(|t| matches!(t, Target::View(_)));
-        assert_eq!(targets.len(), 11, "{targets:?}");
+        assert_eq!(targets.len(), 14, "{targets:?}");
         for target in targets {
             let before = app.session.journal.len();
             let deleted = match &target {
@@ -670,7 +695,25 @@ mod tests {
         apply(&mut app, Target::Def(Def::Defeature, "Small".into()), Action::Edit);
         assert_eq!(app.dialog.as_ref().map(|d| d.command), Some("geometry.defeature"));
         app.close_dialog();
-        for (kind, name) in [(Def::FaceMerge, "Fillet"), (Def::FaceSplit, "Band"), (Def::Stitch, "Gaps")] {
+        // A mesh plan and a relaxation field are applied, not edited; an initial field is mapped
+        // again under its name.
+        for (kind, name, command, key) in
+            [(Def::MeshPlan, "Plan-Base", "mesh.plan.apply", "plan"), (Def::Relaxation, "Relax1", "mesh.node.relax.apply", "field")]
+        {
+            apply(&mut app, Target::Def(kind, name.into()), Action::Apply);
+            let d = app.dialog.as_ref().unwrap();
+            let params: Value = serde_json::from_str(&d.text).unwrap();
+            assert_eq!((d.command, params[key].as_str()), (command, Some(name)), "{kind:?}");
+            app.close_dialog();
+        }
+        for (kind, name) in [
+            (Def::FaceMerge, "Fillet"),
+            (Def::FaceSplit, "Band"),
+            (Def::Stitch, "Gaps"),
+            (Def::InitialField, "Warm"),
+            (Def::MeshPlan, "Plan-Base"),
+            (Def::Relaxation, "Relax1"),
+        ] {
             assert!(kind.edit_command(&app.session.model, name).is_none() && kind.rename_kind().is_none(), "{kind:?}");
         }
         assert_eq!((Def::Mass.rename_kind(), Def::Spring.rename_kind()), (Some("point_mass"), Some("spring")));
