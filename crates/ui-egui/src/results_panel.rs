@@ -18,8 +18,6 @@ use crate::theme::Tokens;
 use solidcraft_ui_kit as kit;
 use solidcraft_ui_kit::BackingTooltipExt as _;
 
-/// Width of the panel's drop-down lists.
-const COMBO_WIDTH: f32 = 160.0;
 const SWATCH: egui::Vec2 = vec2(18.0, 15.0);
 /// The smallest span a drag speed is taken of, so a zero range still drags.
 const MIN_DRAG_SPAN: f64 = 1e-9; // unit-factors: a floor on a span in any unit
@@ -243,6 +241,13 @@ fn legend(plot: &Plot, painter: &egui::Painter, rect: Rect, bar: Option<Rect>, t
     let swatch_top = y;
     let swatch_bottom = y + l.bands.count as f32 * band_height + if l.bands.over { SWATCH.y } else { 0.0 };
     let mut last_label = y;
+    // The values are right-aligned on their widest, so their decimal points line up.
+    let highest = if l.bands.over { l.max.1 } else { l.bands.level(l.bands.count) };
+    let value_w = (0..=l.bands.count)
+        .map(|k| l.bands.level(k))
+        .chain([highest])
+        .map(|v| painter.layout_no_wrap(number_in(v, scale), font.clone(), t.overlay_text).size().x)
+        .fold(0.0_f32, f32::max);
     for k in (0..rows).rev() {
         let h = if l.bands.is_over(k) { SWATCH.y } else { band_height };
         let r = Rect::from_min_size(pos2(origin.x + 10.0, y), vec2(SWATCH.x, h));
@@ -250,12 +255,18 @@ fn legend(plot: &Plot, painter: &egui::Painter, rect: Rect, bar: Option<Rect>, t
         painter.rect_filled(r, 0.0, Color32::from_rgb(c.0, c.1, c.2));
         if k + 1 == rows {
             let top = if l.bands.is_over(k) { l.max.1 } else { l.bands.level(k + 1) };
-            painter.text(pos2(r.right() + 6.0, r.top()), Align2::LEFT_CENTER, number_in(top, scale), font.clone(), t.overlay_text);
+            painter.text(pos2(r.right() + 6.0 + value_w, r.top()), Align2::RIGHT_CENTER, number_in(top, scale), font.clone(), t.overlay_text);
         }
         // Keep both end values and leave a readable gap between the remaining tick labels.
         // The selected contour bands and their colours never change when the window shrinks.
         if k == 0 || (r.bottom() - last_label >= SWATCH.y && swatch_bottom - r.bottom() >= SWATCH.y) {
-            painter.text(pos2(r.right() + 6.0, r.bottom()), Align2::LEFT_CENTER, number_in(l.bands.level(k), scale), font.clone(), t.overlay_text);
+            painter.text(
+                pos2(r.right() + 6.0 + value_w, r.bottom()),
+                Align2::RIGHT_CENTER,
+                number_in(l.bands.level(k), scale),
+                font.clone(),
+                t.overlay_text,
+            );
             last_label = r.bottom();
         }
         y = r.bottom();
@@ -384,7 +395,7 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
                 // The clamp is stored in SI; the legend shows the display units.
                 let mut v = set.map_or(value, |v| l.field.shown(&plot.result, v, &plot.units));
                 let speed = (l.max.1 - l.min.1).abs().max(MIN_DRAG_SPAN) * 0.005;
-                if ui.add_enabled_ui(set.is_some(), |ui| kit::number_field(ui, &mut v, f64::MIN..=f64::MAX, speed, "")).inner.changed() {
+                if ui.add_enabled_ui(set.is_some(), |ui| column_number_field(ui, &mut v, f64::MIN..=f64::MAX, speed, "")).inner.changed() {
                     run.push(("results.contour", legend_params(plot, key, json!(v))));
                 }
             });
@@ -453,18 +464,21 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
         kit::divider(ui, "fc_results_modes");
         kit::text(ui, "Modes", kit::Text::Heading("fc_results_modes"));
         egui::ScrollArea::vertical().id_salt("fc_results_modes").max_height(kit::row_height() * 5.0).show(ui, |ui| {
-            for (i, m) in f.modes.iter().enumerate() {
-                let mode = i + 1;
-                if ui
-                    .selectable_label(
-                        plot.view.mode == mode,
-                        format!("{mode}   {}", crate::results::mode_value(f.buckling.is_some(), m.eigenvalue, m.frequency, &plot.units)),
-                    )
-                    .clicked()
-                {
-                    run.push(("results.modes", json!({"mode": mode})));
+            // Justified: the selected mode highlights across the panel, not only behind its text.
+            ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                for (i, m) in f.modes.iter().enumerate() {
+                    let mode = i + 1;
+                    if ui
+                        .selectable_label(
+                            plot.view.mode == mode,
+                            format!("{mode}   {}", crate::results::mode_value(f.buckling.is_some(), m.eigenvalue, m.frequency, &plot.units)),
+                        )
+                        .clicked()
+                    {
+                        run.push(("results.modes", json!({"mode": mode})));
+                    }
                 }
-            }
+            });
         });
     } else if let Kind::Heat(h) = plot.result.kind() {
         kit::divider(ui, "fc_results_heat");
@@ -529,11 +543,10 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
 fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)>) -> bool {
     let views = &app.session.view.views;
     let current = app.session.view.current.as_deref();
-    let mut save = false;
     kit::row(ui, "Views", |ui| {
         let shown = current.unwrap_or(if views.is_empty() { "None saved" } else { "Choose…" });
         ui.add_enabled_ui(!views.is_empty(), |ui| {
-            kit::bounded_dropdown_menu(ui, "fc_results_views", shown, COMBO_WIDTH, |ui| {
+            kit::bounded_dropdown_menu(ui, "fc_results_views", shown, ui.available_width(), |ui| {
                 for v in views {
                     if ui.selectable_label(current == Some(v.name.as_str()), &v.name).backing_on_hover_text("Show this view (view.restore)").clicked()
                     {
@@ -542,20 +555,29 @@ fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Val
                 }
             });
         });
-        save = kit::button(ui, "Save View…", kit::Button::Normal)
-            .backing_on_hover_text("Keep the camera and this results display as a named view, saved with the model (view.save)")
-            .clicked();
     });
-    save
+    kit::button(ui, "Save View…", kit::Button::Normal)
+        .backing_on_hover_text("Keep the camera and this results display as a named view, saved with the model (view.save)")
+        .clicked()
+}
+
+/// A kit number field as wide as what is left of its row's control column, so the rows' fields
+/// and drop-downs end at one right edge.
+fn column_number_field(ui: &mut egui::Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>, speed: f64, suffix: &str) -> egui::Response {
+    ui.spacing_mut().interact_size.x = ui.available_width();
+    kit::number_field(ui, value, range, speed, suffix)
 }
 
 /// The deformation rows of the results grid: Deformed (with its scale) and Animate.
 fn deformation_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)>) {
     kit::row(ui, "Deformed", |ui| {
         let mut deformed = plot.view.deformed;
-        if kit::checkbox(ui, "", &mut deformed).changed() {
+        if kit::checkbox(ui, "Show", &mut deformed).backing_on_hover_text("Draw the deformed shape").changed() {
             run.push(("results.deformed", json!({"show": deformed})));
         }
+    });
+    // Its own row, so Auto lines up with the legend's.
+    kit::row(ui, "Scale", |ui| {
         let mut auto = plot.view.scale.is_none();
         let tip = if true_scale(&plot.result) {
             "Draw the displacements at true scale (they are large already)"
@@ -569,7 +591,7 @@ fn deformation_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str,
         let mut scale = plot.scale;
         let speed = plot.scale.abs().max(MIN_DRAG_SCALE) * 0.01;
         let field = ui.add_enabled_ui(plot.view.deformed, |ui| {
-            kit::number_field(ui, &mut scale, 0.0..=fieldcraft_engine::results::MAX_DEFORMATION_SCALE, speed, "×")
+            column_number_field(ui, &mut scale, 0.0..=fieldcraft_engine::results::MAX_DEFORMATION_SCALE, speed, "×")
         });
         if field.inner.backing_on_hover_text("The scale the displacements are drawn at").changed() {
             run.push(("results.deformed", json!({"scale": scale})));
@@ -606,7 +628,7 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
             return;
         }
         let shown = view.slice.as_ref().map_or("None", |s| s.axis.id());
-        kit::bounded_dropdown_menu(ui, "fc_results_slice", &format!("Normal {}", shown.to_uppercase()), 90.0, |ui| {
+        kit::bounded_dropdown_menu(ui, "fc_results_slice", &format!("Normal {}", shown.to_uppercase()), ui.available_width(), |ui| {
             if ui.selectable_label(view.slice.is_none(), "None").clicked() {
                 run.push(("results.slice", json!({"axis": "none"})));
             }
@@ -616,16 +638,18 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
                 }
             }
         });
-        if let Some(s) = &view.slice {
+    });
+    if let Some(s) = view.slice.as_ref().filter(|_| plot.view.contour != Some(Field::WallHeatFlux)) {
+        kit::row(ui, "Position", |ui| {
             let length = |m: f64| shown_in(Quantity::Length, m, &plot.units);
             let (lo, hi) = (length(flow.grid.start(s.axis.index())), length(flow.grid.end(s.axis.index())));
             let mut at = length(slice_position(f, s));
             let speed = (hi - lo).abs().max(MIN_DRAG_SPAN) * 0.002;
-            if kit::number_field(ui, &mut at, lo..=hi, speed, "").backing_on_hover_text("Where the slice crosses its axis").changed() {
+            if column_number_field(ui, &mut at, lo..=hi, speed, "").backing_on_hover_text("Where the slice crosses its axis").changed() {
                 run.push(("results.slice", json!({"position": at})));
             }
-        }
-    });
+        });
+    }
     kit::row(ui, "Obstacles", |ui| {
         let mut surface = view.surface;
         if kit::checkbox(ui, "Coloured", &mut surface).backing_on_hover_text("Colour the part by the selected fluid field or wall heat").changed() {
@@ -1359,6 +1383,61 @@ mod tests {
         let over = label_box(pos2(100.0, 295.0), size, bounds, Some(low));
         assert_eq!(over.max.y, low.min.y - LABEL_PAD.y);
         assert!(!over.intersects(low));
+    }
+
+    /// A3-14: the Results rows share one control column: the drop-downs and the number fields
+    /// end at the same right edge, and the deformed shape has its own labelled toggle.
+    #[test]
+    fn the_results_rows_share_one_control_column() {
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        app.run("file.sample", json!({"name": "cantilever"})).unwrap();
+        app.run("solve.run", json!({})).unwrap();
+        app.run("results.contour", json!({"field": "von_mises", "range": {"max": 10}})).unwrap();
+        let plot = app.plot().unwrap();
+        let ctx = egui::Context::default();
+        let t = Tokens::get(true);
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                ui.allocate_ui(vec2(320.0, 2000.0), |ui| controls(&mut app, &plot, ui, &t));
+            });
+            out.textures_delta.clear();
+        }
+        let right = |row: &str| solidcraft_ui_registry::rect_of(&format!("dialog:widget:{row}")).map(|r| r.right());
+        let step = right("Step").expect("the Step drop-down");
+        for row in ["Contours", "Legend max", "Legend min", "Scale", "Views"] {
+            let edge = right(row).unwrap_or_else(|| panic!("no {row} control"));
+            assert!((edge - step).abs() <= 1.0, "{row} ends at {edge}, the Step drop-down at {step}");
+        }
+        assert!(right("Deformed").is_some(), "the deformed shape has its own toggle");
+    }
+
+    /// A3-14: the legend's values are right-aligned, so their decimal points line up.
+    #[test]
+    fn legend_values_are_right_aligned() {
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        app.run("file.sample", json!({"name": "cantilever"})).unwrap();
+        app.run("solve.run", json!({})).unwrap();
+        app.run("results.contour", json!({"field": "von_mises", "bands": 5, "range": {"min": 0, "max": 100}})).unwrap();
+        let plot = app.plot().unwrap();
+        let ctx = egui::Context::default();
+        let t = Tokens::get(true);
+        let view = Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0));
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            legend(&plot, &ui.painter_at(view), view, None, &t);
+        });
+        out.textures_delta.clear();
+        let rights: Vec<f32> = out
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(text) if text.galley.text().replace(',', "").parse::<f64>().is_ok() => Some(text.pos.x + text.galley.size().x),
+                _ => None,
+            })
+            .collect();
+        assert!(rights.len() >= 3, "{rights:?}");
+        for r in &rights {
+            assert!((r - rights[0]).abs() <= 0.5, "the values end at different x: {rights:?}");
+        }
     }
 
     /// The results controls, Path Plot and command replies draw with the kit's rows, tables,
