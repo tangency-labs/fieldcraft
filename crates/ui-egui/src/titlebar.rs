@@ -88,8 +88,8 @@ mod tests {
     fn empty_bar_space_drags_and_edges_resize() {
         let mut w = Win::new(1600.0);
         w.frame(vec![]);
-        // Between the quick-access button and the document tab.
-        let empty = pos2(500.0, 17.0);
+        // Between the document tab's + and Solve.
+        let empty = pos2(800.0, 17.0);
         let cmds = w.gesture(&[empty, empty + vec2(12.0, 4.0), empty + vec2(30.0, 8.0)]);
         assert_eq!(cmds.iter().filter(|c| matches!(c, ViewportCommand::StartDrag)).count(), 1, "{cmds:?}");
         let cmds = w.gesture(&[pos2(1.0, 300.0), pos2(8.0, 300.0)]);

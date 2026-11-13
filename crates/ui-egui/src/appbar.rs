@@ -6,11 +6,11 @@
 //! empty space move the window and draws the caption buttons on Windows and Linux; macOS keeps
 //! its traffic lights over the bar's left end.
 //!
-//! What stays FieldCraft's: its mark, Solve (the one prominent action, in the place the kit
-//! leaves for an offer pill) and the single document tab (drawn in the kit's tab shape; the kit's
-//! tab strip closes, adds and reorders documents, which a FieldCraft window does not).
+//! What stays FieldCraft's: its mark and Solve (the one prominent action, in the place the kit
+//! leaves for an offer pill). The document tab is the kit's tab strip holding the window's one
+//! model, where SolidCraft's tabs start.
 
-use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, pos2, vec2};
+use egui::{Color32, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 use solidcraft_ui_kit::app_bar::{self, BarAction, BarButton};
 use solidcraft_ui_kit::window_chrome;
@@ -273,19 +273,25 @@ fn solve_button(app: &mut ModelApp, ui: &mut egui::Ui, solve: Rect, labeled: boo
     }
 }
 
-/// The model's document tab, centred in the room from `x0` to `x1`, in the kit's tab shape.
+/// The model's document tab: the kit's tab strip (SolidCraft's `documents::tabs`) with the one
+/// tab a FieldCraft window holds, from the documents separator at `x0` up to `x1`. Its × closes
+/// the model and its + starts a new one: both are File › New (`file.new`), which asks first
+/// when that would discard unsaved changes.
 fn document_tab(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
     let k = solidcraft_theme::Tokens::get();
     let migrated = app.session.migrated_from.map(|n| format!(" (from format {n})")).unwrap_or_default();
-    let label = format!("{}{migrated}{}", app.model_name(), if app.session.is_dirty() { " •" } else { "" });
-    let font = FontId::proportional(k.font_button);
-    let text_w = crate::elide::width(ui, &label, &font);
-    let tab_w = (text_w + 40.0).clamp(120.0, 260.0).min((x1 - x0).max(0.0));
-    if tab_w <= 40.0 {
+    let name = format!("{}{migrated}", app.model_name());
+    let dirty = app.session.is_dirty();
+    // Beside the open search the tab shows the model's whole name or nothing: a name cut short
+    // reads as neither. The kit's tab fits its name up to its widest (40 points of insets).
+    let label = format!("{name}{}", if dirty { " •" } else { "" });
+    let natural = ui.painter().layout_no_wrap(label, kit::type_face::semibold(k.font_button), k.app_bar_text).size().x + 40.0;
+    if app.ui.palette && natural > (x1 - x0 - TAB_STRIP_ROOM).min(TAB_MAX) {
         return;
     }
-    let tab_x = (r.center().x - tab_w / 2.0).clamp(x0, (x1 - tab_w).max(x0));
-    let tab = Rect::from_min_size(pos2(tab_x, r.center().y - 13.0), vec2(tab_w, 26.0));
+    if x1 - x0 < TAB_STRIP_ROOM + TAB_MIN {
+        return;
+    }
     let mut place = app.session.path.clone().unwrap_or_else(|| "Not saved yet".into());
     if let Some(n) = app.session.migrated_from {
         place.push_str(&format!("\nOpened from a format {n} file: the first save keeps that file as a copy beside it"));
@@ -293,20 +299,57 @@ fn document_tab(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32
             place.push_str(&format!("\n{note}"));
         }
     }
-    let shown = crate::elide::middle_in(ui, &label, &font, tab_w - 28.0);
-    let cut = shown != label.as_str();
-    // Beside the open search the tab shows the model's whole name or nothing: a name cut in
-    // the middle ("Cant…le)") reads as neither.
-    if cut && app.ui.palette {
-        return;
+    let close_key = shortcut("W");
+    let menu = [app_bar::TabMenuRow { id: "close", label: "Close", key_on_selected: &close_key, needs_others: false }];
+    let mut strip = app_bar::TabStrip {
+        tabs: vec![app_bar::DocTab { name: &name, list_name: &name, dirty, place: &place }],
+        selected: 0,
+        shown_selected: Some(0),
+        title_bar: true,
+        double_click_renames: false,
+        rename: None,
+        menu: &menu,
+        close_name: "Close the model",
+        close_tip: "Close the model: a new, empty one takes its place (File › New)",
+        more_tip: "Every model",
+        new_tip: "New model (File › New)",
+        id: egui::Id::unique("fc_document_tabs"),
+        handles: TAB_HANDLES,
+    };
+    // The strip's hit regions stay clear of what is right of it.
+    let room = Rect::from_min_max(pos2(x0, r.top()), pos2(x1, r.bottom()));
+    let mut tabs_ui = ui.new_child(egui::UiBuilder::new().max_rect(room));
+    tabs_ui.set_clip_rect(room.intersect(ui.clip_rect()));
+    let actions = app_bar::tabs(&mut tabs_ui, &mut strip, r, x0, x1);
+    if let Some(tab) = solidcraft_ui_registry::rect_of("document_tab:0") {
+        app.place("document_tab", tab);
     }
-    let resp = ui.interact(tab, egui::Id::unique("fc_document_tab"), Sense::hover());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, true, &label));
-    app_bar::tab_shape(ui.painter(), &k, tab, true, resp.hovered());
-    ui.painter().text(pos2(tab.left() + 14.0, tab.center().y), Align2::LEFT_CENTER, shown, font, k.app_bar_text);
-    let _ = resp.backing_on_hover_text(app_bar::tab_tip(&label, &place, cut));
-    app.place("document_tab", tab);
+    for action in actions {
+        match action {
+            app_bar::TabAction::Close(_) | app_bar::TabAction::New => app.new_model(),
+            app_bar::TabAction::Menu { id, .. } if id == "close" => app.new_model(),
+            app_bar::TabAction::Maximize => window_chrome::toggle_maximize(ui.ctx()),
+            _ => {}
+        }
+    }
 }
+
+/// Room the kit's tab strip keeps beside its tabs (its + button), and its narrowest and widest
+/// tab.
+const TAB_STRIP_ROOM: f32 = 34.0;
+const TAB_MIN: f32 = 72.0;
+const TAB_MAX: f32 = 200.0;
+
+/// Where the tab strip publishes its parts in the widget registry.
+const TAB_HANDLES: app_bar::TabHandles<'static> = app_bar::TabHandles {
+    tab: "document_tab:",
+    close: "document_tab_close:",
+    more: "document_tabs_more",
+    new: "document_tab_new",
+    rename: "document_tab_rename",
+    menu_row: "document_tab_menu:",
+    more_row: "document_tabs_more:",
+};
 
 /// The shortcut text with this platform's command key.
 pub fn shortcut(key: &str) -> String {
@@ -443,6 +486,20 @@ mod tests {
             }
             assert!(at(&m, "app_bar:report").right() < 1400.0 && at(&m, "app_bar:solve").left() > 700.0);
         }
+    }
+
+    /// The document tab is the kit's tab strip, as SolidCraft's: it starts just after the
+    /// documents separator, right of the quick-access buttons, instead of centred on the bar, and
+    /// its + follows it.
+    #[test]
+    fn the_document_tab_starts_the_tab_strip_after_the_actions() {
+        let m = regions(1400.0, false);
+        let at = |k: &str| m.get(k).copied().unwrap_or_else(|| panic!("{k} not drawn"));
+        let (theme, tab) = (at("app_bar:theme"), at("document_tab"));
+        assert!(tab.left() > theme.right() && tab.left() - theme.right() < 24.0, "theme {theme:?}, tab {tab:?}");
+        assert!(tab.center().x < 700.0, "left-aligned, not centred: {tab:?}");
+        let new = solidcraft_ui_registry::handle_at("document_tab_new").unwrap_or_else(|| panic!("no + button"));
+        assert!(new.x > tab.right() && new.x < tab.right() + 24.0, "+ at {new:?} after {tab:?}");
     }
 
     /// Solve is the kit's primary icon-label action, at the kit's control height (it was a
