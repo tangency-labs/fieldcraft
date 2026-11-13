@@ -2,9 +2,10 @@
 //! face in the viewport. Edit… opens the item's edit form, Hide/Show and Isolate change the view
 //! (`view.*`), Active in step switches a boundary condition or load on or off per step
 //! (`model.step.activate`), Rename… opens `model.rename` (every reference follows the new
-//! name), Restore shows a saved view (`view.restore`), and Delete… asks first (a seed's and a
-//! rigid wall's Delete runs at once: undo brings it back) ([`crate::files::Prompt::Delete`]): it
-//! lists what uses the item, and refuses, or for a datum deletes its partitions with it.
+//! name), Apply… applies a mesh plan or relaxation field (its apply form, filled in), Restore
+//! shows a saved view (`view.restore`), and Delete… asks first (a seed's and a rigid wall's Delete
+//! runs at once: undo brings it back) ([`crate::files::Prompt::Delete`]): it lists what uses the
+//! item, and refuses, or for a datum deletes its partitions with it.
 //! Every entry runs the same command as the ribbon, the forms and scripts.
 
 use fieldcraft_engine::{ItemKind, ViewItem};
@@ -115,10 +116,9 @@ pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action
         Target::Seed(on) => entry(ui, true, "Edit…", seed_command(on), Action::Edit),
         Target::View(_) => entry(ui, true, "Restore", "view.restore: show it", Action::Restore),
         Target::Render(_) => entry(ui, true, "Edit…", "results.render.save: replaces it", Action::Edit),
-        // A wall has no edit command of its own: it is edited in its step's form.
-        Target::RigidWall { step, .. } => {
-            let tip = format!("{}: the wall is one of the step's rigid walls", Def::Step.command("edit"));
-            entry(ui, Def::Step.exists(&app.session.model, step), "Edit Step…", &tip, Action::Edit);
+        Target::RigidWall { step, index } => {
+            let found = rigid_wall_params(app, step, *index).is_some();
+            entry(ui, found, "Edit…", "interaction.rigid_wall.edit", Action::Edit);
         }
         Target::Def(..) | Target::Body(_) | Target::Surface(_) => {}
     }
@@ -196,11 +196,10 @@ pub fn apply(app: &mut ModelApp, target: Target, action: Action) {
             {
                 app.open_form("results.render.save", params);
             }
-            if let Target::RigidWall { step, .. } = &target
-                && let Some((command, params)) = Def::Step.edit(&app.session.model, step, app.session.units())
+            if let Target::RigidWall { step, index } = &target
+                && let Some(params) = rigid_wall_params(app, step, *index)
             {
-                app.select_definition(Some((Def::Step, step.clone())));
-                app.open_form(&command, params);
+                app.open_form("interaction.rigid_wall.edit", params);
             }
             Ok(Value::Null)
         }
@@ -293,6 +292,17 @@ pub fn seed_params(seed: &fieldcraft_model::Seed, units: &fieldcraft_model::Disp
     let on = o.remove(seed.on.entity.kind())?;
     o.insert(seed_key(&seed.on), json!([on]));
     fieldcraft_engine::units::shown_params(seed_command(&seed.on), &v, units).ok()
+}
+
+/// `interaction.rigid_wall.edit`'s parameters that keep wall `index` of explicit step `step` as it
+/// is, in the display units (its form, filled in); `None` when it is gone.
+fn rigid_wall_params(app: &ModelApp, step: &str, index: usize) -> Option<Value> {
+    let fieldcraft_model::Procedure::ExplicitDynamic(e) = &app.session.model.step(step)?.procedure else { return None };
+    let mut v = serde_json::to_value(e.rigid_walls.get(index)?).ok()?;
+    let o = v.as_object_mut()?;
+    o.insert("step".into(), json!(step));
+    o.insert("index".into(), json!(index));
+    fieldcraft_engine::units::shown_params("interaction.rigid_wall.edit", &v, app.session.units()).ok()
 }
 
 /// `results.render.save`'s parameters that make render `name` as it is (its form, filled in).
@@ -679,7 +689,7 @@ mod tests {
 
     /// Edit… opens each editable kind's form filled in, and running it unchanged changes
     /// nothing; merges, splits and stitches are not editable (made again instead); Restore shows
-    /// a saved view; a rigid wall opens its step (#A1-05, #A1-08).
+    /// a saved view; a rigid wall opens interaction.rigid_wall.edit (#A1-05, #A1-08).
     #[test]
     fn edit_and_restore_on_the_new_kinds() {
         let mut app = crate::browser::tests::every_kind();
@@ -720,9 +730,22 @@ mod tests {
         apply(&mut app, Target::Render("Clip".into()), Action::Edit);
         assert_eq!(app.dialog.as_ref().map(|d| d.command), Some("results.render.save"));
         app.close_dialog();
+        // A rigid wall opens its own edit, filled in; running it unchanged changes nothing.
+        let wall = |app: &ModelApp| match &app.session.model.step("Impact").map(|s| &s.procedure) {
+            Some(fieldcraft_model::Procedure::ExplicitDynamic(e)) => e.rigid_walls.first().cloned(),
+            _ => None,
+        };
+        let before = wall(&app);
         apply(&mut app, Target::RigidWall { step: "Impact".into(), index: 0 }, Action::Edit);
-        assert_eq!(app.dialog.as_ref().map(|d| d.command), Some("model.step.edit"));
-        app.close_dialog();
+        let d = app.dialog.as_ref().unwrap();
+        let params: Value = serde_json::from_str(&d.text).unwrap();
+        assert_eq!(
+            (d.command, params["step"].as_str(), params["index"].as_u64()),
+            ("interaction.rigid_wall.edit", Some("Impact"), Some(0)),
+            "{params}"
+        );
+        app.run_dialog().unwrap();
+        assert!(app.dialog.is_none() && before.is_some() && wall(&app) == before);
         app.session.view.current = None;
         apply(&mut app, Target::View("Front".into()), Action::Restore);
         assert_eq!(app.session.view.current.as_deref(), Some("Front"), "{:?}", app.status);
