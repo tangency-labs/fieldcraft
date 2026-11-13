@@ -177,7 +177,18 @@ pub fn pyramid_surface(surface: &BoundarySurface, cut: &[u32], quads: &[[[f64; 3
                     }
                 }
             }
-            _ => return Err(Error::Unsupported("a triangle beside the interface lies along two of its edges".into())),
+            [i, j] => {
+                // The triangle spans a corner of the rim: its corner is the vertex the two rim
+                // edges share, its edges a → corner → b both lie on the rim and b → a is inside.
+                let corner = if j - i == 1 { *j } else { *i };
+                let (a, c, b) = (t[(corner + 2) % 3], t[corner], t[(corner + 1) % 3]);
+                let mut toward_a = rim_path(&rim, at(a), at(c))?;
+                toward_a.reverse();
+                let toward_b = rim_path(&rim, at(c), at(b))?;
+                corner_strip(&toward_a, &toward_b, &positions, &mut triangles)?;
+                tri_face.resize(triangles.len(), f);
+            }
+            _ => return Err(Error::Unsupported("a triangle beside the interface lies along the rim on all three edges".into())),
         }
     }
     // The pyramids: an apex above each quadrilateral, the sides toward the tet region.
@@ -224,6 +235,40 @@ pub fn pyramid_surface(surface: &BoundarySurface, cut: &[u32], quads: &[[[f64; 3
         }
     }
     Ok(Transition { positions: compact, triangles, tri_face, apexes, sides })
+}
+
+/// Triangulate the region between two rim paths that leave the same corner node (`left[0] ==
+/// right[0]`) and end at the two ends of an inside edge: the strip of triangles from the corner
+/// out to that edge, each step along the path whose next diagonal is shorter. The triangles turn
+/// the way of the triangle (left end, corner, right end) they replace, and the last one's edge
+/// right end → left end is the inside edge its neighbour shares.
+fn corner_strip(left: &[u32], right: &[u32], positions: &[[f64; 3]], triangles: &mut Vec<[u32; 3]>) -> Result<()> {
+    let at = |v: u32| positions.get(v as usize).copied().ok_or_else(|| Error::Failed("a rim node is out of range".into()));
+    if left.len() < 2 || right.len() < 2 || left.first() != right.first() {
+        return Err(Error::Unsupported(
+            "a triangle at a corner of the interface collapses onto its rim (the tessellation is coarser than the hex mesh there)".into(),
+        ));
+    }
+    let mut nodes: BTreeSet<u32> = left.iter().copied().collect();
+    if right.iter().skip(1).any(|v| !nodes.insert(*v)) {
+        return Err(Error::Unsupported("a triangle at a corner of the interface spans the rim on both sides of the corner".into()));
+    }
+    let (corner, (mut i, mut j)) = (left[0], (1, 1));
+    triangles.push([left[1], corner, right[1]]);
+    while i + 1 < left.len() || j + 1 < right.len() {
+        let along_left = match (left.get(i + 1), right.get(j + 1)) {
+            (Some(&l), Some(&r)) => dist(at(l)?, at(right[j])?) <= dist(at(left[i])?, at(r)?),
+            (l, _) => l.is_some(),
+        };
+        if along_left {
+            triangles.push([left[i], right[j], left[i + 1]]);
+            i += 1;
+        } else {
+            triangles.push([left[i], right[j], right[j + 1]]);
+            j += 1;
+        }
+    }
+    Ok(())
 }
 
 /// The rim nodes from `from` to `to` along the shorter way round their loop.
@@ -340,6 +385,28 @@ mod tests {
         // Without freezing, refinement splits the pyramid sides and the check says so.
         let free = quality_mesh(&surface, &cdt, Vec::new(), &QualityOptions { size: Some(0.1), ..QualityOptions::default() }).unwrap();
         assert!(apex_points(&free, &t).is_err());
+    }
+
+    #[test]
+    fn a_triangle_across_a_corner_of_the_rim_is_stitched_along_both_edges() {
+        // The cube [0, 2]³ with hex faces on its bottom and its −x side. The −y and +y sides are
+        // split by the diagonal that leaves a triangle along both of those faces at their corner.
+        let p: Vec<[f64; 3]> = (0..8).map(|i| [2.0 * (i & 1) as f64, 2.0 * ((i >> 1) & 1) as f64, 2.0 * ((i >> 2) & 1) as f64]).collect();
+        let t = [[0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5], [0, 1, 4], [1, 5, 4], [2, 6, 3], [6, 7, 3], [0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6]];
+        let s = BoundarySurface::new(&p, &t, &[0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5], &SurfaceOptions::default()).unwrap();
+        // The −x side's faces, their normals along +x into the cube.
+        let side = (0..16)
+            .map(|k| ((k % 4) as f64 * 0.5, (k / 4) as f64 * 0.5))
+            .map(|(y, z)| [[0.0, y, z], [0.0, y + 0.5, z], [0.0, y + 0.5, z + 0.5], [0.0, y, z + 0.5]]);
+        let quads: Vec<[[f64; 3]; 4]> = bottom_quads().into_iter().chain(side).collect();
+        let t = pyramid_surface(&s, &[4, 0], &quads, 6).unwrap();
+        let surface = BoundarySurface::new(&t.positions, &t.triangles, &t.tri_face, &SurfaceOptions::default()).unwrap();
+        let pyramids = 32.0 * 0.25 * (APEX_HEIGHT * 0.5) / 3.0;
+        assert!((surface.volume() - (8.0 - pyramids)).abs() < 1e-12, "{}", surface.volume());
+        let cdt = tetrahedralize(&surface, &CdtOptions::default()).unwrap();
+        let options = QualityOptions { size: Some(0.4), frozen_faces: vec![6], ..QualityOptions::default() };
+        let mesh = quality_mesh(&surface, &cdt, Vec::new(), &options).unwrap();
+        assert_eq!(apex_points(&mesh, &t).unwrap().len(), 32);
     }
 
     #[test]

@@ -964,25 +964,55 @@ mod tests {
         (r, h)
     }
 
-    /// A tet cell among hex cells (#389, #288): the hex cells sweep together and share their
-    /// nodes, the tet cell is tied once (one tie for all its cut faces, the hex cells main), and
-    /// the heat balances to round-off.
-    #[test]
-    fn a_tet_cell_among_swept_hex_cells_is_tied_once_and_the_heat_balances() {
-        let (r, h) = cut_box_heat(&[("yz", 10.0), ("yz", 20.0), ("zx", 10.0)], json!({"Box/b/a/a": "tet"}), 2.5);
-        let interfaces = r["interfaces"].as_array().unwrap();
-        let tied: Vec<&Value> = interfaces.iter().filter(|i| i["joined"] == "tied").collect();
-        assert_eq!(tied.len(), 3, "{r}");
-        assert!(tied.iter().all(|i| i["secondary"] == "Box/b/a/a" && i["tie"] == "tie_Box_b_a_a"), "{r}");
-        assert!(tied.iter().all(|i| i["why"].as_str().is_some_and(|w| w.starts_with("`Box/b/a/a` is meshed with tet"))), "{r}");
-        let merged: Vec<&Value> = interfaces.iter().filter(|i| i["joined"] == "merged").collect();
-        assert_eq!(merged.len(), 4, "{r}");
-        // Box/a/a and Box/a/b meet across y = 10, the third cut.
-        assert!(merged.iter().any(|i| i["cells"] == json!(["Box/a/a", "Box/a/b"]) && i["partition"] == "P2"), "{r}");
+    /// The heat supplied and lost balance to round-off, and the box is above the sink.
+    fn heat_balances(h: &Value) {
         let flows = &h["heat_flows"];
         let supplied = flows["loads"].as_array().unwrap().iter().find(|l| l["name"] == "Q").unwrap()["heat"].as_f64().unwrap();
         assert!(flows["imbalance"].as_f64().unwrap().abs() < 1e-9 * supplied, "{flows}");
         assert!(h["min_temperature"]["value"].as_f64().unwrap() > 25.0, "{h}");
+    }
+
+    /// The four interfaces between the hex cells merge node for node, `Box/a/a` and `Box/a/b`
+    /// across y = 10, the third cut.
+    fn hex_cells_merge(r: &Value) {
+        let merged: Vec<&Value> = r["interfaces"].as_array().unwrap().iter().filter(|i| i["joined"] == "merged").collect();
+        assert_eq!(merged.len(), 4, "{r}");
+        assert!(merged.iter().any(|i| i["cells"] == json!(["Box/a/a", "Box/a/b"]) && i["partition"] == "P2"), "{r}");
+    }
+
+    /// A tet cell among hex cells meets each of them through pyramids (a conforming mesh), and the
+    /// heat balances to round-off. The cut box's tet cell was tied to them (#389) while the
+    /// pyramid transition refused its rim (a triangle across a corner of the rim); since the
+    /// transition stitches such a triangle along both edges, the pyramids are built, and the tie
+    /// path is covered by the thin cell below.
+    #[test]
+    fn a_tet_cell_among_swept_hex_cells_meets_them_through_pyramids_and_the_heat_balances() {
+        let (r, h) = cut_box_heat(&[("yz", 10.0), ("yz", 20.0), ("zx", 10.0)], json!({"Box/b/a/a": "tet"}), 2.5);
+        let interfaces = r["interfaces"].as_array().unwrap();
+        let pyramids: Vec<&Value> = interfaces.iter().filter(|i| i["joined"] == "pyramids").collect();
+        assert_eq!(pyramids.len(), 3, "{r}");
+        assert!(pyramids.iter().all(|i| i["cells"].as_array().is_some_and(|c| c.contains(&json!("Box/b/a/a")))), "{r}");
+        assert!(interfaces.iter().all(|i| i["joined"] != "tied"), "{r}");
+        hex_cells_merge(&r);
+        heat_balances(&h);
+    }
+
+    /// A tet cell among hex cells that cannot take pyramids says why and is tied once (#389,
+    /// #288): one tie for all its cut faces, the hex cells main, and the heat balances to
+    /// round-off. The cell is the 1 mm slab between x = 29 and the box's end, below y = 10; its
+    /// rim refuses the pyramid transition.
+    #[test]
+    fn a_tet_cell_that_cannot_take_pyramids_is_tied_once_and_the_heat_balances() {
+        let (r, h) = cut_box_heat(&[("yz", 10.0), ("yz", 29.0), ("zx", 10.0)], json!({"Box/b/b/a": "tet"}), 2.5);
+        let cell = r["cells"].as_array().unwrap().iter().find(|c| c["body"] == "Box/b/b/a").unwrap();
+        assert!(cell["no_pyramids"].as_str().is_some_and(|w| !w.is_empty()), "{r}");
+        let tied: Vec<&Value> = r["interfaces"].as_array().unwrap().iter().filter(|i| i["joined"] == "tied").collect();
+        assert_eq!(tied.len(), 2, "{r}");
+        assert!(tied.iter().all(|i| i["secondary"] == "Box/b/b/a" && i["tie"] == "tie_Box_b_b_a"), "{r}");
+        assert!(tied.iter().all(|i| i["why"].as_str().is_some_and(|w| w.starts_with("`Box/b/b/a` is meshed with tet"))), "{r}");
+        let merged = r["interfaces"].as_array().unwrap().iter().filter(|i| i["joined"] == "merged").count();
+        assert_eq!(merged, 5, "{r}");
+        heat_balances(&h);
     }
 
     /// Cells cut from one box by planes, one of them (`y = 10`) cutting only the cell left of
