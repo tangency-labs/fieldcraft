@@ -188,6 +188,9 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                 .show(ctx, true, |ui| {
                     kit::section_heading(ui, "Units");
                     units = units_choice(ui, app.prefs.units.preset());
+                    section(ui, "Interface");
+                    kit::checkbox(ui, "Translucent browser", &mut app.ui.browser_float)
+                        .backing_on_hover_text("Show the view through the browser card");
                     if app.updates_available() {
                         section(ui, "Updates");
                         updates = update_check(ui, app.prefs.update_check);

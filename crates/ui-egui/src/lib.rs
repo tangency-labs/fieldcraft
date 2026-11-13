@@ -55,6 +55,7 @@ pub mod results_panel;
 pub mod samples;
 pub mod scene;
 pub mod selection;
+pub mod shell;
 pub mod theme;
 pub mod timeline;
 pub mod titlebar;
@@ -112,6 +113,14 @@ pub struct UiState {
     pub dark: bool,
     /// The browser (left).
     pub show_tree: bool,
+    /// The browser card's width in points ([`browser::width`] holds it to its range;
+    /// remembered per user).
+    pub browser_width: f32,
+    /// The browser card folded to its header (remembered per user).
+    pub browser_collapsed: bool,
+    /// The browser card is translucent over the view (Settings › Interface; remembered per
+    /// user).
+    pub browser_float: bool,
     /// The journal timeline (bottom).
     pub show_timeline: bool,
     /// The mouse navigation preset ([`navigation::NAV_PRESETS`] id; remembered per user).
@@ -143,6 +152,9 @@ impl Default for UiState {
             perspective: false,
             dark: true,
             show_tree: true,
+            browser_width: browser::WIDTH,
+            browser_collapsed: false,
+            browser_float: false,
             show_timeline: true,
             nav_preset: navigation::DEFAULT_PRESET.into(),
             reverse_zoom: false,
@@ -302,7 +314,7 @@ pub struct Viewport {
     /// GPU errors reported by the device (see [`gpu::GpuErrors`]), shown in the status bar.
     pub gpu_errors: gpu::GpuErrors,
     /// The overlays drawn over the viewport last frame (legend, selection bar, gizmo, navigation
-    /// bar): a fit leaves them free ([`framing::free_part`]).
+    /// bar, the shell's cards): a fit leaves them free ([`framing::free_part`]).
     pub overlays: Vec<egui::Rect>,
     /// Frames left in which the model is framed again if part of it is out of the free part
     /// ([`framing::RECHECK_FRAMES`]).
@@ -397,6 +409,8 @@ pub struct ModelApp {
     /// Forms opened so far (numbers each [`ParamsDialog::opening`]).
     forms_opened: u64,
     pub viewport: Viewport,
+    /// Where the cards over the viewport were drawn this frame ([`shell`]).
+    pub shell: shell::State,
     /// The toolbar's buttons drawn last frame, by catalogue id (for the control channel).
     pub toolbar_rects: Vec<(&'static str, egui::Rect, toolbar::Fit)>,
     /// The GPU adapter, for the status bar and diagnostics.
@@ -569,6 +583,7 @@ impl ModelApp {
             node_drag: None,
             forms_opened: 0,
             viewport: Viewport::default(),
+            shell: shell::State::default(),
             toolbar_rects: Vec::new(),
             gpu_info: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -656,6 +671,9 @@ impl ModelApp {
         self.session.default_units = self.prefs.units.clone();
         self.ui.nav_preset = self.prefs.nav_preset.clone();
         self.ui.reverse_zoom = self.prefs.reverse_zoom;
+        self.ui.browser_width = self.prefs.browser_width;
+        self.ui.browser_collapsed = self.prefs.browser_collapsed;
+        self.ui.browser_float = self.prefs.browser_float;
         self.services = services;
         self
     }
@@ -2394,17 +2412,8 @@ impl ModelApp {
         self.show_gpu_errors();
         self.layout.clear();
         appbar::app_bar(self, ui);
-        toolbar::toolbar(self, ui);
-        if self.ui.show_timeline {
-            timeline::timeline(self, ui);
-        }
         palette::command_line(self, ui);
-        if self.ui.show_tree {
-            browser::browser(self, ui);
-        }
-        context::panel(self, ui);
-        let host = solidcraft_ui_kit::Container::new(ui.ctx(), solidcraft_ui_kit::Surface::Viewport);
-        solidcraft_ui_kit::Container::show_central(ui, host.central(), egui::Frame::NONE, |ui| viewport::show(self, ui));
+        self.shell(ui);
         palette::popup(self, ui.ctx());
         files::show(self, ui.ctx());
         report::show(self, ui.ctx());
@@ -2418,6 +2427,40 @@ impl ModelApp {
         // Buttons can start a chooser after this frame's logic; schedule its first poll too.
         if self.picker.is_some() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+        }
+    }
+
+    /// The shell as SolidCraft's (`shell`; SolidCraft `lib.rs`, the floating layout of its
+    /// workspace UI): the viewport fills the window below the application bar, left of the context
+    /// panel, and the ribbon, History and browser cards are drawn over it as kit `Container`
+    /// cards, each recording where in [`ModelApp::shell`]. The context panel docks at the right
+    /// below the top cards.
+    fn shell(&mut self, ui: &mut egui::Ui) {
+        self.shell.clear();
+        // The workspace and ribbon cards first, over the whole width below the application bar.
+        toolbar::toolbar(self, ui);
+        let rest = ui.available_rect_before_wrap();
+        let below = self.shell.panel_space(rest);
+        let mut side = ui.new_child(egui::UiBuilder::new().id_salt("fc_shell_side").max_rect(below));
+        context::panel(self, &mut side);
+        let right = side.available_rect_before_wrap().right();
+        let view = egui::Rect::from_min_max(rest.min, egui::pos2(right.max(rest.left()), rest.bottom()));
+        // The cards over the view: History along its bottom, then the browser above it.
+        let mut over = ui.new_child(egui::UiBuilder::new().id_salt("fc_shell_cards").max_rect(view));
+        if self.ui.show_timeline {
+            timeline::timeline(self, &mut over);
+        }
+        // What a docked host left of the view (none once every card floats).
+        let view = over.available_rect_before_wrap();
+        if self.ui.show_tree {
+            browser::browser(self, &mut over);
+        }
+        // The view last on the window's own layer: the cards are areas above it, which keep the
+        // pointer over them, and its framing keeps clear of them (`viewport::overlays`).
+        let mut viewport = ui.new_child(egui::UiBuilder::new().id_salt("fc_shell_view").max_rect(view));
+        viewport::show(self, &mut viewport);
+        if !self.shell.cards.is_empty() {
+            shell::paint_top_corners(ui.painter(), view, solidcraft_theme::Tokens::get().app_bar);
         }
     }
 
@@ -2443,9 +2486,19 @@ impl ModelApp {
     }
 
     pub(crate) fn save_prefs(&mut self) {
-        if self.ui.nav_preset != self.prefs.nav_preset || self.ui.reverse_zoom != self.prefs.reverse_zoom {
+        let p = &self.prefs;
+        let u = &self.ui;
+        if u.nav_preset != p.nav_preset
+            || u.reverse_zoom != p.reverse_zoom
+            || u.browser_width != p.browser_width
+            || u.browser_collapsed != p.browser_collapsed
+            || u.browser_float != p.browser_float
+        {
             self.prefs.nav_preset = self.ui.nav_preset.clone();
             self.prefs.reverse_zoom = self.ui.reverse_zoom;
+            self.prefs.browser_width = self.ui.browser_width;
+            self.prefs.browser_collapsed = self.ui.browser_collapsed;
+            self.prefs.browser_float = self.ui.browser_float;
             self.prefs.save(self.services.prefs.as_ref());
         }
     }
@@ -3802,7 +3855,7 @@ mod tests {
     /// one keeps it at the top (#559).
     #[test]
     fn the_legend_stays_clear_of_the_selection_bar() {
-        for (w, h, at_top) in [(960.0, 600.0, false), (1400.0, 900.0, true)] {
+        for (w, h, at_top) in [(960.0, 600.0, false), (1800.0, 1000.0, true)] {
             let mut app = ModelApp::new(Session::default());
             let ctx = egui::Context::default();
             app.run("file.sample", json!({"name": "cantilever"})).unwrap();
@@ -4150,13 +4203,14 @@ mod tests {
         let (line, timeline) = (region(&app, "command_line"), region(&app, "timeline"));
         assert_eq!((bar.top(), bar.height()), (0.0, appbar::HEIGHT));
         assert!((ribbon.top() - bar.bottom()).abs() < 1.0 && (ribbon.height() - toolbar::HEIGHT).abs() < 1.0, "{ribbon:?}");
-        // The browser's content, inside its margin.
-        assert!(browser.left() < 8.0 && (browser.width() - browser::WIDTH).abs() <= 14.0, "{browser:?}");
+        // The browser is a card over the viewport's top left; the viewport fills the space between
+        // the ribbon and the command line under it.
+        assert!(browser.left() < 8.0 && (browser.width() - browser::WIDTH).abs() < 0.5, "{browser:?}");
         assert!(
-            view.left() >= browser.right() - 1.0 && view.top() >= ribbon.bottom() - 1.0 && view.bottom() <= line.top() + 1.0,
+            view.contains_rect(browser) && view.left() <= 0.5 && view.top() >= ribbon.bottom() - 1.0 && view.bottom() <= line.top() + 1.0,
             "{view:?} {browser:?} {ribbon:?} {line:?}"
         );
-        assert!((timeline.bottom() - 900.0).abs() < 1.0 && line.bottom() <= timeline.top() + 1.0);
+        assert!((line.bottom() - 900.0).abs() < 4.0 && timeline.bottom() <= line.top() + 4.0, "{timeline:?} {line:?}");
         assert!((view.right() - 1400.0).abs() < 1.0, "no context: the viewport reaches the right edge");
         assert!(!app.layout.contains_key("context"));
         for chrome in ["nav_bar", "axis_view", "workspace_switcher", "document_tab", "app_bar:solve"] {

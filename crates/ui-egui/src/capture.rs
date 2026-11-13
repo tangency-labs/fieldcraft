@@ -335,8 +335,8 @@ mod tests {
         let image = app.capture(size(900.0, 600.0)).unwrap();
         assert_eq!(image.size, [900, 600]);
         let t = Tokens::dark();
-        // The title bar along the top, the timeline along the bottom (their own colours).
-        assert_eq!(pixel(&image, 450, 595), t.timeline, "timeline");
+        // The title bar along the top, the timeline near the bottom (their own colours).
+        assert!((520..600).any(|y| pixel(&image, 450, y) == t.timeline), "timeline");
         assert_eq!(pixel(&image, 899, 1), t.app_bar, "title bar");
         // The viewport shows the model: the middle is neither panel nor background.
         let middle = pixel(&image, 450, 330);
