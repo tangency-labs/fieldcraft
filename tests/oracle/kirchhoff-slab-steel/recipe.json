@@ -1,0 +1,12 @@
+[
+ {"command": "mesh.block", "params": {"body": "Slab", "kind": "hex8", "corners": [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0], [0, 0, 200], [10, 0, 200], [10, 10, 200], [0, 10, 200]], "divisions": [1, 1, 8], "faces": {"1": "cold", "2": "hot"}}},
+ {"command": "model.set.create", "params": {"name": "slab", "geometry": [{"body": "Slab"}]}},
+ {"command": "model.set.create", "params": {"name": "cold", "geometry": [{"body": "Slab", "face": "cold"}]}},
+ {"command": "model.set.create", "params": {"name": "hot", "geometry": [{"body": "Slab", "face": "hot"}]}},
+ {"command": "model.material.library.add", "params": {"entry": "EN10025-S355", "name": "Steel"}},
+ {"command": "model.section.create", "params": {"name": "slab", "set": "slab", "material": "Steel", "kind": {"type": "solid"}}},
+ {"command": "model.boundary_condition.create", "params": {"name": "cold", "type": "temperature", "target": {"set": "cold"}, "value": 20.0}},
+ {"command": "model.boundary_condition.create", "params": {"name": "hot", "type": "temperature", "target": {"set": "hot"}, "value": 700.0}},
+ {"command": "model.step.create", "params": {"name": "Heat", "procedure": {"type": "heat_transfer"}, "boundary_conditions": ["cold", "hot"], "loads": []}},
+ {"command": "solve.heat", "params": {"step": "Heat"}, "id": "heat"}
+]

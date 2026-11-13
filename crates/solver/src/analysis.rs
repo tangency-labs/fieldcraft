@@ -108,6 +108,11 @@ pub struct StaticResult {
     pub reaction_total: [f64; 3],
     pub stats: Stats,
     pub warnings: Vec<String>,
+    /// The temperature tables the step's heat solution read beyond their ranges, in kelvin:
+    /// warnings the caller words in its display system. Reported by the solve, not saved, like
+    /// [`crate::heat::HeatResult::table_ranges`].
+    #[serde(skip)]
+    pub table_ranges: Vec<fieldcraft_model::TableRange>,
     /// The temperatures of a coupled temperature–displacement step, per node.
     pub temperature: Option<Vec<f64>>,
     /// The increments of a nonlinear static step (its stresses are Cauchy stresses and its
@@ -410,9 +415,10 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     warnings.extend(inelastic_warnings(model));
     // The temperature field: the coupled step's own heat solution, or the step's temperature
     // loads.
+    let mut table_ranges = Vec::new();
     let (field, temperature) = match step.procedure {
         Procedure::CoupledTemperatureDisplacement {} => {
-            let field = crate::heat::temperatures_at(model, resolved, step, limits, &mesh.labels)?;
+            let field = crate::heat::temperatures_at(model, resolved, step, limits, &mesh.labels, &mut warnings, &mut table_ranges)?;
             let temperature = field.iter().map(|t| t.unwrap_or(0.0)).collect();
             (Some(field), Some(temperature))
         }
@@ -565,6 +571,7 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
         reaction_total,
         stats: Stats { dofs: mesh.dofs(), equations: red.neq(), factor_entries: chol.entries(), lanczos_vectors: 0 },
         warnings,
+        table_ranges,
         temperature,
         nonlinear: None,
         contacts: Vec::new(),

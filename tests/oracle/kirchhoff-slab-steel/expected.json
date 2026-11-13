@@ -1,0 +1,99 @@
+{
+ "title": "Steady conduction through a steel slab whose conductivity falls with the temperature (EN 1993-1-2 curve), 20 and 700 at the ends",
+ "kind": "theory",
+ "source": "Kirchhoff transform of steady one-dimensional conduction with k(T): θ = ∫k dT satisfies Laplace's equation, so across a slab held at T₀ and T₁ it is linear in z; with k = a + b T the temperature is the root of a T + b T²/2 = θ(z) (H. S. Carslaw, J. C. Jaeger, Conduction of Heat in Solids, 2nd ed., Oxford 1959, §1.7). k is the library's EN 1993-1-2 carbon-steel curve, 54 − 3.33·10⁻² θ W/(m K) for θ in °C, linear over 20–700 °C",
+ "quantities": [
+  {
+   "id": "t_50",
+   "quantity": "T at (0, 0, 50), the root of a T + b T²/2 = θ(z)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Heat",
+     "at": [
+      [
+       0.0,
+       0.0,
+       50.0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/temperature"
+   },
+   "value": 160.03328440264914,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "exact discrete solution: θ = ∫k dT is linear along the slab, and with k linear in T a hex8 element's mean-temperature conductivity times its temperature gradient is θ's gradient, so the nodal temperatures are exact"
+  },
+  {
+   "id": "t_100",
+   "quantity": "T at (0, 0, 100), the root of a T + b T²/2 = θ(z)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Heat",
+     "at": [
+      [
+       0.0,
+       0.0,
+       100.0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/temperature"
+   },
+   "value": 314.98888204130253,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "exact discrete solution: θ = ∫k dT is linear along the slab, and with k linear in T a hex8 element's mean-temperature conductivity times its temperature gradient is θ's gradient, so the nodal temperatures are exact"
+  },
+  {
+   "id": "t_150",
+   "quantity": "T at (0, 0, 150), the root of a T + b T²/2 = θ(z)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Heat",
+     "at": [
+      [
+       0.0,
+       0.0,
+       150.0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/temperature"
+   },
+   "value": 490.9856214908019,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "exact discrete solution: θ = ∫k dT is linear along the slab, and with k linear in T a hex8 element's mean-temperature conductivity times its temperature gradient is θ's gradient, so the nodal temperatures are exact"
+  },
+  {
+   "id": "q_100",
+   "quantity": "heat flux q_z at (0, 0, 100), −(θ(T₁) − θ(T₀)) / L",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Heat",
+     "at": [
+      [
+       0.0,
+       0.0,
+       100.0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/heat_flux/2"
+   },
+   "value": -142.8408,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "each element's k(T̄) (T₂ − T₁)/h equals (θ₂ − θ₁)/h for k linear in T, so the flux is uniform and exact (142 840.8 W/m², shown in mW/mm²)"
+  }
+ ]
+}
