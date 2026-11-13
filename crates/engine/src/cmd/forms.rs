@@ -1696,6 +1696,9 @@ pub const BLOCK: &[Field] = &[
     positive("merge", "Merge distance", D::Length).help("Nodes closer than this merge with existing nodes.").hint("1e-6 of the diagonal"),
 ];
 
+/// Most points a 2D mesh outline takes (`mesh.planar` refuses more).
+const PLANAR_POINTS: usize = 100_000;
+
 pub const PLANAR: &[Field] = &[
     positive("size", "Element size", D::Length).help("Target element edge length.").req(),
     choice("kind", "Element", &[("quad4", "quad4"), ("quad8", "quad8"), ("tri3", "tri3"), ("tri6", "tri6")])
@@ -1704,10 +1707,9 @@ pub const PLANAR: &[Field] = &[
     BODY,
     text("face", "Face").help("A planar face of the body to mesh.").hint("a planar face of the body"),
     TOLERANCE,
-    json("polygon", "Polygon")
-        .numbers(&[("", D::Length)])
-        .help("An outline to mesh instead of a face, as JSON points.")
-        .hint("[[x, y], …] instead of a face"),
+    table("polygon", "Polygon", D::Length, &["x", "y"], PLANAR_POINTS)
+        .help("An outline to mesh instead of a face: three or more points in the XY plane, in order round it.")
+        .hint("instead of a face"),
     json("holes", "Holes").numbers(&[("", D::Length)]).help("Holes in the polygon, as JSON point lists."),
     text("name", "Body name").help("Name of the new 2D body.").hint("Plane"),
     int("max_elements", "Max elements", 1, 4_000_000).help("Cap on the elements created."),
@@ -1871,11 +1873,17 @@ pub const RENUMBER: &[Field] = &[
     int("offset", "Offset", -99_999_999, 99_999_999).help("Instead of an order and a start: add this to every label.").hint("none"),
 ];
 
+/// Design edges by persistent name, `[{"body", "edge"}, …]`.
+const SEED_EDGES: &[Field] = &[
+    reference("body", "Body", C::Body).help("The body the edge is on.").req(),
+    text("edge", "Edge").help("The persistent edge name (geometry.bodies lists them); without its ~k number, every edge of that name.").req(),
+];
+
 pub const SEED_EDGE: &[Field] = &[
-    json("edges", "Edges")
-        .help("The edges to seed, as JSON; easiest with Use selection.")
+    rows("edges", "Edges", SEED_EDGES)
+        .help("The design edges to seed; easiest with Use selection (Select: Edges).")
         .req()
-        .hint("[{\"body\", \"edge\"}, …] — Use selection with Select: Edges"),
+        .hint("Use selection with Select: Edges"),
     int("count", "Count", 1, 100_000).help("Number of elements along each edge.").hint("or an element size"),
     positive("size", "Element size", D::Length).help("Element length along the edge, instead of a count.").hint("or a count"),
     group(
@@ -1917,7 +1925,7 @@ pub const SEED_FACE: &[Field] = &[
 ];
 
 pub const SEED_CLEAR: &[Field] = &[
-    json("edges", "Edges").help("The edges to clear, as JSON; every seed when empty, and no faces.").hint("every seed"),
+    rows("edges", "Edges", SEED_EDGES).help("The design edges whose seeds to clear; every seed when empty, and no faces.").hint("every seed"),
     face_rows("faces", "Faces").help("The faces to clear; every seed when empty, and no edges.").hint("every seed"),
 ];
 
@@ -2179,7 +2187,7 @@ pub const VIEW_NAME: &[Field] = &[text("name", "View").help("The saved view.").r
 pub const RENDER_SAVE: &[Field] = &[
     text("name", "Name").help("The render's name; a render of that name is replaced.").req(),
     text("view", "View").help("The saved view the clip shows (view.save keeps one).").req(),
-    text("step", "Step").help("The step whose frames it plays.").hint("the view's step"),
+    reference("step", "Step", C::Step).help("The step whose frames it plays.").hint("the view's step"),
     json("frames", "Frames").help("\"all\", or [from, to]: the frames drawn, from 0, inclusive.").hint("\"all\""),
     int("fps", "Frames per second", 1, 120).help("The clip's frame rate.").def("12"),
     group(
@@ -2589,41 +2597,43 @@ pub const DEFORMED: &[Field] = &[
     flag("show", "Show").help("Show the deformed shape.").def("true"),
     number_or_auto("scale", "Scale", D::None, Some(0.0)).help("Displacement magnification: auto, or a factor (1 is true scale).").def("\"auto\""),
 ];
+/// The fields a contour shows (every one of results::Field::ALL, a test checks), then "none".
+const CONTOUR_FIELDS: &[(&str, &str)] = &[
+    ("von_mises", "Von Mises stress"),
+    ("displacement", "Displacement"),
+    ("displacement_x", "Displacement X"),
+    ("displacement_y", "Displacement Y"),
+    ("displacement_z", "Displacement Z"),
+    ("velocity", "Velocity magnitude"),
+    ("pressure", "Pressure (fluid)"),
+    ("temperature", "Temperature"),
+    ("heat_flux", "Heat flux"),
+    ("wall_heat_flux", "Wall heat flux (into wall)"),
+    ("max_principal", "Max principal"),
+    ("mid_principal", "Mid principal"),
+    ("min_principal", "Min principal"),
+    ("stress_xx", "Stress XX"),
+    ("stress_yy", "Stress YY"),
+    ("stress_zz", "Stress ZZ"),
+    ("stress_xy", "Stress XY"),
+    ("stress_xz", "Stress XZ"),
+    ("stress_yz", "Stress YZ"),
+    ("contact_pressure", "Contact pressure"),
+    ("contact_gap", "Contact gap"),
+    ("contact_status", "Contact status"),
+    ("contact_shear", "Contact shear"),
+    ("contact_slip", "Contact slip"),
+    ("none", "None"),
+];
+/// The nodal fields, without "none": what a path plot or an XY series reads.
+const NODAL_FIELDS: &[(&str, &str)] = match CONTOUR_FIELDS.split_last() {
+    Some((_, fields)) => fields,
+    None => &[],
+};
+
 pub const CONTOUR: &[Field] = &[
     SOLVED,
-    choice(
-        "field",
-        "Field",
-        &[
-            ("von_mises", "Von Mises stress"),
-            ("displacement", "Displacement"),
-            ("displacement_x", "Displacement X"),
-            ("displacement_y", "Displacement Y"),
-            ("displacement_z", "Displacement Z"),
-            ("velocity", "Velocity magnitude"),
-            ("pressure", "Pressure (fluid)"),
-            ("temperature", "Temperature"),
-            ("wall_heat_flux", "Wall heat flux (into wall)"),
-            ("max_principal", "Max principal"),
-            ("mid_principal", "Mid principal"),
-            ("min_principal", "Min principal"),
-            ("stress_xx", "Stress XX"),
-            ("stress_yy", "Stress YY"),
-            ("stress_zz", "Stress ZZ"),
-            ("stress_xy", "Stress XY"),
-            ("stress_xz", "Stress XZ"),
-            ("stress_yz", "Stress YZ"),
-            ("contact_pressure", "Contact pressure"),
-            ("contact_gap", "Contact gap"),
-            ("contact_status", "Contact status"),
-            ("contact_shear", "Contact shear"),
-            ("contact_slip", "Contact slip"),
-            ("none", "None"),
-        ],
-    )
-    .help("The result shown as colours.")
-    .req()
-    .def("\"von_mises\""),
+    choice("field", "Field", CONTOUR_FIELDS).help("The result shown as colours.").req().def("\"von_mises\""),
     int("bands", "Bands", 2, 24).help("Number of colour bands.").def("12"),
     group(
         "range",
@@ -2703,11 +2713,63 @@ pub const EXPORT_CSV: &[Field] = &[
     int("mode", "Mode", 1, 1_000_000).help("Probe: the mode to read, for frequency and buckling steps."),
     int("frame", "Frame", 0, 1_000_000_000).help("Probe: the frame to read, for explicit and transient steps."),
 ];
+/// An explicit step's energies (`xy::ENERGIES`, a test checks).
+const XY_ENERGIES: &[(&str, &str)] = &[
+    ("kinetic", "Kinetic"),
+    ("internal", "Internal"),
+    ("hourglass", "Hourglass"),
+    ("viscous", "Viscous"),
+    ("external", "External work"),
+    ("constraint", "Constraint work"),
+    ("contact", "Contact"),
+    ("friction", "Friction"),
+    ("plastic", "Plastic work"),
+    ("eroded", "Eroded"),
+    ("added_kinetic", "Added kinetic (mass scaling)"),
+    ("balance", "Energy balance"),
+];
+/// An explicit step's other histories (`xy::HISTORIES`).
+const XY_HISTORIES: &[(&str, &str)] = &[
+    ("constraint_force_x", "Constraint force X"),
+    ("constraint_force_y", "Constraint force Y"),
+    ("constraint_force_z", "Constraint force Z"),
+    ("momentum_x", "Momentum X"),
+    ("momentum_y", "Momentum Y"),
+    ("momentum_z", "Momentum Z"),
+    ("increment", "Time increment"),
+];
+/// What a history node keeps (`xy::NODE_QUANTITIES`).
+const XY_NODE_QUANTITIES: &[(&str, &str)] = &[
+    ("displacement", "Displacement"),
+    ("displacement_x", "Displacement X"),
+    ("displacement_y", "Displacement Y"),
+    ("displacement_z", "Displacement Z"),
+    ("velocity", "Velocity"),
+    ("velocity_x", "Velocity X"),
+    ("velocity_y", "Velocity Y"),
+    ("velocity_z", "Velocity Z"),
+];
+const XY_COMPONENTS: &[(&str, &str)] = &[("x", "X"), ("y", "Y"), ("z", "Z"), ("magnitude", "Magnitude")];
+/// `results.xy`'s `y` by name: a step's own modal series.
+const XY_MODAL: Field = choice("", "Modal series", &[("frequency", "Frequencies (frequency step)"), ("load_factor", "Load factors (buckling step)")])
+    .help("A frequency step's frequencies or a buckling step's load factors, against the mode.");
+/// `results.xy`'s `y` as an object: fill in one pair (a field and a node, an energy, a history,
+/// a history node and its quantity, or a reaction set and its component).
+const XY_SERIES: &[Field] = &[
+    choice("field", "Nodal field", NODAL_FIELDS).help("A nodal field at a node, per frame or mode; with Node."),
+    int("node", "Node", 1, 99_999_999).help("The node whose field to plot; with Nodal field."),
+    choice("energy", "Energy", XY_ENERGIES).help("An explicit step's energy."),
+    choice("history", "History", XY_HISTORIES).help("An explicit step's constraint force, momentum or time increment."),
+    int("history_node", "History node", 1, 99_999_999).help("An explicit step's history node; with Quantity."),
+    choice("quantity", "Quantity", XY_NODE_QUANTITIES).help("What of the history node to plot."),
+    reference("reaction", "Reaction set", C::Set).help("Nonlinear static: the reaction sum on this set per frame; with Component."),
+    choice("component", "Component", XY_COMPONENTS).help("The reaction's component."),
+];
+
 pub const RESULTS_XY: &[Field] = &[
     SOLVED,
-    json("y", "Quantity")
-        .help("What to plot: a nodal field at a node, an explicit energy or history, a history node's quantity, or \"frequency\".")
-        .hint(r#"{"field": "displacement_z", "node": 21}"#)
+    name_or("y", "Quantity", &XY_MODAL, "A series", XY_SERIES)
+        .help("What to plot: a nodal field at a node, an explicit energy or history, a history node's quantity, a set's reaction, or a modal series.")
         .req(),
     choice("x", "Against", &[("auto", "The step's own axis"), ("load_factor", "Load factor"), ("time", "Time"), ("mode", "Mode")])
         .help("The x axis: the load factor (nonlinear static), time (explicit, heat) or mode number (frequency).")
@@ -2717,7 +2779,7 @@ pub const RESULTS_XY: &[Field] = &[
 ];
 pub const RESULTS_PATH: &[Field] = &[
     SOLVED,
-    text("field", "Nodal field").req().help("A results.contour field id, such as stress_xx or temperature.").def("\"displacement\""),
+    choice("field", "Nodal field", NODAL_FIELDS).req().help("The nodal field to interpolate along the path.").def("\"displacement\""),
     points("points", "Polyline points", D::Length, 1000).req().help("Two or more points in undeformed reference coordinates."),
     int("samples", "Samples", 2, 10_000).help("Equally spaced arc-length stations along the complete polyline, including both ends.").def("101"),
     int("frame", "Frame", 0, 1_000_000_000).help("A stored field frame; empty means final state."),
@@ -3000,5 +3062,104 @@ mod tests {
                 walk(form);
             }
         }
+    }
+
+    /// The form of `command`.
+    fn form_of(command: &str) -> &'static [Field] {
+        crate::find_command(command).and_then(|c| c.form).unwrap_or_default()
+    }
+
+    /// The field `key` of `command`'s form.
+    fn field_of(command: &str, key: &str) -> Field {
+        *form_of(command).iter().find(|f| f.key == key).unwrap_or_else(|| panic!("{command} has `{key}`"))
+    }
+
+    /// A1-09: the fields left as raw JSON text are these, each a shape no field kind describes
+    /// yet (a map, a nested point list, a blocking topology, a value of mixed kinds). A field
+    /// typed since stays typed.
+    #[test]
+    fn raw_json_fields_are_only_those_no_kind_describes() {
+        let mut raw: Vec<String> = Vec::new();
+        fn walk(id: &str, fields: &[Field], raw: &mut Vec<String>) {
+            for f in fields {
+                match f.kind {
+                    Kind::Json => raw.push(format!("{id} {}", f.key)),
+                    Kind::Group(g) | Kind::Rows { fields: g, .. } | Kind::Either(g) | Kind::NameOr { fields: g, .. } => walk(id, g, raw),
+                    Kind::Variants { variants, .. } => variants.iter().for_each(|v| walk(id, v.fields, raw)),
+                    _ => {}
+                }
+            }
+        }
+        for c in crate::commands() {
+            walk(c.id, c.form.unwrap_or_default(), &mut raw);
+        }
+        raw.sort();
+        raw.dedup();
+        for typed in ["mesh.planar polygon", "mesh.seed.edge edges", "mesh.seed.clear edges", "results.xy y"] {
+            assert!(!raw.iter().any(|r| r == typed), "{typed} is typed");
+        }
+    }
+
+    /// The 2D outline is a table of x, y points, read in the display length unit.
+    #[test]
+    fn planar_polygon_is_a_point_table() {
+        let f = field_of("mesh.planar", "polygon");
+        assert!(matches!(f.kind, Kind::Points { dim: D::Length, columns: ["x", "y"], .. }), "{f:?}");
+        let ok = json!({"size": 1, "polygon": [[0, 0], [10, 0], [10, 4]]});
+        assert!(problems(PLANAR, &ok).is_empty(), "{:?}", problems(PLANAR, &ok));
+        assert!(!problems(PLANAR, &json!({"size": 1, "polygon": [[0, 0, 0]]})).is_empty());
+        let mut s = Session::default();
+        s.execute("mesh.planar", &json!({"size": 2, "polygon": [[0, 0], [10, 0], [10, 4], [0, 4]], "name": "Strip"})).unwrap();
+        assert!(!s.model.elements().is_empty());
+    }
+
+    /// Seeded edges are rows of a body and a persistent edge name (what Use selection fills in).
+    #[test]
+    fn seed_edges_are_rows_of_body_and_edge() {
+        for id in ["mesh.seed.edge", "mesh.seed.clear"] {
+            let f = field_of(id, "edges");
+            let Kind::Rows { fields, .. } = f.kind else { panic!("{id}: {f:?}") };
+            assert!(matches!(fields.first().map(|f| f.kind), Some(Kind::Ref(C::Body))), "{id}");
+            assert_eq!(fields.iter().map(|f| f.key).collect::<Vec<_>>(), ["body", "edge"], "{id}");
+        }
+        assert!(problems(SEED_EDGE, &json!({"edges": [{"body": "Body1", "edge": "F2:top"}], "count": 4})).is_empty());
+        assert!(!problems(SEED_EDGE, &json!({"edges": [{"edge": "F2:top"}], "count": 4})).is_empty(), "a row needs its body");
+    }
+
+    /// An XY plot's quantity is a modal series by name or one typed pair; the lists match what
+    /// `results.xy` reads.
+    #[test]
+    fn xy_quantity_is_typed() {
+        fn names(o: &'static [(&'static str, &'static str)]) -> Vec<&'static str> {
+            o.iter().map(|(v, _)| *v).collect()
+        }
+        assert_eq!(names(XY_ENERGIES), crate::cmd::xy::ENERGIES);
+        assert_eq!(names(XY_HISTORIES), crate::cmd::xy::HISTORIES);
+        assert_eq!(names(XY_NODE_QUANTITIES), crate::cmd::xy::NODE_QUANTITIES);
+        for y in [
+            json!("frequency"),
+            json!({"field": "displacement_z", "node": 21}),
+            json!({"energy": "kinetic"}),
+            json!({"reaction": "Top", "component": "z"}),
+        ] {
+            assert!(problems(RESULTS_XY, &json!({"y": y})).is_empty(), "{y}");
+        }
+        for y in [json!("mode"), json!({"energy": "nope"}), json!({"field": "nope", "node": 1}), json!(3)] {
+            assert!(!problems(RESULTS_XY, &json!({"y": y})).is_empty(), "{y}");
+        }
+    }
+
+    /// The contour list is every results field and "none"; a path plot picks from the fields.
+    #[test]
+    fn field_lists_follow_the_results_fields() {
+        let mut ids: Vec<&str> = crate::results::Field::ALL.iter().map(|f| f.id()).collect();
+        let mut listed: Vec<&str> = NODAL_FIELDS.iter().map(|(v, _)| *v).collect();
+        ids.sort_unstable();
+        listed.sort_unstable();
+        assert_eq!(listed, ids);
+        assert_eq!(CONTOUR_FIELDS.last().map(|(v, _)| *v), Some("none"));
+        assert!(matches!(field_of("results.path", "field").kind, Kind::Choice(c) if c.len() == ids.len()));
+        assert!(!problems(RESULTS_PATH, &json!({"field": "nope", "points": [[0, 0, 0], [1, 0, 0]]})).is_empty());
+        assert!(matches!(field_of("results.render.save", "step").kind, Kind::Ref(C::Step)));
     }
 }
