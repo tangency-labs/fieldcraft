@@ -1285,6 +1285,66 @@ pub const RENAME: &[Field] = &[
     text("to", "New name").help("Every definition that refers to it is changed to the new name.").req(),
 ];
 
+/// One unit per quantity (`Quantity::ALL` by name, a test checks), for `model.units` overrides.
+const UNIT_OVERRIDES: &[Field] = &[
+    text("dimensionless", "Dimensionless").help("Shows and takes dimensionless values in this unit.").hint("1 in SI"),
+    text("angle", "Angle").help("Shows and takes angle values in this unit.").hint("rad in SI"),
+    text("length", "Length").help("Shows and takes length values in this unit.").hint("m in SI"),
+    text("area", "Area").help("Shows and takes area values in this unit.").hint("m² in SI"),
+    text("volume", "Volume").help("Shows and takes volume values in this unit.").hint("m³ in SI"),
+    text("second_moment_of_area", "Second moment of area").help("Shows and takes second moment of area values in this unit.").hint("m⁴ in SI"),
+    text("inverse_length", "Inverse length").help("Shows and takes inverse length values in this unit.").hint("1/m in SI"),
+    text("mass", "Mass").help("Shows and takes mass values in this unit.").hint("kg in SI"),
+    text("rotary_inertia", "Rotary inertia").help("Shows and takes rotary inertia values in this unit.").hint("kg·m² in SI"),
+    text("density", "Density").help("Shows and takes density values in this unit.").hint("kg/m³ in SI"),
+    text("specific_volume", "Specific volume").help("Shows and takes specific volume values in this unit.").hint("m³/kg in SI"),
+    text("specific_volume_per_temperature", "Specific volume per temperature")
+        .help("Shows and takes specific volume per temperature values in this unit.")
+        .hint("m³/(kg·K) in SI"),
+    text("time", "Time").help("Shows and takes time values in this unit.").hint("s in SI"),
+    text("frequency", "Frequency").help("Shows and takes frequency values in this unit.").hint("Hz in SI"),
+    text("angular_velocity", "Angular velocity").help("Shows and takes angular velocity values in this unit.").hint("rad/s in SI"),
+    text("strain_rate", "Strain rate").help("Shows and takes strain rate values in this unit.").hint("1/s in SI"),
+    text("eigenvalue", "Eigenvalue").help("Shows and takes eigenvalue values in this unit.").hint("1/s² in SI"),
+    text("velocity", "Velocity").help("Shows and takes velocity values in this unit.").hint("m/s in SI"),
+    text("inverse_velocity", "Inverse velocity").help("Shows and takes inverse velocity values in this unit.").hint("s/m in SI"),
+    text("acceleration", "Acceleration").help("Shows and takes acceleration values in this unit.").hint("m/s² in SI"),
+    text("volume_flow", "Volume flow").help("Shows and takes volume flow values in this unit.").hint("m³/s in SI"),
+    text("mass_flow", "Mass flow").help("Shows and takes mass flow values in this unit.").hint("kg/s in SI"),
+    text("momentum", "Momentum").help("Shows and takes momentum values in this unit.").hint("N·s in SI"),
+    text("force", "Force").help("Shows and takes force values in this unit.").hint("N in SI"),
+    text("moment", "Moment").help("Shows and takes moment values in this unit.").hint("N·m in SI"),
+    text("pressure", "Pressure").help("Shows and takes pressure values in this unit.").hint("Pa in SI"),
+    text("inverse_pressure", "Inverse pressure").help("Shows and takes inverse pressure values in this unit.").hint("1/Pa in SI"),
+    text("force_per_volume", "Force per volume").help("Shows and takes force per volume values in this unit.").hint("N/m³ in SI"),
+    text("stiffness", "Stiffness").help("Shows and takes stiffness values in this unit.").hint("N/m in SI"),
+    text("force_per_length", "Force per length").help("Shows and takes force per length values in this unit.").hint("N/m in SI"),
+    text("rotational_stiffness", "Rotational stiffness").help("Shows and takes rotational stiffness values in this unit.").hint("N·m/rad in SI"),
+    text("damping", "Damping").help("Shows and takes damping values in this unit.").hint("N·s/m in SI"),
+    text("rotational_damping", "Rotational damping").help("Shows and takes rotational damping values in this unit.").hint("N·m·s/rad in SI"),
+    text("energy", "Energy").help("Shows and takes energy values in this unit.").hint("J in SI"),
+    text("power", "Power").help("Shows and takes power values in this unit.").hint("W in SI"),
+    text("dynamic_viscosity", "Dynamic viscosity").help("Shows and takes dynamic viscosity values in this unit.").hint("Pa·s in SI"),
+    text("kinematic_viscosity", "Kinematic viscosity").help("Shows and takes kinematic viscosity values in this unit.").hint("m²/s in SI"),
+    text("temperature", "Temperature").help("Shows and takes temperature values in this unit.").hint("K in SI"),
+    text("temperature_difference", "Temperature difference").help("Shows and takes temperature difference values in this unit.").hint("K in SI"),
+    text("thermal_expansion", "Thermal expansion").help("Shows and takes thermal expansion values in this unit.").hint("K⁻¹ in SI"),
+    text("temperature_per_pressure", "Temperature per pressure")
+        .help("Shows and takes temperature per pressure values in this unit.")
+        .hint("K/Pa in SI"),
+    text("thermal_conductivity", "Thermal conductivity").help("Shows and takes thermal conductivity values in this unit.").hint("W/(m·K) in SI"),
+    text("specific_heat", "Specific heat").help("Shows and takes specific heat values in this unit.").hint("J/(kg·K) in SI"),
+    text("specific_energy", "Specific energy").help("Shows and takes specific energy values in this unit.").hint("J/kg in SI"),
+    text("heat_transfer_coefficient", "Heat transfer coefficient")
+        .help("Shows and takes heat transfer coefficient values in this unit.")
+        .hint("W/(m²·K) in SI"),
+    text("thermal_contact_resistance", "Thermal contact resistance")
+        .help("Shows and takes thermal contact resistance values in this unit.")
+        .hint("m²·K/W in SI"),
+    text("heat_flux", "Heat flux").help("Shows and takes heat flux values in this unit.").hint("W/m² in SI"),
+    text("heat_generation", "Heat generation").help("Shows and takes heat generation values in this unit.").hint("W/m³ in SI"),
+];
+
 pub const UNITS: &[Field] = &[
     choice(
         "system",
@@ -1304,7 +1364,9 @@ pub const UNITS: &[Field] = &[
     choice("temperature", "Temperature", &[("°C", "°C"), ("K", "K"), ("°F", "°F")])
         .help("The temperature scale, when not the system's. Temperature differences and the per-degree units (expansion, conductivity, specific heat, film coefficient) follow it unless overridden too: with °F, ΔT is in °F and expansion per °F.")
         .hint("the system's"),
-    json("overrides", "Overrides").help("Units for single quantities, by name: {\"energy\": \"J\", \"angle\": \"deg\"}.").hint("none"),
+    group("overrides", "Overrides", UNIT_OVERRIDES)
+        .help("Units for single quantities, each shown and typed in the unit given (J, deg, kN·m…); the system's for the rest.")
+        .hint("none"),
 ];
 
 // ---- Contact ----
@@ -3102,7 +3164,7 @@ mod tests {
         }
         raw.sort();
         raw.dedup();
-        for typed in ["mesh.planar polygon", "mesh.seed.edge edges", "mesh.seed.clear edges", "results.xy y"] {
+        for typed in ["mesh.planar polygon", "mesh.seed.edge edges", "mesh.seed.clear edges", "results.xy y", "model.units overrides"] {
             assert!(!raw.iter().any(|r| r == typed), "{typed} is typed");
         }
     }
@@ -3168,6 +3230,19 @@ mod tests {
         assert!(matches!(field_of("results.path", "field").kind, Kind::Choice(c) if c.len() == ids.len()));
         assert!(!problems(RESULTS_PATH, &json!({"field": "nope", "points": [[0, 0, 0], [1, 0, 0]]})).is_empty());
         assert!(matches!(field_of("results.render.save", "step").kind, Kind::Ref(C::Step)));
+    }
+
+    /// Unit overrides are one unit per quantity, every quantity listed by its name.
+    #[test]
+    fn unit_overrides_list_every_quantity() {
+        let keys: Vec<&str> = UNIT_OVERRIDES.iter().map(|f| f.key).collect();
+        let names: Vec<&str> = Quantity::ALL.iter().map(|q| q.name()).collect();
+        assert_eq!(keys, names);
+        let p = json!({"system": "mm-t-s-N-MPa", "overrides": {"energy": "J", "angle": "deg"}});
+        assert!(problems(form_of("model.units"), &p).is_empty());
+        let mut s = Session::default();
+        let r = s.execute("model.units", &p).unwrap();
+        assert_eq!(r["units"]["energy"], "J", "{r}");
     }
 
     /// A1-13: a picture of the viewport is saved from any workspace's View drop-down.
