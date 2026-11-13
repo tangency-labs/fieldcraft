@@ -1,0 +1,71 @@
+{
+ "title": "Hagen–Poiseuille flow in a round pipe with interpolated walls (Bouzidi et al.)",
+ "kind": "theory",
+ "source": "Hagen–Poiseuille flow driven by a body force a in a pipe of radius R: u(r) = a (R² − r²) / (4 ν), u_max = a R² / (4 ν); walls by M. Bouzidi, M. Firdaouss, P. Lallemand, Phys. Fluids 13(11):3452–3459, 2001, doi:10.1063/1.1399290",
+ "quantities": [
+  {
+   "id": "u_max_8",
+   "quantity": "centreline velocity a R² / (4 ν), 8 cells per radius",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run8",
+     "line": {
+      "from": [
+       0.0,
+       -0.0125,
+       0.000625
+      ],
+      "to": [
+       0.0,
+       0.0125,
+       0.000625
+      ],
+      "count": 21,
+      "field": "velocity_z"
+     }
+    },
+    "pointer": "/line/max/velocity"
+   },
+   "value": 0.24,
+   "tolerance": {
+    "relative": 0.005
+   },
+   "reason": "interpolated walls at 8 cells per radius: measured −0.15 %, converging at second order (−0.04 % at 16; the README's table); a third of the tolerance. Halfway walls read −5.5 % here, so the case fails if the obstacle's links fall back to halfway bounce-back",
+   "fixture": false,
+   "fixture_reason": "the pipe wall comes from a SolidCraft design: its triangulation is not bit-identical across platforms, though q is taken on the exact cylinder"
+  },
+  {
+   "id": "u_max_16",
+   "quantity": "centreline velocity a R² / (4 ν), 16 cells per radius",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Run16",
+     "line": {
+      "from": [
+       0.0,
+       -0.01125,
+       0.0003125
+      ],
+      "to": [
+       0.0,
+       0.01125,
+       0.0003125
+      ],
+      "count": 37,
+      "field": "velocity_z"
+     }
+    },
+    "pointer": "/line/max/velocity"
+   },
+   "value": 0.24,
+   "tolerance": {
+    "relative": 0.0015
+   },
+   "reason": "interpolated walls at 16 cells per radius: measured −0.04 %, a quarter of the tolerance; halfway walls read −2.1 %",
+   "fixture": false,
+   "fixture_reason": "the pipe wall comes from a SolidCraft design: its triangulation is not bit-identical across platforms, though q is taken on the exact cylinder"
+  }
+ ]
+}

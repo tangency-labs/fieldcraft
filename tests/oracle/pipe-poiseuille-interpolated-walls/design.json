@@ -1,0 +1,6 @@
+{
+ "commands": [
+  {"command": "solid.box", "params": {"corner": [-15, -15, -5], "length": 30, "width": 30, "height": 10, "body_name": "Block"}},
+  {"command": "solid.cylinder", "params": {"base": [0, 0, -6], "radius": 10, "height": 12, "operation": "cut", "targets": ["Block"]}}
+ ]
+}
