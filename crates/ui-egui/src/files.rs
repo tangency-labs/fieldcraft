@@ -402,20 +402,53 @@ impl Loading {
 }
 
 /// What the status bar says when job `command` finished: its `done` text with the time it took,
-/// and for a mesher the elements made and their worst quality.
-fn finished(command: &str, done: &str, took: &str, reply: &Value) -> String {
+/// and for a mesher the elements made, their worst quality and, for the octree mesher, how deep
+/// it refined and for which wall (lengths in `units`, the reply's).
+fn finished(command: &str, done: &str, took: &str, reply: &Value, units: &fieldcraft_model::DisplaySystem) -> String {
     let r = &reply["result"];
-    match (r["elements"].as_u64(), r["kind"].as_str()) {
+    let bodies = || r["bodies"].as_array().into_iter().flatten();
+    // The element kind: the reply's, else the one its bodies share.
+    let kind = r["kind"].as_str().or_else(|| {
+        let mut kinds = bodies().filter_map(|b| b["kind"].as_str());
+        let first = kinds.next()?;
+        kinds.all(|k| k == first).then_some(first)
+    });
+    match (r["elements"].as_u64(), kind) {
         (Some(n), Some(kind)) if BACKGROUND.contains(&command) => {
-            let bodies = r["bodies"].as_array().into_iter().flatten();
-            let dihedral = bodies.filter_map(|b| b["quality"]["mesh"]["min_dihedral"].as_f64()).reduce(f64::min);
-            let q = dihedral.map(|d| format!(", smallest dihedral angle {d:.1}°")).unwrap_or_default();
+            let least = |f: &dyn Fn(&Value) -> Option<f64>| bodies().filter_map(f).reduce(f64::min);
+            let mut q = match (least(&|b| b["quality"]["mesh"]["min_dihedral"].as_f64()), least(&|b| b["quality"]["min_scaled_jacobian"].as_f64())) {
+                (Some(d), _) => format!(", smallest dihedral angle {d:.1}°"),
+                (None, Some(j)) => format!(", smallest scaled Jacobian {}", fieldcraft_model::units::format_number(sig3(j))),
+                _ => String::new(),
+            };
+            let levels = bodies().filter_map(|b| b["grid"]["levels"].as_u64()).max();
+            if let Some(levels) = levels {
+                let wall = least(&|b| b["grid"]["thinnest_wall"].as_f64())
+                    .map(|w| {
+                        format!(
+                            " (thinnest wall {} {})",
+                            fieldcraft_model::units::format_number(sig3(w)),
+                            units.symbol(fieldcraft_model::units::Quantity::Length)
+                        )
+                    })
+                    .unwrap_or_default();
+                q.push_str(&format!(", {levels} octree levels{wall}"));
+            }
             let n = fieldcraft_engine::thousands(usize::try_from(n).unwrap_or(usize::MAX));
             format!("{done}: {n} {kind}{q} in {took} — Mesh › Quality checks them")
         }
         _ if is_long(command) && !opens(command) => format!("{done} in {took}"),
         _ => done.to_string(),
     }
+}
+
+/// `v` to three significant digits.
+fn sig3(v: f64) -> f64 {
+    if v == 0.0 || !v.is_finite() {
+        return v;
+    }
+    let scale = 10f64.powi(2 - v.abs().log10().floor() as i32);
+    (v * scale).round() / scale
 }
 
 /// What the window says while a sample opens, and once it has.
@@ -1034,7 +1067,7 @@ impl ModelApp {
             let _ = w.send(reply.clone());
         }
         let took = elapsed(l.started.elapsed().as_secs_f64());
-        let l = Loading { done: finished(l.command, &l.done, &took, &reply), ..l };
+        let l = Loading { done: finished(l.command, &l.done, &took, &reply, self.session.units()), ..l };
         match outcome {
             Some(Ok((reply, Product::PathPlot(plot, index)))) => {
                 self.session.path_plot = plot;
@@ -2356,6 +2389,26 @@ pub(crate) mod tests {
         opened(&mut app);
         assert!(app.prompt.is_none() && app.session.model.set("plate").is_some());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A mesher's status says what it made: the octree mesher its count, worst scaled Jacobian,
+    /// and how deep it refined for the thinnest wall, as the tet mesher says its count (A4-14).
+    #[test]
+    fn a_finished_mesher_says_what_it_made() {
+        let units = fieldcraft_model::DisplaySystem::default();
+        let octree = serde_json::json!({"ok": true, "result": {"elements": 154710, "nodes": 170000, "bodies": [
+            {"body": "Case", "kind": "hex8", "elements": 154710, "quality": {"min_scaled_jacobian": 0.3812},
+             "grid": {"levels": 4, "thinnest_wall": 2.0}}]}});
+        assert_eq!(
+            finished("mesh.hex.octree", "Octree Hex Mesh done", "1 min 10 s", &octree, &units),
+            "Octree Hex Mesh done: 154,710 hex8, smallest scaled Jacobian 0.381, 4 octree levels (thinnest wall 2 mm) in 1 min 10 s — Mesh › Quality checks them"
+        );
+        let tet =
+            serde_json::json!({"ok": true, "result": {"elements": 3125, "kind": "tet4", "bodies": [{"quality": {"mesh": {"min_dihedral": 36.54}}}]}});
+        assert_eq!(
+            finished("mesh.tet.generate", "Tet Mesh done", "2.2 s", &tet, &units),
+            "Tet Mesh done: 3,125 tet4, smallest dihedral angle 36.5° in 2.2 s — Mesh › Quality checks them"
+        );
     }
 
     /// A file opened from its form reads as a dropped one does: "Opened plate.solidcraft" (A4-6).
