@@ -169,10 +169,25 @@ pub enum Def {
     /// A datum plane, axis or point.
     Datum,
     Partition,
+    /// A point mass (`model.mass.create`).
+    Mass,
+    /// A spring or dashpot (`model.spring.create`).
+    Spring,
+    /// A local element size (`mesh.size.set`).
+    SizeControl,
+    /// Faces meshed as one (`geometry.faces.merge`), or a face absorbed into a neighbour
+    /// (`geometry.face.absorb`, a merge that keeps its neighbour's name).
+    FaceMerge,
+    /// A face split along a datum plane (`geometry.face.split`).
+    FaceSplit,
+    /// An imported surface's gaps closed (`geometry.stitch`).
+    Stitch,
+    /// Features of the design taken out for meshing (`geometry.defeature`).
+    Defeature,
 }
 
 impl Def {
-    pub const ALL: [Def; 13] = [
+    pub const ALL: [Def; 20] = [
         Def::Set,
         Def::Material,
         Def::Section,
@@ -186,10 +201,17 @@ impl Def {
         Def::FluidDomain,
         Def::Datum,
         Def::Partition,
+        Def::Mass,
+        Def::Spring,
+        Def::SizeControl,
+        Def::FaceMerge,
+        Def::FaceSplit,
+        Def::Stitch,
+        Def::Defeature,
     ];
 
     /// The kind `model.rename` takes for it; `None` for a partition (its cut faces are named
-    /// after it).
+    /// after it) and the meshing helpers `model.rename` does not take.
     pub fn rename_kind(self) -> Option<&'static str> {
         Some(match self {
             Def::Set => "set",
@@ -204,7 +226,9 @@ impl Def {
             Def::Tie => "tie",
             Def::FluidDomain => "fluid_domain",
             Def::Datum => "datum",
-            Def::Partition => return None,
+            Def::Mass => "point_mass",
+            Def::Spring => "spring",
+            Def::Partition | Def::SizeControl | Def::FaceMerge | Def::FaceSplit | Def::Stitch | Def::Defeature => return None,
         })
     }
 
@@ -219,7 +243,19 @@ impl Def {
             Def::Contact => Definition::Contact,
             Def::Tie => Definition::Tie,
             Def::Step => Definition::Step,
-            Def::Set | Def::Material | Def::Section | Def::FluidDomain | Def::Datum | Def::Partition => return None,
+            Def::Set
+            | Def::Material
+            | Def::Section
+            | Def::FluidDomain
+            | Def::Datum
+            | Def::Partition
+            | Def::Mass
+            | Def::Spring
+            | Def::SizeControl
+            | Def::FaceMerge
+            | Def::FaceSplit
+            | Def::Stitch
+            | Def::Defeature => return None,
         })
     }
 
@@ -239,10 +275,18 @@ impl Def {
             Def::FluidDomain => Collection::FluidDomain,
             Def::Datum => Collection::Datum,
             Def::Partition => Collection::Partition,
+            Def::Mass => Collection::Mass,
+            Def::Spring => Collection::Spring,
+            Def::SizeControl => Collection::SizeControl,
+            Def::FaceMerge => Collection::FaceMerge,
+            Def::FaceSplit => Collection::FaceSplit,
+            Def::Stitch => Collection::Stitch,
+            Def::Defeature => Collection::Defeature,
         }
     }
 
-    /// The commands' stem: `model.<stem>.create|edit|delete`.
+    /// Its short name: `model.<stem>.create|edit|delete` for the model's definitions, and the
+    /// row ids' kind.
     pub fn stem(self) -> &'static str {
         match self {
             Def::Set => "set",
@@ -258,6 +302,13 @@ impl Def {
             Def::FluidDomain => "fluid_domain",
             Def::Datum => "datum",
             Def::Partition => "partition",
+            Def::Mass => "mass",
+            Def::Spring => "spring",
+            Def::SizeControl => "size_control",
+            Def::FaceMerge => "face_merge",
+            Def::FaceSplit => "face_split",
+            Def::Stitch => "stitch",
+            Def::Defeature => "defeature",
         }
     }
 
@@ -276,6 +327,13 @@ impl Def {
             Def::FluidDomain => "Fluid Domain",
             Def::Datum => "Datum",
             Def::Partition => "Partition",
+            Def::Mass => "Point Mass",
+            Def::Spring => "Spring or Dashpot",
+            Def::SizeControl => "Size Control",
+            Def::FaceMerge => "Face Merge",
+            Def::FaceSplit => "Face Split",
+            Def::Stitch => "Stitch",
+            Def::Defeature => "Defeature",
         }
     }
 
@@ -295,14 +353,29 @@ impl Def {
             Def::FluidDomain => "model.fluid_domain.create",
             Def::Datum => "geometry.datum",
             Def::Partition => "geometry.partition",
+            Def::Mass => "model.mass.create",
+            Def::Spring => "model.spring.create",
+            Def::SizeControl => "mesh.size.set",
+            Def::FaceMerge => "geometry.faces.merge",
+            Def::FaceSplit => "geometry.face.split",
+            Def::Stitch => "geometry.stitch",
+            Def::Defeature => "geometry.defeature",
         }
     }
 
     /// The command of this kind with `verb` (`create`, `edit`, `delete`); contacts are
     /// interactions, created as pairs or general contact; datums and partitions are geometry
-    /// (a datum's edit command depends on its kind: [`Def::edit`]).
+    /// (a datum's edit command depends on its kind: [`Def::edit`]). A size control and a
+    /// defeature are edited by making them again under their name, and size controls are
+    /// deleted by `mesh.size.clear` ([`Def::delete_params`]). Face merges, splits and stitches
+    /// cannot be edited ([`Def::edit_command`]).
     pub fn command(self, verb: &str) -> String {
         match (self, verb) {
+            (Def::SizeControl, "create" | "edit") => "mesh.size.set".into(),
+            (Def::SizeControl, "delete") => "mesh.size.clear".into(),
+            (Def::Defeature, "create" | "edit") => "geometry.defeature".into(),
+            (Def::FaceMerge | Def::FaceSplit | Def::Stitch, "create") => self.icon().into(),
+            (Def::FaceMerge | Def::FaceSplit | Def::Stitch | Def::Defeature | Def::SizeControl, _) => format!("{}.{verb}", self.icon()),
             (Def::Contact, "create") => "interaction.contact.pair".into(),
             (Def::Contact, _) => format!("interaction.contact.{verb}"),
             (Def::Tie, "create") => "interaction.tie".into(),
@@ -313,11 +386,20 @@ impl Def {
         }
     }
 
+    /// The delete command's parameters for definition `name`: `{"name": name}`, or
+    /// `{"names": [name]}` for a size control's `mesh.size.clear`.
+    pub fn delete_params(self, name: &str) -> Value {
+        match self {
+            Def::SizeControl => json!({"names": [name]}),
+            _ => json!({"name": name}),
+        }
+    }
+
     /// The command that edits definition `name` (without building its parameters); `None` when
     /// it is gone or cannot be edited.
     pub fn edit_command(self, m: &Model, name: &str) -> Option<String> {
         match self {
-            Def::Partition => None,
+            Def::Partition | Def::FaceMerge | Def::FaceSplit | Def::Stitch => None,
             Def::Datum => m.datum(name).map(|d| fieldcraft_engine::cmd::datum_edit_params(name, d).0.to_string()),
             _ => self.exists(m, name).then(|| self.command("edit")),
         }
@@ -327,7 +409,7 @@ impl Def {
     /// edit form, filled in); `None` when it is gone or cannot be edited (a partition).
     pub fn edit(self, m: &Model, name: &str, units: &fieldcraft_model::DisplaySystem) -> Option<(String, Value)> {
         let (command, params) = match self {
-            Def::Partition => return None,
+            Def::Partition | Def::FaceMerge | Def::FaceSplit | Def::Stitch => return None,
             Def::Datum => m.datum(name).map(|d| {
                 let (command, params) = fieldcraft_engine::cmd::datum_edit_params(name, d);
                 (command.to_string(), params)
@@ -364,7 +446,19 @@ impl Def {
             Def::ReferencePoint => m.reference_point_users(name),
             Def::FluidDomain => m.fluid_domain_users(name),
             Def::Datum => m.datum_users(name),
-            Def::Section | Def::Step | Def::Coupling | Def::Contact | Def::Tie | Def::Partition => Vec::new(),
+            Def::Section
+            | Def::Step
+            | Def::Coupling
+            | Def::Contact
+            | Def::Tie
+            | Def::Partition
+            | Def::Mass
+            | Def::Spring
+            | Def::SizeControl
+            | Def::FaceMerge
+            | Def::FaceSplit
+            | Def::Stitch
+            | Def::Defeature => Vec::new(),
         }
     }
 
@@ -384,6 +478,13 @@ impl Def {
             Def::FluidDomain => m.fluid_domains().len(),
             Def::Datum => m.datums().len(),
             Def::Partition => m.partitions().len(),
+            Def::Mass => m.masses().len(),
+            Def::Spring => m.springs().len(),
+            Def::SizeControl => m.size_controls().len(),
+            Def::FaceMerge => m.face_merges().len(),
+            Def::FaceSplit => m.face_splits().len(),
+            Def::Stitch => m.stitches().len(),
+            Def::Defeature => m.defeatures().len(),
         }
     }
 
@@ -403,6 +504,13 @@ impl Def {
             Def::FluidDomain => m.fluid_domain(name).is_some(),
             Def::Datum => m.datum(name).is_some(),
             Def::Partition => m.partitions().iter().any(|p| p.name == name),
+            Def::Mass => m.mass(name).is_some(),
+            Def::Spring => m.spring(name).is_some(),
+            Def::SizeControl => m.size_controls().contains_key(name),
+            Def::FaceMerge => m.face_merges().iter().any(|f| f.name == name),
+            Def::FaceSplit => m.face_splits().iter().any(|f| f.name == name),
+            Def::Stitch => m.stitches().iter().any(|f| f.name == name),
+            Def::Defeature => m.defeatures().iter().any(|f| f.name == name),
         }
     }
 
@@ -422,6 +530,13 @@ impl Def {
             Def::FluidDomain => m.fluid_domains().keys().cloned().collect(),
             Def::Datum => m.datums().keys().cloned().collect(),
             Def::Partition => m.partitions().iter().map(|p| p.name.clone()).collect(),
+            Def::Mass => m.masses().keys().cloned().collect(),
+            Def::Spring => m.springs().keys().cloned().collect(),
+            Def::SizeControl => m.size_controls().keys().cloned().collect(),
+            Def::FaceMerge => m.face_merges().iter().map(|f| f.name.clone()).collect(),
+            Def::FaceSplit => m.face_splits().iter().map(|f| f.name.clone()).collect(),
+            Def::Stitch => m.stitches().iter().map(|f| f.name.clone()).collect(),
+            Def::Defeature => m.defeatures().iter().map(|f| f.name.clone()).collect(),
         }
     }
 }
@@ -429,6 +544,17 @@ impl Def {
 /// A definition as JSON (its command parameters' shape, with its name); `None` when it is gone.
 pub fn definition(m: &Model, kind: Def, name: &str) -> Option<Value> {
     let v = match kind {
+        // Kept in the model's own shape; as their commands take them.
+        Def::SizeControl => Ok(size_params(m.size_controls().get(name)?)),
+        Def::FaceMerge => Ok(merge_params(m.face_merges().iter().find(|f| f.name == name)?)),
+        Def::FaceSplit => {
+            let f = m.face_splits().iter().find(|f| f.name == name)?;
+            Ok(json!({"face": {"body": f.body, "face": f.face}, "datum": f.datum}))
+        }
+        Def::Stitch => serde_json::to_value(m.stitches().iter().find(|f| f.name == name)?),
+        Def::Defeature => serde_json::to_value(m.defeatures().iter().find(|f| f.name == name)?),
+        Def::Mass => serde_json::to_value(m.mass(name)?),
+        Def::Spring => serde_json::to_value(m.spring(name)?),
         Def::Set => serde_json::to_value(m.sets().get(name)?),
         Def::Material => serde_json::to_value(m.materials().get(name)?),
         Def::Section => serde_json::to_value(m.sections().get(name)?),
@@ -449,6 +575,35 @@ pub fn definition(m: &Model, kind: Def, name: &str) -> Option<Value> {
         o.insert("name".into(), json!(name));
     }
     Some(v)
+}
+
+/// `mesh.size.set`'s parameters for a size control (without its name).
+fn size_params(c: &fieldcraft_model::SizeControl) -> Value {
+    use fieldcraft_model::{Entity, SizeRegion};
+    let region = match &c.region {
+        // A control is on faces or on bodies (`mesh.size.set` takes one or the other).
+        SizeRegion::Geometry(refs) if refs.iter().all(|r| matches!(r.entity, Entity::Body)) => {
+            json!({"bodies": refs.iter().map(|r| r.body.clone()).collect::<Vec<_>>()})
+        }
+        SizeRegion::Geometry(refs) => json!({"faces": refs}),
+        SizeRegion::Box { min, max } => json!({"box": {"min": min, "max": max}}),
+        SizeRegion::Sphere { center, radius } => json!({"sphere": {"center": center, "radius": radius}}),
+    };
+    let mut v = region;
+    v["size"] = json!(c.size);
+    v
+}
+
+/// A face merge's parameters: `geometry.faces.merge`'s, or `geometry.face.absorb`'s for an absorb
+/// (the face, and the neighbour it went into).
+fn merge_params(f: &fieldcraft_model::FaceMerge) -> Value {
+    match &f.into {
+        Some(into) => {
+            let face = f.faces.iter().find(|n| *n != into).cloned().unwrap_or_default();
+            json!({"face": {"body": f.body, "face": face}, "into": into})
+        }
+        None => json!({"faces": f.faces.iter().map(|n| json!({"body": f.body, "face": n})).collect::<Vec<_>>()}),
+    }
 }
 
 /// One row's look.
@@ -554,7 +709,8 @@ fn item_row(app: &mut ModelApp, ui: &mut egui::Ui, id: egui::Id, mut row: Row, t
     match &target {
         Target::Def(kind, name) => row.selected = app.selected.as_ref().is_some_and(|(k, n)| k == kind && n == name),
         Target::Seed(edge) => row.selected = app.selected_seed.as_ref() == Some(edge),
-        Target::Body(_) | Target::Surface(_) => {}
+        Target::View(name) => row.selected = app.session.view.current.as_ref() == Some(name),
+        Target::Body(_) | Target::Surface(_) | Target::Render(_) | Target::RigidWall { .. } => {}
     }
     let r = draw_row(app, ui, id, &row);
     // A right click selects the row its menu acts on (another item's highlight would say the
@@ -571,13 +727,15 @@ fn item_row(app: &mut ModelApp, ui: &mut egui::Ui, id: egui::Id, mut row: Row, t
     }
     if r.eye {
         acts.push(Act::Menu(target, if row.eye == Some(true) { Action::Hide } else { Action::Show }));
-    } else if r.double && matches!(target, Target::Def(..) | Target::Seed(_)) {
+    } else if r.double && matches!(target, Target::View(_)) {
+        acts.push(Act::Menu(target, Action::Restore));
+    } else if r.double && matches!(target, Target::Def(..) | Target::Seed(_) | Target::Render(_) | Target::RigidWall { .. }) {
         acts.push(Act::Menu(target, Action::Edit));
     } else if r.clicked {
         match target {
             Target::Def(kind, name) => acts.push(Act::Select(kind, name)),
             Target::Seed(edge) => acts.push(Act::SelectSeed(edge)),
-            Target::Body(_) | Target::Surface(_) => {}
+            Target::Body(_) | Target::Surface(_) | Target::View(_) | Target::Render(_) | Target::RigidWall { .. } => {}
         }
     }
 }
@@ -738,7 +896,7 @@ pub fn browser(app: &mut ModelApp, ui: &mut egui::Ui) {
             Act::Focus(target) => match target {
                 Target::Def(kind, name) => app.select_definition(Some((kind, name))),
                 Target::Seed(edge) => app.select_seed(edge),
-                Target::Body(_) | Target::Surface(_) => app.select_definition(None),
+                Target::Body(_) | Target::Surface(_) | Target::View(_) | Target::Render(_) | Target::RigidWall { .. } => app.select_definition(None),
             },
             Act::Menu(target, action) => menu::apply(app, target, action),
             Act::ShowResult(step) => {
@@ -753,20 +911,143 @@ pub fn browser(app: &mut ModelApp, ui: &mut egui::Ui) {
     }
 }
 
-/// The viewport setting a definition group's eye shows and hides: the setup's symbols.
-/// The rigid walls of the explicit steps: a row label (`Rigid wall on front (Impact)`) and the
-/// step each belongs to.
-fn rigid_walls(m: &Model) -> Vec<(String, String)> {
-    m.steps()
+/// One item row of the tree: what it is (its menu's target) and how it reads.
+#[derive(Clone, Debug, PartialEq)]
+struct Item {
+    target: Target,
+    icon: &'static str,
+    label: String,
+    /// Dim text after the label.
+    note: Option<String>,
+    /// Shown dim (suppressed).
+    dim: bool,
+    /// A boundary condition that moves the part ([`Row::moves`]).
+    moves: bool,
+}
+
+impl Item {
+    fn new(target: Target, icon: &'static str, label: impl Into<String>, note: Option<String>) -> Item {
+        Item { target, icon, label: label.into(), note, dim: false, moves: false }
+    }
+
+    /// A definition of the model, with its kind's icon.
+    fn def(m: &Model, kind: Def, name: &str, note: Option<String>) -> Item {
+        let (icon, moves) = item_icon(m, kind, name);
+        Item { moves, ..Item::new(Target::Def(kind, name.to_string()), icon, name, note) }
+    }
+
+    fn draw(self, app: &mut ModelApp, ui: &mut egui::Ui, depth: usize, acts: &mut Vec<Act>) {
+        let id = egui::Id::unique(("fc_row_item", &self.target));
+        let row = Row { depth, icon: Some(self.icon), moves: self.moves, label: &self.label, note: self.note, dim: self.dim, ..Default::default() };
+        item_row(app, ui, id, row, self.target, acts);
+    }
+}
+
+/// What Geometry lists under the design: datum planes, axes and points, the partitions in the
+/// order they cut, then what is kept for meshing only: face merges and absorbs, face splits,
+/// stitches and defeatures.
+fn geometry_items(m: &Model) -> Vec<Item> {
+    let mut out = Vec::new();
+    for (n, d) in m.datums() {
+        let kind = d.kind();
+        let icon = match kind {
+            "axis" => "geometry.datum.axis",
+            "point" => "geometry.datum.point",
+            _ => "geometry.datum",
+        };
+        let off = m.datum_suppressed(n);
+        let note = if off { format!("{kind} · suppressed") } else { kind.into() };
+        out.push(Item { dim: off, ..Item::new(Target::Def(Def::Datum, n.clone()), icon, n, Some(note)) });
+    }
+    for p in m.partitions() {
+        let off = !m.partition_cuts(p);
+        let note = if off { format!("by {} · suppressed", p.datum) } else { format!("by {}", p.datum) };
+        out.push(Item { dim: off, ..Item::new(Target::Def(Def::Partition, p.name.clone()), "geometry.partition", &p.name, Some(note)) });
+    }
+    for f in m.face_merges() {
+        let note = match &f.into {
+            Some(into) => format!("{} · absorbed into {into}", f.body),
+            None => format!("{} · {} faces", f.body, f.faces.len()),
+        };
+        out.push(Item::def(m, Def::FaceMerge, &f.name, Some(note)));
+    }
+    for f in m.face_splits() {
+        out.push(Item::def(m, Def::FaceSplit, &f.name, Some(format!("{} · by {}", f.body, f.datum))));
+    }
+    for f in m.stitches() {
+        out.push(Item::def(m, Def::Stitch, &f.name, Some(format!("on {}", f.surface))));
+    }
+    for f in m.defeatures() {
+        let n = f.features.len();
+        out.push(Item::def(m, Def::Defeature, &f.name, Some(format!("{n} feature{}", if n == 1 { "" } else { "s" }))));
+    }
+    out
+}
+
+/// What Mesh lists after the seeds: the local size controls, by where they apply.
+fn mesh_items(m: &Model) -> Vec<Item> {
+    use fieldcraft_model::{Entity, SizeRegion};
+    m.size_controls()
         .iter()
-        .filter_map(|s| match &s.procedure {
-            fieldcraft_model::Procedure::ExplicitDynamic(e) => {
-                Some(e.rigid_walls.iter().map(move |w| (format!("Rigid wall on {} ({})", w.set, s.name), s.name.clone())))
-            }
-            _ => None,
+        .map(|(n, c)| {
+            let on = match &c.region {
+                SizeRegion::Geometry(refs) if refs.iter().all(|r| matches!(r.entity, Entity::Body)) => "bodies",
+                SizeRegion::Geometry(_) => "faces",
+                SizeRegion::Box { .. } => "box",
+                SizeRegion::Sphere { .. } => "sphere",
+            };
+            Item::def(m, Def::SizeControl, n, Some(on.into()))
         })
-        .flatten()
         .collect()
+}
+
+/// The definition groups below Mesh: key, label and the kinds each lists.
+const GROUPS: [(&str, &str, &[Def]); 7] = [
+    ("sets", "Sets", &[Def::Set]),
+    ("materials", "Materials", &[Def::Material]),
+    ("sections", "Sections", &[Def::Section]),
+    ("steps", "Steps", &[Def::Step]),
+    ("loads", "Loads & BCs", &[Def::BoundaryCondition, Def::Load]),
+    ("interactions", "Interactions", &[Def::ReferencePoint, Def::Coupling, Def::Contact, Def::Tie, Def::Spring, Def::Mass]),
+    ("fluids", "Fluid Domains", &[Def::FluidDomain]),
+];
+
+/// What a definition group lists: its kinds' definitions, and under Interactions the rigid
+/// walls of the explicit steps (`Rigid wall on front (Impact)`), each its own item.
+fn group_items(m: &Model, key: &str, kinds: &[Def]) -> Vec<Item> {
+    let mut out: Vec<Item> = Vec::new();
+    for kind in kinds {
+        for name in kind.names(m) {
+            let note = match kind {
+                Def::Spring => m.spring(&name).map(|s| s.kind().to_string()),
+                _ => None,
+            };
+            out.push(Item::def(m, *kind, &name, note));
+        }
+    }
+    if key == "interactions" {
+        for s in m.steps() {
+            if let fieldcraft_model::Procedure::ExplicitDynamic(e) = &s.procedure {
+                for (index, w) in e.rigid_walls.iter().enumerate() {
+                    let target = Target::RigidWall { step: s.name.clone(), index };
+                    out.push(Item::new(target, "interaction.rigid_wall", format!("Rigid wall on {} ({})", w.set, s.name), None));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// What Results lists after the solved steps: the saved views and the renders made from them.
+fn saved_items(app: &ModelApp) -> Vec<Item> {
+    let view = &app.session.view;
+    let views = view.views.iter().map(|v| {
+        let note = (view.current.as_deref() == Some(v.name.as_str())).then(|| "shown".to_string());
+        Item::new(Target::View(v.name.clone()), "ui.views", &v.name, note)
+    });
+    let renders =
+        view.renders.iter().map(|r| Item::new(Target::Render(r.name.clone()), "results.export.vtu", &r.name, Some(format!("of {}", r.view))));
+    views.chain(renders).collect()
 }
 
 fn eye_flag<'u>(state: &'u mut crate::UiState, group: &str) -> Option<&'u mut bool> {
@@ -843,26 +1124,8 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
             let row = Row { depth: 2, icon: Some("geometry.import.mesh"), label: s, ..Default::default() };
             item_row(app, ui, egui::Id::unique(("fc_row_surface", i)), row, Target::Surface(s.clone()), acts);
         }
-        // Datum planes, axes and points, then the partitions in the order they cut.
-        let datums: Vec<(String, &'static str)> = app.session.model.datums().iter().map(|(n, d)| (n.clone(), d.kind())).collect();
-        for (i, (n, kind)) in datums.iter().enumerate() {
-            let icon = match *kind {
-                "axis" => "geometry.datum.axis",
-                "point" => "geometry.datum.point",
-                _ => "geometry.datum",
-            };
-            let off = app.session.model.datum_suppressed(n);
-            let note = if off { format!("{kind} · suppressed") } else { (*kind).into() };
-            let row = Row { depth: 2, icon: Some(icon), label: n, note: Some(note), dim: off, ..Default::default() };
-            item_row(app, ui, egui::Id::unique(("fc_row_datum", i)), row, Target::Def(Def::Datum, n.clone()), acts);
-        }
-        let model = &app.session.model;
-        let partitions: Vec<(String, String, bool)> =
-            model.partitions().iter().map(|p| (p.name.clone(), p.datum.clone(), !model.partition_cuts(p))).collect();
-        for (i, (n, datum, off)) in partitions.iter().enumerate() {
-            let note = if *off { format!("by {datum} · suppressed") } else { format!("by {datum}") };
-            let row = Row { depth: 2, icon: Some("geometry.partition"), label: n, note: Some(note), dim: *off, ..Default::default() };
-            item_row(app, ui, egui::Id::unique(("fc_row_partition", i)), row, Target::Def(Def::Partition, n.clone()), acts);
+        for item in geometry_items(&app.session.model) {
+            item.draw(app, ui, 2, acts);
         }
     }
     ghost_rows(app, ui, &stages, "geometry", acts);
@@ -957,22 +1220,14 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
                 }
             }
         }
+        for item in mesh_items(&app.session.model) {
+            item.draw(app, ui, 2, acts);
+        }
     }
     ghost_rows(app, ui, &stages, "mesh", acts);
     // Definitions.
-    let groups: [(&str, &str, &[Def]); 7] = [
-        ("sets", "Sets", &[Def::Set]),
-        ("materials", "Materials", &[Def::Material]),
-        ("sections", "Sections", &[Def::Section]),
-        ("steps", "Steps", &[Def::Step]),
-        ("loads", "Loads & BCs", &[Def::BoundaryCondition, Def::Load]),
-        ("interactions", "Interactions", &[Def::ReferencePoint, Def::Coupling, Def::Contact, Def::Tie]),
-        ("fluids", "Fluid Domains", &[Def::FluidDomain]),
-    ];
-    for (key, label, kinds) in groups {
-        let items: Vec<(Def, String)> = kinds.iter().flat_map(|k| k.names(&app.session.model).into_iter().map(move |n| (*k, n))).collect();
-        // Rigid walls belong to their explicit step; they are listed here too, and open it.
-        let walls: Vec<(String, String)> = if key == "interactions" { rigid_walls(&app.session.model) } else { Vec::new() };
+    for (key, label, kinds) in GROUPS {
+        let items = group_items(&app.session.model, key, kinds);
         let icon = kinds.first().map(|k| k.icon());
         let eye = eye_flag(&mut app.ui, key).map(|v| *v);
         let (mark, tip) = state(key);
@@ -986,8 +1241,8 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
                 eye,
                 icon,
                 label,
-                note: Some(format!("{}", items.len() + walls.len())),
-                dim: items.is_empty() && walls.is_empty(),
+                note: Some(format!("{}", items.len())),
+                dim: items.is_empty(),
                 mark,
                 tip,
                 ..Default::default()
@@ -1001,16 +1256,8 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
             acts.push(Act::Fold(key.into()));
         }
         if open(app, key) {
-            for (kind, name) in items {
-                let id = egui::Id::unique(("fc_row_def", kind.stem(), &name));
-                let (icon, moves) = item_icon(&app.session.model, kind, &name);
-                let row = Row { depth: 2, icon: Some(icon), moves, label: &name, ..Default::default() };
-                item_row(app, ui, id, row, Target::Def(kind, name.clone()), acts);
-            }
-            for (i, (label, step)) in walls.into_iter().enumerate() {
-                let id = egui::Id::unique(("fc_row_rigid_wall", i));
-                let row = Row { depth: 2, icon: Some("interaction.rigid_wall"), label: &label, ..Default::default() };
-                item_row(app, ui, id, row, Target::Def(Def::Step, step), acts);
+            for item in items {
+                item.draw(app, ui, 2, acts);
             }
         }
         ghost_rows(app, ui, &stages, key, acts);
@@ -1052,16 +1299,119 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
                 acts.push(Act::ShowResult(step));
             }
         }
+        for item in saved_items(app) {
+            item.draw(app, ui, 2, acts);
+        }
     }
     ghost_rows(app, ui, &stages, "results", acts);
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use fieldcraft_engine::Session;
 
     use super::*;
     use Status::*;
+
+    /// The impact sample (an explicit step with a rigid wall) holding one of every other kind
+    /// the browser lists: a point mass, a spring, a size control, a face merge and an absorb, a
+    /// face split, a stitch, a defeature, a saved view and a render of it.
+    pub(crate) fn every_kind() -> ModelApp {
+        let mut app = ModelApp::new(Session::default());
+        app.run_script(&fieldcraft_engine::sample::impact()).unwrap();
+        app.run("model.mass.create", json!({"name": "motor", "target": {"set": "tip"}, "mass": 2.5})).unwrap();
+        app.run(
+            "model.spring.create",
+            json!({"name": "mount", "type": "spring", "stiffness": 1000, "first": {"set": "tip"}, "direction": {"dof": 1}}),
+        )
+        .unwrap();
+        app.run("mesh.size.set", json!({"name": "Fine", "size": 1, "box": {"min": [0, 0, 0], "max": [10, 10, 10]}})).unwrap();
+        app.run("geometry.datum", json!({"name": "Mid", "by": {"type": "offset", "plane": "yz", "offset": 15}})).unwrap();
+        // Merges, splits, stitches and defeatures need a design or a surface to be made by their
+        // commands; the model keeps them by name, as a model file read back would.
+        let m = &mut app.session.model;
+        let merge = |name: &str, faces: [&str; 2], into: Option<&str>| fieldcraft_model::FaceMerge {
+            name: name.into(),
+            body: "Base".into(),
+            faces: faces.map(str::to_string).to_vec(),
+            into: into.map(str::to_string),
+        };
+        m.add_face_merge(merge("Fillet", ["F3:blend#0", "F3:blend#1"], None)).unwrap();
+        m.add_face_merge(merge("Sliver", ["F4:side#2", "F1:+z"], Some("F1:+z"))).unwrap();
+        m.add_face_split(fieldcraft_model::FaceSplit { name: "Band".into(), body: "Base".into(), face: "F1:+z".into(), datum: "Mid".into() })
+            .unwrap();
+        m.add_stitch(fieldcraft_model::Stitch { name: "Gaps".into(), surface: "Mesh1".into(), tolerance: 0.05 }).unwrap();
+        m.set_defeature(fieldcraft_model::Defeature { name: "Small".into(), features: vec![3, 7] }).unwrap();
+        app.run("view.save", json!({"name": "Front", "camera": {"yaw": 0, "pitch": 0}, "results": false})).unwrap();
+        app.run("results.render.save", json!({"name": "Clip", "view": "Front", "step": "Impact"})).unwrap();
+        app
+    }
+
+    /// Every item the tree lists, under each node.
+    pub(crate) fn listed(app: &ModelApp) -> Vec<Target> {
+        let m = &app.session.model;
+        let mut out: Vec<Item> = geometry_items(m);
+        out.extend(mesh_items(m));
+        for (key, _, kinds) in GROUPS {
+            out.extend(group_items(m, key, kinds));
+        }
+        out.extend(saved_items(app));
+        out.into_iter().map(|i| i.target).collect()
+    }
+
+    /// Every kind of definition the model keeps has its place in the tree (#A1-08): each is
+    /// listed once, so it can be selected, edited and deleted from its row; rigid walls are
+    /// items of their own, and saved views and renders are listed under Results.
+    #[test]
+    fn every_kind_the_model_keeps_is_listed() {
+        let app = every_kind();
+        let listed = listed(&app);
+        for kind in Def::ALL {
+            let names = kind.names(&app.session.model);
+            let rows: Vec<&String> = listed
+                .iter()
+                .filter_map(|t| match t {
+                    Target::Def(k, n) if *k == kind => Some(n),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(rows, names.iter().collect::<Vec<_>>(), "{kind:?}");
+        }
+        for kind in [Def::Mass, Def::Spring, Def::SizeControl, Def::FaceMerge, Def::FaceSplit, Def::Stitch, Def::Defeature, Def::Datum] {
+            assert!(!kind.names(&app.session.model).is_empty(), "the fixture has a {kind:?}");
+        }
+        assert!(listed.contains(&Target::RigidWall { step: "Impact".into(), index: 0 }), "{listed:?}");
+        assert!(listed.contains(&Target::View("Front".into())) && listed.contains(&Target::Render("Clip".into())));
+        // Each kind sits in one place.
+        let mut placed: Vec<Def> = GROUPS.iter().flat_map(|(_, _, k)| k.iter().copied()).collect();
+        placed.extend([Def::Datum, Def::Partition, Def::FaceMerge, Def::FaceSplit, Def::Stitch, Def::Defeature, Def::SizeControl]);
+        placed.sort_by_key(|k| format!("{k:?}"));
+        let mut all = Def::ALL.to_vec();
+        all.sort_by_key(|k| format!("{k:?}"));
+        assert_eq!(placed, all);
+        // An absorb reads as one, with the face it went into.
+        let geometry = geometry_items(&app.session.model);
+        let sliver = geometry.iter().find(|i| i.label == "Sliver").and_then(|i| i.note.clone());
+        assert_eq!(sliver.as_deref(), Some("Base · absorbed into F1:+z"));
+    }
+
+    /// The new kinds read back as their commands' parameters (in the model's SI): a size
+    /// control as mesh.size.set takes it, an absorb as geometry.face.absorb, a split as
+    /// geometry.face.split.
+    #[test]
+    fn meshing_helpers_read_back_as_their_parameters() {
+        let app = every_kind();
+        let m = &app.session.model;
+        let size = definition(m, Def::SizeControl, "Fine").unwrap();
+        assert_eq!((size["name"].clone(), size["box"]["max"].clone()), (json!("Fine"), json!([0.01, 0.01, 0.01])), "{size}");
+        let sliver = definition(m, Def::FaceMerge, "Sliver").unwrap();
+        assert_eq!(sliver, json!({"name": "Sliver", "face": {"body": "Base", "face": "F4:side#2"}, "into": "F1:+z"}));
+        let fillet = definition(m, Def::FaceMerge, "Fillet").unwrap();
+        assert_eq!(fillet["faces"][1], json!({"body": "Base", "face": "F3:blend#1"}));
+        let band = definition(m, Def::FaceSplit, "Band").unwrap();
+        assert_eq!(band, json!({"name": "Band", "face": {"body": "Base", "face": "F1:+z"}, "datum": "Mid"}));
+        assert_eq!(definition(m, Def::Defeature, "Small").unwrap(), json!({"name": "Small", "features": [3, 7]}));
+    }
 
     /// Each top-level node's state, and the commands of its ghost rows.
     fn marks(app: &mut ModelApp) -> Vec<(&'static str, Option<Status>, Vec<&'static str>)> {
@@ -1165,7 +1515,8 @@ mod tests {
         assert!(steel.get("elastic").is_some(), "{steel}");
         assert!(definition(m, Def::Load, "nope").is_none());
         for kind in Def::ALL {
-            let verbs: &[&str] = if kind == Def::Partition { &["create", "delete"] } else { &["create", "edit", "delete"] };
+            let no_edit = [Def::Partition, Def::FaceMerge, Def::FaceSplit, Def::Stitch];
+            let verbs: &[&str] = if no_edit.contains(&kind) { &["create", "delete"] } else { &["create", "edit", "delete"] };
             for verb in verbs {
                 assert!(fieldcraft_engine::find_command(&kind.command(verb)).is_some(), "{kind:?} {verb}");
             }

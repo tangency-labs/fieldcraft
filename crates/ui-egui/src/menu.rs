@@ -2,12 +2,13 @@
 //! face in the viewport. Edit… opens the item's edit form, Hide/Show and Isolate change the view
 //! (`view.*`), Active in step switches a boundary condition or load on or off per step
 //! (`model.step.activate`), Rename… opens `model.rename` (every reference follows the new
-//! name), and Delete… asks first (a seed's Delete clears it at once: undo brings
-//! it back) ([`crate::files::Prompt::Delete`]): it lists
-//! the definitions that use the item, and refuses, or for a datum deletes its partitions with it.
+//! name), Restore shows a saved view (`view.restore`), and Delete… asks first (a seed's and a
+//! rigid wall's Delete runs at once: undo brings it back) ([`crate::files::Prompt::Delete`]): it
+//! lists what uses the item, and refuses, or for a datum deletes its partitions with it.
 //! Every entry runs the same command as the ribbon, the forms and scripts.
 
 use fieldcraft_engine::{ItemKind, ViewItem};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::ModelApp;
@@ -16,7 +17,7 @@ use solidcraft_ui_kit as kit;
 use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// What the menu is for.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Target {
     /// A body of the open design.
     Body(String),
@@ -26,6 +27,12 @@ pub enum Target {
     Def(Def, String),
     /// The seed on a design edge or face.
     Seed(fieldcraft_model::GeometryRef),
+    /// A saved view (`view.save`).
+    View(String),
+    /// A saved render (`results.render.save`).
+    Render(String),
+    /// A rigid wall of an explicit dynamics step: the step, and the wall's index in its walls.
+    RigidWall { step: String, index: usize },
 }
 
 impl Target {
@@ -35,7 +42,7 @@ impl Target {
             Target::Body(n) => (ItemKind::Body, n),
             Target::Surface(n) => (ItemKind::Surface, n),
             Target::Def(def, n) => (def.item_kind()?, n),
-            Target::Seed(_) => return None,
+            Target::Seed(_) | Target::View(_) | Target::Render(_) | Target::RigidWall { .. } => return None,
         };
         Some(ViewItem { kind, name: name.clone() })
     }
@@ -58,6 +65,8 @@ pub enum Action {
         step: String,
         active: bool,
     },
+    /// Show a saved view.
+    Restore,
     Delete,
 }
 
@@ -97,8 +106,16 @@ pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action
             entry(ui, true, label, &tip, Action::Suppress(!suppressed));
         }
     }
-    if let Target::Seed(on) = target {
-        entry(ui, true, "Edit…", seed_command(on), Action::Edit);
+    match target {
+        Target::Seed(on) => entry(ui, true, "Edit…", seed_command(on), Action::Edit),
+        Target::View(_) => entry(ui, true, "Restore", "view.restore: show it", Action::Restore),
+        Target::Render(_) => entry(ui, true, "Edit…", "results.render.save: replaces it", Action::Edit),
+        // A wall has no edit command of its own: it is edited in its step's form.
+        Target::RigidWall { step, .. } => {
+            let tip = format!("{}: the wall is one of the step's rigid walls", Def::Step.command("edit"));
+            entry(ui, Def::Step.exists(&app.session.model, step), "Edit Step…", &tip, Action::Edit);
+        }
+        Target::Def(..) | Target::Body(_) | Target::Surface(_) => {}
     }
     if let Some(item) = target.item() {
         if app.session.shows(item.kind, &item.name) {
@@ -133,14 +150,15 @@ pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action
         row.danger = true;
         row.show(ui).backing_on_hover_text(tip).clicked()
     };
-    if let Target::Def(def, _) = target
-        && delete(ui, "Delete…", &format!("{} (Delete key)", def.command("delete")))
-    {
-        chosen = Some(Action::Delete);
-    }
-    if let Target::Seed(_) = target
-        && delete(ui, "Delete", "mesh.seed.clear (undo brings it back)")
-    {
+    let deleted = match target {
+        Target::Def(def, _) => delete(ui, "Delete…", &format!("{} (Delete key)", def.command("delete"))),
+        Target::Seed(_) => delete(ui, "Delete", "mesh.seed.clear (undo brings it back)"),
+        Target::View(_) => delete(ui, "Delete…", Saved::View.command()),
+        Target::Render(_) => delete(ui, "Delete…", Saved::Render.command()),
+        Target::RigidWall { .. } => delete(ui, "Delete", "interaction.rigid_wall.delete (undo brings it back)"),
+        Target::Body(_) | Target::Surface(_) => false,
+    };
+    if deleted {
         chosen = Some(Action::Delete);
     }
     if chosen.is_some() {
@@ -161,15 +179,30 @@ pub fn apply(app: &mut ModelApp, target: Target, action: Action) {
                 app.select_definition(Some((*def, name.clone())));
                 app.open_form(&command, params);
             }
-            if let Target::Seed(on) = target
-                && let Some(params) = app.seed(&on).and_then(|s| seed_params(s, app.session.units()))
+            if let Target::Seed(on) = &target
+                && let Some(params) = app.seed(on).and_then(|s| seed_params(s, app.session.units()))
             {
-                let command = seed_command(&on);
-                app.select_seed(on);
+                let command = seed_command(on);
+                app.select_seed(on.clone());
                 app.open_form(command, params);
+            }
+            if let Target::Render(name) = &target
+                && let Some(params) = render_params(app, name)
+            {
+                app.open_form("results.render.save", params);
+            }
+            if let Target::RigidWall { step, .. } = &target
+                && let Some((command, params)) = Def::Step.edit(&app.session.model, step, app.session.units())
+            {
+                app.select_definition(Some((Def::Step, step.clone())));
+                app.open_form(&command, params);
             }
             Ok(Value::Null)
         }
+        Action::Restore => match &target {
+            Target::View(name) => app.run("view.restore", json!({"name": name})),
+            _ => Ok(Value::Null),
+        },
         Action::Rename => {
             if let Target::Def(def, name) = &target
                 && let Some(kind) = def.rename_kind()
@@ -203,6 +236,15 @@ pub fn apply(app: &mut ModelApp, target: Target, action: Action) {
                 Ok(Value::Null)
             }
             Target::Seed(on) => app.run("mesh.seed.clear", json!({seed_key(&on): [on]})),
+            Target::View(name) => {
+                app.ask_delete_saved(Saved::View, &name);
+                Ok(Value::Null)
+            }
+            Target::Render(name) => {
+                app.ask_delete_saved(Saved::Render, &name);
+                Ok(Value::Null)
+            }
+            Target::RigidWall { step, index } => app.run("interaction.rigid_wall.delete", json!({"step": step, "index": index})),
             Target::Body(_) | Target::Surface(_) => Ok(Value::Null),
         },
     };
@@ -239,20 +281,76 @@ pub fn seed_params(seed: &fieldcraft_model::Seed, units: &fieldcraft_model::Disp
     fieldcraft_engine::units::shown_params(seed_command(&seed.on), &v, units).ok()
 }
 
+/// `results.render.save`'s parameters that make render `name` as it is (its form, filled in).
+fn render_params(app: &ModelApp, name: &str) -> Option<Value> {
+    let v = serde_json::to_value(app.session.view.render(name)?).ok()?;
+    fieldcraft_engine::units::shown_params("results.render.save", &v, app.session.units()).ok()
+}
+
+/// What the session keeps beside the model's definitions (view state, never undone).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Saved {
+    View,
+    Render,
+}
+
+impl Saved {
+    pub fn label(self) -> &'static str {
+        match self {
+            Saved::View => "Saved view",
+            Saved::Render => "Render",
+        }
+    }
+
+    /// The command that deletes one.
+    pub fn command(self) -> &'static str {
+        match self {
+            Saved::View => "view.delete",
+            Saved::Render => "results.render.delete",
+        }
+    }
+}
+
+/// What a deletion deletes: a model definition, or a saved view or render.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum Deletable {
+    Def(Def),
+    Saved(Saved),
+}
+
+impl Deletable {
+    fn label(self) -> &'static str {
+        match self {
+            Deletable::Def(d) => d.label(),
+            Deletable::Saved(s) => s.label(),
+        }
+    }
+
+    /// The command that deletes `name`, and its parameters.
+    fn command(self, name: &str) -> (String, Value) {
+        match self {
+            Deletable::Def(d) => (d.command("delete"), d.delete_params(name)),
+            Deletable::Saved(s) => (s.command().to_string(), json!({"name": name})),
+        }
+    }
+}
+
 /// The question a deletion asks ([`crate::files::Prompt::Delete`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeleteAsk {
-    pub kind: Def,
+    pub kind: Deletable,
     pub name: String,
-    /// The definitions that use it.
+    /// What uses it.
     pub users: Vec<String>,
 }
 
 impl DeleteAsk {
     /// Whether deleting goes ahead with its users: a datum's partitions are deleted with it; any
-    /// other definition in use is refused.
+    /// other item in use is refused.
     pub fn cascades(&self) -> bool {
-        self.kind == Def::Datum
+        self.kind == Deletable::Def(Def::Datum)
     }
 
     /// Whether it can be deleted at all.
@@ -278,7 +376,21 @@ impl ModelApp {
             return;
         }
         let users = kind.users(&self.session.model, name);
-        self.prompt = Some(crate::files::Prompt::Delete(DeleteAsk { kind, name: name.to_string(), users }));
+        self.prompt = Some(crate::files::Prompt::Delete(DeleteAsk { kind: Deletable::Def(kind), name: name.to_string(), users }));
+    }
+
+    /// Ask before deleting saved view or render `name` (the browser's item menu): view state is
+    /// not undone. A view a render starts from is refused (delete the render first).
+    pub fn ask_delete_saved(&mut self, kind: Saved, name: &str) {
+        let view = &self.session.view;
+        let users: Vec<String> = match kind {
+            Saved::View if view.saved(name).is_some() => {
+                view.renders.iter().filter(|r| r.view == name).map(|r| format!("render `{}`", r.name)).collect()
+            }
+            Saved::Render if view.render(name).is_some() => Vec::new(),
+            Saved::View | Saved::Render => return,
+        };
+        self.prompt = Some(crate::files::Prompt::Delete(DeleteAsk { kind: Deletable::Saved(kind), name: name.to_string(), users }));
     }
 
     /// Answer [`crate::files::Prompt::Delete`]: delete (with its partitions, for a datum in use)
@@ -289,11 +401,14 @@ impl ModelApp {
         if !delete || !ask.allowed() {
             return;
         }
-        let mut params = json!({"name": ask.name});
+        let (command, mut params) = ask.kind.command(&ask.name);
         if ask.cascades() && !ask.users.is_empty() {
             params["cascade"] = json!(true);
         }
-        if self.run(&ask.kind.command("delete"), params).is_ok() && self.selected.as_ref() == Some(&(ask.kind, ask.name)) {
+        if self.run(&command, params).is_ok()
+            && let Deletable::Def(kind) = ask.kind
+            && self.selected.as_ref() == Some(&(kind, ask.name))
+        {
             self.selected = None;
         }
     }
@@ -489,6 +604,89 @@ mod tests {
         apply(&mut app, Target::Seed(seed.on.clone()), Action::Delete);
         assert!(app.session.model.seeds().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Delete… on every item the browser lists runs its kind's delete command once confirmed,
+    /// and the item is gone: point masses, springs, size controls (mesh.size.clear), face
+    /// merges and absorbs, splits, stitches, defeatures; a saved view and a render (view state,
+    /// asked first too); a rigid wall at once, by its index (#A1-01–03, #A1-05, #A1-08).
+    #[test]
+    fn delete_on_each_kind_runs_its_delete_command() {
+        let mut app = crate::browser::tests::every_kind();
+        // The render first: the view it starts from is refused while it stands.
+        apply(&mut app, Target::View("Front".into()), Action::Delete);
+        let Some(crate::files::Prompt::Delete(ask)) = app.prompt.clone() else { panic!("{:?}", app.prompt) };
+        assert!(!ask.allowed() && ask.users == ["render `Clip`"], "{ask:?}");
+        app.answer_delete(true);
+        assert!(app.session.view.saved("Front").is_some());
+        let new = [Def::Mass, Def::Spring, Def::SizeControl, Def::FaceMerge, Def::FaceSplit, Def::Stitch, Def::Defeature];
+        let mut targets: Vec<Target> =
+            crate::browser::tests::listed(&app).into_iter().filter(|t| !matches!(t, Target::Def(k, _) if !new.contains(k))).collect();
+        // The render before the view it starts from.
+        targets.sort_by_key(|t| matches!(t, Target::View(_)));
+        assert_eq!(targets.len(), 11, "{targets:?}");
+        for target in targets {
+            let before = app.session.journal.len();
+            let deleted = match &target {
+                Target::Def(kind, name) => {
+                    apply(&mut app, target.clone(), Action::Delete);
+                    app.answer_delete(true);
+                    let journal = app.session.journal.last().map(|(c, _)| c.clone());
+                    assert_eq!(journal, Some(kind.command("delete")), "{target:?}: {:?}", app.status);
+                    !kind.exists(&app.session.model, name)
+                }
+                Target::View(_) | Target::Render(_) => {
+                    apply(&mut app, target.clone(), Action::Delete);
+                    app.answer_delete(true);
+                    assert_eq!(app.session.journal.len(), before, "view state is not journalled");
+                    !crate::browser::tests::listed(&app).contains(&target)
+                }
+                Target::RigidWall { .. } => {
+                    apply(&mut app, target.clone(), Action::Delete);
+                    assert_eq!(app.session.journal.last().map(|(c, _)| c.as_str()), Some("interaction.rigid_wall.delete"));
+                    !crate::browser::tests::listed(&app).contains(&target)
+                }
+                Target::Body(_) | Target::Surface(_) | Target::Seed(_) => continue,
+            };
+            assert!(deleted, "{target:?} is gone: {:?}", app.status);
+        }
+    }
+
+    /// Edit… opens each editable kind's form filled in, and running it unchanged changes
+    /// nothing; merges, splits and stitches are not editable (made again instead); Restore shows
+    /// a saved view; a rigid wall opens its step (#A1-05, #A1-08).
+    #[test]
+    fn edit_and_restore_on_the_new_kinds() {
+        let mut app = crate::browser::tests::every_kind();
+        for (kind, name, command) in
+            [(Def::Mass, "motor", "model.mass.edit"), (Def::Spring, "mount", "model.spring.edit"), (Def::SizeControl, "Fine", "mesh.size.set")]
+        {
+            let before = definition_of(&app, kind, name);
+            apply(&mut app, Target::Def(kind, name.into()), Action::Edit);
+            assert_eq!(app.dialog.as_ref().map(|d| d.command), Some(command), "{kind:?}");
+            app.run_dialog().unwrap();
+            assert_eq!(definition_of(&app, kind, name), before, "{kind:?}");
+        }
+        apply(&mut app, Target::Def(Def::Defeature, "Small".into()), Action::Edit);
+        assert_eq!(app.dialog.as_ref().map(|d| d.command), Some("geometry.defeature"));
+        app.close_dialog();
+        for (kind, name) in [(Def::FaceMerge, "Fillet"), (Def::FaceSplit, "Band"), (Def::Stitch, "Gaps")] {
+            assert!(kind.edit_command(&app.session.model, name).is_none() && kind.rename_kind().is_none(), "{kind:?}");
+        }
+        assert_eq!((Def::Mass.rename_kind(), Def::Spring.rename_kind()), (Some("point_mass"), Some("spring")));
+        apply(&mut app, Target::Render("Clip".into()), Action::Edit);
+        assert_eq!(app.dialog.as_ref().map(|d| d.command), Some("results.render.save"));
+        app.close_dialog();
+        apply(&mut app, Target::RigidWall { step: "Impact".into(), index: 0 }, Action::Edit);
+        assert_eq!(app.dialog.as_ref().map(|d| d.command), Some("model.step.edit"));
+        app.close_dialog();
+        app.session.view.current = None;
+        apply(&mut app, Target::View("Front".into()), Action::Restore);
+        assert_eq!(app.session.view.current.as_deref(), Some("Front"), "{:?}", app.status);
+    }
+
+    fn definition_of(app: &ModelApp, kind: Def, name: &str) -> Option<Value> {
+        crate::browser::definition(&app.session.model, kind, name)
     }
 
     /// Delete asks first: a datum a partition uses names it and deletes both on confirmation;
