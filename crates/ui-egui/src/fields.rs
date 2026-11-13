@@ -3,6 +3,10 @@
 //! and help icon, at its row height); what is FieldCraft's own is the row's label column: a long
 //! label wraps inside it onto two lines, after it the required mark, so a form shows every label
 //! whole and says which fields it needs.
+//!
+//! [`row`] is a deliberate fork of `kit::row`, which truncates its label to one line and has no
+//! required mark. Moving both into the kit is requested upstream (SolidCraft); once `kit::row`
+//! wraps and marks required fields, this row goes and the forms use the kit's.
 
 use egui::{Color32, Id, RichText, Ui, vec2};
 use solidcraft_ui_kit as kit;
