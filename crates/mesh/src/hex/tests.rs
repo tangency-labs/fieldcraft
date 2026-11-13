@@ -567,6 +567,56 @@ fn an_o_grid_round_a_hole_conforms_with_graded_radial_lines() {
     }
 }
 
+/// A face joined from a plane and the fillet running out of it (a composite face, whose members
+/// lie on different surfaces) gets its nodes on the fillet's cylinder, not on the chords of its
+/// tessellation: the block's side y = 0 turns into a quarter-round fillet of radius 1 about
+/// (1, 1) up to −45°, then the block's corner.
+#[test]
+fn a_composite_faces_nodes_lie_on_its_members_surfaces() {
+    use std::f64::consts::FRAC_PI_4;
+    let arc = 12;
+    let mut poly = vec![[0.0, 0.0]];
+    let mut tags = vec![2];
+    for k in 0..arc {
+        let t = -2.0 * FRAC_PI_4 + FRAC_PI_4 * k as f64 / arc as f64;
+        poly.push([1.0 + t.cos(), 1.0 + t.sin()]);
+        tags.push(5);
+    }
+    let c = [1.0 + FRAC_PI_4.cos(), 1.0 - FRAC_PI_4.sin()];
+    poly.extend([c, [c[0], 1.5], [0.0, 1.5]]);
+    tags.extend([3, 4, 6]);
+    let surfaces = vec![tagged_prism(&poly, &tags, 0.0, 1.0)];
+    let plane = |point: [f64; 3], normal: [f64; 3]| Some(Surface::Plane { point, normal });
+    let faces = vec![vec![
+        plane([0.0; 3], [0.0, 0.0, -1.0]),
+        plane([0.0, 0.0, 1.0], [0.0, 0.0, 1.0]),
+        plane([0.0; 3], [0.0, -1.0, 0.0]),
+        plane([c[0], c[1], 0.0], [1.0, 0.0, 0.0]),
+        plane([0.0, 1.5, 0.0], [0.0, 1.0, 0.0]),
+        Some(Surface::Cylinder { origin: [1.0, 1.0, 0.0], axis: [0.0, 0.0, 1.0], radius: 1.0 }),
+        plane([0.0; 3], [-1.0, 0.0, 0.0]),
+    ]];
+    let sagitta = 1.0 - (FRAC_PI_4 / (2.0 * arc as f64)).cos();
+    for quadratic in [false, true] {
+        let opts = HexOptions { quadratic, chordal_tolerance: sagitta, ..HexOptions::default() };
+        let m = hex_mesh_cells(&cells_of(&surfaces, &faces), &UniformSize(0.1), &opts).unwrap();
+        // The nodes on the fillet: within the sagitta of its cylinder, inside its angles.
+        let fillet: Vec<f64> = m
+            .mesh
+            .nodes
+            .iter()
+            .filter_map(|p| {
+                let (dx, dy) = (p[0] - 1.0, p[1] - 1.0);
+                let (r, t) = ((dx * dx + dy * dy).sqrt(), dy.atan2(dx));
+                ((r - 1.0).abs() <= 2.0 * sagitta && t > -2.0 * FRAC_PI_4 + 1e-9 && t < -FRAC_PI_4 - 1e-9).then_some(r - 1.0)
+            })
+            .collect();
+        assert!(fillet.len() >= 20, "{quadratic}: {} nodes on the fillet", fillet.len());
+        let worst = fillet.iter().fold(0.0f64, |a, d| a.max(d.abs()));
+        assert!(worst < 1e-9, "{quadratic}: a node {worst} off the fillet");
+    }
+}
+
 fn seed(
     name: &str,
     points: Vec<[f64; 3]>,

@@ -51,6 +51,10 @@ pub(crate) struct Face {
     /// was absorbed into (#546), which its vertices on the absorbed piece do not lie on — so it
     /// snaps to its triangles instead.
     pub snap: Option<Surface>,
+    /// Without a [`Face::snap`] (a composite face, an absorbed face): each B-rep face among its
+    /// triangles (`tri_face`) whose own vertices lie on its own analytic surface, with that
+    /// surface. A node placed on one of their triangles snaps to it (`project_to_face`).
+    pub members: Vec<(u32, Surface)>,
     /// When the face is planar: a point and the outward unit normal.
     pub plane: Option<(P, P)>,
     /// Boundary loops: oriented edges `(edge, forward)` with the face on the left.
@@ -168,10 +172,11 @@ impl<'a> Brep<'a> {
             // face is not on (an absorbed face's kept surface, #546) is classification
             // (`Face::surface`) only.
             let snap = verified_surface(surface, surfaces, tris, RELATIVE_ON_SURFACE * diagonal);
+            let members = if snap.is_some() { Vec::new() } else { member_surfaces(surface, surfaces, tris, RELATIVE_ON_SURFACE * diagonal) };
             let analytic = if composite { snap } else { own_surface(surfaces, id) };
             let normal = unit(nsum).unwrap_or([0.0; 3]);
             let plane = planarity(pts, &verts, normal, analytic, eps);
-            faces.push(Face { id, triangles: tris.clone(), vertices: verts, area, surface: analytic, snap, plane, loops: Vec::new() });
+            faces.push(Face { id, triangles: tris.clone(), vertices: verts, area, surface: analytic, snap, members, plane, loops: Vec::new() });
         }
         let face_of = |t: u32| tags.get(t as usize).and_then(|f| index.get(f)).copied();
         // Oriented boundary segments: `from → to` with face `left` traversing it.
@@ -486,6 +491,19 @@ fn verified_surface(surface: &BoundarySurface, surfaces: &[Option<Surface>], tri
     let pts = surface.points();
     let on = |v: u32| pts.get(v as usize).is_some_and(|&p| s.project(p).is_some_and(|q| dist(p, q) <= tol));
     tris.iter().all(|&t| surface.triangles().get(t as usize).is_some_and(|tri| tri.iter().all(|&v| on(v)))).then_some(s)
+}
+
+/// The B-rep faces among triangles `tris` whose own vertices lie on their own analytic surface
+/// within `tol`, with that surface, in tag order.
+fn member_surfaces(surface: &BoundarySurface, surfaces: &[Option<Surface>], tris: &[u32], tol: f64) -> Vec<(u32, Surface)> {
+    let tri_face = surface.tri_face();
+    let mut by_member: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for &t in tris {
+        if let Some(&m) = tri_face.get(t as usize) {
+            by_member.entry(m).or_default().push(t);
+        }
+    }
+    by_member.iter().filter_map(|(&m, own)| verified_surface(surface, surfaces, own, tol).map(|s| (m, s))).collect()
 }
 
 /// Face tags with smoothly meeting faces joined: two faces join when, at every boundary segment
