@@ -66,7 +66,8 @@
 //! as derived by L. Selle, F. Nicoud, T. Poinsot, *Actual impedance of nonreflecting boundary
 //! conditions: implications for computation of resonators*, AIAA J. 42(5):958–964, 2004: σ trades
 //! the reflection of slow waves against how far the mean pressure drifts from the face's.
-//! Where the flow comes back in (u_b < 0) the cell keeps this outflow treatment.
+//! The plane-pulse check of that response is [`crate::reflection`]. Where the flow comes back in
+//! (u_b < 0) the cell keeps this outflow treatment.
 //!
 //! # Determinism
 //! Every cell's update reads only populations streamed before any open cell changes, and writes

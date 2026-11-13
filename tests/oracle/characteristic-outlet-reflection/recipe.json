@@ -1,0 +1,4 @@
+[
+ {"command": "solve.outlet_reflection", "params": {"sigma": 1.0}, "id": "s1"},
+ {"command": "solve.outlet_reflection", "params": {"sigma": 0.25, "omegas": [0.01, 0.02, 0.04]}, "id": "s025"}
+]

@@ -109,6 +109,48 @@ pub const HISTORY: CommandSpec = CommandSpec {
     run: history,
 };
 
+pub const OUTLET_REFLECTION: CommandSpec = CommandSpec {
+    id: "solve.outlet_reflection",
+    label: "Outlet Reflection Check",
+    params: r#"{"sigma": 0.25 (required), "omegas"?: [0.01, 0.02, 0.04]} — the plane-pulse check of the characteristic pressure outlet (`outflow: "characteristic"`) with relaxation σ, in lattice units, on its own duct (the model is not used): a 2048-cell duct with a velocity inlet at rest and a pressure outlet, TRT τ 0.51, a right-going Gaussian pulse (width 40 cells, amplitude 1e-4) started at cell 1000 and a probe at cell 1300, run 7400 steps with the uniform outlet and with the characteristic one (about 5 s). Returns `rate` (K = σ c_s / L per step), the uniform outlet's `uniform_peak_ratio` (reflected over incident peak: the control, a fully reflecting end), and for the characteristic outlet: `largest_departure` (the largest difference between its reflection and the one-pole response of rate K/2 to the uniform outlet's, Selle, Nicoud & Poinsot 2004, over the incident peak, up to `record_steps`), `tail_level` and `fitted_rate` (the decay rate of its reflection's tail over K/2); per `omegas` (radians per step, at most 16) the `windowed` spectral ratio of reflected to incident pulse over ±5w/c_s steps for the characteristic outlet, the one-pole prediction and the uniform outlet. The windowed ratio includes the truncated relaxation tail: it is not the outlet's |R| at that frequency"#,
+    form: Some(super::forms::OUTLET_REFLECTION),
+    kind: CommandKind::Session,
+    requires: &[],
+    run: outlet_reflection,
+};
+
+/// `solve.outlet_reflection`: the plane-pulse check of the characteristic outlet.
+fn outlet_reflection(_: &mut Session, p: &Value) -> Result<Value> {
+    // Required, without a default: a run takes seconds, so only an explicit call starts one.
+    let sigma: f64 = req(p, "sigma")?;
+    let omegas = match p.get("omegas") {
+        None => vec![0.01, 0.02, 0.04],
+        Some(v) => {
+            let list = v.as_array().filter(|a| a.len() <= fieldcraft_lbm::reflection::MAX_FREQUENCIES).ok_or_else(|| {
+                EngineError::invalid("omegas", format!("must be a list of at most {} frequencies", fieldcraft_lbm::reflection::MAX_FREQUENCIES))
+            })?;
+            list.iter()
+                .map(|w| w.as_f64().ok_or_else(|| EngineError::invalid("omegas", "must be numbers (radians per step)")))
+                .collect::<Result<Vec<f64>>>()?
+        }
+    };
+    let r = fieldcraft_lbm::reflection::outlet_reflection(sigma, &omegas)?;
+    let rows = |w: &[fieldcraft_lbm::reflection::Windowed]| w.iter().map(|w| json!({"omega": w.omega, "ratio": w.ratio})).collect::<Vec<_>>();
+    Ok(json!({
+        "sigma": r.sigma,
+        "rate": r.rate,
+        "record_steps": r.record_steps,
+        "uniform_peak_ratio": r.uniform_peak_ratio,
+        "incident_peak": r.incident_peak,
+        "largest_departure": r.largest_departure,
+        "tail_level": r.tail_level,
+        "fitted_rate": r.fitted_rate,
+        "windowed": rows(&r.windowed),
+        "predicted_windowed": rows(&r.predicted_windowed),
+        "uniform_windowed": rows(&r.uniform_windowed),
+    }))
+}
+
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
@@ -2374,6 +2416,32 @@ pub(crate) mod tests {
         assert!(!path.exists(), "a refused solve writes no checkpoint");
         assert_eq!(s.model, before);
         assert_eq!(s.solved_steps().count(), 0);
+    }
+
+    /// The outlet reflection check refuses a missing or out-of-range σ and bad frequencies at
+    /// once, before any run (the run itself is the oracle case `characteristic-outlet-reflection`).
+    #[test]
+    fn the_outlet_reflection_check_refuses_bad_parameters_before_running() {
+        let mut s = Session::default();
+        let before = s.model.clone();
+        for p in [
+            json!({}),
+            crate::schema::prefill(super::super::forms::OUTLET_REFLECTION, &json!({})),
+            json!({"sigma": 0}),
+            json!({"sigma": 1.5}),
+            json!({"sigma": -0.25}),
+            json!({"sigma": "0.25"}),
+            json!({"sigma": 0.25, "omegas": [0.01, -1]}),
+            json!({"sigma": 0.25, "omegas": [0.01, 4.0]}),
+            json!({"sigma": 0.25, "omegas": ["fast"]}),
+            json!({"sigma": 0.25, "omegas": 0.01}),
+            json!({"sigma": 0.25, "omegas": vec![0.01; 17]}),
+        ] {
+            let started = std::time::Instant::now();
+            assert!(s.execute("solve.outlet_reflection", &p).is_err(), "{p}");
+            assert!(started.elapsed().as_secs_f64() < 0.5, "{p} ran");
+        }
+        assert_eq!(s.model, before);
     }
 
     /// The Couette gap with heat: the sliding top wall held at 1, the bottom at 0, the fluid's
