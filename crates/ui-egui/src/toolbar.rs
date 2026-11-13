@@ -10,7 +10,8 @@
 //! collapses panels into one button and moves the last ones into its » menu. Nothing is dropped.
 //!
 //! A ready entry starts its command ([`ModelApp::start`]); a coming-soon entry does nothing and
-//! its tooltip says when it comes. The milestone badge and the drop-downs are FieldCraft's.
+//! its tooltip says when it comes. The milestone badge is FieldCraft's; the drop-downs hang from
+//! their panel labels as SolidCraft's do (`crate::frame::surface_popup`), without its pinning.
 
 use egui::{FontId, Rect, Stroke, pos2, vec2};
 use fieldcraft_engine::catalogue::{self, Capability, Tab, Workspace};
@@ -254,8 +255,12 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
         }
         for (group, anchor) in anchors {
             let (Some(entries), Some(key)) = (panels.get(group), keys.get(group)) else { continue };
-            if let Some(rect) = crate::frame::wide_menu(app, ui, key, anchor, |app, ui| dropdown(app, ui, entries)) {
-                app.place("toolbar_dropdown", rect);
+            // SolidCraft's panel drop-down: the kit's menu surface hanging from the panel's label.
+            let shown = crate::frame::surface_popup(app, ui, key, anchor, |app, ui| {
+                kit::Menu::show_frame(ui, kit::Menu::frame(), |ui| dropdown(app, ui, entries))
+            });
+            if let Some(shown) = shown {
+                app.place("toolbar_dropdown", shown.response.rect);
             }
         }
         painter.line_segment([pos2(r.left(), r.bottom() - 0.5), pos2(r.right(), r.bottom() - 0.5)], Stroke::new(1.0, t.border));
@@ -326,7 +331,7 @@ fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect) {
             height,
         )
     });
-    if let Some(Some(item)) = picked
+    if let Some(Some(item)) = picked.map(|p| p.inner)
         && let Some(w) = Workspace::ALL.into_iter().find(|w| w.label() == item.id)
     {
         app.ui.select_workspace(w);
@@ -334,33 +339,113 @@ fn workspace_switcher(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect) {
     }
 }
 
-/// The rows of a panel's drop-down: every entry with its related commands under it, coming-soon
-/// entries greyed with their milestone. A click starts the row's command.
-pub fn dropdown(app: &mut ModelApp, ui: &mut egui::Ui, entries: &'static [Capability]) {
-    let mut start = None;
+/// One row of a panel's drop-down.
+struct Row {
+    id: &'static str,
+    label: &'static str,
+    /// A kit icon name ("" for none).
+    icon: &'static str,
+    /// The milestone of a coming-soon entry, where SolidCraft shows the shortcut.
+    note: String,
+    enabled: bool,
+    /// Its hover text: what it does, or what its command is missing.
+    tip: String,
+    /// A catalogue entry (not one of its related commands).
+    entry: bool,
+}
+
+/// The rows of a panel's drop-down: every entry with its related commands (edit, delete…) under
+/// it without an icon, coming-soon entries greyed with their milestone.
+fn rows(app: &ModelApp, entries: &'static [Capability]) -> Vec<Row> {
+    let mut rows = Vec::new();
     for c in entries {
         let missing = app.unavailable(c.id);
-        let enabled = c.command().is_some() && missing.is_none();
-        let soon = c.milestone().map(|m| format!("soon · {m}"));
-        let mut row = solidcraft_ui_kit::MenuItem::new(c.id, c.label, c.id);
-        row.enabled = enabled;
-        row.shortcut = soon.as_deref().unwrap_or("");
-        let resp = row.show(ui);
-        app.toolbar_rects.push((c.id, resp.rect, Fit::Menu));
-        if resp.backing_on_hover_text(Unavailable::tip(&c.tooltip(), missing.as_ref())).clicked() {
-            start = Some(c.id);
-        }
-        // Its related commands (edit, delete…) follow it, without an icon.
+        rows.push(Row {
+            id: c.id,
+            label: c.label,
+            icon: c.id,
+            note: c.milestone().map(|m| format!("soon · {m}")).unwrap_or_default(),
+            enabled: c.command().is_some() && missing.is_none(),
+            tip: Unavailable::tip(&c.tooltip(), missing.as_ref()),
+            entry: true,
+        });
         for id in c.more {
             let missing = app.unavailable(id);
-            let mut row = solidcraft_ui_kit::MenuItem::new(id, crate::command_label(id), "");
-            row.enabled = missing.is_none();
-            let tip = Unavailable::tip(id, missing.as_ref());
-            if row.show(ui).backing_on_hover_text(tip).clicked() {
-                start = Some(id);
-            }
+            rows.push(Row {
+                id,
+                label: crate::command_label(id),
+                icon: "",
+                note: String::new(),
+                enabled: missing.is_none(),
+                tip: Unavailable::tip(id, missing.as_ref()),
+                entry: false,
+            });
         }
     }
+    rows
+}
+
+/// Where the drop-downs' rows keep their keyboard focus ([`ribbon::list_keys`]); FieldCraft's
+/// ribbon has no pinning, so the pin's parts are unused.
+fn menu_style(ctx: &egui::Context) -> ribbon::MenuStyle<'static> {
+    ribbon::MenuStyle {
+        pin_tip: "",
+        unpin_tip: "",
+        accent: TabAccent::current(ctx),
+        focus: egui::Id::unique("fc_dropdown_row"),
+        entry: &["dropdown:"],
+        pin: "dropdown_pin:",
+        hot: "dropdown_hot:",
+        reveal: "ribbon:reveal",
+    }
+}
+
+/// A drop-down row as SolidCraft's ([`ribbon::menu_row`]) without its pin and drag: the kit's
+/// menu row [`ribbon::ROW_H`] high and `width` wide, focused by [`ribbon::list_keys`], its hover
+/// text beside the menu ([`ribbon::menu_tip`]).
+fn menu_row(ui: &mut egui::Ui, row: &Row, width: f32, style: &ribbon::MenuStyle) -> egui::Response {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, ribbon::ROW_H), egui::Sense::hover());
+    let resp = ui.interact(rect, style.focus_id(row.id), if row.enabled { egui::Sense::click() } else { egui::Sense::hover() });
+    if resp.has_focus() && !ui.clip_rect().contains_rect(rect) {
+        resp.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
+    }
+    let mut item = kit::MenuItem::new(row.id, row.label, row.icon);
+    item.enabled = row.enabled;
+    item.shortcut = &row.note;
+    item.highlighted = row.enabled && (resp.hovered() || resp.has_focus());
+    item.paint(ui, rect, &resp, 0.0);
+    // The menu's rect from the last pass: the tip sits beside it, never over its rows.
+    let menu = egui::containers::AreaState::load(ui.ctx(), ui.layer_id().id).map_or(rect, |s| s.rect());
+    ribbon::menu_tip(ui, menu, &resp, |ui| {
+        ui.label(&row.tip);
+    });
+    resp
+}
+
+/// A panel's drop-down, as SolidCraft's: its [`rows`] at the kit's menu width, Up and Down through
+/// the enabled ones, scrolling when the window is too short. A click (or Enter) starts the row's
+/// command and closes it.
+pub fn dropdown(app: &mut ModelApp, ui: &mut egui::Ui, entries: &'static [Capability]) {
+    let rows = rows(app, entries);
+    let style = menu_style(ui.ctx());
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let width = ribbon::menu_width(ui, rows.iter().map(|r| (r.label, r.note.as_str())));
+    ui.set_width(width);
+    let enabled: Vec<&str> = rows.iter().filter(|r| r.enabled).map(|r| r.id).collect();
+    ribbon::list_keys(ui, &enabled, &style);
+    let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - 64.0).max(ribbon::ROW_H * 3.0);
+    let mut start = None;
+    egui::ScrollArea::vertical().id_salt("fc_panel_menu_rows").max_height(room).min_scrolled_height(room).show(ui, |ui| {
+        for row in &rows {
+            let resp = menu_row(ui, row, width, &style);
+            if row.entry {
+                app.toolbar_rects.push((row.id, resp.rect, Fit::Menu));
+            }
+            if resp.clicked() && row.enabled {
+                start = Some(row.id);
+            }
+        }
+    });
     if let Some(id) = start {
         app.ui.menu = None;
         ui.close();
@@ -426,5 +511,46 @@ mod tests {
             }
         }
         assert_eq!(panel_key(Tab::Loads, "Loads"), "loads/Loads");
+    }
+
+    /// A panel's drop-down is SolidCraft's: the kit's menu hanging from the panel's label, its rows
+    /// at the kit's menu width, Down focusing its first enabled row.
+    #[test]
+    fn a_drop_down_hangs_from_its_panel_label_with_ribbon_rows() {
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        app.ui.select_tab(Tab::Mesh);
+        let key = panel_key(Tab::Mesh, "Tet");
+        app.ui.menu = Some(key.clone());
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx, true);
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(1400.0, 900.0));
+        let run = |app: &mut ModelApp, events: Vec<egui::Event>| {
+            let raw = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| toolbar(app, ui));
+            out.textures_delta.clear();
+        };
+        run(&mut app, Vec::new());
+        run(&mut app, Vec::new());
+        let menu = app.layout.get("toolbar_dropdown").copied().unwrap_or_else(|| panic!("drop-down not drawn"));
+        let label = app.panel_rects.iter().find(|(k, _)| *k == key).map(|(_, r)| *r).unwrap_or_else(|| panic!("no Tet label"));
+        // Within the pixel the area is rounded to.
+        assert!((menu.left_top() - label.left_bottom()).length() < 0.5, "menu {menu:?}, label {label:?}");
+        let entries = catalogue::panels(Tab::Mesh).find(|p| p.first().is_some_and(|c| c.panel == "Tet")).unwrap_or_default();
+        let rows = rows(&app, entries);
+        let mut width = 0.0;
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| width = ribbon::menu_width(ui, rows.iter().map(|r| (r.label, r.note.as_str()))));
+        let margin = kit::Menu::frame().total_margin().sum().x;
+        assert!((menu.width() - width - margin).abs() < 1.0, "menu {} wide, rows {width} + {margin}", menu.width());
+        for c in entries.iter() {
+            let row = app.toolbar_rects.iter().rev().find(|(id, _, f)| *id == c.id && *f == Fit::Menu).map(|(_, r, _)| *r);
+            assert!(row.is_some_and(|r| (r.height() - ribbon::ROW_H).abs() < 0.5 && menu.contains_rect(r)), "{}: {row:?}", c.id);
+        }
+        let first = rows.iter().find(|r| r.enabled).map(|r| r.id).unwrap_or_else(|| panic!("no enabled row"));
+        let down =
+            egui::Event::Key { key: egui::Key::ArrowDown, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::default() };
+        run(&mut app, vec![down]);
+        run(&mut app, Vec::new());
+        assert_eq!(ctx.memory(|m| m.focused()), Some(menu_style(&ctx).focus_id(first)));
+        assert_eq!(app.ui.menu.as_deref(), Some(key.as_str()));
     }
 }
