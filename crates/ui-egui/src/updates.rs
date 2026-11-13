@@ -343,6 +343,8 @@ pub fn notice(app: &mut ModelApp, ui: &mut egui::Ui) {
     }
 }
 
+/// The Update window's icon: SolidCraft's update artwork.
+pub(crate) const UPDATE_ICON: &str = "update";
 /// The question that finishes an install ([`Prompt::Update`]).
 pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
     if app.prompt != Some(Prompt::Update) {
@@ -357,7 +359,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         Finish::Swap(_) => ("Restart Now", "Later"),
         Finish::Package { .. } => ("Open with Installer", "Close"),
     };
-    let (closed, action) = crate::frame::window(egui::Id::unique("fc_update"), "file.save", "Update FieldCraft", crate::frame::Width::Normal)
+    let (closed, action) = crate::frame::window(egui::Id::unique("fc_update"), UPDATE_ICON, "Update FieldCraft", crate::frame::Width::Normal)
         .actions(ok, cancel, None)
         .show(ctx, true, |ui| match &finish {
             Finish::Swap(_) => {
@@ -527,6 +529,31 @@ mod tests {
         tx.send(Event::Checked { manual: true, result: Err("offline".into()) }).unwrap();
         a.poll_updates(&ctx);
         assert!(a.status.as_ref().is_some_and(|s| s.error && s.text.contains("offline")));
+    }
+
+    /// The Update window draws SolidCraft's update artwork, not the borrowed save icon (K11).
+    #[test]
+    fn the_update_window_draws_its_own_icon() {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx, true);
+        let (mut a, _jobs, tx) = app(&temp("icon"), DAY, false);
+        let current = Version::parse(crate::VERSION).unwrap();
+        tx.send(Event::Checked { manual: true, result: Ok(Check { current, latest: release("99.0.0") }) }).unwrap();
+        a.poll_updates(&ctx);
+        a.install_update(&ctx);
+        let staged = Staged {
+            install: Install::TarGz { root: "/opt/fieldcraft".into() },
+            version: Version::parse("99.0.0").unwrap(),
+            dir: "/opt/.fieldcraft-update-99.0.0".into(),
+            payload: "/opt/.fieldcraft-update-99.0.0/new/x".into(),
+            entries: vec![],
+        };
+        tx.send(Event::Staged(Ok(staged))).unwrap();
+        a.poll_updates(&ctx);
+        assert_eq!(a.prompt, Some(Prompt::Update));
+        let drawn = crate::files::tests::icons_drawn(&ctx, |ctx| show(&mut a, ctx));
+        assert!(drawn.contains(&(UPDATE_ICON.to_string(), true)), "{drawn:?}");
+        assert!(!drawn.iter().any(|(name, _)| name == "file.save"), "{drawn:?}");
     }
 
     /// Install downloads first; restarting asks about unsaved changes, then closes the window

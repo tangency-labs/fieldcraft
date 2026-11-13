@@ -101,6 +101,8 @@ const MODEL: Filter = Filter { name: "FieldCraft model", extensions: &["fieldcra
 const DESIGN: Filter = Filter { name: "SolidCraft design", extensions: &["solidcraft"] };
 const MESH: Filter = Filter { name: "Face-tagged mesh (3MF)", extensions: &["3mf", "3MF"] };
 const ORPHAN: Filter = Filter { name: "Orphan mesh (Gmsh MSH 4.1)", extensions: &["msh", "MSH"] };
+/// The Delete confirmation's icon: the kit's bin, as its delete buttons draw.
+pub(crate) const DELETE_ICON: &str = "delete";
 const SCRIPT: Filter = Filter { name: "FieldCraft script (JSON)", extensions: &["json", "JSON"] };
 /// Largest script File › Run Script… reads (bytes), as `fieldcraft-cli run`.
 const MAX_SCRIPT_BYTES: u64 = 256 * 1024 * 1024;
@@ -1463,7 +1465,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         }
         Some(Prompt::Delete(ask)) => {
             let allowed = ask.allowed();
-            let (closed, action) = kit::Confirm::new(egui::Id::unique("fc_delete"), "", "Delete")
+            let (closed, action) = kit::Confirm::new(egui::Id::unique("fc_delete"), DELETE_ICON, "Delete")
                 .tone(kit::Tone::Danger)
                 .actions(if allowed { "Delete" } else { "" }, if allowed { "Cancel" } else { "Close" }, None)
                 .show(ctx, allowed, |ui| {
@@ -1654,7 +1656,7 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -2187,6 +2189,33 @@ mod tests {
         assert!(app.save());
         assert!(!app.session.is_dirty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The icons a few frames of `draw` ask the kit for, with whether each has artwork.
+    pub(crate) fn icons_drawn(ctx: &egui::Context, mut draw: impl FnMut(&egui::Context)) -> Vec<(String, bool)> {
+        crate::icons::install();
+        solidcraft_ui_kit::icons::audit::start();
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| draw(ui.ctx()));
+            out.textures_delta.clear();
+        }
+        let drawn = solidcraft_ui_kit::icons::audit::take().into_iter().map(|r| (r.name, !r.placeholder)).collect();
+        solidcraft_ui_kit::icons::audit::stop();
+        drawn
+    }
+
+    /// The Delete confirmation draws the kit's delete artwork, not an empty icon (K11).
+    #[test]
+    fn the_delete_prompt_draws_its_own_icon() {
+        let mut app = ModelApp::new(Session::default());
+        app.open_sample("cantilever");
+        app.wait_loaded();
+        let load = app.session.model.loads().keys().next().cloned().unwrap();
+        app.ask_delete(crate::browser::Def::Load, &load);
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx, true);
+        let drawn = icons_drawn(&ctx, |ctx| show(&mut app, ctx));
+        assert!(drawn.contains(&(DELETE_ICON.to_string(), true)), "{drawn:?}");
     }
 
     /// File › Run Script… runs a JSON script the picker chose, as `fieldcraft-cli run` and the
