@@ -173,7 +173,8 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
         ui.set_min_size(cards.ribbon.size());
         host.paint_background(ui.painter(), frame, cards.ribbon);
         let r = cards.ribbon;
-        // Tabs: the kit's tab row, in the main accent.
+        // Tabs: the kit's tab row, in the main accent, with the command search at its end.
+        let search_key = crate::appbar::shortcut("K");
         let tabs = app.ui.workspace.tabs();
         let accent = TabAccent::current(ui.ctx());
         let row = ribbon::Tabs {
@@ -181,14 +182,18 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
             active: app.ui.tab.id(),
             add: None,
             menu_open_from: &|_| false,
-            search_width: 0.0,
+            search_width: kit::CommandSearch::closed_width(ui.ctx(), Some(&search_key)),
             buttons: Vec::new(),
             floating: host.floating(),
             underline: None,
             handles: ribbon::TabHandles { tab: "tab:", tab_rect: "tab_rect:", add: "tab_add", action: "tab_action:" },
         };
         let row_rect = Rect::from_min_max(r.left_top(), pos2(r.right(), r.top() + TABS_HEIGHT));
-        for action in ribbon::tabs(ui, &row, row_rect).actions {
+        let tabs_out = ribbon::tabs(ui, &row, row_rect);
+        // The command search at the tab row's right end, as SolidCraft's (`SearchPlace::Ribbon`).
+        search_field(app, ui, tabs_out.search, &search_key);
+        app.place("ribbon:search", tabs_out.search);
+        for action in tabs_out.actions {
             if let ribbon::TabAction::Select { index, .. } = action
                 && let Some(&tab) = tabs.get(index)
             {
@@ -324,6 +329,25 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
         app.ui.menu = None;
         // Errors already show in the status bar.
         let _ = app.start(id);
+    }
+}
+
+/// The command search's closed field (the kit's) at `rect`, opening the command palette when
+/// clicked. While the search is open its own field is drawn over it (`palette::popup`): the kit's
+/// one search editor, drawn once.
+fn search_field(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, key: &str) {
+    if app.ui.palette || !rect.is_positive() {
+        return;
+    }
+    let geometry = kit::SearchFieldGeometry { height: rect.height(), radius: kit::CommandSearch::field_radius(0.0, false), progress: 0.0 };
+    let mut field = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("fc_ribbon_search"));
+    let mut empty = String::new();
+    kit::CommandSearch::field(&mut field, &mut empty, false, false, false, geometry, Some(key), 0);
+    let resp = ui.interact(rect, ui.scope_id().with("fc_ribbon_search_open"), egui::Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Search commands"));
+    if resp.backing_on_hover_text(format!("Search commands (S or {key})")).clicked() {
+        app.ui.palette = !app.ui.palette;
+        app.ui.menu = None;
     }
 }
 
@@ -653,6 +677,10 @@ mod tests {
         assert!(near(card.left(), ws.right() + gap) && near(card.top(), gap) && near(card.right(), screen.right() - gap), "{card:?}");
         assert!(near(card.height(), CARD_HEIGHT) && near(ws.bottom(), card.bottom()), "{ws:?} {card:?}");
         assert_eq!(app.shell.cards, vec![ws, card], "the viewport keeps its overlays clear of both cards");
+        // The command search ends the tab row, inside the ribbon card, as SolidCraft's.
+        let search = at("ribbon:search");
+        assert!(card.contains_rect(search) && search.bottom() <= card.top() + TABS_HEIGHT + 0.5, "{search:?} in {card:?}");
+        assert!(card.right() - search.right() < 16.0, "at the row's end: {search:?} in {card:?}");
         let buttons: Vec<Rect> = app.toolbar_rects.iter().filter(|(.., f)| *f == Fit::Full).map(|(_, r, _)| *r).collect();
         assert!(!buttons.is_empty() && buttons.iter().all(|r| card.contains_rect(*r)), "{buttons:?} outside {card:?}");
     }

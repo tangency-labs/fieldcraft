@@ -124,14 +124,14 @@ fn submit_line(app: &mut ModelApp, line: &str) {
 }
 
 /// Where the open search field's top left goes over the ribbon's closed `field` in `screen`:
-/// its right edge kept, inside the window. The title bar keeps its document tab clear of it.
+/// its right edge kept, inside the window.
 pub fn open_field_at(screen: Rect, field: Rect) -> egui::Pos2 {
     let k = solidcraft_theme::Tokens::get();
     let width = kit::CommandSearch::width();
     egui::pos2((field.right() - width).clamp(screen.left() + k.space_8, (screen.right() - width - k.space_8).max(screen.left())), field.top())
 }
 
-/// The command search: the kit's search field opened where the title bar's closed field is, with
+/// The command search: the kit's search field opened where the ribbon's closed field is, with
 /// the kit's results sheet under it, as SolidCraft's command search opens.
 pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
     if !app.ui.palette {
@@ -141,16 +141,16 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
     let mut run_typed = false;
     let k = solidcraft_theme::Tokens::get();
     let width = kit::CommandSearch::width();
-    // Opened over the title bar's field, its right edge kept; centred near the top without one.
+    // Opened over the ribbon's field, its right edge kept; centred near the top without one.
     let screen = ctx.content_rect();
     let field = app
         .layout
-        .get("app_bar:search")
+        .get("ribbon:search")
         .copied()
         .unwrap_or_else(|| Rect::from_center_size(egui::pos2(screen.center().x, 60.0), egui::vec2(width, 26.0)));
     let at = open_field_at(screen, field);
     let key = crate::appbar::shortcut("K");
-    // An anchored popup host over the title bar's field.
+    // An anchored popup host over the ribbon's field.
     let host = kit::Container::new(ctx, kit::Surface::Popup);
     let shown = host.area(egui::Id::unique("fc_search")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
         ui.set_width(width);
