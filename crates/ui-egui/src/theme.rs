@@ -30,6 +30,10 @@ const DARK_ACCENT: Color32 = Color32::from_rgb(0x0e, 0x83, 0x7a);
 const DARK_ACCENT_INK: Color32 = Color32::from_rgb(0x5c, 0xd6, 0xcb);
 /// How far a hovered accent fill moves toward black: darker keeps white on it legible.
 const ACCENT_HOVER: f32 = 0.12;
+/// How far the selected document tab moves from the title bar toward white: the dark theme's
+/// step, (53 − 28) / (255 − 28). The bar is dark in both themes, and the light theme's own tab
+/// colour is almost the bar's.
+const TAB_ON_BAR: f32 = 0.11;
 
 /// `a` moved the fraction `t` of the way to `b`, channel by channel: `Color32::lerp_to_gamma` for
 /// opaque colours, as a `const fn` so the themes stay constants.
@@ -115,6 +119,9 @@ pub const fn kit(dark: bool) -> kit_theme::Tokens {
     k.render_fill = a.fill;
     k.render_ink = a.ink;
     k.render_soft = a.soft;
+    if !dark {
+        k.app_bar_tab_active = mix(k.app_bar, Color32::WHITE, TAB_ON_BAR);
+    }
     k
 }
 
