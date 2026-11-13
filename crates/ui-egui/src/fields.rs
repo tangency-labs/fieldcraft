@@ -278,9 +278,11 @@ pub fn parse_sides(text: &str, max: usize) -> Option<Vec<(u64, u64)>> {
     Some(out)
 }
 
-/// A short label before a field ("X"), dim.
+/// A short label before a field ("X"), dim, at the row labels' size and centred on the field.
 pub fn caption(ui: &mut Ui, s: &Style, text: &str) {
-    ui.label(RichText::new(text).small().color(s.dim));
+    let font = label_font(ui);
+    let width = crate::elide::width(ui, text, &font).ceil();
+    ui.add_sized(vec2(width, kit::row_height()), egui::Label::new(RichText::new(text).font(font).color(s.dim)));
 }
 
 /// A unit after a field.
