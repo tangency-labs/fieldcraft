@@ -142,6 +142,13 @@ impl ModelApp {
 /// The Settings window's icon: the gear, as on the title bar's Settings button.
 const SETTINGS_ICON: &str = "settings";
 
+/// A window's section heading after its first: the kit's heading with a section's gap above it,
+/// so the group starts apart from the paragraph before it.
+fn section(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(solidcraft_theme::Tokens::get().space_12);
+    kit::section_heading(ui, title);
+}
+
 /// The consent question and Help › Settings, when open.
 pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
     match app.prompt {
@@ -182,18 +189,13 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                     kit::section_heading(ui, "Units");
                     units = units_choice(ui, app.prefs.units.preset());
                     if app.updates_available() {
-                        kit::section_heading(ui, "Updates");
+                        section(ui, "Updates");
                         updates = update_check(ui, app.prefs.update_check);
-                        ui.horizontal(|ui| {
-                            check = kit::button(ui, "Check Now", kit::Button::Small).backing_on_hover_text("Help › Check for Updates").clicked();
-                            if !app.prefs.update_skip.is_empty() {
-                                unskip = kit::button(ui, "Offer It Again", kit::Button::Small)
-                                    .backing_on_hover_text(format!("Skipping FieldCraft {}", app.prefs.update_skip))
-                                    .clicked();
-                            }
-                        });
+                        let (now, again) = update_actions(ui, &app.prefs.update_skip);
+                        check = now.clicked();
+                        unskip = again.is_some_and(|r| r.clicked());
                     }
-                    kit::section_heading(ui, "Privacy");
+                    section(ui, "Privacy");
                     ui.add_enabled_ui(available, |ui| {
                         kit::checkbox(ui, "Share anonymous usage", &mut sharing).backing_on_hover_text(QUESTION);
                     });
@@ -250,6 +252,18 @@ fn units_choice(ui: &mut egui::Ui, current: fieldcraft_model::units::Preset) -> 
 }
 
 /// The automatic update check's checkbox; the new value when it was clicked.
+/// The Updates section's actions: Check Now, and Offer It Again while a version is skipped
+/// (`skip`). The window's ordinary buttons, as its Close is.
+fn update_actions(ui: &mut egui::Ui, skip: &str) -> (egui::Response, Option<egui::Response>) {
+    ui.horizontal(|ui| {
+        let check = kit::button(ui, "Check Now", kit::Button::Normal).backing_on_hover_text("Help › Check for Updates");
+        let again = (!skip.is_empty())
+            .then(|| kit::button(ui, "Offer It Again", kit::Button::Normal).backing_on_hover_text(format!("Skipping FieldCraft {skip}")));
+        (check, again)
+    })
+    .inner
+}
+
 fn update_check(ui: &mut egui::Ui, on: bool) -> Option<bool> {
     let mut checked = on;
     let changed = kit::checkbox(ui, "Check for updates automatically", &mut checked)
@@ -283,6 +297,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("prefs.json")
+    }
+
+    /// A later section starts a section's gap below the paragraph before it, not at the row pitch.
+    #[test]
+    fn a_later_section_stands_apart_from_the_text_before_it() {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx, true);
+        let mut above = egui::Rect::NOTHING;
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            above = ui.label("The paragraph before the section.").rect;
+            section(ui, "Spacing check");
+        });
+        out.textures_delta.clear();
+        let heading = solidcraft_ui_registry::rect_of("dialog:heading:Spacing check").expect("the kit publishes its heading");
+        let gap = heading.top() - above.bottom();
+        assert!(gap >= solidcraft_theme::Tokens::get().space_12, "the heading is {gap} pt below the paragraph");
+    }
+
+    /// Check Now and Offer It Again are the window's ordinary buttons, as tall as its Close.
+    #[test]
+    fn update_actions_match_the_close_button() {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx, true);
+        let (mut close, mut actions) = (egui::Rect::NOTHING, Vec::new());
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let (now, again) = update_actions(ui, "0.9.0");
+            actions = std::iter::once(now).chain(again).map(|r| r.rect).collect();
+            close = kit::button(ui, "Close", kit::Button::Normal).rect;
+        });
+        out.textures_delta.clear();
+        assert_eq!(actions.len(), 2);
+        for r in actions {
+            assert!((r.height() - close.height()).abs() < 0.5, "{r:?} against Close {close:?}");
+        }
     }
 
     /// The Settings window shows the gear the title bar's Settings button shows, not the
