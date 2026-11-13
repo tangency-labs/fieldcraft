@@ -240,7 +240,12 @@ fn search_field(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, key: &str) {
         radius: solidcraft_ui_kit::CommandSearch::field_radius(0.0, false),
         progress: 0.0,
     };
+    // The title bar is dark in both themes: the closed field takes the dark palette, as Solve
+    // does, so it is not a white box on the dark bar in the light theme.
+    let bar = crate::theme::kit(true);
+    let _bar = solidcraft_theme::scoped_panel_tokens(bar);
     let mut field = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("fc_app_bar_search"));
+    field.visuals_mut().weak_text_color = Some(bar.text_dim);
     let mut empty = String::new();
     solidcraft_ui_kit::CommandSearch::field(&mut field, &mut empty, false, false, false, geometry, Some(key), 0);
     let resp = ui.interact(rect, ui.scope_id().with("fc_app_bar_search_open"), Sense::click());
@@ -460,5 +465,32 @@ mod tests {
         }
         let menu = app.layout.get("menu:help").copied().unwrap_or_else(|| panic!("Help menu not drawn"));
         assert!(menu.bottom() <= screen.bottom(), "{menu:?}");
+    }
+
+    /// In the light theme the closed search field is drawn in the dark title bar's palette, not
+    /// as a white box on the dark bar (A3-13).
+    #[test]
+    fn the_search_field_takes_the_dark_bars_palette_in_the_light_theme() {
+        let mut app = ModelApp::new(Session::default());
+        app.ui.dark = false;
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx, false);
+        let mut shapes = Vec::new();
+        for _ in 0..2 {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, 600.0))), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app_bar(&mut app, ui));
+            out.textures_delta.clear();
+            shapes = out.shapes;
+        }
+        let field = app.layout.get("app_bar:search").copied().unwrap_or_else(|| panic!("search not drawn"));
+        let fills: Vec<egui::Color32> = shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Rect(r) if r.rect == field => Some(r.fill),
+                _ => None,
+            })
+            .collect();
+        let dark = crate::theme::kit(true).input_fill();
+        assert!(fills.contains(&dark), "field fills {fills:?}, dark bar's input fill {dark:?}");
     }
 }
