@@ -122,6 +122,9 @@ pub struct UiState {
     /// The browser card is translucent over the view (Settings › Interface; remembered per
     /// user).
     pub browser_float: bool,
+    /// The browser rows' eye beside the fold arrow instead of at the row's end (Settings ›
+    /// Interface; remembered per user).
+    pub browser_eye_left: bool,
     /// The journal timeline (bottom).
     pub show_timeline: bool,
     /// The status bar along the window's bottom edge (Settings › Interface; off by default,
@@ -159,6 +162,7 @@ impl Default for UiState {
             browser_width: browser::WIDTH,
             browser_collapsed: false,
             browser_float: false,
+            browser_eye_left: false,
             show_timeline: true,
             status_bar: false,
             nav_preset: navigation::DEFAULT_PRESET.into(),
@@ -683,6 +687,7 @@ impl ModelApp {
         self.ui.browser_width = self.prefs.browser_width;
         self.ui.browser_collapsed = self.prefs.browser_collapsed;
         self.ui.browser_float = self.prefs.browser_float;
+        self.ui.browser_eye_left = self.prefs.browser_eye_left;
         self.ui.status_bar = self.prefs.status_bar;
         self.services = services;
         self
@@ -2503,6 +2508,7 @@ impl ModelApp {
             || u.browser_width != p.browser_width
             || u.browser_collapsed != p.browser_collapsed
             || u.browser_float != p.browser_float
+            || u.browser_eye_left != p.browser_eye_left
             || u.status_bar != p.status_bar
         {
             self.prefs.nav_preset = self.ui.nav_preset.clone();
@@ -2510,6 +2516,7 @@ impl ModelApp {
             self.prefs.browser_width = self.ui.browser_width;
             self.prefs.browser_collapsed = self.ui.browser_collapsed;
             self.prefs.browser_float = self.ui.browser_float;
+            self.prefs.browser_eye_left = self.ui.browser_eye_left;
             self.prefs.status_bar = self.ui.status_bar;
             self.prefs.save(self.services.prefs.as_ref());
         }

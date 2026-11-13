@@ -727,6 +727,7 @@ fn draw_row(app: &mut ModelApp, ui: &mut egui::Ui, id: egui::Id, row: &Row) -> R
         depth: row.depth,
         fold: row.fold,
         eye: row.eye,
+        eye_left: app.ui.browser_eye_left,
         icon: row.icon.unwrap_or(""),
         label: row.label,
         name: row.name,
