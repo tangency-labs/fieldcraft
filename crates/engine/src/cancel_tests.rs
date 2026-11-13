@@ -98,6 +98,11 @@ fn fluid_stops_between_lattice_steps() {
 }
 
 #[test]
+fn the_outlet_reflection_check_stops_between_lattice_steps() {
+    cancel(&mut Session::default(), "solve.outlet_reflection", json!({"sigma": 0.25}), None);
+}
+
+#[test]
 fn nonlinear_stops_between_increments() {
     let mut s = Session::default();
     s.execute("file.sample", &json!({"name": "rubber-seal"})).unwrap();

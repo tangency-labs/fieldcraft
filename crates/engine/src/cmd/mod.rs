@@ -236,6 +236,7 @@ pub static ALL: &[CommandSpec] = &[
     solve::HISTORY,
     solve::SETTINGS,
     solve::FLUID,
+    solve::OUTLET_REFLECTION,
     solve::PROBE,
     results::DEFORMED,
     results::CONTOUR,
