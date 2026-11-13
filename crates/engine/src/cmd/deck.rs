@@ -29,6 +29,87 @@ pub const READ: CommandSpec = CommandSpec {
     run: read,
 };
 
+pub const OPENFOAM: CommandSpec = CommandSpec {
+    id: "deck.openfoam",
+    label: "Write OpenFOAM Case",
+    params: r#"{"path": "case_dir", "step"?: "Flow", "cell_factor"?: 2, "processes"?: 1, "max_courant"?: 0.8, "refine_boxes"?: [{"min": [x,y,z], "max": [x,y,z]}], "location"?: [x,y,z]} — writes a fluid step (the only one when `step` is left out) as an OpenFOAM case directory: blockMesh background of spacing × cell_factor (1, 2, 4, 8), snappyHexMesh around the obstacles (one patch per named face, refined back to the spacing, as are `refine_boxes`), 0/U p nut, pimpleFoam with an adaptive time step (max_courant), Smagorinsky LES, decomposeParDict for `processes` ranks and an Allrun script; lengths in the input units; `location` is a point in the fluid (found when left out). Fails naming what OpenFOAM cannot be given yet (heat, porous zones, fans, baffles, free surface, periodic faces, parabolic inlets, non-Newtonian fluids). Writes SI; nothing of the model changes"#,
+    form: None,
+    kind: CommandKind::Session,
+    requires: &[Requirement::FluidDomain, Requirement::Step],
+    run: openfoam,
+};
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoxParam {
+    min: [f64; 3],
+    max: [f64; 3],
+}
+
+fn openfoam(s: &mut Session, p: &Value) -> Result<Value> {
+    use fieldcraft_decks::openfoam::{CaseOptions, ObstacleSurface, RefineBox, write_case};
+    use fieldcraft_model::units::Quantity;
+
+    let dir = super::file_param(s, p, "path", Access::Write)?;
+    let step: Option<String> = opt(p, "step")?;
+    let length = |key: &str, v: [f64; 3]| -> Result<[f64; 3]> {
+        let mut out = [0.0; 3];
+        for (o, x) in out.iter_mut().zip(v) {
+            *o = s.input_units().to_si(Quantity::Length, x).map_err(|e| EngineError::invalid(key, e.to_string()))?;
+        }
+        Ok(out)
+    };
+    let defaults = CaseOptions::default();
+    let mut options = CaseOptions {
+        cell_factor: opt(p, "cell_factor")?.unwrap_or(defaults.cell_factor),
+        processes: opt(p, "processes")?.unwrap_or(defaults.processes),
+        max_courant: opt(p, "max_courant")?.unwrap_or(defaults.max_courant),
+        ..defaults
+    };
+    for b in opt::<Vec<BoxParam>>(p, "refine_boxes")?.unwrap_or_default() {
+        options.refine_boxes.push(RefineBox { min: length("refine_boxes", b.min)?, max: length("refine_boxes", b.max)? });
+    }
+    if let Some(l) = opt::<[f64; 3]>(p, "location")? {
+        options.location = Some(length("location", l)?);
+    }
+
+    // The obstacles of the step's domain, tessellated as the lattice solver does, in metres.
+    let domain = match step.as_deref() {
+        Some(name) => s.model.steps().iter().find(|st| st.name == name),
+        None => s.model.steps().iter().find(|st| matches!(st.procedure, fieldcraft_model::Procedure::Fluid { .. })),
+    }
+    .and_then(|st| st.procedure.fluid_domain())
+    .and_then(|d| s.model.fluid_domains().get(d));
+    let mut meshes = Vec::new();
+    if let Some(domain) = domain {
+        let tolerance = super::solve::obstacle_tolerance(domain);
+        for body in &domain.obstacles {
+            let (mesh, faces) = super::solve::obstacle_mesh(s, body, tolerance)?;
+            let positions: Vec<[f64; 3]> = mesh.positions.iter().map(|q| crate::units::geometry_point(*q)).collect();
+            meshes.push((body.as_str(), positions, mesh.into_owned(), faces));
+        }
+    }
+    let surfaces: Vec<ObstacleSurface<'_>> = meshes
+        .iter()
+        .map(|(body, positions, mesh, faces)| ObstacleSurface { body, positions, triangles: &mesh.triangles, tri_face: &mesh.tri_face, faces })
+        .collect();
+    let case = write_case(&s.model, step.as_deref(), &surfaces, &options)?;
+
+    let root = Path::new(&dir);
+    let mut bytes = 0;
+    for (rel, text) in &case.files {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            fieldcraft_io::fs::create_dir_all(parent)?;
+        }
+        fieldcraft_io::fs::write_output(&path, text.as_bytes())?;
+        bytes += text.len();
+    }
+    Ok(json!({"format": "openfoam", "path": dir, "solver": case.solver, "files": case.files.keys().collect::<Vec<_>>(), "bytes": bytes,
+        "background_cells": case.background_cells, "location": case.location, "patches": case.patches, "notes": case.notes,
+        "run": format!("cd {dir} && sh Allrun")}))
+}
+
 fn read(s: &mut Session, p: &Value) -> Result<Value> {
     let format: &str = req(p, "format")?;
     if format != "abaqus" {
@@ -98,6 +179,61 @@ fn write(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sample plate in a box of water flowing along x, written as an OpenFOAM case: a patch
+    /// per named face of the plate, lengths in metres, nothing of the model changed.
+    #[test]
+    fn writes_a_fluid_step_as_an_openfoam_case() {
+        use fieldcraft_geometry::sample::{Plate, plate_design};
+        let dir = std::env::temp_dir().join(format!("fieldcraft-openfoam-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let design = dir.join("plate.solidcraft");
+        std::fs::write(&design, plate_design(&Plate::default()).unwrap()).unwrap();
+        let mut s = Session::default();
+        s.execute("geometry.open", &json!({"path": design.to_str().unwrap()})).unwrap();
+        let bodies = s.execute("geometry.bodies", &json!({})).unwrap();
+        let [lo, hi] = [0, 1].map(|k| bodies[0]["bbox"][k].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect::<Vec<_>>());
+        let min: Vec<f64> = lo.iter().map(|v| (v / 5.0).floor() * 5.0 - 20.0).collect();
+        let max: Vec<f64> = hi.iter().map(|v| (v / 5.0).ceil() * 5.0 + 20.0).collect();
+        let script = json!([
+            {"command": "model.material.create", "params": {"name": "Water", "density": 1e-9, "fluid": {"type": "newtonian", "viscosity": 1e-9}}},
+            {"command": "model.fluid_domain.create", "params": {"name": "Tank", "material": "Water", "min": min, "max": max, "spacing": 5, "obstacles": ["Body1"],
+                "faces": {"x_min": {"type": "velocity", "velocity": [1000, 0, 0]}, "x_max": {"type": "pressure", "pressure": 0},
+                          "z_min": {"type": "slip"}}}},
+            {"command": "model.step.create", "params": {"name": "Flow", "procedure": {"type": "fluid", "domain": "Tank", "end_time": 0.5, "frames": 10}}},
+        ]);
+        s.run_script(&script).unwrap();
+        let journal = s.journal.len();
+        let case = dir.join("case");
+        let out = s.execute("deck.openfoam", &json!({"path": case.to_str().unwrap(), "processes": 4, "cell_factor": 1})).unwrap();
+        assert_eq!(s.journal.len(), journal, "writing a case does not change the model");
+        assert_eq!(out["solver"], "pimpleFoam");
+        let read = |rel: &str| std::fs::read_to_string(case.join(rel)).unwrap();
+        // Lengths in metres: the 5 mm spacing is the background cell.
+        let extent: Vec<f64> = (0..3).map(|i| (max[i] - min[i]) / 5.0).collect();
+        assert_eq!(out["background_cells"], json!(extent.iter().map(|n| n.round() as u64).collect::<Vec<_>>()), "{out}");
+        assert!(read("system/blockMeshDict").contains(&format!("({:e} ", min[0] / 1000.0)), "{}", read("system/blockMeshDict"));
+        // A solid and a patch per named face of the plate; m/s and m²/s.
+        let faces = bodies[0]["faces"].as_array().unwrap();
+        let stl = read("constant/triSurface/Body1.stl");
+        assert_eq!(stl.matches("endsolid").count(), faces.len(), "{out}");
+        assert_eq!(out["patches"].as_object().unwrap().len(), 6 + faces.len());
+        assert!(read("0/U").contains("x_min { type fixedValue; value uniform (1e0 0 0); }"), "{}", read("0/U"));
+        assert!(read("constant/transportProperties").contains("nu 1e-6;"));
+        assert!(read("system/decomposeParDict").contains("numberOfSubdomains 4;"));
+        assert!(read("Allrun").contains("snappyHexMesh -overwrite"));
+        // What OpenFOAM cannot be given yet is named, and nothing is written.
+        s.execute(
+            "model.fluid_domain.edit",
+            &json!({"name": "Tank", "material": "Water", "min": min, "max": max, "spacing": 5, "obstacles": ["Body1"], "acceleration": [0, 0, -9810]}),
+        )
+        .unwrap();
+        let other = dir.join("other");
+        let e = s.execute("deck.openfoam", &json!({"path": other.to_str().unwrap()})).unwrap_err().to_string();
+        assert!(e.contains("acceleration"), "{e}");
+        assert!(!other.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn writes_the_defined_model_and_refuses_what_it_cannot() {

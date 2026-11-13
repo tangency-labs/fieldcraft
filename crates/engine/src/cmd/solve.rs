@@ -555,17 +555,13 @@ fn nonlinear_history(s: &Session, step: &str, r: &fieldcraft_solver::StaticResul
 /// domain's tolerance) or imported surfaces, by name. The geometry is in millimetres; the
 /// surfaces come out in metres, as the domain is.
 fn obstacles(s: &Session, domain: &FluidDomain) -> Result<Vec<Obstacle>> {
-    let tolerance = crate::units::to_geometry_length(domain.tolerance.unwrap_or(domain.spacing / 10.0));
+    let tolerance = obstacle_tolerance(domain);
     let mut out = Vec::with_capacity(domain.obstacles.len());
     for body in &domain.obstacles {
-        let (mesh, faces, exact) = if let Some(shape) = s.design.as_deref().and_then(|d| d.body(body)) {
-            let exact = super::mesh::analytic_surfaces(shape).into_iter().map(|a| a.map(analytic_in_model)).collect();
-            (std::borrow::Cow::Owned(shape.tessellate(tolerance)?), shape.faces().iter().map(|f| f.name.clone()).collect(), exact)
-        } else if let Some(t) = s.surfaces.iter().find(|t| &t.name == body) {
-            // Imported faces have no names: the solver calls them face0, face1, ….
-            (std::borrow::Cow::Borrowed(&t.mesh), Vec::new(), Vec::new())
-        } else {
-            return Err(EngineError::Params(format!("obstacle `{body}` is neither a body of the open design nor an imported surface")));
+        let (mesh, faces) = obstacle_mesh(s, body, tolerance)?;
+        let exact = match s.design.as_deref().and_then(|d| d.body(body)) {
+            Some(shape) => super::mesh::analytic_surfaces(shape).into_iter().map(|a| a.map(analytic_in_model)).collect(),
+            None => Vec::new(),
         };
         let positions: Vec<[f64; 3]> = mesh.positions.iter().map(|p| crate::units::geometry_point(*p)).collect();
         let options = SurfaceOptions { weld_distance: crate::units::geometry_length(mesh.weld_distance), ..SurfaceOptions::default() };
@@ -574,6 +570,28 @@ fn obstacles(s: &Session, domain: &FluidDomain) -> Result<Vec<Obstacle>> {
         out.push(Obstacle { body: body.clone(), surface, faces, exact });
     }
     Ok(out)
+}
+
+/// An obstacle's triangles (geometry units) and its face names: a body of the open design
+/// tessellated at `tolerance` (geometry units), or an imported surface (its faces have no names:
+/// the solver calls them face0, face1, …).
+pub(super) fn obstacle_mesh<'s>(
+    s: &'s Session,
+    body: &str,
+    tolerance: f64,
+) -> Result<(std::borrow::Cow<'s, fieldcraft_geometry::SurfaceMesh>, Vec<String>)> {
+    if let Some(shape) = s.design.as_deref().and_then(|d| d.body(body)) {
+        Ok((std::borrow::Cow::Owned(shape.tessellate(tolerance)?), shape.faces().iter().map(|f| f.name.clone()).collect()))
+    } else if let Some(t) = s.surfaces.iter().find(|t| t.name == body) {
+        Ok((std::borrow::Cow::Borrowed(&t.mesh), Vec::new()))
+    } else {
+        Err(EngineError::Params(format!("obstacle `{body}` is neither a body of the open design nor an imported surface")))
+    }
+}
+
+/// The obstacle tolerance of `domain` (geometry units): its own, else a tenth of its spacing.
+pub(super) fn obstacle_tolerance(domain: &FluidDomain) -> f64 {
+    crate::units::to_geometry_length(domain.tolerance.unwrap_or(domain.spacing / 10.0))
 }
 
 /// An exact surface of the geometry (millimetres) in the model's units, as the obstacles'
