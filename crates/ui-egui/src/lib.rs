@@ -795,8 +795,8 @@ impl ModelApp {
 
     /// The ribbon turns to the tab where `id` lives ([`catalogue::stage_tab`]), as a person's click
     /// there would, so commands run by scripts, the control channel and MCP show their stage.
-    /// Called after a command changed the model or the results display; queries leave the ribbon
-    /// alone, and a ribbon click never moves it.
+    /// Called after a command changed the model or the results display, and when a form opens;
+    /// queries leave the ribbon alone, and a ribbon click never moves it.
     fn follow_stage(&mut self, id: &str) {
         if let Some(tab) = catalogue::stage_tab(id) {
             self.ui.select_tab(tab);
@@ -850,7 +850,9 @@ impl ModelApp {
             self.dialog = None;
             self.run(spec.id, json!({})).map(|_| ())
         } else {
-            // The form starts with the entry's preset; the rest (a path…) is filled in there.
+            // The form starts with the entry's preset; the rest (a path…) is filled in there. Its
+            // tab comes up with it, as the command's run would bring it (a ribbon click is on it).
+            self.follow_stage(spec.id);
             self.open_form(spec.id, preset);
             Ok(())
         }

@@ -1059,6 +1059,17 @@ mod tests {
         assert!(app.dialog.is_none() && app.session.model.node(3).is_some());
     }
 
+    /// A form started from anywhere but its tab (`ui.start`, the search, the browser) brings the
+    /// tab its entry lives on, as a click there would (A4-5).
+    #[test]
+    fn a_form_started_elsewhere_shows_its_tab() {
+        use fieldcraft_engine::catalogue::{Tab, Workspace};
+        let mut app = ModelApp::new(Session::default());
+        assert_eq!((app.ui.workspace, app.ui.tab), (Workspace::Prepare, Tab::Geometry));
+        assert_eq!(call(&mut app, "ui.start", json!({"command": "model.material.create"}))["result"]["dialog"], "model.material.create");
+        assert_eq!((app.ui.workspace, app.ui.tab), (Workspace::Model, Tab::Properties));
+    }
+
     /// Deleting a definition in use is refused: `ui.prompt` "delete" answers why, deletes nothing
     /// and leaves the prompt up to be closed (A4-10).
     #[test]
