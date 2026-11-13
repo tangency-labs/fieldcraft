@@ -238,6 +238,16 @@ pub enum Collection {
     SizeControl,
     /// A defeature (`geometry.defeature`).
     Defeature,
+    /// An initial field (`model.initial_field.*`).
+    InitialField,
+    /// A saved mesh plan (`mesh.plan`).
+    MeshPlan,
+    /// A relaxation field kept by `mesh.node.relax`.
+    Relaxation,
+    /// A saved view (`view.save`).
+    SavedView,
+    /// A render (`results.render.save`).
+    Render,
 }
 
 impl Collection {
@@ -268,6 +278,11 @@ impl Collection {
             Collection::FaceSplit => "face split",
             Collection::SizeControl => "size control",
             Collection::Defeature => "defeature",
+            Collection::InitialField => "initial field",
+            Collection::MeshPlan => "mesh plan",
+            Collection::Relaxation => "relaxation field",
+            Collection::SavedView => "saved view",
+            Collection::Render => "render",
         }
     }
 }
@@ -302,6 +317,11 @@ impl Session {
             Collection::FaceSplit => Box::new(m.face_splits().iter().map(|f| f.name.as_str())),
             Collection::SizeControl => Box::new(m.size_controls().keys().map(String::as_str)),
             Collection::Defeature => Box::new(m.defeatures().iter().map(|f| f.name.as_str())),
+            Collection::InitialField => Box::new(m.initial_fields().keys().map(String::as_str)),
+            Collection::MeshPlan => Box::new(m.mesh_plans().keys().map(String::as_str)),
+            Collection::Relaxation => Box::new(m.relaxations().keys().map(String::as_str)),
+            Collection::SavedView => Box::new(self.view.views.iter().map(|v| v.name.as_str())),
+            Collection::Render => Box::new(self.view.renders.iter().map(|r| r.name.as_str())),
         };
         names.take(MAX_NAMES).map(str::to_string).collect()
     }
@@ -1423,6 +1443,29 @@ fn field_schema(f: &Field, depth: usize) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Initial fields, mesh plans, relaxation fields, saved views and renders are collections a
+    /// reference field names, in the model's (or the view state's) order.
+    #[test]
+    fn every_kept_definition_is_a_collection() {
+        use fieldcraft_model::{InitialField, Relaxation};
+        let mut s = Session::default();
+        for c in [Collection::InitialField, Collection::MeshPlan, Collection::Relaxation, Collection::SavedView, Collection::Render] {
+            assert!(s.names(c).is_empty(), "{}", c.label());
+        }
+        s.model.set_initial_field("Warm", InitialField::Temperature { values: [(1, 300.0)].into(), source: String::new() }).unwrap();
+        s.model.set_relaxation("Relax1", Relaxation { bodies: Vec::new(), cells: Vec::new(), reapply: false }).unwrap();
+        let plan = json!({"body": "Base", "size": 2.0, "layers": 2, "mesher": "sweep"});
+        s.model.set_mesh_plan("Plan-Base", serde_json::from_value(plan).unwrap()).unwrap();
+        s.execute("view.save", &json!({"name": "Front", "camera": {"yaw": 0, "pitch": 0, "distance": 10}, "results": false})).unwrap();
+        s.view.renders.push(fieldcraft_io::views::Render { name: "Clip".into(), view: "Front".into(), ..Default::default() });
+        assert_eq!(s.names(Collection::InitialField), ["Warm"]);
+        assert_eq!(s.names(Collection::MeshPlan), ["Plan-Base"]);
+        assert_eq!(s.names(Collection::Relaxation), ["Relax1"]);
+        assert_eq!(s.names(Collection::SavedView), ["Front"]);
+        assert_eq!(s.names(Collection::Render), ["Clip"]);
+        assert_eq!(Collection::MeshPlan.label(), "mesh plan");
+    }
 
     #[test]
     fn units_follow_the_system() {
