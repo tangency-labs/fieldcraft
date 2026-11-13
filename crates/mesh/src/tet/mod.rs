@@ -667,8 +667,10 @@ pub fn quality_mesh(surface: &BoundarySurface, cdt: &TetMesh, analytic: Vec<Opti
     let size = size_field(surface, &geometry, global, o);
     let plain = Tessellation::new(surface, Vec::new());
     let refining = refinement_geometry(&plain, &geometry);
-    let ctx = Context { size: &size, geometry: &refining, curve_faces: &curve_faces };
-    let exact = Context { size: &size, geometry: &geometry, curve_faces: &curve_faces };
+    let controls = (!o.locals.is_empty()).then(|| GradedSize::new(global, &[], &o.locals, lo, hi, o.grading));
+    let controls = controls.as_ref().map(|c| c as &dyn crate::size::SizeField);
+    let ctx = Context { size: &size, controls, geometry: &refining, curve_faces: &curve_faces };
+    let exact = Context { size: &size, controls, geometry: &geometry, curve_faces: &curve_faces };
     // Remove what rounding left flat first, so refinement starts from a valid mesh.
     let flat =
         |cx: &TetComplex| -> Vec<(u32, [u32; 4])> { cx.live_tets().filter(|(_, vs)| ops::tet_quality(cx, *vs).is_ok_and(|q| q < SLIVER)).collect() };

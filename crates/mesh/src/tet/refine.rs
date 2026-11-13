@@ -34,6 +34,9 @@ use super::ops::{self, Site};
 /// What the boundary insertions project onto.
 pub struct Context<'a> {
     pub size: &'a dyn SizeField,
+    /// The size controls' own graded field (local sizes only, [`crate::size::LocalSize`]), when
+    /// there are any: a tetrahedron on the boundary is no larger than it at its corners.
+    pub controls: Option<&'a dyn SizeField>,
     pub geometry: &'a dyn BoundaryGeometry,
     /// The B-rep faces of each feature curve (by curve id).
     pub curve_faces: &'a [[u32; 2]],
@@ -244,12 +247,26 @@ fn encroached_curve_edge(cx: &mut TetComplex, near: &[u32], p: P) -> Result<Opti
     Ok(None)
 }
 
-/// Whether a tetrahedron is bad, and its circumcentre.
-fn badness(x: &[P; 4], ctx: &Context, o: &RefineOptions) -> Option<P> {
+/// Whether a tetrahedron is bad, and its circumcentre. Its size is the field's at its centroid;
+/// a tetrahedron with a face on the boundary is also no larger than the size controls ask at its
+/// corners ([`Context::controls`]). Its boundary face is sized by it alone, and the centroid lies
+/// a quarter of the tetrahedron's height inside, where a field graded from a control on that face
+/// is larger by the growth rate times that depth: read there alone, a controlled face's elements
+/// came out a third larger than the control asks. Only the controls are read at the corners, so
+/// the curvature, thin-wall and seed sizing keep their meaning.
+fn badness(x: &[P; 4], on_boundary: bool, ctx: &Context, o: &RefineOptions) -> Option<P> {
     let c = measure::circumcenter(x)?;
     let r = measure::dist(c, x[0]);
     let (lmin, lmax) = measure::edge_range(x);
-    let h = ctx.h(measure::centroid(x), lmax);
+    let mut h = ctx.h(measure::centroid(x), lmax);
+    if let (true, Some(controls)) = (on_boundary, ctx.controls) {
+        for p in x {
+            let hc = controls.size(*p);
+            if hc > 0.0 && hc < h {
+                h = hc;
+            }
+        }
+    }
     ((r > o.radius_edge * lmin && r > o.min_shape_radius * h) || r > o.size_factor * h).then_some(c)
 }
 
@@ -281,7 +298,8 @@ pub fn refine(cx: &mut TetComplex, ctx: &Context, o: &RefineOptions) -> Result<R
             continue;
         }
         let x = cx.coords(vs)?;
-        let Some(c) = badness(&x, ctx, o) else { continue };
+        let on_boundary = cx.adj(t)?.contains(&NONE);
+        let Some(c) = badness(&x, on_boundary, ctx, o) else { continue };
         if inserted >= o.max_insertions {
             stats.stopped = Some(format!("refinement stopped at {} inserted vertices", o.max_insertions));
             break;

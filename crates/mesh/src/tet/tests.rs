@@ -256,6 +256,33 @@ mod pipeline {
         assert_eq!(a, b);
     }
 
+    /// A size control on one side of the box gives that side elements of its size: the
+    /// tetrahedra against it read the size where they touch it, not at their centroids inside
+    /// the graded field, which are larger by the growth rate times their depth.
+    #[test]
+    fn a_controlled_face_gets_its_size() {
+        use crate::size::{LocalSize, Region};
+        let s = box_surface();
+        let cdt = tetrahedralize(&s, &CdtOptions::default()).unwrap();
+        let h = 1.0;
+        let control = LocalSize { region: Region::Box { lo: [0.0; 3], hi: [0.0, 10.0, 10.0] }, size: h };
+        let o = QualityOptions { size: Some(5.0), grading: 0.5, locals: vec![control], ..QualityOptions::default() };
+        let m = quality_mesh(&s, &cdt, Vec::new(), &o).unwrap();
+        let mut on_face = std::collections::BTreeSet::new();
+        for e in &m.elements {
+            for (i, j) in [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)] {
+                let (a, b) = (e[i].min(e[j]), e[i].max(e[j]));
+                if m.points[a as usize][0] == 0.0 && m.points[b as usize][0] == 0.0 {
+                    on_face.insert((a, b));
+                }
+            }
+        }
+        let lengths: Vec<f64> = on_face.iter().map(|&(a, b)| crate::vec3::dist(m.points[a as usize], m.points[b as usize])).collect();
+        let mean = lengths.iter().sum::<f64>() / lengths.len() as f64;
+        // A uniform mesh's boundary edges average about 1.1 times its size.
+        assert!(mean < 1.2 * h, "mean edge on the controlled side {mean} for a size of {h}");
+    }
+
     /// Refinement splitting a face edge whose midpoint lies inside a feature edge's diametral
     /// sphere splits the feature edge instead (#303): otherwise each split halves the distance
     /// of the face vertices to the curve and they pile up against it.
@@ -278,7 +305,7 @@ mod pipeline {
         let cdt = tetrahedralize(&s, &CdtOptions::default()).unwrap();
         let (mut cx, curve_faces) = complex_from_cdt(&s, &cdt, &[], &QualityOptions::default()).unwrap();
         let (geometry, size) = (Tessellation::new(&s, Vec::new()), UniformSize(5.0));
-        let ctx = Context { size: &size, geometry: &geometry, curve_faces: &curve_faces };
+        let ctx = Context { size: &size, controls: None, geometry: &geometry, curve_faces: &curve_faces };
         // A curve edge on the z = 0 side, and a face vertex beside it on that side.
         let ((a, b), _) = cx.curve_edges().into_iter().find(|&((a, b), _)| [a, b].iter().all(|&v| cx.xyz(v).unwrap()[2] == 0.0)).unwrap();
         let (xa, xb) = (cx.xyz(a).unwrap(), cx.xyz(b).unwrap());
@@ -509,7 +536,7 @@ mod pipeline {
         let (mut cx, curve_faces) = complex_from_cdt(&s, &cdt, &analytic, &QualityOptions::default()).unwrap();
         let (plain, exact) = (Tessellation::new(&s, Vec::new()), Tessellation::new(&s, analytic));
         let geometry = refinement_geometry(&plain, &exact);
-        let ctx = Context { size: &UniformSize(0.5), geometry: &geometry, curve_faces: &curve_faces };
+        let ctx = Context { size: &UniformSize(0.5), controls: None, geometry: &geometry, curve_faces: &curve_faces };
         // Off the bottom circle, in millimetres.
         let off = |x: [f64; 3]| x[0].hypot(x[1]) - r;
         let bottom = |cx: &super::super::complex::TetComplex| -> Vec<u32> {
@@ -901,7 +928,7 @@ fn a_rejected_snap_never_commits_or_journals() {
     let trial = vs.map(|v| if v == 3 { p.coords() } else { cx.xyz(v).unwrap() });
     assert!(measure::quality(&trial) < worst(&cx, &star).unwrap().min(0.3));
     let before = format!("{cx:?}");
-    let ctx = Context { size: &UniformSize(1.0), geometry: &Plane, curve_faces: &[] };
+    let ctx = Context { size: &UniformSize(1.0), controls: None, geometry: &Plane, curve_faces: &[] };
     assert_eq!(super::snap_to_geometry(&mut cx, &ctx, true).unwrap().off, 1);
     assert_eq!(format!("{cx:?}"), before);
 }
@@ -932,7 +959,7 @@ fn snapping_reports_running_out_of_sweeps() {
         |_| 0,
     );
     cx.index_skin(1.0).unwrap();
-    let ctx = Context { size: &UniformSize(1.0), geometry: &Mirror, curve_faces: &[] };
+    let ctx = Context { size: &UniformSize(1.0), controls: None, geometry: &Mirror, curve_faces: &[] };
     let snapped = super::snap_to_geometry(&mut cx, &ctx, false).unwrap();
     assert_eq!(snapped.off, 1);
     assert!(snapped.stopped.as_ref().is_some_and(|s| s.contains(&format!("after {} sweeps", super::SNAP_SWEEPS))));
