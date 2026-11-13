@@ -873,9 +873,16 @@ impl ModelApp {
             if let (Some(form), Some(obj)) = (spec.form, params.as_object_mut()) {
                 let selected = self.selected.clone();
                 let session = &self.session;
+                // A section is assigned to elements: a set of faces, edges or nodes is never its
+                // set, however it is selected (A4-4).
+                let section = spec.id == "model.section.create";
+                let solid =
+                    |set: &fieldcraft_model::Set| !set.elements.is_empty() || set.geometry.iter().any(|g| g.entity == fieldcraft_model::Entity::Body);
+                let fits =
+                    |c, name: &str| !(section && c == fieldcraft_engine::schema::Collection::Set) || session.model.set(name).is_some_and(solid);
                 let pick = |c| match &selected {
-                    Some((kind, name)) if kind.collection() == c => Some(name.clone()),
-                    _ => Some(session.names(c)).filter(|n| n.len() == 1).and_then(|n| n.into_iter().next()),
+                    Some((kind, name)) if kind.collection() == c => Some(name.clone()).filter(|n| fits(c, n)),
+                    _ => Some(session.names(c)).filter(|n| n.len() == 1).and_then(|n| n.into_iter().next()).filter(|n| fits(c, n)),
                 };
                 form::preselect(form, obj, &pick);
                 // The model's first step starts with every boundary condition and load active: a
@@ -3205,8 +3212,10 @@ mod tests {
         let params = |app: &ModelApp| serde_json::from_str::<Value>(&app.dialog.as_ref().unwrap().text).unwrap();
         let steel = json!({"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}});
         let mut app = ModelApp::new(Session::default());
-        app.run("mesh.node.add", json!({"label": 1, "xyz": [0, 0, 0]})).unwrap();
-        app.run("model.set.create", json!({"name": "all", "nodes": [1]})).unwrap();
+        let cube = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]];
+        app.run("mesh.block", json!({"body": "Block", "kind": "hex8", "corners": cube, "divisions": [1, 1, 1]})).unwrap();
+        // A section's set holds elements (a set of nodes is never offered to it).
+        app.run("model.set.create", json!({"name": "all", "elements": [1]})).unwrap();
         // (Opened directly: from the toolbar, Section waits for a material.)
         app.open_form("model.section.create", json!({}));
         let opened = params(&app);
@@ -3712,6 +3721,33 @@ mod tests {
                 assert!(!legend.contains(at) && view.contains(at), "{w}×{h}: corner {k} at {at:?}, legend {legend:?}");
             }
         }
+    }
+
+    /// A section's form starts with a set of elements or bodies, never with a set of faces
+    /// selected in the browser (A4-4).
+    #[test]
+    fn a_section_form_never_starts_with_a_face_set() {
+        let dir = std::env::temp_dir().join(format!("fieldcraft-section-set-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let design = dir.join("plate.solidcraft");
+        std::fs::write(&design, fieldcraft_geometry::sample::plate_design(&fieldcraft_geometry::sample::Plate::default()).unwrap()).unwrap();
+        let mut app = ModelApp::new(Session::default());
+        app.run("geometry.open", json!({"path": design.to_string_lossy()})).unwrap();
+        let body = app.session.design.as_ref().unwrap().bodies[0].clone();
+        let face = body.faces()[0].name.clone();
+        app.run("model.set.create", json!({"name": "end", "geometry": [{"body": body.name, "face": face}]})).unwrap();
+        app.run("model.material.create", json!({"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}})).unwrap();
+        app.selected = Some((browser::Def::Set, "end".into()));
+        let set = |app: &mut ModelApp| {
+            app.start("model.section.create").unwrap();
+            let params: Value = serde_json::from_str(&app.dialog.take().unwrap().text).unwrap();
+            params.get("set").cloned().unwrap_or(Value::Null)
+        };
+        assert!(set(&mut app).as_str().is_none_or(str::is_empty), "the face set is not offered");
+        app.run("model.set.create", json!({"name": "solid", "geometry": [{"body": body.name}]})).unwrap();
+        app.selected = Some((browser::Def::Set, "solid".into()));
+        assert_eq!(set(&mut app), "solid");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The first step's form starts with every boundary condition and load active, so the step
