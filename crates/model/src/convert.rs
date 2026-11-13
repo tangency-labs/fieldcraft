@@ -21,7 +21,7 @@ fn each(values: &mut [f64], q: Q, f: &mut dyn FnMut(Q, &mut f64)) {
 
 impl Quantities for Material {
     fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
-        let Material { elastic, hyperelastic, density, fluid, plastic, damage, erosion, thermal, pvt, phase_change } = self;
+        let Material { elastic, hyperelastic, density, fluid, plastic, damage, erosion, thermal, pvt, phase_change, temperature_dependent } = self;
         match elastic {
             Some(Elastic::Isotropic { young, poisson: _ }) => f(Q::Pressure, young),
             Some(Elastic::EngineeringConstants { young, poisson: _, shear }) => {
@@ -127,6 +127,12 @@ impl Quantities for Material {
             f(Q::SpecificEnergy, latent_heat);
             f(Q::Temperature, solidus);
             f(Q::Temperature, liquidus);
+        }
+        for (q, table) in temperature_dependent.iter_mut().flat_map(|d| d.tables_mut()) {
+            for [t, v] in &mut table.0 {
+                f(Q::Temperature, t);
+                f(q, v);
+            }
         }
     }
 }
