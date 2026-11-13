@@ -189,10 +189,19 @@
             # SolidCraft crates embed files from their repo root (`../../assets`, LICENSE-*,
             # NOTICE, THIRD-PARTY-LICENSES.txt); a vendored crate dir has none of them. Vendored
             # crates sit in $NIX_BUILD_TOP/cargo-vendor-dir/<crate>, so `../..` is $NIX_BUILD_TOP.
+            # craft-plugin-wasm's build script reads its sibling's `../craft-plugin/wit`; the vendored
+            # sibling is `craft-plugin-<version>`, so the wit dir goes where the script looks (a dir
+            # without Cargo.toml, which cargo's vendor source skips).
             preBuild = ''
               for f in assets LICENSE-MIT LICENSE-APACHE NOTICE THIRD-PARTY-LICENSES.txt; do
                 ln -s ${solidcraftSrc}/$f "$NIX_BUILD_TOP/$f"
               done
+              vendor="$NIX_BUILD_TOP/cargo-vendor-dir"
+              if [ -d ${solidcraftSrc}/crates/craft-plugin/wit ]; then
+                chmod u+w "$vendor"
+                mkdir -p "$vendor/craft-plugin"
+                ln -s ${solidcraftSrc}/crates/craft-plugin/wit "$vendor/craft-plugin/wit"
+              fi
             '';
 
             cargoBuildFlags = cargoPackages;
