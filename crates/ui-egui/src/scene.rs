@@ -143,15 +143,23 @@ pub fn seeds(s: &mut Scene, model: &fieldcraft_model::Model, names: &[crate::sel
 
 /// Draw the model's size controls (mesh.size.set) where they apply: the faces and bodies they
 /// refine tinted on the drawn geometry, a box as its twelve edges, a sphere as
-/// [`sphere`] draws one, each labelled with its name and size.
-pub fn sizes(s: &mut Scene, model: &fieldcraft_model::Model, names: &[crate::selection::BodyNames], display: &DisplayMesh, t: &Tokens) {
+/// [`sphere`] draws one, each labelled with its name and size in `units` (stored in metres).
+pub fn sizes(
+    s: &mut Scene,
+    model: &fieldcraft_model::Model,
+    names: &[crate::selection::BodyNames],
+    display: &DisplayMesh,
+    units: &fieldcraft_model::DisplaySystem,
+    t: &Tokens,
+) {
     use fieldcraft_model::{Entity, GeometryRef, SizeRegion};
     if model.size_controls().is_empty() {
         return;
     }
     let color = rgb(t.warm);
     for (name, c) in model.size_controls() {
-        let text = format!("{name} {}", c.size);
+        let size = fieldcraft_model::units::Quantity::Length.format(c.size, units).unwrap_or_else(|_| fieldcraft_model::units::format_number(c.size));
+        let text = format!("{name} {size}");
         let v = |p: [f64; 3]| Vec3 { x: p[0], y: p[1], z: p[2] };
         match &c.region {
             SizeRegion::Box { min, max } => {
@@ -362,15 +370,16 @@ mod tests {
         use fieldcraft_model::{SizeControl, SizeRegion};
         let mut m = Model::default();
         m.set_size_control("Zone", SizeControl { region: SizeRegion::Box { min: [0.0; 3], max: [1.0; 3] }, size: 0.5 }).unwrap();
-        m.set_size_control("Ball", SizeControl { region: SizeRegion::Sphere { center: [0.0; 3], radius: 2.0 }, size: 0.5 }).unwrap();
+        m.set_size_control("Ball", SizeControl { region: SizeRegion::Sphere { center: [0.0; 3], radius: 2.0 }, size: 0.002 }).unwrap();
         let mut s = Scene::default();
-        sizes(&mut s, &m, &[], &DisplayMesh::default(), &Tokens::dark());
+        let units = fieldcraft_model::DisplaySystem::default();
+        sizes(&mut s, &m, &[], &DisplayMesh::default(), &units, &Tokens::dark());
         assert!(s.lines.len() >= 12 && !s.fills.is_empty(), "the box's edges and the sphere");
         let mut labels: Vec<&str> = s.labels.iter().map(|l| l.text.as_str()).collect();
         labels.sort();
-        assert_eq!(labels, ["Ball 0.5", "Zone 0.5"]);
+        assert_eq!(labels, ["Ball 2 mm", "Zone 500 mm"], "sizes in the display units (stored in metres)");
         let mut empty = Scene::default();
-        sizes(&mut empty, &Model::default(), &[], &DisplayMesh::default(), &Tokens::dark());
+        sizes(&mut empty, &Model::default(), &[], &DisplayMesh::default(), &units, &Tokens::dark());
         assert!(empty.lines.is_empty() && empty.labels.is_empty());
     }
 }
