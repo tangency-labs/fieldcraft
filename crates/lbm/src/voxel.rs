@@ -29,6 +29,27 @@
 //! after C. Ericson, *Real-Time Collision Detection*, Morgan Kaufmann 2005, §5.1.5. Ties go to the
 //! lower triangle index, so the assignment is deterministic. This is a classification for
 //! reporting, not a meshing decision, so floating-point distances are adequate.
+//!
+//! # Link fractions
+//! Interpolated walls (Bouzidi, Firdaouss & Lallemand 2001) need, for each wall link from a fluid
+//! centre `x_f` to a solid centre `x_s`, the fraction `q` of the link from `x_f` to where the
+//! surface crosses it ([`link_fraction`]). Whether the closed segment meets a closed triangle is
+//! decided with [`orient3d`] alone: its ends on opposite sides of the triangle's plane (or one on
+//! it), and the segment's line on one side of all three edges (or on one, which counts: a hit on a
+//! shared edge or vertex is a hit of every triangle there). Only the crossing's position is
+//! constructed: `t = d_f / (d_f − d_s)` from the ends' distances to the plane, exactly 0 or 1
+//! when an end lies on it. The crossing nearest `x_f` is the link's (equal ones from triangles
+//! meeting at an edge are the same point, so which of them it is changes nothing but the face, the
+//! lowest triangle index). A segment in a triangle's plane meets it nowhere new: the triangles
+//! around it decide. Where the obstacle's face there has an exact curved surface (the one
+//! [`decide_near_curved`] classifies the cells near it by), the crossing is that surface's: the
+//! sign of the side of the surface changes along the link, and halving the interval 64 times
+//! (deterministic, to rounding) finds where; it is kept when it lies within half a link of the
+//! triangles' crossing (farther, it belongs to another part of the untrimmed surface). A link
+//! the voxeliser calls fluid → solid always meets the triangles, unless the exact surface moved
+//! one of its ends across the chords; then the exact surface's crossing is the link's, and with
+//! neither (a crossing only rounding or an inconsistent surface could hide) there is none, which
+//! the caller reports.
 
 use fieldcraft_mesh::predicates::{Point2, Point3, Sign, orient2d, orient3d, snap_to_domain};
 use fieldcraft_mesh::surface::BoundarySurface;
@@ -284,6 +305,108 @@ pub fn decide_near_curved(surface: &BoundarySurface, exact: &[Option<AnalyticSur
     Ok(changed)
 }
 
+/// The smallest link fraction an interpolated wall link takes. Bouzidi et al.'s linear
+/// interpolation has convex weights for every q in [0, 1], so a small q does not destabilise
+/// it; the floor keeps the q ≥ ½ branch's 1/(2q) and the constructed crossing of a fluid centre
+/// lying on the surface (t = 0 to rounding) bounded. 0.01 is where the curved-boundary schemes'
+/// small-q trouble starts (docs/solvers/literature.md C3.2, after R. Mei, L.-S. Luo, W. Shyy, JCP
+/// 155:307, 1999): clamping a crossing closer than that moves the wall by under a hundredth of a
+/// link.
+pub const MIN_LINK_FRACTION: f64 = 0.01;
+
+/// The fraction `q ∈ [MIN_LINK_FRACTION, 1]` of the link from the fluid centre `fluid` to the
+/// solid centre `solid` (its geometric position, unwrapped across periodic faces) before it meets
+/// the obstacle's surface: the triangles' crossing nearest `fluid`, or the exact curved surface's
+/// of that face (see the module notes). `tags` are the surface's face tags by triangle, `exact`
+/// its exact surfaces by tag. `None` when neither crosses the link.
+pub fn link_fraction(tree: &TriangleTree, tags: &[u32], exact: &[Option<AnalyticSurface>], fluid: [f64; 3], solid: [f64; 3]) -> Option<f64> {
+    let tri = tree.crossing(fluid, solid);
+    let face = match tri {
+        Some((_, t)) => tags.get(t as usize).copied(),
+        None => {
+            let mid = [0, 1, 2].map(|a| 0.5 * (fluid[a] + solid[a]));
+            tree.nearest(mid).and_then(|t| tags.get(t as usize).copied())
+        }
+    };
+    let curved = face.and_then(|f| exact.get(f as usize).copied().flatten()).filter(|s| !matches!(s, AnalyticSurface::Plane { .. }));
+    let on_exact = curved.and_then(|s| exact_crossing(&s, fluid, solid));
+    let t = match (tri, on_exact) {
+        (Some((t, _)), Some(e)) if (e - t).abs() <= 0.5 => e,
+        (Some((t, _)), _) => t,
+        (None, e) => e?,
+    };
+    Some(t.clamp(MIN_LINK_FRACTION, 1.0))
+}
+
+/// Where the segment from `a` to `b` crosses the exact surface `s`, as a fraction of it from `a`:
+/// the side of the surface (the offset from its closest point along its normal there) changes
+/// sign along it, and 64 halvings of the interval find where. `None` when both ends are on one
+/// side, or the side is undefined somewhere (on an axis).
+fn exact_crossing(s: &AnalyticSurface, a: [f64; 3], b: [f64; 3]) -> Option<f64> {
+    let at = |t: f64| [0, 1, 2].map(|k| a[k] + t * (b[k] - a[k]));
+    let side = |t: f64| -> Option<f64> {
+        let p = at(t);
+        let q = s.project(p)?;
+        let n = s.normal_at(q)?;
+        let v = dot(sub(p, q), n);
+        v.is_finite().then_some(v)
+    };
+    let (sa, sb) = (side(0.0)?, side(1.0)?);
+    if sa == 0.0 {
+        return Some(0.0);
+    }
+    if sb == 0.0 {
+        return Some(1.0);
+    }
+    if (sa > 0.0) == (sb > 0.0) {
+        return None;
+    }
+    let (mut lo, mut hi) = (0.0f64, 1.0f64);
+    for _ in 0..64 {
+        let mid = 0.5 * (lo + hi);
+        let v = side(mid)?;
+        if v == 0.0 {
+            return Some(mid);
+        }
+        if (v > 0.0) == (sa > 0.0) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Some(0.5 * (lo + hi))
+}
+
+/// Whether the closed segment `p`–`s` meets the closed triangle `abc` (exact predicates), and
+/// where, as a fraction of the segment from `p` (constructed).
+fn segment_hits(p: &Point3, s: &Point3, [a, b, c]: &[Point3; 3]) -> Option<f64> {
+    let (sp, ss) = (orient3d(a, b, c, p), orient3d(a, b, c, s));
+    if sp == ss {
+        // Both on one side, or both on the plane (the triangles around decide).
+        return None;
+    }
+    let edges = [orient3d(p, s, a, b), orient3d(p, s, b, c), orient3d(p, s, c, a)];
+    let positive = edges.contains(&Sign::Positive);
+    let negative = edges.contains(&Sign::Negative);
+    if positive == negative {
+        // On both sides of the triangle's edges, or degenerate.
+        return None;
+    }
+    if sp.is_zero() {
+        return Some(0.0);
+    }
+    if ss.is_zero() {
+        return Some(1.0);
+    }
+    let ([ax, ay, az], [bx, by, bz], [cx, cy, cz]) = (a.coords(), b.coords(), c.coords());
+    let (u, v) = ([bx - ax, by - ay, bz - az], [cx - ax, cy - ay, cz - az]);
+    let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    let (dp, ds) = (dot(n, sub(p.coords(), [ax, ay, az])), dot(n, sub(s.coords(), [ax, ay, az])));
+    let t = dp / (dp - ds);
+    // The exact tests put the crossing strictly inside; rounding cannot take it out.
+    Some(if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.5 })
+}
+
 /// A bounding-volume tree over a surface's triangles for nearest-triangle queries.
 #[derive(Debug, Clone)]
 pub struct TriangleTree {
@@ -420,6 +543,40 @@ impl TriangleTree {
             }
         }
         TriangleTree { triangles, order, nodes }
+    }
+
+    /// The crossing of the closed segment from `p` to `s` with the triangles nearest `p`: its
+    /// fraction of the segment from `p` and the triangle (the lowest index among equally near
+    /// ones). `None` when it meets none.
+    pub fn crossing(&self, p: [f64; 3], s: [f64; 3]) -> Option<(f64, u32)> {
+        let point = |x: [f64; 3]| Point3::new(snap_to_domain(x[0]), snap_to_domain(x[1]), snap_to_domain(x[2])).ok();
+        let (pp, sp) = (point(p)?, point(s)?);
+        let lo = [0, 1, 2].map(|a| p[a].min(s[a]));
+        let hi = [0, 1, 2].map(|a| p[a].max(s[a]));
+        let mut best: Option<(f64, u32)> = None;
+        let mut stack = vec![0u32];
+        // Every node is pushed at most once.
+        while let Some(i) = stack.pop() {
+            let Some(node) = self.nodes.get(i as usize) else { continue };
+            if (0..3).any(|a| node.lo[a] > hi[a] || node.hi[a] < lo[a]) {
+                continue;
+            }
+            if node.count == 0 {
+                stack.extend([node.first, node.first + 1]);
+                continue;
+            }
+            let range = node.first as usize..(node.first + node.count) as usize;
+            for &t in self.order.get(range).unwrap_or_default() {
+                let Some(tri) = self.triangles.get(t as usize) else { continue };
+                let (Some(a), Some(b), Some(c)) = (point(tri[0]), point(tri[1]), point(tri[2])) else { continue };
+                if let Some(f) = segment_hits(&pp, &sp, &[a, b, c])
+                    && best.is_none_or(|(bf, bt)| f < bf || (f == bf && t < bt))
+                {
+                    best = Some((f, t));
+                }
+            }
+        }
+        best
     }
 
     /// The triangle nearest `p` (the lowest index among equally near ones).
@@ -569,6 +726,54 @@ mod tests {
         assert_eq!(n, count);
         // x: 2.5 (moved inside), 3.5, 4.5 (5.5 moves outside); y: 2.5 … 5.5; z as x.
         assert_eq!(n, 3 * 4 * 3, "{n}");
+    }
+
+    /// Links through a box's sides cross them where the sides are; a link through an edge or a
+    /// vertex (shared by several triangles) and one with an end on a side are crossings too, and
+    /// a link that misses has none.
+    #[test]
+    fn link_fractions_cross_a_box_where_its_sides_are() {
+        let s = cube([0.3, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let tree = TriangleTree::new(&s);
+        let tags = s.tri_face();
+        let q = |a: [f64; 3], b: [f64; 3]| link_fraction(&tree, tags, &[], a, b);
+        // Along +x from outside at x = −0.5 into x = 0.5: the side x = 0.3 at 0.8 of the link.
+        assert!((q([-0.5, 0.5, 0.5], [0.5, 0.5, 0.5]).unwrap() - 0.8).abs() < 1e-15);
+        // Through the diagonal of a side (two triangles share it), and through a vertex.
+        let diag = q([-0.2, 0.5, 0.5], [0.8, 0.5, 0.5]).unwrap();
+        assert!((diag - 0.5).abs() < 1e-15, "{diag}");
+        let corner = q([0.0, -0.3, -0.3], [0.6, 0.3, 0.3]).unwrap();
+        assert!((corner - 0.5).abs() < 1e-15, "{corner}");
+        // An end on the side, and a crossing nearer than the floor.
+        assert_eq!(q([0.3, 0.5, 0.5], [0.8, 0.5, 0.5]), Some(MIN_LINK_FRACTION));
+        assert_eq!(q([0.299, 0.5, 0.5], [1.299, 0.5, 0.5]), Some(MIN_LINK_FRACTION));
+        assert_eq!(q([-0.7, 0.5, 0.5], [0.3, 0.5, 0.5]), Some(1.0));
+        // A link that stays outside.
+        assert_eq!(q([-0.5, 0.5, 0.5], [0.2, 0.5, 0.5]), None);
+    }
+
+    /// With a cylinder's exact surface the fraction is the true crossing, not the chords'; without
+    /// it, the chords' (inside the cylinder, so later along an inward link).
+    #[test]
+    fn link_fractions_follow_the_exact_surface() {
+        let s = staggered_cylinder();
+        let tree = TriangleTree::new(&s);
+        let tags = s.tri_face();
+        let cylinder = AnalyticSurface::Cylinder { origin: [0.0, 4.0, 4.0], axis: [1.0, 0.0, 0.0], radius: 3.0 };
+        let exact = vec![Some(cylinder), None, None];
+        // The deepest a chord of the eight-sided section lies inside the circle.
+        let sag = 3.0 * (1.0 - (std::f64::consts::PI / 8.0).cos());
+        for k in 0..40 {
+            let phi = std::f64::consts::TAU * (k as f64 + 0.3) / 40.0;
+            let (c, sn) = (phi.cos(), phi.sin());
+            // A unit link along the radius from 3.4 to 2.4, at x = 3.5 (not on a section).
+            let a = [3.5, 4.0 + 3.4 * c, 4.0 + 3.4 * sn];
+            let b = [3.5, 4.0 + 2.4 * c, 4.0 + 2.4 * sn];
+            let on_exact = link_fraction(&tree, tags, &exact, a, b).unwrap();
+            assert!((on_exact - 0.4).abs() < 1e-12, "{phi}: {on_exact}");
+            let on_chords = link_fraction(&tree, tags, &[], a, b).unwrap();
+            assert!(on_chords >= 0.4 - 1e-12 && on_chords <= 0.4 + sag, "{phi}: {on_chords}");
+        }
     }
 
     #[test]
