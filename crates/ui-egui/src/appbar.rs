@@ -11,7 +11,7 @@
 //! leaves for an offer pill). The document tab is the kit's tab strip holding the window's one
 //! model, where SolidCraft's tabs start.
 
-use egui::{Color32, Rect, Sense, Stroke, pos2, vec2};
+use egui::{Color32, FontId, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 use solidcraft_ui_kit::app_bar::{self, BarAction, BarButton};
 use solidcraft_ui_kit::window_chrome;
@@ -185,11 +185,18 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
         }
         app.place("app_bar:theme", rect);
     }
-    // Solve: right-aligned where the kit leaves room for an offer pill, before the right cluster.
+    // An update on offer: SolidCraft's Update pill at the offer span's right end, before the
+    // right cluster; Solve goes left of it.
     let k = solidcraft_theme::Tokens::get();
+    let mut offer = out.offer;
+    if let Some(pill) = update_pill(app, ui, offer, out.offer_labeled) {
+        offer.max.x = pill.left() - 8.0;
+        app.place("app_bar:update", pill);
+    }
+    // Solve: right-aligned where the kit leaves room for an offer pill, before the right cluster.
     let solve_w = kit::icon_label_width(ui, if out.offer_labeled { SOLVE } else { "" }, Some(SOLVE_ICON), true);
-    let solve = Rect::from_center_size(pos2(out.offer.right() - solve_w / 2.0, cy), vec2(solve_w, k.control_height));
-    let tabs_end = if out.offer.width() >= solve_w {
+    let solve = Rect::from_center_size(pos2(offer.right() - solve_w / 2.0, cy), vec2(solve_w, k.control_height));
+    let tabs_end = if offer.width() >= solve_w {
         solve_button(app, ui, solve, out.offer_labeled);
         app.place("app_bar:solve", solve);
         solve.left() - 8.0
@@ -202,6 +209,56 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
     crate::frame::menu(app, ui, "file", out.file, crate::files::file_menu);
     crate::frame::wide_menu(app, ui, "home", home_at, samples_menu);
     crate::frame::wide_menu(app, ui, "help", help_at, help_menu);
+    if let Some(pill) = app.layout.get("app_bar:update").copied() {
+        crate::frame::menu(app, ui, "update", pill, crate::updates::offer_menu);
+    }
+}
+
+/// The Update pill's height and the room it leaves the document tab before it shortens its
+/// label (SolidCraft's `PILL_HEIGHT`, `update::TAB_ROOM`).
+const PILL_HEIGHT: f32 = 22.0;
+const PILL_TAB_ROOM: f32 = 300.0;
+
+/// SolidCraft's Update pill (`update::button`, `toolbar::offer_pill`): an accent pill at the right
+/// end of `span` reading "Update to X", or "Update" when the document tab would be squeezed, or
+/// its icon alone in a narrow bar. A click opens the update menu ([`crate::updates::offer_menu`]).
+/// None when nothing is on offer or there is no room.
+fn update_pill(app: &mut ModelApp, ui: &mut egui::Ui, span: Rect, labeled: bool) -> Option<Rect> {
+    use crate::updates::Offer;
+    let offer = crate::updates::offer(app)?;
+    let (full, tip) = match &offer {
+        Offer::Release(version) => (format!("Update to {version}"), format!("FieldCraft {version} is available")),
+        Offer::Busy(busy) => ("Update".to_string(), busy.clone()),
+        Offer::Reload => ("Reload to update".to_string(), "A new version of FieldCraft is available".to_string()),
+    };
+    let k = solidcraft_theme::Tokens::get();
+    let font = FontId::proportional(k.font_label);
+    let (icon_x, text_x, right_pad) = (16.0, 29.0, 11.0);
+    let labels = [full.as_str(), "Update"];
+    let label = labels.iter().enumerate().filter(|_| labeled).find_map(|(i, text)| {
+        let width = text_x + ui.painter().layout_no_wrap(text.to_string(), font.clone(), k.app_bar_text).size().x + right_pad;
+        let room = if i + 1 < labels.len() { span.width() - PILL_TAB_ROOM } else { span.width() };
+        (width <= room).then_some((*text, width))
+    });
+    let width = label.map_or(PILL_HEIGHT + 4.0, |(_, w)| w);
+    if width > span.width() {
+        return None;
+    }
+    let rect = Rect::from_min_size(pos2(span.right() - width, span.center().y - PILL_HEIGHT / 2.0), vec2(width, PILL_HEIGHT));
+    let resp = ui.interact(rect, ui.scope_id().with("fc_update_pill"), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label.map_or("Update", |(t, _)| t)));
+    let hot = resp.hovered() || resp.has_focus();
+    let radius = PILL_HEIGHT / 2.0 * f32::from(k.radius_xl) / 10.0;
+    ui.painter().rect_filled(rect, radius, if hot { k.app_bar_hover_button } else { k.accent });
+    let glyph_x = if label.is_some() { rect.left() + icon_x } else { rect.center().x };
+    icons::paint(ui, crate::updates::UPDATE_ICON, Rect::from_center_size(pos2(glyph_x, rect.center().y), vec2(16.0, 16.0)), Look::AppBar);
+    if let Some((text, _)) = label {
+        ui.painter().text(pos2(rect.left() + text_x, rect.center().y), egui::Align2::LEFT_CENTER, text, font, k.app_bar_text);
+    }
+    if resp.backing_on_hover_text(tip).clicked() {
+        app.toggle_menu("update");
+    }
+    Some(rect)
 }
 
 /// The theme's quick-access button, drawn as the kit's bar draws its icon buttons. `true` when
@@ -415,6 +472,30 @@ mod tests {
             }
             assert!(at(&m, "app_bar:report").right() < 1400.0 && at(&m, "app_bar:solve").left() > 700.0);
         }
+    }
+
+    /// An update on offer is SolidCraft's Update pill before the right cluster, Solve left of it;
+    /// with none on offer there is no pill.
+    #[test]
+    fn an_update_on_offer_is_a_pill_before_settings() {
+        let draw = |reload: bool| {
+            let mut app = ModelApp::new(Session::default());
+            if reload {
+                app.reload = Some(Box::new(|| {}));
+            }
+            let ctx = egui::Context::default();
+            for _ in 0..2 {
+                let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, 600.0))), ..Default::default() };
+                let mut out = ctx.run_ui(raw, |ui| app_bar(&mut app, ui));
+                out.textures_delta.clear();
+            }
+            app.layout
+        };
+        assert!(!draw(false).contains_key("app_bar:update"));
+        let m = draw(true);
+        let at = |k: &str| m.get(k).copied().unwrap_or_else(|| panic!("{k} not drawn"));
+        let (solve, update, settings) = (at("app_bar:solve"), at("app_bar:update"), at("app_bar:settings"));
+        assert!(solve.right() < update.left() && update.right() < settings.left(), "{solve:?} {update:?} {settings:?}");
     }
 
     /// The document tab is the kit's tab strip, as SolidCraft's: it starts just after the

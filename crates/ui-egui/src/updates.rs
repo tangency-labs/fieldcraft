@@ -343,6 +343,64 @@ pub fn notice(app: &mut ModelApp, ui: &mut egui::Ui) {
     }
 }
 
+/// What the application bar's Update button offers (SolidCraft's `update.rs` `button`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Offer {
+    /// A newer release, by its version.
+    Release(String),
+    /// A download or a check under way, in words.
+    Busy(String),
+    /// The web build: a newer version is deployed, and reloading the page takes it.
+    Reload,
+}
+
+/// The offer the Update button shows, if any: a page reload (web), a download under way, or a
+/// newer release.
+pub(crate) fn offer(app: &ModelApp) -> Option<Offer> {
+    if app.reload.is_some() {
+        return Some(Offer::Reload);
+    }
+    let u = app.updates.as_ref()?;
+    if let Some(busy) = &u.busy {
+        return Some(Offer::Busy(busy.clone()));
+    }
+    u.available.as_ref().map(|r| Offer::Release(r.version.to_string()))
+}
+
+/// The Update button's menu: the notice's sentence and its actions as rows (What's new, Install,
+/// Skip; Reload to Update on the web), each running what the notice's link runs.
+pub(crate) fn offer_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
+    let row =
+        |ui: &mut egui::Ui, id: &str, label: &str, tip: &str| crate::frame::menu_row(ui, id, label, None, true).backing_on_hover_text(tip).clicked();
+    match offer(app) {
+        Some(Offer::Reload) => {
+            crate::frame::menu_heading(ui, "A new version of FieldCraft is available");
+            let tip = if app.has_unsaved_work() { "Reloads the page; you are asked about the unsaved changes first" } else { "Reloads the page" };
+            if row(ui, "update.reload", "Reload to Update", tip)
+                && let Some(reload) = &app.reload
+            {
+                reload();
+            }
+        }
+        Some(Offer::Busy(busy)) => crate::frame::menu_heading(ui, &busy),
+        Some(Offer::Release(version)) => {
+            crate::frame::menu_heading(ui, &format!("FieldCraft {version} is available"));
+            let url = app.updates.as_ref().and_then(|u| u.available.as_ref()).map(|r| r.url.clone()).unwrap_or_default();
+            let notes = row(ui, "update.notes", "What's New", &url);
+            let install = row(ui, "update.install", "Install", "Download, verify and install it; you choose when to restart");
+            let skip = row(ui, "update.skip", "Skip This Version", "Don't offer this version again (Help › Settings)");
+            if notes {
+                app.open_link(ui.ctx(), &url);
+            } else if install {
+                app.install_update(ui.ctx());
+            } else if skip {
+                app.skip_update();
+            }
+        }
+        None => {}
+    }
+}
+
 /// The Update window's icon: SolidCraft's update artwork.
 pub(crate) const UPDATE_ICON: &str = "update";
 /// The question that finishes an install ([`Prompt::Update`]).
