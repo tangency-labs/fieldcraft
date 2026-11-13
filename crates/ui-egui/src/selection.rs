@@ -967,6 +967,19 @@ pub fn with_faces(params: &Value, selection: &Selection) -> Option<Value> {
     Some(Value::Object(out))
 }
 
+/// The one selected design entity of `kind` (`face`, `edge` or `vertex`), of `body` when given,
+/// as its body and persistent name: what a name field's Pick fills in (a face of a set's
+/// geometry row, the face an absorption goes into). `None` when none, or more than one, is
+/// selected: the form does not guess which.
+pub fn topology_name(selection: &Selection, kind: &str, body: Option<&str>) -> Option<(String, String)> {
+    let mut found = selection.items().iter().filter_map(|i| match i {
+        Item::Geometry(g) if g.entity.kind() == kind && body.is_none_or(|b| b == g.body) => g.entity.name().map(|n| (g.body.clone(), n.to_string())),
+        _ => None,
+    });
+    let first = found.next()?;
+    found.next().is_none().then_some(first)
+}
+
 /// The key of an extrusion's form the selected faces go into: `source` while it names no face
 /// (and no `source_set`), then `to_surface`.
 pub fn extrude_key(params: &Value) -> &'static str {
@@ -1314,6 +1327,23 @@ mod tests {
         // A whole body: every skin triangle.
         sel.apply([Item::Geometry(GeometryRef::body("Bar").unwrap())], Mode::Replace);
         assert_eq!(p.overlay(&sel, None, sel_c, hov_c).tris.len(), s.display.tris.len());
+    }
+
+    /// A1-11: a name field's Pick takes the one selected face, edge or vertex (of the form's body
+    /// when it names one), with its body; none, or two of that kind, fill nothing.
+    #[test]
+    fn a_pick_takes_the_one_selected_entity_of_its_kind() {
+        let geo = |body: &str, entity: Entity| Item::Geometry(GeometryRef { body: body.into(), entity });
+        let mut s = Selection::default();
+        s.apply([geo("Plate", Entity::Face("F3".into())), geo("Plate", Entity::Edge("F3:F4".into())), Item::Node(2)], Mode::Replace);
+        assert_eq!(topology_name(&s, "face", None), Some(("Plate".into(), "F3".into())));
+        assert_eq!(topology_name(&s, "edge", Some("Plate")), Some(("Plate".into(), "F3:F4".into())));
+        assert_eq!(topology_name(&s, "edge", Some("Post")), None, "not of the form's body");
+        assert_eq!(topology_name(&s, "vertex", None), None, "no vertex selected");
+        assert_eq!(topology_name(&s, "body", None), None, "a body has no persistent name");
+        s.apply([geo("Post", Entity::Face("F1".into()))], Mode::Add);
+        assert_eq!(topology_name(&s, "face", None), None, "two faces: which one is unclear");
+        assert_eq!(topology_name(&s, "face", Some("Post")), Some(("Post".into(), "F1".into())), "the body tells them apart");
     }
 
     /// An extrusion's form takes the source face first, then the target surface (#400).
