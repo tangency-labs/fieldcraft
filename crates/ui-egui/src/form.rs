@@ -77,19 +77,20 @@ struct Form<'a> {
     out: Outcome,
 }
 
-/// The form's look; `label_width` is the label column ([`label_column`]).
-pub fn style(t: &Tokens, label_width: f32) -> Style {
-    Style { label_width, dim: t.text_dim, error: t.error, required: t.accent_ink }
+/// The form's look; `label_width` is the label column ([`label_column`]), `unit_gutter` the room
+/// every row keeps after its field for a unit ([`unit_gutter`]).
+pub fn style(t: &Tokens, label_width: f32, unit_gutter: f32) -> Style {
+    Style { label_width, unit_gutter, dim: t.text_dim, error: t.error, required: t.accent_ink }
 }
 
-/// The label column of `fields` in a form `width` wide: its longest label on one line with its
-/// marks, within [`LABEL_MIN`] and [`LABEL_SHARE`] of the width. Labels longer than that wrap; the
-/// column widens when one would need more than [`fields::LABEL_LINES`] lines, as long as a field
-/// keeps [`FIELD_MIN`].
+/// The label column of `fields` in a form `width` wide: [`LABEL_SHARE`] of the width (at least
+/// [`LABEL_MIN`]), the same in every form so the fields do not move from form to form. Labels
+/// longer than that wrap; the column widens only when one would need more than
+/// [`fields::LABEL_LINES`] lines, as long as a field keeps [`FIELD_MIN`].
 pub fn label_column(ui: &Ui, fields: &[Field], units: &DisplaySystem, width: f32) -> f32 {
     let share = (width * LABEL_SHARE).max(LABEL_MIN);
     let most = (width - FIELD_MIN - ui.spacing().item_spacing.x).max(share);
-    let mut column = LABEL_MIN;
+    let mut column = share;
     each_label(fields, units, 0, &mut |label, required, help| {
         let one_line = fields::label_width(ui, label, required, help);
         let need = if one_line <= share { one_line } else { wrapped_width(ui, label, required, help, share, one_line.min(most)) };
@@ -124,9 +125,27 @@ fn is_name(f: &Field) -> bool {
     matches!(f.kind, Kind::Text) && matches!(f.key, "name" | "new_name")
 }
 
-/// A field's width: the rest of its row.
-fn fill(ui: &Ui) -> f32 {
-    ui.available_width().max(FIELD_MIN)
+/// A field's width: the rest of its row but the unit gutter, so every field of a form ends at
+/// one edge whether a unit follows it or not.
+fn fill(ui: &Ui, s: &Style) -> f32 {
+    (ui.available_width() - s.unit_gutter).max(FIELD_MIN)
+}
+
+/// The room a unit after a field takes in `fields` (nested too): the widest of their units with
+/// the space before it; 0 when none has a unit.
+fn unit_gutter(ui: &Ui, fields: &[Field], units: &DisplaySystem, depth: usize) -> f32 {
+    if depth > MAX_DEPTH {
+        return 0.0;
+    }
+    fields.iter().fold(0.0, |widest, f| {
+        let inner = match f.kind {
+            Kind::Variants { variants, .. } => variants.iter().fold(0.0, |w, v| unit_gutter(ui, v.fields, units, depth + 1).max(w)),
+            Kind::Group(inner) | Kind::Rows { fields: inner, .. } | Kind::NameOr { fields: inner, .. } => unit_gutter(ui, inner, units, depth + 1),
+            Kind::Either(options) => unit_gutter(ui, options, units, depth + 1),
+            _ => fields::unit_width(ui, f.unit_label(units).as_deref()),
+        };
+        widest.max(inner)
+    })
 }
 
 /// Each row label of `fields` (nested too): its text, whether it is required and has help.
@@ -158,7 +177,8 @@ fn each_label(fields: &[Field], units: &DisplaySystem, depth: usize, out: &mut d
 pub fn show(ui: &mut Ui, t: &Tokens, cx: &Context, fields: &'static [Field], params: &mut Map<String, Value>) -> Outcome {
     let problems = cx.problems.iter().cloned().collect();
     let label_width = label_column(ui, fields, cx.units, ui.available_width());
-    let mut f = Form { cx, style: style(t, label_width), problems, names: BTreeMap::new(), out: Outcome::default() };
+    let gutter = unit_gutter(ui, fields, cx.units, 0);
+    let mut f = Form { cx, style: style(t, label_width, gutter), problems, names: BTreeMap::new(), out: Outcome::default() };
     ui.spacing_mut().item_spacing.y = 3.0;
     f.fields(ui, fields, fields, params, "", 0);
     f.out
@@ -227,7 +247,7 @@ impl Form<'_> {
         let labels: Vec<&str> = variants.iter().map(|v| v.label).collect();
         let id = self.id(path);
         let help = f.help_text(self.cx.units);
-        let picked = fields::row(ui, &self.style, f.label, f.required, &help, |ui| fields::combo(ui, id, selected, &labels, fill(ui)));
+        let picked = fields::row(ui, &self.style, f.label, f.required, &help, |ui| fields::combo(ui, id, selected, &labels, fill(ui, &self.style)));
         picked.and_then(|i| variants.get(i)).map(|v| v.tag.to_string()).filter(|t| Some(t.as_str()) != current)
     }
 
@@ -269,15 +289,14 @@ impl Form<'_> {
         match f.kind {
             Kind::Number { .. } => {
                 let unit = f.unit_label(self.cx.units);
-                let width = (fill(ui) - fields::unit_width(ui, unit.as_deref())).max(FIELD_MIN);
-                let out = self.number(ui, id, value, f.hint, false, width);
+                let out = self.number(ui, id, value, f.hint, false, fill(ui, &s));
                 fields::unit(ui, &s, unit.as_deref());
                 out
             }
-            Kind::Integer { .. } => self.number(ui, id, value, f.hint, true, fill(ui)),
+            Kind::Integer { .. } => self.number(ui, id, value, f.hint, true, fill(ui, &s)),
             Kind::Text | Kind::Path { .. } | Kind::Topology { .. } => {
                 let mut text = value.and_then(Value::as_str).unwrap_or_default().to_string();
-                let changed = fields::text(ui, id, &mut text, f.hint, fill(ui));
+                let changed = fields::text(ui, id, &mut text, f.hint, fill(ui, &s));
                 // Definition names go into solver decks, which take no spaces: a typed space
                 // becomes `_`, and the field says so.
                 if changed && is_name(f) && text.contains(' ') {
@@ -306,7 +325,7 @@ impl Form<'_> {
                 if optional {
                     labels.push("(default)");
                 }
-                fields::combo(ui, id, selected, &labels, fill(ui)).map(|i| options.get(i).map_or(Value::Null, |(v, _)| json!(v)))
+                fields::combo(ui, id, selected, &labels, fill(ui, &s)).map(|i| options.get(i).map_or(Value::Null, |(v, _)| json!(v)))
             }
             Kind::Vector { labels, nullable, .. } => self.vector(ui, id, value, f, labels, nullable, None),
             Kind::Tuple { labels, whole, .. } => self.tuple(ui, id, value, labels, whole),
@@ -325,7 +344,7 @@ impl Form<'_> {
                 if !f.required {
                     labels.push("(none)");
                 }
-                fields::combo(ui, id, selected, &labels, fill(ui)).and_then(|i| match options.get(i) {
+                fields::combo(ui, id, selected, &labels, fill(ui, &s)).and_then(|i| match options.get(i) {
                     Some(o) if Some(o.key) == key => None,
                     Some(o) if matches!(o.kind, Kind::Unit) => Some(json!(o.key)),
                     Some(o) => Some(json!({o.key: schema::prefill(&[*o], &json!({})).get(o.key).cloned().unwrap_or(Value::Null)})),
@@ -408,7 +427,7 @@ impl Form<'_> {
         let gap = 3.0;
         let small = egui::TextStyle::Small.resolve(ui.style());
         let caption_w = labels.iter().map(|l| crate::elide::width(ui, &caption(l), &small)).fold(0.0, f32::max) + 2.0 * gap;
-        let room = fill(ui) - fields::unit_width(ui, unit.as_deref());
+        let room = fill(ui, &self.style);
         let three = labels.len().clamp(1, 3);
         let (per_line, width) = match cells {
             Some(w) => (labels.len().max(1), w),
@@ -462,7 +481,7 @@ impl Form<'_> {
         let small = egui::TextStyle::Small.resolve(ui.style());
         let caption_w = labels.iter().map(|l| crate::elide::width(ui, &caption(l), &small)).fold(0.0, f32::max) + 2.0 * gap;
         // All on one line when each still shows a value whole; otherwise one per line.
-        let room = fill(ui);
+        let room = fill(ui, &self.style);
         let n = labels.len().max(1);
         let per_line = if (room - gap * (n as f32 - 1.0)) / n as f32 - caption_w >= VECTOR_MIN { n } else { 1 };
         let width = ((room - gap * (per_line as f32 - 1.0)) / per_line as f32 - caption_w - 1.0).max(1.0);
@@ -502,7 +521,7 @@ impl Form<'_> {
         if names.is_empty() {
             ui.vertical(|ui| {
                 let none = format!("No {} yet", plural(c.label()));
-                ui.add_enabled_ui(false, |ui| fields::combo(ui, id, current.as_deref().unwrap_or(&none), &[], fill(ui)));
+                ui.add_enabled_ui(false, |ui| fields::combo(ui, id, current.as_deref().unwrap_or(&none), &[], fill(ui, &self.style)));
                 self.create_button(ui, c, path);
             });
             return None;
@@ -513,7 +532,7 @@ impl Form<'_> {
         if !required {
             labels.push("(default)");
         }
-        fields::combo(ui, id, &selected, &labels, fill(ui)).map(|i| names.get(i).map_or(Value::Null, |n| json!(n)))
+        fields::combo(ui, id, &selected, &labels, fill(ui, &self.style)).map(|i| names.get(i).map_or(Value::Null, |n| json!(n)))
     }
 
     fn reference_list(&mut self, ui: &mut Ui, path: &str, value: Option<&Value>, c: Collection) -> Option<Value> {
@@ -576,7 +595,7 @@ impl Form<'_> {
                 let row = ui.horizontal(|ui| {
                     let width = (ui.available_width() * 0.5).max(FIELD_MIN);
                     ui.add_sized([width, ui.spacing().interact_size.y], egui::Label::new(n.as_str()).truncate());
-                    fields::combo(ui, id.with(i), selected, &labels, fill(ui))
+                    fields::combo(ui, id.with(i), selected, &labels, fill(ui, &self.style))
                 });
                 if row.response.contains_pointer() && c == Collection::Body {
                     self.out.hover_body = Some(n.clone());
@@ -608,7 +627,7 @@ impl Form<'_> {
                 let row = ui.horizontal(|ui| {
                     let width = (ui.available_width() * 0.5).max(FIELD_MIN);
                     ui.add_sized([width, ui.spacing().interact_size.y], egui::Label::new(n.as_str()).truncate());
-                    fields::text(ui, id.with(i), &mut text, hint, fill(ui))
+                    fields::text(ui, id.with(i), &mut text, hint, fill(ui, &self.style))
                 });
                 if row.response.contains_pointer() && c == Collection::Body {
                     self.out.hover_body = Some(n.clone());
@@ -647,7 +666,8 @@ impl Form<'_> {
         let style = self.style;
         let labels = [name.label, object];
         let selected = if is_object { object } else { name.label };
-        if let Some(i) = fields::row(ui, &style, f.label, f.required, &help, |ui| fields::combo(ui, id.with("form"), selected, &labels, fill(ui)))
+        if let Some(i) =
+            fields::row(ui, &style, f.label, f.required, &help, |ui| fields::combo(ui, id.with("form"), selected, &labels, fill(ui, &self.style)))
             && (i == 1) != is_object
         {
             if i == 1 {
@@ -715,7 +735,7 @@ impl Form<'_> {
             if bad {
                 self.out.invalid += 1;
             }
-            if fields::checked_text(ui, id, &mut text, hint, bad, fill(ui)).changed()
+            if fields::checked_text(ui, id, &mut text, hint, bad, fill(ui, &self.style)).changed()
                 && let Some(l) = fields::parse_labels(&text, schema::MAX_LABELS)
             {
                 out = Some(if l.is_empty() { Value::Null } else { json!(l) });
@@ -761,7 +781,7 @@ impl Form<'_> {
             if bad {
                 self.out.invalid += 1;
             }
-            if fields::checked_text(ui, id, &mut text, hint, bad, fill(ui)).changed()
+            if fields::checked_text(ui, id, &mut text, hint, bad, fill(ui, &self.style)).changed()
                 && let Some(l) = fields::parse_sides(&text, schema::MAX_LABELS)
             {
                 over = fields::format_sides(&l);
@@ -806,8 +826,7 @@ impl Form<'_> {
         // left by the remove button and the unit.
         let gap = 3.0;
         let remove_w = ui.spacing().interact_size.y + gap;
-        let unit = f.unit_label(self.cx.units);
-        let room = fill(ui) - remove_w - fields::unit_width(ui, unit.as_deref());
+        let room = fill(ui, &self.style) - remove_w;
         let n = columns.len().max(1) as f32;
         let cell = ((room - gap * (n - 1.0)) / n - 1.0).max(34.0);
         ui.vertical(|ui| {
@@ -885,7 +904,7 @@ impl Form<'_> {
             }
             if !auto {
                 let unit = f.unit_label(self.cx.units);
-                let width = (fill(ui) - fields::unit_width(ui, unit.as_deref())).max(FIELD_MIN);
+                let width = fill(ui, &self.style);
                 if let Some(v) = self.number(ui, id, value, f.hint, false, width) {
                     out = Some(v);
                 }
@@ -917,7 +936,7 @@ impl Form<'_> {
             } else {
                 ui.horizontal(|ui| {
                     let unit = f.unit_label(self.cx.units);
-                    let width = (fill(ui) - fields::unit_width(ui, unit.as_deref())).max(FIELD_MIN);
+                    let width = fill(ui, &self.style);
                     if let Some(v) = self.number(ui, id, value, f.hint, false, width) {
                         out = Some(v);
                     }
@@ -937,7 +956,7 @@ impl Form<'_> {
         if bad {
             self.out.invalid += 1;
         }
-        let r = fields::checked_text(ui, id, &mut text, hint, bad, fill(ui));
+        let r = fields::checked_text(ui, id, &mut text, hint, bad, fill(ui, &self.style));
         let mut out = None;
         if r.changed() {
             if text.trim().is_empty() {
@@ -1351,6 +1370,63 @@ mod tests {
             .filter_map(|c| if let egui::Shape::Text(t) = &c.shape { Some(t.galley.text().to_string()) } else { None })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// One label column for every form at a panel width (A3-6): the form's share of the width,
+    /// wider only for a form whose label would not fit it on two lines.
+    #[test]
+    fn forms_share_one_label_column() {
+        let ctx = egui::Context::default();
+        let width = crate::context::inner_width();
+        let (mut shared, mut wider) = (0, Vec::new());
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let share = width * LABEL_SHARE;
+            for c in fieldcraft_engine::commands() {
+                let Some(form) = c.form else { continue };
+                let column = label_column(ui, form, &mm(), width);
+                assert!(column >= share - 0.5, "{}: {column} is narrower than {share}", c.id);
+                if (column - share).abs() < 0.5 { shared += 1 } else { wider.push(c.id) }
+            }
+        });
+        out.textures_delta.clear();
+        assert!(shared > 100 && wider.len() < shared / 4, "{shared} share the column; wider: {wider:?}");
+    }
+
+    /// A field with a unit ends where one without does (A3-6): the unit sits in a gutter every
+    /// row keeps, so the form's right edge is straight.
+    #[test]
+    fn fields_end_at_one_edge_with_or_without_a_unit() {
+        let form = fieldcraft_engine::find_command("model.material.create").and_then(|c| c.form).unwrap();
+        let ctx = egui::Context::default();
+        let mut params = json!({"name": "Steel", "elastic": {"type": "isotropic"}}).as_object().cloned().unwrap_or_default();
+        let names = |_: Collection| Vec::new();
+        let touched = BTreeSet::new();
+        let salt = Id::unique("t");
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let cx = Context {
+                    units: &mm(),
+                    names: &names,
+                    salt,
+                    touched: &touched,
+                    attempted: false,
+                    refused: None,
+                    problems: &[],
+                    picked: Picked::default(),
+                };
+                ui.vertical(|ui| {
+                    ui.set_max_width(crate::context::inner_width());
+                    show(ui, &Tokens::get(false), &cx, form, &mut params);
+                });
+            });
+            out.textures_delta.clear();
+        }
+        let right = |path: &str| ctx.read_response(Id::unique(("fc_form", salt, path))).map(|r| r.rect.right());
+        let name = right("name").expect("the name field");
+        for path in ["elastic/young", "elastic/poisson", "density"] {
+            let r = right(path).unwrap_or_else(|| panic!("{path} is drawn"));
+            assert!((r - name).abs() < 0.5, "{path} ends at {r}, the name at {name}");
+        }
     }
 
     fn mm() -> DisplaySystem {
