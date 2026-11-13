@@ -165,7 +165,9 @@ fn scalar(f: &Field, v: &Value, units: &DisplaySystem) -> String {
         }
         Kind::Vector { labels, .. } => vector(labels, v, unit.as_deref()),
         Kind::Tuple { labels, .. } => vector(labels, v, None),
-        Kind::Ref(_) | Kind::Text | Kind::Path { .. } => v.as_str().map_or_else(|| crate::context::value_text(v), str::to_string),
+        Kind::Ref(_) | Kind::Text | Kind::Path { .. } | Kind::Topology { .. } => {
+            v.as_str().map_or_else(|| crate::context::value_text(v), str::to_string)
+        }
         Kind::RefList(_) => list(v, |x| x.as_str().map(str::to_string)),
         // `Bracket.3: Tet, Bracket.7: Swept`.
         Kind::RefChoices(_, options) => v.as_object().map_or_else(
@@ -201,6 +203,11 @@ fn scalar(f: &Field, v: &Value, units: &DisplaySystem) -> String {
             _ => crate::context::value_text(v),
         },
         Kind::Rows { .. } => v.as_array().map_or_else(|| crate::context::value_text(v), |a| plural(a.len(), "row")),
+        Kind::List { item, .. } => match v.as_array() {
+            Some(a) => a.iter().map(|x| scalar(item, x, units)).collect::<Vec<_>>().join("; "),
+            None => crate::context::value_text(v),
+        },
+        Kind::NameOrValue { name, value } => scalar(if v.is_string() { name } else { value }, v, units),
         Kind::Sides(side) => match v
             .as_array()
             .and_then(|a| a.iter().map(|x| Some((x.get("element")?.as_u64()?, x.get(side.key())?.as_u64()?))).collect::<Option<Vec<_>>>())

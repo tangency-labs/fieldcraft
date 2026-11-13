@@ -302,6 +302,7 @@ fn field(f: &Field, v: &mut Value, parent: &Value, path: &str, leaf: &mut dyn Le
     if !f.numbers.is_empty() && (v.is_object() || v.is_array()) {
         inner_numbers(f.numbers, v, None, &mut Vec::new(), path, leaf, 0)?;
     }
+    let holder = parent;
     let parent = Some(parent);
     match f.kind {
         Kind::Number { dim, .. } => leaf.number(v, dim.resolve(parent, 0), dim.fixed(), path),
@@ -348,6 +349,15 @@ fn field(f: &Field, v: &mut Value, parent: &Value, path: &str, leaf: &mut dyn Le
             },
             _ => Ok(()),
         },
+        Kind::List { item, .. } => {
+            if let Value::Array(items) = v {
+                for (i, x) in items.iter_mut().enumerate() {
+                    field(item, x, holder, &format!("{path}/{i}"), leaf, depth + 1)?;
+                }
+            }
+            Ok(())
+        }
+        Kind::NameOrValue { value, .. } if !v.is_string() => field(value, v, holder, path, leaf, depth + 1),
         Kind::Either(options) => {
             let holder = v.clone();
             if let Value::Object(o) = v {
@@ -969,6 +979,24 @@ mod tests {
         num("t", "T", Dim::Temperature),
         num("ratio", "Ratio", Dim::None),
     ];
+
+    const HOLE: Field = table("", "Hole", Dim::Length, &["x", "y"], 100);
+    const SIZE_NAME: Field = choice("", "", &[("auto", "Automatic")]);
+    const SIZE_VALUE: Field = num("", "Size", Dim::Length);
+    const LISTS: &[Field] = &[list("holes", "Holes", &HOLE, 10), name_or_value("size", "Size", &SIZE_NAME, &SIZE_VALUE)];
+
+    /// Each element of a list converts as its item; a name-or-value's value converts as the value
+    /// and its name stays.
+    #[test]
+    fn list_elements_and_name_or_value_values_convert() {
+        let mm = DisplaySystem::new(Preset::MmTonneS);
+        let p = json!({"holes": [[[1000.0, 2000.0], [0.0, 500.0]]], "size": 2000.0});
+        let si_params = convert_params(LISTS, &p, &mm, si()).unwrap();
+        assert_eq!(si_params["holes"], json!([[[1.0, 2.0], [0.0, 0.5]]]));
+        assert_eq!(si_params["size"], json!(2.0));
+        let named = convert_params(LISTS, &json!({"size": "auto"}), &mm, si()).unwrap();
+        assert_eq!(named["size"], "auto");
+    }
 
     #[test]
     fn fluid_peak_and_final_speeds_and_peak_time_follow_display_units() {
