@@ -1151,7 +1151,7 @@ impl Flow {
             wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounceHalfway),
             nodes: on_node.then(|| WallNodes::new(node_list, nu)),
             bulk,
-            rheology: setup.rheology,
+            rheology: setup.rheology.clone(),
             clamps: Clamps::default(),
             acceleration: setup.acceleration,
             forces: vec![[0.0; 3]; groups.len()],

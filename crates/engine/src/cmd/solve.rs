@@ -198,6 +198,14 @@ fn with_threads<R: Send>(threads: usize, f: impl FnOnce() -> R + Send) -> R {
     parallel::with_threads(threads, move || fieldcraft_model::progress::scoped(progress, f))
 }
 
+/// A solver's `warnings` and, after them, the temperature tables it read beyond their ranges
+/// (`ranges`, in kelvin) worded in the display system; `context` leads each of those.
+fn warnings_with(warnings: &[String], ranges: &[fieldcraft_model::TableRange], display: &DisplaySystem, context: &str) -> Vec<String> {
+    use fieldcraft_model::units::{Quantity, format_number};
+    let show = |kelvin: f64| Quantity::Temperature.format(kelvin, display).unwrap_or_else(|_| format!("{} K", format_number(kelvin)));
+    warnings.iter().cloned().chain(ranges.iter().map(|r| format!("{context}{}", r.message(show)))).collect()
+}
+
 fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
     use fieldcraft_model::Procedure;
     type Solve = fn(&mut Session, &Value) -> Result<Value>;
@@ -292,7 +300,7 @@ fn run_static(s: &mut Session, p: &Value) -> Result<Value> {
             "reaction": p.reaction,
         })).collect::<Vec<_>>(),
         "max_temperature": r.temperature.as_ref().map(|t| largest(r.nodes.iter().copied().zip(t.iter().copied()))),
-        "warnings": r.warnings,
+        "warnings": warnings_with(&r.warnings, &r.table_ranges, s.units(), "the step's heat conduction: "),
     });
     s.store_result(StepResult::Implicit(ImplicitResult::Static(r)));
     Ok(summary)
@@ -335,7 +343,7 @@ fn run_nonlinear(s: &mut Session, p: &Value) -> Result<Value> {
             "displacement": p.displacement,
             "reaction": p.reaction,
         })).collect::<Vec<_>>(),
-        "warnings": r.warnings,
+        "warnings": warnings_with(&r.warnings, &r.table_ranges, s.units(), "the step's heat conduction: "),
     });
     s.store_result(StepResult::Implicit(ImplicitResult::Static(r)));
     Ok(summary)
@@ -359,7 +367,7 @@ fn run_heat(s: &mut Session, p: &Value) -> Result<Value> {
         "heat_supplied": r.applied_total,
         "heat_removed": r.reaction_total,
         "heat_flows": crate::results::heat_flows(&r, crate::units::si()),
-        "warnings": r.warnings,
+        "warnings": warnings_with(&r.warnings, &r.table_ranges, s.units(), ""),
     });
     s.store_result(StepResult::Implicit(ImplicitResult::Heat(r)));
     Ok(summary)

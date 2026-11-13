@@ -1196,7 +1196,15 @@ fn plasticity(model: &Model, step: &Step, warnings: &mut Vec<String>) -> Result<
 /// The step's temperature field per mesh node: the steady heat solution of its temperature
 /// boundary conditions and heat loads when it has some (one-way coupling, as the coupled
 /// temperature–displacement step of the linear solver), or its temperature loads.
-fn temperatures(model: &Model, resolved: &fieldcraft_model::Resolved, mesh: &Mesh, step: &Step, limits: &Limits) -> Result<Option<Vec<Option<f64>>>> {
+fn temperatures(
+    model: &Model,
+    resolved: &fieldcraft_model::Resolved,
+    mesh: &Mesh,
+    step: &Step,
+    limits: &Limits,
+    warnings: &mut Vec<String>,
+    ranges: &mut Vec<fieldcraft_model::TableRange>,
+) -> Result<Option<Vec<Option<f64>>>> {
     let conducts = step.boundary_conditions.iter().any(|b| model.boundary_conditions().get(b).is_some_and(BoundaryCondition::is_thermal))
         || step.loads.iter().any(|l| model.load(l).is_some_and(Load::is_thermal));
     let loads = temperature_loads(model, resolved, mesh, step)?;
@@ -1205,7 +1213,7 @@ fn temperatures(model: &Model, resolved: &fieldcraft_model::Resolved, mesh: &Mes
             "step `{}` gives temperatures both by temperature loads and by heat conditions (temperature boundary conditions, heat loads); use one",
             step.name
         ))),
-        (true, None) => Ok(Some(crate::heat::temperatures_at(model, resolved, step, limits, &mesh.labels)?)),
+        (true, None) => Ok(Some(crate::heat::temperatures_at(model, resolved, step, limits, &mesh.labels, warnings, ranges)?)),
         (false, field) => Ok(field),
     }
 }
@@ -1348,7 +1356,8 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
         if settings.nonlinear_geometry { followers(model, &resolved, &mesh, step)? } else { (Vec::new(), step.clone()) };
     let (scheduled, dead_step) = scheduled(model, &resolved, &mesh, step, settings, dead_step, &red.active)?;
     let dead = loads(model, &resolved, &mesh, &dead_step, &red.active)?;
-    let field = temperatures(model, &resolved, &mesh, step, limits)?;
+    let mut table_ranges = Vec::new();
+    let field = temperatures(model, &resolved, &mesh, step, limits, &mut warnings, &mut table_ranges)?;
     let springs = if mesh.discrete.springs.iter().any(|s| !s.dashpot) {
         let mut s = graph.zero_matrix(&mesh.layout);
         mesh.discrete.add_stiffness(&mut s)?;
@@ -1622,7 +1631,8 @@ fn solve_on(model: &Model, step: &str, limits: &Limits, notes: Vec<String>) -> R
         ));
     }
     let contacts = problem.contacts.iter().zip(&evaluation.contact).map(|(c, s)| c.result(&mesh, s, run.augmentations)).collect();
-    finish(&mesh, step, &red, &problem, u, lambda, evaluation, &run.committed, history, run.factor_entries, contacts, warnings)
+    let result = finish(&mesh, step, &red, &problem, u, lambda, evaluation, &run.committed, history, run.factor_entries, contacts, warnings)?;
+    Ok(StaticResult { table_ranges, ..result })
 }
 
 /// The final state as a static result: displacements, reactions, Cauchy stresses and
@@ -1685,6 +1695,7 @@ fn finish(
         reaction_total,
         stats: Stats { dofs: mesh.dofs(), equations: red.neq(), factor_entries, lanczos_vectors: 0 },
         warnings,
+        table_ranges: Vec::new(),
         temperature: None,
         nonlinear: Some(history),
         contacts,

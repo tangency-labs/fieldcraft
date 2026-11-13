@@ -396,6 +396,7 @@ mod tests {
             reaction_total: 0.0,
             stats: Default::default(),
             warnings: vec![],
+            table_ranges: vec![],
         };
         s.store_result(StepResult::Implicit(fieldcraft_solver::StepResult::Heat(heat)));
         p["frame"] = json!(0);

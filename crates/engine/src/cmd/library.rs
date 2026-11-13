@@ -1,7 +1,7 @@
 //! The fixed, independently curated material catalogue. No runtime import or network lookup.
 
 use fieldcraft_model::library::{self, Entry, Property};
-use fieldcraft_model::units::{CELSIUS_ZERO, Quantity};
+use fieldcraft_model::units::Quantity;
 use serde_json::{Value, json};
 
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
@@ -9,7 +9,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const LIST: CommandSpec = CommandSpec {
     id: "model.material.library.list",
     label: "Browse Material Library",
-    params: r#"{"family"?: "steel|stainless|aluminium|titanium"} — list the fixed cited catalogue, with properties in display units, conditions and unavailable properties. Read-only. Strengths are informational, never selected plasticity or failure criteria."#,
+    params: r#"{"family"?: "steel|stainless|aluminium|titanium|fluid"} — list the fixed cited catalogue, with properties in display units, temperature curves (cited points, linear between them), conditions and unavailable properties. Read-only. Strengths are informational, never selected plasticity or failure criteria."#,
     form: Some(super::forms::MATERIAL_LIBRARY_LIST),
     kind: CommandKind::Model,
     requires: &[],
@@ -19,7 +19,7 @@ pub const LIST: CommandSpec = CommandSpec {
 pub const ADD: CommandSpec = CommandSpec {
     id: "model.material.library.add",
     label: "Add Library Material",
-    params: r#"{"entry": "EN10025-S235|EN10025-S355|EN10088-14301|EN10088-14401|AA6061-T6|AA6082-T6|AA7075-T6|AA2024-T3|Ti6Al4V-annealed", "name"?: "Steel" (default: entry id), "reference_temperature"?: 20 (default 20 °C; bare numbers in display units, or a value with its unit)} — create an isotropic material from cited constant properties, refusing duplicate names. The stress-free temperature is your modelling choice. Missing data stays absent; strength data is reported but never applied as plasticity/damage/failure criteria."#,
+    params: r#"{"entry": "EN10025-S235|EN10025-S355|EN10088-14301|EN10088-14401|AA6061-T6|AA6082-T6|AA7075-T6|AA2024-T3|Ti6Al4V-annealed|air", "name"?: "Steel" (default: entry id), "reference_temperature"?: 20 (default 20 °C; bare numbers in display units, or a value with its unit), "temperature"?: 20 (default 20 °C: where temperature-dependent properties give their constants)} — create an isotropic material (a Newtonian fluid for air) from cited properties, refusing duplicate names. Temperature curves are saved with the material: heat transfer follows its conductivity, specific heat and density curves, a fluid step with heat its viscosity curve; other solvers use the constants taken at `temperature`, with a warning when it lies outside a curve (the end value is taken). The stress-free temperature is your modelling choice. Missing data stays absent; strength data is reported but never applied as plasticity/damage/failure criteria."#,
     form: Some(super::forms::MATERIAL_LIBRARY),
     kind: CommandKind::Model,
     requires: &[],
@@ -46,24 +46,21 @@ fn text<'a>(p: &'a serde_json::Map<String, Value>, key: &str) -> Result<Option<&
 
 fn report(s: &Session, e: &Entry) -> Result<Value> {
     let (applied, information): (Vec<_>, Vec<_>) = e.report(s.units())?.into_iter().partition(|v| v.property.applied());
-    let unavailable: Vec<_> = [
-        Property::Young,
-        Property::Poisson,
-        Property::Density,
-        Property::Conductivity,
-        Property::SpecificHeat,
-        Property::Expansion,
-        Property::Yield,
-        Property::Tensile,
-    ]
-    .into_iter()
-    .filter(|p| !e.properties.contains_key(p))
-    .collect();
+    // A fluid has no elastic constants, expansion or strengths to miss; a solid no viscosity.
+    let relevant = |p: &Property| {
+        if e.is_fluid() {
+            matches!(p, Property::Density | Property::Conductivity | Property::SpecificHeat | Property::Viscosity)
+        } else {
+            *p != Property::Viscosity
+        }
+    };
+    let unavailable: Vec<_> =
+        Property::ALL.into_iter().filter(relevant).filter(|p| !e.properties.contains_key(p) && !e.curves.contains_key(p)).collect();
     Ok(json!({
         "id": e.id, "name": e.name, "family": e.family, "designation": e.designation,
-        "display_units": s.units().label(), "values": applied,
+        "display_units": s.units().label(), "values": applied, "curves": e.report_curves(s.units())?,
         "not_applied": information, "unavailable": unavailable,
-        "limits": "Constant isotropic approximation within each source's stated conditions. Strengths are informational; no plasticity, damage, safety factor or failure criterion is selected. Missing properties must be supplied before analyses that need them."
+        "limits": "Isotropic properties within each source's stated conditions; curves are linear between their points and held at their end values outside them. Strengths are informational; no plasticity, damage, safety factor or failure criterion is selected. Missing properties must be supplied before analyses that need them."
     }))
 }
 
@@ -71,33 +68,48 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
     let p = parameters(p, &["family"])?;
     let family = text(p, "family")?;
     if family.is_some_and(|f| !library::FAMILIES.iter().any(|(id, _)| *id == f)) {
-        return Err(EngineError::invalid("family", "choose steel, stainless, aluminium or titanium"));
+        return Err(EngineError::invalid("family", "choose steel, stainless, aluminium, titanium or fluid"));
     }
     let entries = library::entries()?.iter().filter(|e| family.is_none_or(|f| e.family == f)).map(|e| report(s, e)).collect::<Result<Vec<_>>>()?;
     Ok(json!({"count": entries.len(), "entries": entries}))
 }
 
 fn add(s: &mut Session, p: &Value) -> Result<Value> {
-    let p = parameters(p, &["entry", "name", "reference_temperature"])?;
+    let p = parameters(p, &["entry", "name", "reference_temperature", "temperature"])?;
     let id = text(p, "entry")?.ok_or_else(|| EngineError::param("entry", crate::schema::ProblemKind::Required))?;
     let entry = library::entry(id)?;
     let name = if p.get("name").and_then(Value::as_str) == Some("") { &entry.id } else { text(p, "name")?.unwrap_or(&entry.id) };
-    let reference = match p.get("reference_temperature") {
-        Some(v) => {
-            v.as_f64().filter(|v| v.is_finite()).ok_or_else(|| EngineError::invalid("reference_temperature", "must be a finite temperature"))?
-        }
-        None => CELSIUS_ZERO + 20.0, // A modelling default of 20 degrees Celsius, not a conversion factor.
+    let temperature = |key: &str| match p.get(key) {
+        Some(v) => v.as_f64().filter(|v| v.is_finite()).ok_or_else(|| EngineError::invalid(key, "must be a finite temperature")),
+        None => Ok(library::DEFAULT_TEMPERATURE),
     };
-    let material = entry.material(reference)?;
+    let (reference, at) = (temperature("reference_temperature")?, temperature("temperature")?);
+    let material = entry.material(reference, at)?;
+    let shown = |t: f64| s.units().express(Quantity::Temperature, t).map_err(|e| EngineError::Params(e.to_string()));
     let mut reply = report(s, entry)?;
     reply["name"] = json!(name);
     reply["material_si"] = json!(material);
     reply["reference_temperature"] = json!({
-        "value": s.units().express(Quantity::Temperature, reference).map_err(|e| EngineError::Params(e.to_string()))?,
+        "value": shown(reference)?,
         "unit": s.units().symbol(Quantity::Temperature),
         "basis": "user modelling choice: temperature of zero thermal strain; default 20 degrees Celsius",
         "applied": material.thermal.as_ref().is_some_and(|t| t.expansion.is_some())
     });
+    reply["temperature"] = json!({
+        "value": shown(at)?,
+        "unit": s.units().symbol(Quantity::Temperature),
+        "basis": "user modelling choice: the temperature the constants of temperature-dependent properties are taken at; default 20 degrees Celsius",
+        "applied": !entry.curves.is_empty()
+    });
+    let outside = entry.outside(at);
+    if !outside.is_empty() {
+        reply["warnings"] = json!([format!(
+            "{} lies outside the {} curve(s) of {}: their end values were taken as the constants, an extrapolation the source does not cover",
+            Quantity::Temperature.format(at, s.units()).map_err(|e| EngineError::Params(e.to_string()))?,
+            outside.iter().map(|p| p.name()).collect::<Vec<_>>().join(", "),
+            entry.id
+        )]);
+    }
     s.model.add_material(name, material)?;
     Ok(reply)
 }
@@ -112,7 +124,7 @@ mod tests {
         let mut s = Session::default();
         let before = s.revision();
         let all = s.execute(LIST.id, &json!({})).unwrap();
-        assert_eq!(all["count"], 9);
+        assert_eq!(all["count"], 10);
         let aluminium = s.execute(LIST.id, &json!({"family": "aluminium"})).unwrap();
         assert_eq!(aluminium["count"], 4);
         assert_eq!(s.revision(), before);
@@ -121,8 +133,11 @@ mod tests {
             assert!(e["designation"]["condition"].as_str().unwrap().len() > 20);
             for value in e["values"].as_array().unwrap() {
                 let source = &value["source"];
-                for key in ["document", "edition", "location", "page"] {
+                for key in ["document", "edition", "location"] {
                     assert!(!source[key].as_str().unwrap().is_empty());
+                }
+                if let Some(page) = source.get("page") {
+                    assert!(!page.as_str().unwrap().is_empty());
                 }
                 if let Some(url) = source.get("url") {
                     assert!(url.as_str().unwrap().starts_with("https://"));
@@ -142,7 +157,7 @@ mod tests {
                 for &(id, _) in library::CHOICES {
                     let reply = s.execute(ADD.id, &json!({"entry": id, "reference_temperature": "68 degF"})).unwrap();
                     let material = s.model.material(id).unwrap();
-                    assert_eq!(*material, library::entry(id).unwrap().material(293.15).unwrap());
+                    assert_eq!(*material, library::entry(id).unwrap().material(293.15, 293.15).unwrap());
                     assert!(material.plastic.is_none() && material.damage.is_none() && material.erosion.is_none());
                     assert_eq!(reply["name"], id);
                     assert_eq!(reply["material_si"], json!(material));
@@ -185,6 +200,69 @@ mod tests {
         for bad in [json!({"family": []}), json!({"family": "x".repeat(100_000)}), json!({"family": "plastic"})] {
             assert!(s.execute(LIST.id, &bad).is_err());
             assert_eq!(s.model, before);
+        }
+    }
+
+    #[test]
+    fn fluids_carry_their_cited_curves_and_warn_outside_them() {
+        let mut s = Session::default();
+        let r = s.execute(ADD.id, &json!({"entry": "air", "temperature": "30 degC"})).unwrap();
+        assert!(r.get("warnings").is_none(), "{r}");
+        assert_eq!(r["unavailable"], json!([]));
+        let air = s.model.material("air").unwrap();
+        let mu = air.fluid.unwrap().newtonian().unwrap();
+        // 303.15 K, between the 300 K and 310 K points of the Standard's eq. (51).
+        let sutherland = |t: f64| 1.458e-6 * t.powf(1.5) / (t + 110.4);
+        let expected = sutherland(300.0) + (303.15 - 300.0) / 10.0 * (sutherland(310.0) - sutherland(300.0));
+        assert!((mu - expected).abs() < 1e-15, "{mu}");
+        assert_eq!(air.temperature_dependent.as_ref().unwrap().viscosity.as_ref().unwrap().0.len(), 21);
+        let curves = r["curves"].as_array().unwrap();
+        assert_eq!(curves.len(), 3);
+        assert!(curves.iter().all(|c| c["source"]["document"].as_str().unwrap().contains("Standard Atmosphere")));
+        // The default display system shows °C: the first point at 200 K is −73.15 °C.
+        assert!((curves[0]["points"][0][0].as_f64().unwrap() + 73.15).abs() < 1e-9, "{}", curves[0]);
+
+        let r = s.execute(ADD.id, &json!({"entry": "air", "name": "Hot_air", "temperature": "500 K"})).unwrap();
+        let warning = r["warnings"][0].as_str().unwrap();
+        assert!(warning.contains("outside") && warning.contains("viscosity") && warning.contains("air"), "{warning}");
+        let air = s.model.material("Hot_air").unwrap();
+        assert_eq!(air.density, Some(library::entry("air").unwrap().curves[&Property::Density].points.0.last().unwrap()[1]));
+        assert!(air.elastic.is_none());
+        let fluids = s.execute(LIST.id, &json!({"family": "fluid"})).unwrap();
+        assert_eq!(fluids["count"], 1);
+        let before = s.model.clone();
+        for bad in [json!({"entry": "air", "name": "A2", "temperature": "-1 K"}), json!({"entry": "air", "name": "A3", "temperature": "hot"})] {
+            assert!(s.execute(ADD.id, &bad).is_err());
+            assert_eq!(s.model, before);
+        }
+    }
+
+    /// The oracle's Kirchhoff slab, its hot end raised past the steel curves' 1200 °C: the heat
+    /// solve warns, with the temperatures in the display units.
+    #[test]
+    fn a_heat_solve_past_a_curve_warns_in_display_units() {
+        let mut recipe: Value = serde_json::from_str(include_str!("../../../../tests/oracle/kirchhoff-slab-steel/recipe.json")).unwrap();
+        let steps = recipe.as_array_mut().unwrap();
+        let hot = steps.iter_mut().find(|c| c["params"]["name"] == "hot" && c["command"] == "model.boundary_condition.create").unwrap();
+        hot["params"]["value"] = json!(1500.0);
+        steps.pop(); // Build the model once, then solve in each display system and thread count.
+        let mut s = Session::default();
+        s.run_script(&recipe).unwrap();
+        for (unit, range) in
+            [("°C", "conductivity (20 °C to 1200 °C)"), ("°F", "conductivity (68 °F to 2192 °F)"), ("K", "conductivity (293.15 K to 1473.15 K)")]
+        {
+            s.execute("model.units", &json!({"system": "mm-t-s-N-MPa", "temperature": unit})).unwrap();
+            let mut previous = None;
+            for threads in [1, 2] {
+                let reply = s.execute("solve.heat", &json!({"threads": threads})).unwrap();
+                let warnings = reply["warnings"].as_array().unwrap();
+                let w = warnings.iter().filter_map(Value::as_str).find(|w| w.contains("outside")).unwrap();
+                assert!(w.contains(range), "{unit}, {threads} threads: {w}");
+                if let Some(previous) = &previous {
+                    assert_eq!(w, previous);
+                }
+                previous = Some(w.to_string());
+            }
         }
     }
 
