@@ -69,6 +69,16 @@
 // ω. `collide` then binds 8 storage buffers, the most of any kernel. A fixed σ of 1 compiles to
 // the regularised kernels (native.rs), so it is that collision bit for bit.
 //
+// Interpolated walls (fieldcraft_lbm::flow, `INTERPOLATED`; M. Bouzidi, M. Firdaouss, P. Lallemand,
+// Phys. Fluids 13:3452, 2001): a bounce link flagged INTERP sends back the linear interpolation at
+// the fraction q of the link where the obstacle's surface crosses it, from the post-collision
+// populations of its cell and, for q < ½, of the next fluid cell away from the wall (the link's
+// second word). The rule is linear with weights summing to one, so it holds for the deviations h
+// as written. All its reads are post-collision values the gather takes before the scatter writes.
+// Its momentum exchange is Galilean invariant (Y. Wen et al., JCP 266:161, 2014), with the
+// group's wall velocity. `link_f` then holds per link its moving-wall term [0, L), its q
+// [L, 2L) and per group its wall velocity (4 floats each) from 2L.
+//
 // Han, Ooka and Kikumoto's on-node wall-function bounce (fieldcraft_lbm::bounce, `ON_NODE`): the
 // outermost cell layer at each wall face is boundary nodes, the wall through their centres. They
 // stream like fluid cells but do not collide and are left out of the gradients, moments, mass
@@ -97,6 +107,8 @@ override WALL_BOUNCE: bool = false;
 // Han, Ooka and Kikumoto's on-node wall-function bounce (`spalding_bounce`, their eq. 14);
 // likewise.
 override ON_NODE: bool = false;
+// Interpolated walls; likewise.
+override INTERPOLATED: bool = false;
 // The hybrid recursive regularised collision (fieldcraft_lbm::hrr, with REGULARIZED): its σ in
 // `params.les.x`; likewise.
 override HRR: bool = false;
@@ -121,6 +133,9 @@ const KIND_OPEN: u32 = 3u;
 // the open boundary sets after streaming: the heat the link gives never stays in the fluid, and
 // the wall heat leaves it out (fieldcraft_lbm::flow::ThermalState::resets).
 const RESET: u32 = 0x1000000u;
+// Set in a bounce link's first word when it interpolates where the surface crosses it (with
+// INTERPOLATED; its second word is the next fluid cell away from the wall).
+const INTERP: u32 = 0x2000000u;
 
 struct Params {
     n: u32,
@@ -176,7 +191,8 @@ struct Params {
 @group(0) @binding(1) var<storage, read> fluid: array<u32>;
 @group(0) @binding(2) var<storage, read_write> f: array<f32>;
 @group(0) @binding(3) var<storage, read_write> g: array<f32>;
-// Per link: (q | kind << 8 | q2 << 16 | RESET, from, group, cell) and the moving-wall term.
+// Per link: (q | kind << 8 | q2 << 16 | RESET | INTERP, from, group, cell) and the moving-wall
+// term (with INTERPOLATED, then the links' fractions and the groups' wall velocities: see above).
 @group(0) @binding(5) var<storage, read> link_u: array<vec4<u32>>;
 // Per pressure cell (fieldcraft_lbm::outlet), OUTLET floats at its slot: its five unknown
 // populations after the last step (h, 0..5) and its convection speed (5), kept between steps;
@@ -1497,7 +1513,11 @@ fn gather_link(l: u32, exchange: bool) {
     if kind == KIND_PULL {
         v = post(q, lu.y);
     } else if kind == KIND_BOUNCE {
-        v = post(opp(q), cell) + link_f[l];
+        if is_interpolated(lu) {
+            v = interpolated_back(l, lu, q, cell);
+        } else {
+            v = post(opp(q), cell) + link_f[l];
+        }
     } else if kind == KIND_REFLECT {
         // The mirrored direction has the same weight, so h reflects like f.
         v = post(q2, lu.y);
@@ -1768,12 +1788,39 @@ fn zou_he(o: u32, kind: u32, cell: u32, axis: u32, sign: f32, xyz: vec3<i32>, ap
     }
 }
 
+// Whether bounce link `lu` interpolates (INTERPOLATED).
+fn is_interpolated(lu: vec4<u32>) -> bool {
+    return INTERPOLATED && (lu.x & INTERP) != 0u;
+}
+
+// The population interpolated bounce link l (direction q into `cell`) sends back
+// (fieldcraft_lbm::flow::bouzidi): for q < ½ from the cell's and the next cell's populations
+// leaving toward the wall, otherwise from the cell's toward the wall and away from it.
+fn interpolated_back(l: u32, lu: vec4<u32>, q: u32, cell: u32) -> f32 {
+    let frac = link_f[params.links + l];
+    let out = post(opp(q), cell);
+    let du = link_f[l];
+    if frac < 0.5 {
+        return 2.0 * frac * out + (1.0 - 2.0 * frac) * post(opp(q), lu.y) + du;
+    }
+    return (out + (2.0 * frac - 1.0) * post(q, cell) + du) / (2.0 * frac);
+}
+
 fn momentum_exchange(l: u32, lu: vec4<u32>, q: u32, kind: u32, q2: u32) -> vec3<f32> {
     var v = vec3<f32>(0.0);
     if kind == KIND_BOUNCE {
         let out = post(opp(q), lu.w);
-        let back = out + link_f[l];
-        v = -vec3<f32>(c_of(q)) * (out + back);
+        if is_interpolated(lu) {
+            // (c_out − u_w) f* − (c_in − u_w) f' with c_out = −c_q (Wen et al. 2014); the
+            // weights cancel in out − back.
+            let back = interpolated_back(l, lu, q, lu.w);
+            let w = 2u * params.links + 4u * lu.z;
+            let uw = vec3<f32>(link_f[w], link_f[w + 1u], link_f[w + 2u]);
+            v = -vec3<f32>(c_of(q)) * (out + back) - uw * (out - back);
+        } else {
+            let back = out + link_f[l];
+            v = -vec3<f32>(c_of(q)) * (out + back);
+        }
     } else if kind == KIND_REFLECT {
         let out = post(q2, lu.y);
         v = vec3<f32>(c_of(q2)) * out - vec3<f32>(c_of(q)) * out;

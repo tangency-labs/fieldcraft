@@ -24,6 +24,8 @@ const KIND_REFLECT: u32 = 2;
 const KIND_OPEN: u32 = 3;
 /// Marks a link into a cell whose scalar populations the open boundary sets (see lbm.wgsl).
 const RESET: u32 = 1 << 24;
+/// Marks a bounce link that interpolates where the obstacle's surface crosses it (see lbm.wgsl).
+const INTERP: u32 = 1 << 25;
 /// Floats per open cell in the outlet buffer (see lbm.wgsl).
 const OUTLET: usize = fieldcraft_lbm::memory::DEVICE_OUTLET_WORDS;
 /// The flag word of a boundary node of the on-node wall-function bounce: it streams, but it is not
@@ -239,6 +241,8 @@ pub struct GpuFlow {
     fluid_cells: usize,
     groups: Vec<Group>,
     empty_obstacles: Vec<String>,
+    /// With interpolated walls, how the obstacles' links bounce back (the flow's).
+    wall_links: Option<fieldcraft_lbm::WallLinks>,
     steps_done: u64,
     // Last uploaded uniform acceleration, used only by the momentum diagnostic.
     diagnostic_acceleration: [f64; 3],
@@ -511,6 +515,8 @@ struct Variant {
     dynamic: bool,
     /// Fans or porous zones.
     zones: bool,
+    /// Interpolated wall links.
+    interpolated: bool,
 }
 
 /// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
@@ -562,6 +568,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("VREMAN", if variant.vreman { 1.0 } else { 0.0 }),
                     ("DYNAMIC", if variant.dynamic { 1.0 } else { 0.0 }),
                     ("ZONES", if variant.zones { 1.0 } else { 0.0 }),
+                    ("INTERPOLATED", if variant.interpolated { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
                 ..Default::default()
@@ -669,11 +676,6 @@ impl GpuFlow {
     pub fn with_options(flow: &Flow, policy: Policy, options: Options) -> Result<GpuFlow> {
         if flow.has_baffles() {
             return Err(Error::Invalid("baffles are not supported on the GPU yet: solve on the CPU".into()));
-        }
-        if flow.wall_links().is_some() {
-            return Err(Error::Invalid(
-                "not supported yet: interpolated walls (`walls: \"interpolated\"`) on the GPU backend: solve on the CPU (`backend: \"cpu\"`)".into(),
-            ));
         }
         if let Some(r) = flow.rheology() {
             return Err(Error::Invalid(format!(
@@ -856,28 +858,41 @@ impl GpuFlow {
         // The links, by cell, and the ones with a force by group.
         let links = flow.links();
         let mut link_u = reserved(4 * links.len(), "links")?;
-        let mut link_f = reserved(links.len(), "links")?;
+        // With interpolated walls, also each link's fraction and each group's wall velocity
+        // (lbm.wgsl, `link_f`).
+        let interpolations = flow.interpolations();
+        let interpolated = !interpolations.is_empty();
+        let mut link_q = reserved(if interpolated { links.len() } else { 0 }, "link fractions")?;
+        let mut link_f = reserved(if interpolated { 2 * links.len() + 4 * flow.groups().len() } else { links.len() }, "links")?;
         let mut by_group: Vec<(u32, u32)> = reserved(links.len(), "links by group")?;
         let group_count = flow.groups().len();
         let mut weight_forces = filled(group_count, [0.0f64; 3], "force groups")?;
         let c = |q: u32| C.get(q as usize).copied().unwrap_or([0; 3]).map(f64::from);
         let w = |q: u32| W.get(q as usize).copied().unwrap_or(0.0);
         for (l, link) in links.iter().enumerate() {
-            let (kind, from, group, q2, du) = match link.rule {
-                Rule::Pull { from } => (KIND_PULL, from, 0, 0, 0.0),
-                // Refused above until the GPU interpolates.
-                Rule::Bounce { group, du } => (KIND_BOUNCE, 0, group, 0, du),
-                Rule::Interpolated { group, .. } => (KIND_BOUNCE, 0, group, 0, 0.0),
-                Rule::Reflect { from, q, group } => (KIND_REFLECT, from, group, u32::from(q), 0.0),
-                Rule::Open => (KIND_OPEN, 0, 0, 0, 0.0),
+            // The link's fraction q is ½ but for an interpolated link.
+            let (kind, from, group, q2, du, frac) = match link.rule {
+                Rule::Pull { from } => (KIND_PULL, from, 0, 0, 0.0, 0.5),
+                Rule::Bounce { group, du } => (KIND_BOUNCE, 0, group, 0, du, 0.5),
+                // A bounce flagged INTERP, its next cell in the second word.
+                Rule::Interpolated { group, slot } => {
+                    let i = interpolations.get(slot as usize).ok_or_else(|| Error::Invalid(format!("interpolated wall link {slot} is missing")))?;
+                    (KIND_BOUNCE, i.next, group, 0, i.du, i.q)
+                }
+                Rule::Reflect { from, q, group } => (KIND_REFLECT, from, group, u32::from(q), 0.0, 0.5),
+                Rule::Open => (KIND_OPEN, 0, 0, 0, 0.0, 0.5),
             };
+            if interpolated {
+                link_q.push(frac as f32);
+            }
             // What the weights add to the link's exchange (see `link_forces`).
             let weight = match link.rule {
-                Rule::Bounce { .. } => c(u32::from(link.q)).map(|x| -2.0 * w(u32::from(link.q)) * x),
+                // The interpolated exchange's weights cancel in out − back, as the halfway one's.
+                Rule::Bounce { .. } | Rule::Interpolated { .. } => c(u32::from(link.q)).map(|x| -2.0 * w(u32::from(link.q)) * x),
                 Rule::Reflect { .. } => std::array::from_fn(|a| (c(q2)[a] - c(u32::from(link.q))[a]) * w(q2)),
                 _ => [0.0; 3],
             };
-            if matches!(link.rule, Rule::Bounce { .. } | Rule::Reflect { .. }) {
+            if link.rule.wall_group().is_some() {
                 by_group.push((group, l as u32));
                 if let Some(g) = weight_forces.get_mut(group as usize) {
                     for (s, x) in g.iter_mut().zip(weight) {
@@ -886,8 +901,17 @@ impl GpuFlow {
                 }
             }
             let reset = if thermal.is_some_and(|t| t.resets(link.cell)) { RESET } else { 0 };
-            link_u.extend_from_slice(&[u32::from(link.q) | (kind << 8) | (q2 << 16) | reset, from, group, link.cell]);
+            let interp = if matches!(link.rule, Rule::Interpolated { .. }) { INTERP } else { 0 };
+            link_u.extend_from_slice(&[u32::from(link.q) | (kind << 8) | (q2 << 16) | reset | interp, from, group, link.cell]);
             link_f.push(du as f32);
+        }
+        if interpolated {
+            link_f.extend_from_slice(&link_q);
+            let velocities = flow.wall_velocities();
+            for g in 0..group_count {
+                let u = velocities.get(g).copied().unwrap_or([0.0; 3]);
+                link_f.extend_from_slice(&[u[0] as f32, u[1] as f32, u[2] as f32, 0.0]);
+            }
         }
         // The boundary nodes' links: the weights' share of what a node takes is −⅓ n (the
         // populations arriving from the fluid, −n/6, less those sent back, n/6).
@@ -1151,6 +1175,7 @@ impl GpuFlow {
             vreman: flow.vreman() > 0.0,
             dynamic: hybrid == Some(HrrSigma::Dynamic),
             zones: zones.zones > 0,
+            interpolated,
         })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
@@ -1250,6 +1275,7 @@ impl GpuFlow {
             fluid,
             groups: flow.groups().to_vec(),
             empty_obstacles: flow.empty_obstacles().to_vec(),
+            wall_links: flow.wall_links(),
             steps_done: 0,
             diagnostic_acceleration: flow.acceleration().map(|a| f64::from(a as f32)),
             nu0: (1.0 / omega_plus - 0.5) / 3.0,
@@ -1721,6 +1747,10 @@ impl Backend for GpuFlow {
 
     fn empty_obstacles(&self) -> &[String] {
         &self.empty_obstacles
+    }
+
+    fn wall_links(&self) -> Option<fieldcraft_lbm::WallLinks> {
+        self.wall_links
     }
 
     fn conducting(&self) -> &[Vec<u32>] {
