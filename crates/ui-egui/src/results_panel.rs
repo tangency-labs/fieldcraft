@@ -42,10 +42,8 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
     let extremes = legend(&plot, &painter, rect, bar, t);
     // The markers and their labels keep off the legend: its Max and Min lines name a node under it.
     let covered = plot.contour.as_ref().map(|_| legend_layout(&plot, &painter, rect, bar, t).frame);
-    if app.ui.result_extremes {
-        markers(app, &plot, &painter, rect, covered, t);
-    }
-    probe(app, &plot, &painter, rect, covered, t);
+    let placed = if app.ui.result_extremes { markers(app, &plot, &painter, rect, covered, t) } else { Vec::new() };
+    probe(app, &plot, &painter, rect, covered, &placed, t);
     let mut focus = None;
     for (i, (line, node)) in extremes.into_iter().enumerate() {
         let tip = if plot.is_fluid() { "Centre this field extreme".into() } else { format!("Show and probe node {node}") };
@@ -307,32 +305,30 @@ fn label_box(at: Pos2, size: egui::Vec2, bounds: Rect, avoid: Option<Rect>) -> R
     }
 }
 
-/// Where the label of a marker at `at` goes ([`label_box`]) clear of the legend and of the label
-/// `placed` already: under (or over) the legend when beside it would cover it. None when the
-/// point is under the legend, or when no clear place is left.
-fn clear_label(at: Pos2, size: egui::Vec2, bounds: Rect, legend: Option<Rect>, placed: Option<Rect>) -> Option<Rect> {
+/// Where the label of a marker at `at` goes ([`label_box`]) clear of the legend and of the labels
+/// `placed` already: under (or over) whichever of them it would cover beside the point. None
+/// when the point is under the legend, or when no clear place is left.
+fn clear_label(at: Pos2, size: egui::Vec2, bounds: Rect, legend: Option<Rect>, placed: &[Rect]) -> Option<Rect> {
     if legend.is_some_and(|l| l.contains(at)) {
         return None;
     }
-    let mut r = label_box(at, size, bounds, placed);
-    if let Some(l) = legend.filter(|l| l.intersects(r)) {
-        r = label_box(at, size, bounds, Some(l));
+    let mut r = label_box(at, size, bounds, None);
+    // Each move takes it under (or, at the bottom, over) the box it covers; a place found within
+    // one move per box, or none.
+    for _ in 0..=placed.len() + 1 {
+        let Some(o) = legend.into_iter().chain(placed.iter().copied()).find(|o| o.intersects(r)) else { return Some(r) };
+        let under = r.translate(vec2(0.0, o.bottom() + LABEL_PAD.y - r.top()));
+        r = if under.bottom() <= bounds.bottom() { under } else { r.translate(vec2(0.0, o.top() - LABEL_PAD.y - r.bottom())) };
+        if r.top() < bounds.top() {
+            return None;
+        }
     }
-    let covers = |other: Option<Rect>| other.is_some_and(|o| o.intersects(r));
-    (!covers(legend) && !covers(placed)).then_some(r)
+    None
 }
 
-/// A box of `text` beside the screen point `at`, clear of the legend and of `placed`
+/// A box of `text` beside the screen point `at`, clear of the legend and of the labels `placed`
 /// ([`clear_label`]); returns where it went, or None when it was left out.
-fn label_beside(
-    painter: &egui::Painter,
-    at: Pos2,
-    text: String,
-    bounds: Rect,
-    legend: Option<Rect>,
-    placed: Option<Rect>,
-    t: &Tokens,
-) -> Option<Rect> {
+fn label_beside(painter: &egui::Painter, at: Pos2, text: String, bounds: Rect, legend: Option<Rect>, placed: &[Rect], t: &Tokens) -> Option<Rect> {
     let k = solidcraft_theme::Tokens::get();
     let galley = painter.layout_no_wrap(text, FontId::proportional(k.font_body), t.overlay_text);
     let box_rect = clear_label(at, galley.size() + 2.0 * LABEL_PAD, bounds, legend, placed)?;
@@ -341,14 +337,15 @@ fn label_beside(
     Some(box_rect)
 }
 
-/// Markers with their values at the contour's largest and smallest value.
-fn markers(app: &ModelApp, plot: &Plot, painter: &egui::Painter, rect: Rect, legend: Option<Rect>, t: &Tokens) {
-    let Some(l) = &plot.contour else { return };
+/// Markers with their values at the contour's largest and smallest value; returns where their
+/// labels went.
+fn markers(app: &ModelApp, plot: &Plot, painter: &egui::Painter, rect: Rect, legend: Option<Rect>, t: &Tokens) -> Vec<Rect> {
+    let mut placed = Vec::new();
+    let Some(l) = &plot.contour else { return placed };
     let unit = l.field.unit(&plot.result, &plot.units);
     let scale = l.max.1.abs().max(l.min.1.abs());
     let (high, low) = (t.contour[4], t.contour[0]);
     // The Min label keeps off the Max label when the two cells are close on screen.
-    let mut placed = None;
     for (what, (node, v), color) in [("Max", l.max, high), ("Min", l.min, low)] {
         let Some(at) = plot.extreme_position(node).and_then(|w| crate::viewport::to_screen(app, w)) else { continue };
         if !rect.contains(at) || legend.is_some_and(|l| l.contains(at)) {
@@ -356,8 +353,9 @@ fn markers(app: &ModelApp, plot: &Plot, painter: &egui::Painter, rect: Rect, leg
         }
         painter.circle(at, 5.0, color, Stroke::new(2.0, t.overlay_text));
         let text = format!("{what} {}", with_unit(number_in(v, scale), unit.as_deref()));
-        placed = label_beside(painter, at, text, rect, legend, placed, t).or(placed);
+        placed.extend(label_beside(painter, at, text, rect, legend, &placed, t));
     }
+    placed
 }
 
 /// `results.contour`'s parameters that change one end of the legend's range (`key` `min` or
@@ -369,15 +367,16 @@ fn legend_params(plot: &Plot, key: &str, value: Value) -> Value {
     json!({"step": plot.view.step, "field": field, "range": range})
 }
 
-/// The probed node: a marker on it and its values beside it, inside the viewport.
-fn probe(app: &ModelApp, plot: &Plot, painter: &egui::Painter, rect: Rect, legend: Option<Rect>, t: &Tokens) {
+/// The probed node: a marker on it and its values beside it, inside the viewport and clear of
+/// the extremes' labels `placed`.
+fn probe(app: &ModelApp, plot: &Plot, painter: &egui::Painter, rect: Rect, legend: Option<Rect>, placed: &[Rect], t: &Tokens) {
     let Some(p) = app.probe.as_ref().filter(|p| p.step == plot.view.step && p.mode == plot.pick.mode && p.frame == plot.pick.frame) else { return };
     let Some(at) = plot.node_position(p.node).and_then(|w| crate::viewport::to_screen(app, w)) else { return };
     if legend.is_some_and(|l| l.contains(at)) {
         return;
     }
     painter.circle(at, 5.0, t.accent, Stroke::new(2.0, t.overlay_text));
-    label_beside(painter, at, p.lines.join("\n"), rect, legend, None, t);
+    label_beside(painter, at, p.lines.join("\n"), rect, legend, placed, t);
 }
 
 /// The results controls (the context panel's Results section): step, contour field,
@@ -1429,15 +1428,27 @@ mod tests {
         let bounds = Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 400.0));
         let legend = Rect::from_min_max(pos2(12.0, 12.0), pos2(200.0, 300.0));
         let size = vec2(80.0, 20.0);
-        assert_eq!(clear_label(pos2(100.0, 100.0), size, bounds, Some(legend), None), None, "under the legend");
-        assert_eq!(clear_label(pos2(220.0, 100.0), size, bounds, None, None), Some(label_box(pos2(220.0, 100.0), size, bounds, None)));
+        assert_eq!(clear_label(pos2(100.0, 100.0), size, bounds, Some(legend), &[]), None, "under the legend");
+        assert_eq!(clear_label(pos2(220.0, 100.0), size, bounds, None, &[]), Some(label_box(pos2(220.0, 100.0), size, bounds, None)));
         // Near the right edge the label goes left, over the legend: it moves under the legend.
-        let r = clear_label(pos2(210.0, 150.0), size, bounds, Some(legend), None).expect("a free place");
+        let r = clear_label(pos2(210.0, 150.0), size, bounds, Some(legend), &[]).expect("a free place");
         assert!(!r.intersects(legend) && r.top() >= legend.bottom(), "{r:?}");
         // A second label keeps off the first and off the legend, or is left out.
-        if let Some(second) = clear_label(pos2(212.0, 152.0), size, bounds, Some(legend), Some(r)) {
+        if let Some(second) = clear_label(pos2(212.0, 152.0), size, bounds, Some(legend), &[r]) {
             assert!(!second.intersects(legend) && !second.intersects(r), "{second:?}");
         }
+    }
+
+    /// The probe's label keeps off the Max and Min labels already drawn (A4-7): it moves under
+    /// or over them, or is left out when no clear place is left.
+    #[test]
+    fn the_probe_label_keeps_off_the_extremes() {
+        let bounds = Rect::from_min_max(pos2(0.0, 0.0), pos2(400.0, 400.0));
+        let size = vec2(80.0, 20.0);
+        let max = label_box(pos2(100.0, 200.0), size, bounds, None);
+        let min = label_box(pos2(100.0, 230.0), size, bounds, Some(max));
+        let probe = clear_label(pos2(102.0, 201.0), size, bounds, None, &[max, min]).expect("a free place");
+        assert!(!probe.intersects(max) && !probe.intersects(min), "{probe:?} over {max:?} or {min:?}");
     }
 
     /// A3-14: the Results rows share one control column: the drop-downs and the number fields
