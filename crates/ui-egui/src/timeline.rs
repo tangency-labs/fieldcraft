@@ -1,15 +1,19 @@
 //! The timeline (bottom): the command journal in order, as SolidCraft shows its features. Runs of
-//! the same command make one item with a count; the marker stands after the current state, and
-//! undone commands follow it greyed, ready to redo. Clicking an item (or the transport buttons)
-//! undoes or redoes up to it with `edit.undo` / `edit.redo`, as dragging the marker does; commands
-//! older than the undo history cannot be reached and say so.
+//! the same command fold into one chip with their count, which a click opens to show each command
+//! (as SolidCraft folds a long run of one component's features); the marker stands after the
+//! current state, and undone commands follow it greyed, ready to redo. Clicking a command (or the
+//! transport buttons) undoes or redoes up to it with `edit.undo` / `edit.redo`, as dragging the
+//! marker does; commands older than the undo history cannot be reached and say so.
 //!
-//! The bar is the kit's History bar (`solidcraft_ui_kit::history_bar`), as SolidCraft draws its
-//! own; FieldCraft keeps its journal and undo behind it.
+//! The bar is the kit's History bar (`solidcraft_ui_kit::history_bar`) and its run chip the kit's
+//! `HistoryGroupChip`, as SolidCraft draws its own; FieldCraft keeps its journal and undo behind
+//! them.
+
+use std::collections::BTreeSet;
 
 use egui::{Align2, Color32, FontId, Rect, Stroke, pos2, vec2};
 use serde_json::{Value, json};
-use solidcraft_ui_kit::{self as kit, history_bar};
+use solidcraft_ui_kit::{self as kit, BackingTooltipExt as _, history_bar};
 
 use crate::ModelApp;
 use crate::theme::Tokens;
@@ -25,13 +29,19 @@ pub struct Item {
     /// Journal positions: after this item the journal holds `end` commands.
     pub start: usize,
     pub end: usize,
-    /// The first command's parameters (the tooltip).
-    pub params: Value,
+    /// Each command's parameters, in order (the tooltips).
+    pub params: Vec<Value>,
 }
 
 impl Item {
     pub fn count(&self) -> usize {
         self.end - self.start
+    }
+
+    /// The command at journal position `at` of this run, as an item of its own.
+    fn one(&self, at: usize) -> Item {
+        let params = at.checked_sub(self.start).and_then(|j| self.params.get(j)).cloned().into_iter().collect();
+        Item { command: self.command.clone(), start: at, end: at + 1, params }
     }
 }
 
@@ -58,8 +68,11 @@ pub fn items(app: &ModelApp) -> (Vec<Item>, usize) {
     for (i, (command, params)) in all.enumerate() {
         // A run never crosses the current position.
         match out.last_mut() {
-            Some(last) if last.command == *command && last.end == i && i != done => last.end = i + 1,
-            _ => out.push(Item { command: command.clone(), start: i, end: i + 1, params: params.clone() }),
+            Some(last) if last.command == *command && last.end == i && i != done => {
+                last.end = i + 1;
+                last.params.push(params.clone());
+            }
+            _ => out.push(Item { command: command.clone(), start: i, end: i + 1, params: vec![params.clone()] }),
         }
     }
     (out, done)
@@ -83,7 +96,7 @@ impl ModelApp {
 /// What an item's commands did, in words: "Delete reference point RP1", "Add Node × 3", "Open
 /// Sample cantilever". Never the parameters' JSON.
 fn describe(item: &Item) -> String {
-    let name = item.params.get("name").and_then(Value::as_str);
+    let name = item.params.first().and_then(|p| p.get("name")).and_then(Value::as_str);
     let def = crate::browser::Def::ALL
         .into_iter()
         .find_map(|kind| ["create", "edit", "delete"].into_iter().find(|verb| kind.command(verb) == item.command).map(|verb| (kind, verb)));
@@ -146,59 +159,154 @@ fn tip(item: &Item, reachable: bool) -> String {
 const HANDLES: history_bar::Handles<'static> =
     history_bar::Handles { grip: "timeline:grip", marker: "timeline:marker", step: "timeline:step:", controls: "timeline:" };
 
-/// The journal's items as the kit's History strip lays them out: one step each, the badge of a
-/// deletion or an edit and a run's count drawn over its chip.
+/// What the strip shows, in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Entry {
+    /// One command: the item at `item`, the command at journal position `at` of it.
+    Step { item: usize, at: usize },
+    /// A run of one command (the item at `item`) as one chip; open, its commands follow one by
+    /// one, in a tray up to its [`Entry::End`].
+    Run { item: usize, open: bool },
+    /// The end of an open run's tray.
+    End,
+}
+
+/// The strip's entries for `list`: a single command is a step; a run of one command is a chip,
+/// followed by each of its commands while it is open (`open` holds the first journal position of
+/// each open run).
+fn entries(list: &[Item], open: &BTreeSet<usize>) -> Vec<Entry> {
+    let mut out = Vec::with_capacity(list.len());
+    for (item, run) in list.iter().enumerate() {
+        if run.count() == 1 {
+            out.push(Entry::Step { item, at: run.start });
+            continue;
+        }
+        let is_open = open.contains(&run.start);
+        out.push(Entry::Run { item, open: is_open });
+        if is_open {
+            out.extend((run.start..run.end).map(|at| Entry::Step { item, at }));
+            out.push(Entry::End);
+        }
+    }
+    out
+}
+
+/// Where the strip keeps which runs are open: the strip's own view state, for the session.
+fn open_runs_id() -> egui::Id {
+    egui::Id::unique("fc_timeline_open_runs")
+}
+
+/// The journal's items as the kit's History strip lays them out. Its slots are journal
+/// positions: a step's id is its command's position, and a run's chip covers its commands'.
 struct Steps<'a> {
     list: &'a [Item],
+    entries: &'a [Entry],
     done: usize,
     oldest: usize,
     t: &'a Tokens,
+    accent: solidcraft_theme::TabAccent,
+    /// The run (its first position) whose chip was clicked: it opens or folds.
+    toggle: Option<usize>,
+}
+
+impl Steps<'_> {
+    fn step(&self, strip: &mut history_bar::Strip<'_, '_>, item: &Item) {
+        let reachable = item.end >= self.oldest;
+        let label = describe(item);
+        let tip = || tip(item, reachable);
+        let step = history_bar::Step {
+            id: item.start as u64,
+            slot: item.start,
+            label: &label,
+            icon: icon(item),
+            icon_accent: None,
+            state: history_bar::StepState { rolled_back: item.start >= self.done, suppressed: !reachable, ..Default::default() },
+            error: false,
+            warning: false,
+            ink: None,
+            tip: &tip,
+        };
+        let chip = strip.step(&step);
+        if strip.ui().is_rect_visible(chip)
+            && let Some(b) = badge(&item.command)
+        {
+            paint_badge(strip.painter(), chip, b, self.t);
+        }
+    }
+
+    /// A run's chip: the kit's group chip (its icon, name and count); a click opens or folds it.
+    fn run(&mut self, strip: &mut history_bar::Strip<'_, '_>, item: &Item, open: bool) {
+        let (done, oldest, t, accent) = (self.done, self.oldest, self.t, self.accent);
+        let mut clicked = false;
+        strip.chip(item.start, item.end, open, 0, |ui, p, at| {
+            let chip = kit::HistoryGroupChip {
+                icon: icon(item),
+                name: crate::command_label(&item.command),
+                count: item.count(),
+                open,
+                selected: false,
+                hovered: false,
+                dim: item.start >= done,
+                error: false,
+                warning: false,
+                accent,
+            };
+            let rect = Rect::from_min_size(at, chip.size(p));
+            let response = ui.interact(rect, ui.scope_id().with(("fc_timeline_run", item.start)), egui::Sense::click());
+            solidcraft_ui_registry::publish_handle(&format!("timeline:run:{}", item.start), rect.center());
+            if ui.is_rect_visible(rect) {
+                chip.paint(p, rect, response.hover_pos());
+                if let Some(b) = badge(&item.command) {
+                    paint_badge(p, rect, b, t);
+                }
+            }
+            let what = if open { "click to fold them" } else { "click to show each one" };
+            let mut text = format!("{}: {} commands, {what}", describe(item), item.count());
+            if item.end < oldest {
+                text.push_str("\nOlder than the undo history");
+            }
+            clicked = response.on_hover_cursor(egui::CursorIcon::PointingHand).backing_on_hover_text(text).clicked();
+            rect.width()
+        });
+        if clicked {
+            self.toggle = Some(item.start);
+        }
+    }
 }
 
 impl history_bar::Contents for Steps<'_> {
     fn entries(&mut self, strip: &mut history_bar::Strip<'_, '_>) {
-        for (slot, item) in self.list.iter().enumerate() {
-            let reachable = item.end >= self.oldest;
-            let label = describe(item);
-            let tip = || tip(item, reachable);
-            let step = history_bar::Step {
-                id: slot as u64,
-                slot,
-                label: &label,
-                icon: fieldcraft_engine::catalogue::entry_of(&item.command).map_or("ui.views", |c| c.id),
-                icon_accent: None,
-                state: history_bar::StepState { rolled_back: item.start >= self.done, suppressed: !reachable, ..Default::default() },
-                error: false,
-                warning: false,
-                ink: None,
-                tip: &tip,
-            };
-            let chip = strip.step(&step);
-            if !strip.ui().is_rect_visible(chip) {
-                continue;
-            }
-            let p = strip.painter().clone();
-            if let Some(b) = badge(&item.command) {
-                paint_badge(&p, chip, b, self.t);
-            }
-            if item.count() > 1 {
-                let k = solidcraft_theme::Tokens::get();
-                let text = p.layout_no_wrap(format!("{}", item.count()), FontId::proportional(k.font_badge), self.t.text);
-                let pad = vec2(k.space_3, k.space_2);
-                let b = Rect::from_min_size(chip.right_bottom() - text.size() - pad, text.size() + pad);
-                p.rect_filled(b, k.radius_sm, self.t.panel_header);
-                p.galley(b.min + pad / 2.0, text, self.t.text);
+        for entry in self.entries {
+            match *entry {
+                Entry::Step { item, at } => {
+                    if let Some(run) = self.list.get(item) {
+                        self.step(strip, &run.one(at));
+                    }
+                }
+                Entry::Run { item, open } => {
+                    if let Some(run) = self.list.get(item) {
+                        self.run(strip, run, open);
+                    }
+                }
+                Entry::End => strip.end_tray(),
             }
         }
     }
 }
 
+/// An item's icon: its command's catalogue entry's.
+fn icon(item: &Item) -> &'static str {
+    fieldcraft_engine::catalogue::entry_of(&item.command).map_or("ui.views", |c| c.id)
+}
+
 /// The History bar (bottom): the kit's header (grip, title and the History controls) and strip
-/// (a chip per item, the marker after the current state). Its controls, a click on an item and a
-/// dragged marker undo or redo through [`ModelApp::roll_to`]; the journal cannot be reordered.
+/// (a chip per command or run, the marker after the current state). Its controls, a click on a
+/// command and a dragged marker undo or redo through [`ModelApp::roll_to`]; the journal cannot be
+/// reordered.
 pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
     let mut roll: Option<usize> = None;
+    let mut toggle: Option<usize> = None;
     // History is a workspace panel surface along the bottom edge.
     let host = kit::Container::new(ui.ctx(), kit::Surface::Panel);
     let panel = host.edge("fc_timeline", kit::Edge::Bottom).exact_size(HEIGHT).show_separator_line(false);
@@ -218,8 +326,9 @@ pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
             play_labels: kit::PlayLabels { play: "Play", stop: "Stop" },
             accent,
             drag_accent: accent,
-            marker: list.iter().position(|i| i.start >= done).unwrap_or(list.len()),
-            steps: list.len(),
+            // Slots are journal positions: the marker stands after the commands done.
+            marker: done,
+            steps: list.last().map_or(0, |i| i.end),
             floating: false,
             // The journal is a record of what was done, in order: its steps never move.
             reorder: false,
@@ -238,22 +347,33 @@ pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
             );
         } else {
             let strip = Rect::from_min_max(pos2(head.x, r.top()), r.right_bottom());
-            let mut steps = Steps { list: &list, done, oldest, t: &t };
+            let open: BTreeSet<usize> = ui.data(|d| d.get_temp(open_runs_id())).unwrap_or_default();
+            let shown = entries(&list, &open);
+            let mut steps = Steps { list: &list, entries: &shown, done, oldest, t: &t, accent, toggle: None };
             actions.extend(history_bar::strip(ui, &bar, r, strip, "fc_timeline_strip", &mut steps).actions);
+            toggle = steps.toggle;
         }
-        let start = |slot: usize| list.get(slot).map_or(done + redo, |i| i.start);
         for action in actions {
             roll = match action {
                 history_bar::Action::Seek(history_bar::Seek::First) => Some(oldest),
                 history_bar::Action::Seek(history_bar::Seek::Back) => Some(done.saturating_sub(1)),
                 history_bar::Action::Seek(history_bar::Seek::Forward) => Some(done + 1),
                 history_bar::Action::Seek(history_bar::Seek::Last) => Some(done + redo),
-                history_bar::Action::Seek(history_bar::Seek::Slot { slot, .. }) => Some(start(slot)),
-                history_bar::Action::Select { step, .. } => list.get(step as usize).filter(|i| i.end >= oldest).map(|i| i.end),
+                history_bar::Action::Seek(history_bar::Seek::Slot { slot, .. }) => Some(slot),
+                // A command's chip rolls the model to just after it, when the history reaches it.
+                history_bar::Action::Select { step, .. } => usize::try_from(step).ok().map(|at| at + 1).filter(|end| *end >= oldest),
                 _ => roll,
             };
         }
     });
+    if let Some(start) = toggle {
+        ui.data_mut(|d| {
+            let open = d.get_temp_mut_or_default::<BTreeSet<usize>>(open_runs_id());
+            if !open.remove(&start) {
+                open.insert(start);
+            }
+        });
+    }
     if let Some(target) = roll {
         app.roll_to(target);
     }
@@ -296,7 +416,7 @@ mod tests {
     /// a tooltip in words.
     #[test]
     fn deletions_and_edits_read_apart_from_creations() {
-        let item = |command: &str, params: Value| Item { command: command.into(), start: 0, end: 1, params };
+        let item = |command: &str, params: Value| Item { command: command.into(), start: 0, end: 1, params: vec![params] };
         let create = item("model.reference_point.create", json!({"name": "RP1", "xyz": [0, 0, 0]}));
         let delete = item("model.reference_point.delete", json!({"name": "RP1"}));
         assert_eq!((badge(&create.command), badge(&delete.command)), (None, Some(Badge::Delete)));
@@ -306,5 +426,74 @@ mod tests {
         assert!(!tip(&delete, true).contains('{'));
         let nodes = Item { end: 3, ..item("mesh.node.add", json!({"label": 1, "xyz": [0, 0, 0]})) };
         assert_eq!(describe(&nodes), "Add Node × 3");
+    }
+
+    /// A run of one command is the kit's group chip covering its commands' slots, and opened it
+    /// lists each command after it, in a tray, as SolidCraft folds a run of features.
+    #[test]
+    fn runs_fold_into_a_group_chip_that_opens_to_each_command() {
+        let mut app = ModelApp::new(Session::default());
+        for l in 1..=3 {
+            app.run("mesh.node.add", json!({"label": l, "xyz": [l, 0, 0]})).unwrap();
+        }
+        app.run(
+            "model.material.create",
+            json!({"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}, "density": 7.85e-9}),
+        )
+        .unwrap();
+        let (list, _) = items(&app);
+        let closed = entries(&list, &BTreeSet::new());
+        assert_eq!(closed, [Entry::Run { item: 0, open: false }, Entry::Step { item: 1, at: 3 }]);
+        let open = entries(&list, &BTreeSet::from([0]));
+        assert_eq!(
+            open,
+            [
+                Entry::Run { item: 0, open: true },
+                Entry::Step { item: 0, at: 0 },
+                Entry::Step { item: 0, at: 1 },
+                Entry::Step { item: 0, at: 2 },
+                Entry::End,
+                Entry::Step { item: 1, at: 3 },
+            ]
+        );
+        // Each command of an open run reads as itself.
+        let second = list[0].one(1);
+        assert_eq!((second.start, second.end, second.params[0]["label"].as_i64()), (1, 2, Some(2)));
+        assert_eq!(describe(&second), "Add Node");
+    }
+
+    /// A click on a run's chip opens it to each command, and a second click folds it.
+    #[test]
+    fn a_click_on_a_run_opens_and_folds_it() {
+        let mut app = ModelApp::new(Session::default());
+        for l in 1..=3 {
+            app.run("mesh.node.add", json!({"label": l, "xyz": [l, 0, 0]})).unwrap();
+        }
+        let ctx = egui::Context::default();
+        let size = vec2(1400.0, 900.0);
+        let draw = |app: &mut ModelApp, events: Vec<egui::Event>| {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)), events, ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+            out.textures_delta.clear();
+        };
+        let click = |app: &mut ModelApp, at: egui::Pos2| {
+            let press =
+                |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            draw(app, vec![egui::Event::PointerMoved(at)]);
+            draw(app, vec![press(true)]);
+            draw(app, vec![press(false)]);
+            draw(app, Vec::new());
+        };
+        let open = || ctx.data(|d| d.get_temp::<BTreeSet<usize>>(open_runs_id())).unwrap_or_default();
+        for _ in 0..3 {
+            draw(&mut app, Vec::new());
+        }
+        let chip = solidcraft_ui_registry::handle_at("timeline:run:0").expect("the run's chip");
+        click(&mut app, chip);
+        assert_eq!(open(), BTreeSet::from([0]));
+        assert_eq!(solidcraft_ui_registry::handles("timeline:step:Add Node").len(), 3, "each command shown");
+        click(&mut app, chip);
+        assert!(open().is_empty());
+        assert_eq!(app.session.journal.len(), 3, "opening a run rolls nothing back");
     }
 }
