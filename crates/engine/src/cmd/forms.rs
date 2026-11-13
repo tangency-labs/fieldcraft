@@ -1919,7 +1919,7 @@ pub const NODE_MOVE: &[Field] = &[
 ];
 
 pub const NODE_RELAX_APPLY: &[Field] = &[
-    text("field", "Field").req().help("The relaxation field kept by Relax Nodes."),
+    reference("field", "Field", C::Relaxation).req().help("The relaxation field kept by Relax Nodes."),
     references("bodies", "Bodies", C::Body).help("Only the nodes of these bodies.").hint("the field's bodies"),
     range("polish", "Polish", D::None, 0.0, 1.0).help("Strength of one guarded smoothing sweep after the field is applied; 0 for none.").def("0.3"),
 ];
@@ -2263,10 +2263,10 @@ pub const IMAGE_SAVE: &[Field] = &[
         .help("ui.camera's parameters: yaw and pitch in degrees, distance and target in the display units; the viewport's camera when empty.")
         .hint(r#"{"yaw": -70, "pitch": 18, "fit": true}"#),
 ];
-pub const VIEW_NAME: &[Field] = &[text("name", "View").help("The saved view.").req()];
+pub const VIEW_NAME: &[Field] = &[reference("name", "View", C::SavedView).help("The saved view.").req()];
 pub const RENDER_SAVE: &[Field] = &[
     text("name", "Name").help("The render's name; a render of that name is replaced.").req(),
-    text("view", "View").help("The saved view the clip shows (view.save keeps one).").req(),
+    reference("view", "View", C::SavedView).help("The saved view the clip shows (view.save keeps one).").req(),
     reference("step", "Step", C::Step).help("The step whose frames it plays.").hint("the view's step"),
     json("frames", "Frames").help("\"all\", or [from, to]: the frames drawn, from 0, inclusive.").hint("\"all\""),
     int("fps", "Frames per second", 1, 120).help("The clip's frame rate.").def("12"),
@@ -2289,9 +2289,9 @@ pub const RENDER_SAVE: &[Field] = &[
         .help("Numbered PNG pictures and the ffmpeg command line that makes a video of them; FieldCraft bundles no video encoder.")
         .def("\"png-sequence\""),
 ];
-pub const RENDER_NAME: &[Field] = &[text("name", "Render").help("The saved render.").req()];
+pub const RENDER_NAME: &[Field] = &[reference("name", "Render", C::Render).help("The saved render.").req()];
 pub const EXPORT_ANIMATION: &[Field] = &[
-    text("render", "Render").help("The saved render to draw (results.render.save keeps one).").req(),
+    reference("render", "Render", C::Render).help("The saved render to draw (results.render.save keeps one).").req(),
     path("path", "File", true)
         .help("The clip to make: the pictures go beside it (clip_00000.png, …), with the ffmpeg command line that encodes them as it.")
         .req(),
@@ -2905,7 +2905,7 @@ pub const INITIAL_FIELD_MAP: &[Field] = &[
         .help("How far outside the source mesh a node may lie and still take the value at the closest point.")
         .hint("a quarter of the source's element size"),
 ];
-pub const INITIAL_FIELD_DELETE: &[Field] = &[text("name", "Initial field").req().help("The initial field to remove, by name.")];
+pub const INITIAL_FIELD_DELETE: &[Field] = &[reference("name", "Initial field", C::InitialField).req().help("The initial field to remove, by name.")];
 
 pub const REACTIONS: &[Field] = &[
     SOLVED,
@@ -3242,6 +3242,23 @@ mod tests {
         assert!(matches!(field_of("results.path", "field").kind, Kind::Choice(c) if c.len() == ids.len()));
         assert!(!problems(RESULTS_PATH, &json!({"field": "nope", "points": [[0, 0, 0], [1, 0, 0]]})).is_empty());
         assert!(matches!(field_of("results.render.save", "step").kind, Kind::Ref(C::Step)));
+    }
+
+    /// A1-10: a field naming a saved view, render, relaxation field or initial field picks it
+    /// from the model's list.
+    #[test]
+    fn names_of_kept_items_are_drop_downs() {
+        for (command, key, c) in [
+            ("view.restore", "name", C::SavedView),
+            ("view.delete", "name", C::SavedView),
+            ("results.render.save", "view", C::SavedView),
+            ("results.render.delete", "name", C::Render),
+            ("results.export.animation", "render", C::Render),
+            ("mesh.node.relax.apply", "field", C::Relaxation),
+            ("model.initial_field.delete", "name", C::InitialField),
+        ] {
+            assert!(matches!(field_of(command, key).kind, Kind::Ref(r) if r == c), "{command} {key}");
+        }
     }
 
     /// Unit overrides are one unit per quantity, every quantity listed by its name.
