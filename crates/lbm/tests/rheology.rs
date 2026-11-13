@@ -291,3 +291,96 @@ fn a_characteristic_tau_below_the_floor_is_refused_only_when_clamping_cannot_hel
     let e = Setup::new(&m, None, &[], &fieldcraft_lbm::Limits::default()).unwrap_err().to_string();
     assert!(e.contains("Carreau–Yasuda") && e.contains("every shear rate"), "{e}");
 }
+
+/// A Newtonian fluid with a viscosity table takes each cell's temperature: held at a uniform
+/// temperature it is the Newtonian fluid of the table's viscosity there (the n = 1 power law,
+/// same collision path), to round-off; a hotter one, thinner in the table, flows faster. Without
+/// heat in the fluid the constant holds, with a warning.
+#[test]
+fn a_viscosity_table_follows_the_temperature() {
+    let table = fieldcraft_model::TemperatureTable(vec![[380.0, 0.3], [400.0, 0.2], [420.0, 0.15]]);
+    let tabled = |kelvin: Option<f64>, procedure: fieldcraft_model::Procedure| {
+        let mut m = channel_model(Fluid::Newtonian { viscosity: 0.2 }, kelvin, 8.0 * 0.15 * U_MAX / (H * H), 16, procedure).unwrap();
+        let mut fluid = m.material("Fluid").unwrap().clone();
+        fluid.temperature_dependent = Some(fieldcraft_model::TemperatureDependent { viscosity: Some(table.clone()), ..Default::default() });
+        m.replace_material("Fluid", fluid).unwrap();
+        m
+    };
+    let g = 8.0 * 0.15 * U_MAX / (H * H);
+    let time = 8.0 * H * H * 6.0;
+    let dx = H / 16.0;
+    let run = |m: &Model| {
+        let (setup, mut flow) = prepare(m, &[]);
+        run_all(&setup, &mut flow);
+        (profile(&setup, &flow), setup)
+    };
+    for kelvin in [390.0, 410.0] {
+        let mu = table.value(kelvin);
+        let (u, setup) = run(&tabled(Some(kelvin), collide(time, dx * dx, None, Collision::Trt)));
+        assert!(setup.rheology.as_ref().is_some_and(|r| r.table.is_some()));
+        let reference = Fluid::PowerLaw { consistency: mu, index: 1.0, reference_shear_rate: None };
+        let (rs, rf) = channel_at(reference, Some(kelvin), g, 16, time, Collision::Trt);
+        let expected = profile(&rs, &rf);
+        let peak = expected.iter().copied().fold(0.0, f64::max);
+        let d = max_diff(&u, &expected) / peak;
+        println!("viscosity table at {kelvin} K (μ = {mu}): {d:.2e} of the peak from the constant fluid (peak {peak:.4})");
+        assert!(peak > 0.3 * U_MAX && d < 1e-10, "{peak} {d}");
+    }
+    let peak = |kelvin| run(&tabled(Some(kelvin), collide(time, dx * dx, None, Collision::Trt))).0.iter().copied().fold(0.0, f64::max);
+    assert!(peak(410.0) > 1.2 * peak(390.0));
+    // No heat in the fluid: the constant viscosity, said so.
+    let m = tabled(None, step(1.0, 1.0 / 256.0, None));
+    let setup = Setup::new(&m, None, &[], &fieldcraft_lbm::Limits::default()).unwrap();
+    assert!(setup.rheology.is_none());
+    assert!(setup.warnings.iter().any(|w| w.contains("viscosity is held at its constant")), "{:?}", setup.warnings);
+    // A table thinner somewhere than the grid resolves is refused as a constant that thin would
+    // be, although its constant (0.2) is resolved.
+    let mut thin = tabled(Some(400.0), collide(time, dx * dx, None, Collision::Trt));
+    let mut fluid = thin.material("Fluid").unwrap().clone();
+    fluid.temperature_dependent = Some(fieldcraft_model::TemperatureDependent {
+        viscosity: Some(fieldcraft_model::TemperatureTable(vec![[380.0, 0.3], [420.0, 1e-6]])),
+        ..Default::default()
+    });
+    thin.replace_material("Fluid", fluid).unwrap();
+    let e = Setup::new(&thin, None, &[], &fieldcraft_lbm::Limits::default()).unwrap_err().to_string();
+    assert!(e.contains("thinnest viscosity"), "{e}");
+}
+
+/// With a viscosity table, the solver's own time step and the velocity scale of an
+/// acceleration-driven flow come from the table's thinnest viscosity, not the constant: a table
+/// fifty times thinner than its constant somewhere still runs at the step the solver chose,
+/// every cell's τ⁺ above the floor, and the Mach check sees the faster flow.
+#[test]
+fn a_viscosity_table_sizes_the_automatic_step_from_its_thinnest_viscosity() {
+    let (g, cells) = (8.0 * 0.015 * U_MAX / (H * H), 16);
+    let auto = fieldcraft_model::Procedure::Fluid {
+        domain: "Flow".into(),
+        end_time: Some(1.0),
+        steps: None,
+        time_step: None,
+        frames: 2,
+        magic: None,
+        sigma: None,
+        collision: Some(Collision::Trt),
+        turbulence: None,
+        steady: None,
+    };
+    let mut m = channel_model(Fluid::Newtonian { viscosity: 0.2 }, Some(400.0), g, cells, auto).unwrap();
+    let mut fluid = m.material("Fluid").unwrap().clone();
+    fluid.temperature_dependent = Some(fieldcraft_model::TemperatureDependent {
+        viscosity: Some(fieldcraft_model::TemperatureTable(vec![[380.0, 0.3], [420.0, 0.004]])),
+        ..Default::default()
+    });
+    m.replace_material("Fluid", fluid).unwrap();
+    let setup = Setup::new(&m, None, &[], &fieldcraft_lbm::Limits::default()).unwrap();
+    let r = setup.rheology.as_ref().unwrap();
+    let thinnest = 0.5 + 3.0 * r.table.as_ref().unwrap().range()[0] * r.viscosity_scale;
+    assert!(thinnest >= fieldcraft_lbm::setup::MIN_TAU, "{thinnest}");
+    // The box is one cell thick along x, the smallest extent the velocity scale takes.
+    let dx = H / cells as f64;
+    let at = |nu: f64| (g * dx * dx / (8.0 * nu)).min((2.0 * g * H).sqrt());
+    assert_eq!(setup.velocity, at(0.004));
+    assert!(setup.velocity > at(0.2));
+    let constant_step = (fieldcraft_lbm::setup::AUTO_TAU_MAX - 0.5) * dx * dx / (3.0 * 0.2);
+    assert!(setup.time_step > 10.0 * constant_step, "{} vs {constant_step}", setup.time_step);
+}

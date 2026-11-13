@@ -739,3 +739,25 @@ fn a_radiating_slab_balances_conduction_and_radiation() {
         assert!((hot + cold + glow).abs() < 1e-6 * glow, "{n}: {hot} {cold} {glow}");
     }
 }
+
+/// A conducting solid whose material follows the temperature (a library alloy's conductivity
+/// and specific heat tables) conducts with its constants, and the setup says so.
+#[test]
+fn a_conducting_solid_with_temperature_tables_holds_its_constants_and_says_so() {
+    let (mut m, obstacles) = heated_block(2.0, 1.0, None);
+    let plain = fieldcraft_lbm::Setup::new(&m, None, &obstacles, &fieldcraft_lbm::Limits::default()).unwrap();
+    let mut solid = m.material("Solid").unwrap().clone();
+    let flat = |v: f64| Some(fieldcraft_model::TemperatureTable(vec![[0.0, v], [1000.0, 2.0 * v]]));
+    let k = match solid.thermal.as_ref().unwrap().conductivity.unwrap() {
+        fieldcraft_model::Directional::Isotropic(k) => k,
+        fieldcraft_model::Directional::Orthotropic(k) => k[0],
+    };
+    solid.temperature_dependent =
+        Some(fieldcraft_model::TemperatureDependent { conductivity: flat(k), specific_heat: flat(1.0), ..Default::default() });
+    m.replace_material("Solid", solid).unwrap();
+    let setup = fieldcraft_lbm::Setup::new(&m, None, &obstacles, &fieldcraft_lbm::Limits::default()).unwrap();
+    let warning = setup.warnings.iter().find(|w| w.contains("conducting solid `Block`")).unwrap();
+    assert!(warning.contains("conductivity, specific heat at their constant"), "{warning}");
+    let (a, b) = (&plain.thermal.as_ref().unwrap().solids[0], &setup.thermal.as_ref().unwrap().solids[0]);
+    assert_eq!((a.conductivity, a.capacity), (b.conductivity, b.capacity));
+}

@@ -47,8 +47,12 @@ library update never changes its results) and takes each curve's value at `tempe
 (default 20 C) as its constant. The heat transfer solver follows the conductivity, specific
 heat and density curves: each element takes its properties at its mean temperature, iterated to
 convergence (see [heat transfer](heat-transfer.md)), with a warning where the temperatures leave
-a curve. The other solvers and the deck writers use the constants. A `temperature` outside a
-curve takes its end value and the reply warns.
+a curve. A CPU Newtonian fluid step with heat (`thermal`), without turbulence or porous zones,
+follows a viscosity curve cell by cell; the fluid's density, conductivity and specific heat,
+and the curves of conducting solids in the flow, stay at
+their constants there, said in the run's warnings. The structural and explicit solvers and the
+deck writers use the constants. A `temperature` outside a curve takes its end value and the
+reply warns.
 
 Every curve cites a document a reader can open and check. Aluminium has no curves yet: the
 EN 1999-1-2 design equations are not reproduced in any open source we could check. Liquid water is
