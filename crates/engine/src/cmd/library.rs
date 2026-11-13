@@ -19,7 +19,7 @@ pub const LIST: CommandSpec = CommandSpec {
 pub const ADD: CommandSpec = CommandSpec {
     id: "model.material.library.add",
     label: "Add Library Material",
-    params: r#"{"entry": "EN10025-S235|EN10025-S355|EN10088-14301|EN10088-14401|AA6061-T6|AA6082-T6|AA7075-T6|AA2024-T3|Ti6Al4V-annealed|air", "name"?: "Steel" (default: entry id), "reference_temperature"?: 20 (default 20 °C; bare numbers in display units, or a value with its unit), "temperature"?: 20 (default 20 °C: where temperature-dependent properties give their constants)} — create an isotropic material (a Newtonian fluid for air) from cited properties, refusing duplicate names. Temperature curves are saved with the material; the solvers use the constants taken at `temperature`, with a warning when it lies outside a curve (the end value is taken). The stress-free temperature is your modelling choice. Missing data stays absent; strength data is reported but never applied as plasticity/damage/failure criteria."#,
+    params: r#"{"entry": "EN10025-S235|EN10025-S355|EN10088-14301|EN10088-14401|AA6061-T6|AA6082-T6|AA7075-T6|AA2024-T3|Ti6Al4V-annealed|air", "name"?: "Steel" (default: entry id), "reference_temperature"?: 20 (default 20 °C; bare numbers in display units, or a value with its unit), "temperature"?: 20 (default 20 °C: where temperature-dependent properties give their constants)} — create an isotropic material (a Newtonian fluid for air) from cited properties, refusing duplicate names. Temperature curves are saved with the material: heat transfer follows its conductivity, specific heat and density curves; other solvers use the constants taken at `temperature`, with a warning when it lies outside a curve (the end value is taken). The stress-free temperature is your modelling choice. Missing data stays absent; strength data is reported but never applied as plasticity/damage/failure criteria."#,
     form: Some(super::forms::MATERIAL_LIBRARY),
     kind: CommandKind::Model,
     requires: &[],
@@ -234,6 +234,35 @@ mod tests {
         for bad in [json!({"entry": "air", "name": "A2", "temperature": "-1 K"}), json!({"entry": "air", "name": "A3", "temperature": "hot"})] {
             assert!(s.execute(ADD.id, &bad).is_err());
             assert_eq!(s.model, before);
+        }
+    }
+
+    /// The oracle's Kirchhoff slab, its hot end raised past the steel curves' 1200 °C: the heat
+    /// solve warns, with the temperatures in the display units.
+    #[test]
+    fn a_heat_solve_past_a_curve_warns_in_display_units() {
+        let mut recipe: Value = serde_json::from_str(include_str!("../../../../tests/oracle/kirchhoff-slab-steel/recipe.json")).unwrap();
+        let steps = recipe.as_array_mut().unwrap();
+        let hot = steps.iter_mut().find(|c| c["params"]["name"] == "hot" && c["command"] == "model.boundary_condition.create").unwrap();
+        hot["params"]["value"] = json!(1500.0);
+        steps.pop(); // Build the model once, then solve in each display system and thread count.
+        let mut s = Session::default();
+        s.run_script(&recipe).unwrap();
+        for (unit, range) in
+            [("°C", "conductivity (20 °C to 1200 °C)"), ("°F", "conductivity (68 °F to 2192 °F)"), ("K", "conductivity (293.15 K to 1473.15 K)")]
+        {
+            s.execute("model.units", &json!({"system": "mm-t-s-N-MPa", "temperature": unit})).unwrap();
+            let mut previous = None;
+            for threads in [1, 2] {
+                let reply = s.execute("solve.heat", &json!({"threads": threads})).unwrap();
+                let warnings = reply["warnings"].as_array().unwrap();
+                let w = warnings.iter().filter_map(Value::as_str).find(|w| w.contains("outside")).unwrap();
+                assert!(w.contains(range), "{unit}, {threads} threads: {w}");
+                if let Some(previous) = &previous {
+                    assert_eq!(w, previous);
+                }
+                previous = Some(w.to_string());
+            }
         }
     }
 

@@ -336,6 +336,7 @@ fn heat_result() -> fieldcraft_solver::HeatResult {
         reaction_total: -2.5,
         stats: Default::default(),
         warnings: vec!["a note".into()],
+        table_ranges: Vec::new(),
     }
 }
 

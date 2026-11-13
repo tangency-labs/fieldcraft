@@ -31,13 +31,33 @@
 //!
 //! The heat flux −k∇T is reported at the integration points and averaged at the nodes; the heat
 //! flow at prescribed temperatures is the reaction K T − f (C Ṫ included in transient steps).
+//!
+//! **Temperature-dependent properties** ([`fieldcraft_model::curves`]): a material with
+//! conductivity, specific heat or density tables makes the problem nonlinear, K(T) T = f. It is
+//! solved by Picard (successive substitution) iteration: each element takes its properties at the
+//! mean of its nodal temperatures, the system is assembled and solved again, until no temperature
+//! moves by more than [`PICARD_TOLERANCE`] of the largest; the steady step starts from the
+//! constants, each transient increment from the previous one's temperatures and properties
+//! (fully implicit in the properties). At most [`MAX_PICARD_ITERATIONS`] solves per step or
+//! increment (without radiation); a run that stops there says so in its warnings. With radiation
+//! as well, the two share one loop ([`Problem::settle`]): each Newton iteration first takes the
+//! properties at the last temperatures, and the solve ends when the heat balances and the
+//! properties have settled, within [`MAX_RADIATION_ITERATIONS`]. With a conductivity linear in the
+//! temperature the Kirchhoff transform θ = ∫k dT is linear in x across a slab, and the element
+//! mean is exact for linear elements, so the nodal temperatures are exact (H. S. Carslaw, J. C.
+//! Jaeger, *Conduction of Heat in Solids*, 2nd ed., Oxford 1959, §1.7).
+
+use std::borrow::Cow;
 
 use fieldcraft_fem::element::{Extrapolation, extrapolation};
 use fieldcraft_fem::frame::norm;
 use fieldcraft_fem::heat::{Conduction, PointFlux, face_film, face_radiation, face_weights};
 use fieldcraft_fem::mortar::area_vector;
 use fieldcraft_fem::{DofKind, DofLayout, DofSet};
-use fieldcraft_model::{ElementKind, Load, Model, Procedure, Resolved, STEFAN_BOLTZMANN, SectionKind, Step, TEMPERATURE_DOF};
+use fieldcraft_model::{
+    ElementKind, Load, Model, Procedure, Resolved, STEFAN_BOLTZMANN, SectionKind, Step, TEMPERATURE_DOF, TableRange, TemperatureDependent,
+    TemperatureTable,
+};
 
 use crate::cholesky::{Factor, FactorError, UpperColumns};
 use crate::constraints::{Budget, Reduction, Row};
@@ -52,7 +72,8 @@ use crate::{Error, Limits, Result, Stats};
 /// evenly to stay below it, the last increment always kept.
 pub const MAX_TEMPERATURE_VALUES: usize = 50_000_000;
 
-/// Most Newton iterations of one radiation solve (the steady solve or one increment).
+/// Most Newton iterations of one solve with radiation (the steady solve or one increment), the
+/// temperature-dependent properties' iteration included.
 pub const MAX_RADIATION_ITERATIONS: usize = 50;
 
 /// A radiation solve has converged when the heat out of balance in each free equation is at most
@@ -64,6 +85,37 @@ pub const RADIATION_TOLERANCE: f64 = 1e-10;
 /// terms (|g| + |A| |T| + s |r|): where large conductances meet nearly equal temperatures, the
 /// balance cannot be computed more closely than that, however well the temperatures are solved.
 const ROUND_OFF: f64 = 16.0 * f64::EPSILON;
+
+/// Most solves of a step (steady) or an increment (transient) with temperature-dependent
+/// properties and no radiation.
+pub const MAX_PICARD_ITERATIONS: usize = 100;
+
+/// The Picard iteration has converged when no temperature moves by more than this fraction of
+/// the largest absolute temperature.
+pub const PICARD_TOLERANCE: f64 = 1e-10;
+
+/// The temperature tables of one material, beside the constants they replace.
+#[derive(Debug, Clone)]
+pub struct Variable {
+    pub material: String,
+    /// Its conductivity, specific heat and density tables (no viscosity).
+    tables: TemperatureDependent,
+    /// The constants: conductivity along X, Y, Z, specific heat and density.
+    k: [f64; 3],
+    c: Option<f64>,
+    rho: Option<f64>,
+}
+
+impl Variable {
+    /// The conductivity and the capacity ρc at `kelvin`.
+    fn at(&self, kelvin: f64) -> ([f64; 3], Option<f64>) {
+        let value = |t: &Option<TemperatureTable>, constant: Option<f64>| t.as_ref().map(|t| t.value(kelvin)).or(constant);
+        let d = &self.tables;
+        // A conductivity table is isotropic; without one the constant keeps its axes.
+        let k = d.conductivity.as_ref().map_or(self.k, |t| [t.value(kelvin); 3]);
+        (k, value(&d.density, self.rho).zip(value(&d.specific_heat, self.c)).map(|(rho, c)| rho * c))
+    }
+}
 
 /// A solid element conducting heat.
 #[derive(Debug, Clone)]
@@ -77,6 +129,8 @@ pub struct HeatElem {
     pub conductivity: [f64; 3],
     /// ρc, when the material has a density and a specific heat.
     pub capacity: Option<f64>,
+    /// The index of its material's temperature tables in [`HeatMesh::variables`].
+    pub variable: Option<usize>,
 }
 
 impl HeatElem {
@@ -92,11 +146,14 @@ pub struct HeatMesh {
     pub xyz: Vec<[f64; 3]>,
     pub elements: Vec<HeatElem>,
     pub layout: DofLayout,
+    /// The materials with temperature tables (heat transfer is then nonlinear).
+    pub variables: Vec<Variable>,
 }
 
 impl HeatMesh {
     pub fn new(model: &Model, resolved: &Resolved, max_dofs: usize) -> Result<HeatMesh> {
         let mut elements = Vec::new();
+        let mut variables: Vec<Variable> = Vec::new();
         for (name, section) in model.sections() {
             if !matches!(section.kind, SectionKind::Solid {}) {
                 return Err(Error::NotSupported(format!(
@@ -111,10 +168,25 @@ impl HeatMesh {
             let conductivity =
                 thermal.conductivity.ok_or_else(|| Error::Invalid(format!("material `{}` has no conductivity", section.material)))?.axes();
             let capacity = material.density.zip(thermal.specific_heat).map(|(rho, c)| rho * c);
+            let variable = material.temperature_dependent.as_ref().filter(|d| d.conducts()).map(|d| {
+                match variables.iter().position(|v| v.material == section.material) {
+                    Some(i) => i,
+                    None => {
+                        variables.push(Variable {
+                            material: section.material.clone(),
+                            tables: TemperatureDependent { viscosity: None, ..d.clone() },
+                            k: conductivity,
+                            c: thermal.specific_heat,
+                            rho: material.density,
+                        });
+                        variables.len() - 1
+                    }
+                }
+            });
             let set = resolved.sets.get(&section.set).ok_or_else(|| Error::Invalid(format!("set `{}` is not resolved", section.set)))?;
             for &label in &set.elements {
                 let el = model.element(label).ok_or_else(|| Error::Invalid(format!("element {label} is missing")))?;
-                elements.push((label, el.kind, el.nodes.clone(), conductivity, capacity));
+                elements.push((label, el.kind, el.nodes.clone(), conductivity, capacity, variable));
             }
         }
         elements.sort_by_key(|e| e.0);
@@ -127,13 +199,53 @@ impl HeatMesh {
             .iter()
             .map(|l| model.node(*l).map(|n| n.xyz).ok_or_else(|| Error::Invalid(format!("node {l} is missing"))))
             .collect::<Result<_>>()?;
-        let mut mesh = HeatMesh { labels, xyz, elements: Vec::with_capacity(elements.len()), layout };
-        for (label, kind, nodes, conductivity, capacity) in elements {
+        let mut mesh = HeatMesh { labels, xyz, elements: Vec::with_capacity(elements.len()), layout, variables };
+        for (label, kind, nodes, conductivity, capacity, variable) in elements {
             let idx: Vec<usize> = nodes.iter().filter_map(|n| mesh.layout.node(*n)).collect();
             let xyz = idx.iter().filter_map(|i| mesh.xyz.get(*i).copied()).collect();
-            mesh.elements.push(HeatElem { label, kind, nodes: idx, xyz, conductivity, capacity });
+            mesh.elements.push(HeatElem { label, kind, nodes: idx, xyz, conductivity, capacity, variable });
         }
         Ok(mesh)
+    }
+
+    /// The mean of an element's nodal temperatures `t`.
+    fn mean(e: &HeatElem, t: &[f64]) -> f64 {
+        e.nodes.iter().filter_map(|n| t.get(*n)).sum::<f64>() / e.nodes.len().max(1) as f64
+    }
+
+    /// Take each temperature-dependent element's properties at its mean temperature in `t`.
+    fn update(&mut self, t: &[f64]) {
+        for e in &mut self.elements {
+            if let Some(v) = e.variable.and_then(|i| self.variables.get(i)) {
+                (e.conductivity, e.capacity) = v.at(HeatMesh::mean(e, t));
+            }
+        }
+    }
+
+    /// The materials whose element temperatures in any of `frames` leave the range of a table
+    /// the step reads (a steady one the conductivity alone).
+    fn ranges(&self, frames: &[Vec<f64>], transient: bool) -> Vec<TableRange> {
+        let mut span = vec![[f64::INFINITY, f64::NEG_INFINITY]; self.variables.len()];
+        for t in frames {
+            for e in &self.elements {
+                if let Some(s) = e.variable.and_then(|i| span.get_mut(i)) {
+                    let mean = HeatMesh::mean(e, t);
+                    *s = [s[0].min(mean), s[1].max(mean)];
+                }
+            }
+        }
+        self.variables
+            .iter()
+            .zip(span)
+            .filter_map(|(v, [low, high])| {
+                if transient {
+                    v.tables.range(&v.material, low, high)
+                } else {
+                    let conduction = TemperatureDependent { conductivity: v.tables.conductivity.clone(), ..TemperatureDependent::default() };
+                    conduction.range(&v.material, low, high)
+                }
+            })
+            .collect()
     }
 
     fn node_of(&self, what: &str, label: u32) -> Result<usize> {
@@ -143,6 +255,20 @@ impl HeatMesh {
     fn element(&self, label: u32) -> Option<&HeatElem> {
         self.elements.binary_search_by_key(&label, |e| e.label).ok().and_then(|i| self.elements.get(i))
     }
+}
+
+/// Whether the Picard iterate `next` has settled from `previous`.
+fn settled(previous: &[f64], next: &[f64]) -> bool {
+    let scale = next.iter().fold(0.0f64, |m, t| m.max(t.abs()));
+    previous.iter().zip(next).all(|(a, b)| (a - b).abs() <= PICARD_TOLERANCE * scale)
+}
+
+/// The warning of a Picard iteration that stopped at its cap of `solves`; `what` names the step
+/// or increment.
+fn unsettled(what: &str, solves: usize) -> String {
+    format!(
+        "the temperature-dependent properties did not settle in {solves} solves ({what}): the temperatures are those of the last solve; a property that changes steeply with the temperature, or shorter increments, need more"
+    )
 }
 
 /// The heat flux in one element.
@@ -190,6 +316,11 @@ pub struct HeatResult {
     pub reaction_total: f64,
     pub stats: Stats,
     pub warnings: Vec<String>,
+    /// The temperature tables read beyond their ranges, in kelvin: warnings the caller words
+    /// in its display system. Reported by the solve, not saved: the results encoding skips it
+    /// (none when read back), so results saved before it read unchanged.
+    #[serde(skip)]
+    pub table_ranges: Vec<TableRange>,
 }
 
 impl HeatResult {
@@ -203,19 +334,21 @@ impl HeatResult {
     /// The model must be unchanged since the solve. Earlier frames recover −k∇T from
     /// their temperatures with the same extrapolation and averaging as the final frame;
     /// the final frame borrows the stored flux. No additional frame history is kept.
-    pub fn flux_at(&self, model: &Model, frame: usize) -> Result<std::borrow::Cow<'_, [[f64; 3]]>> {
+    pub fn flux_at(&self, model: &Model, frame: usize) -> Result<Cow<'_, [[f64; 3]]>> {
         let t = self.frames.get(frame).ok_or_else(|| Error::Invalid(format!("step `{}` has no frame {frame}", self.step)))?;
         if frame + 1 == self.frames.len() {
-            return Ok(std::borrow::Cow::Borrowed(&self.flux));
+            return Ok(Cow::Borrowed(&self.flux));
         }
         if t.len() != self.nodes.len() || t.iter().any(|v| !v.is_finite()) {
             return Err(Error::Invalid(format!("step `{}` frame {frame} has invalid temperatures", self.step)));
         }
-        let mesh = HeatMesh::new(model, &model.resolve()?, self.nodes.len())?;
+        let mut mesh = HeatMesh::new(model, &model.resolve()?, self.nodes.len())?;
         if mesh.labels != self.nodes {
             return Err(Error::Invalid(format!("step `{}` temperatures do not match the conducting mesh", self.step)));
         }
-        Ok(std::borrow::Cow::Owned(fluxes(&mesh, t)?.0))
+        // The conductivity of the frame's own temperatures, where the material follows a table.
+        mesh.update(t);
+        Ok(Cow::Owned(fluxes(&mesh, t)?.0))
     }
 }
 
@@ -443,6 +576,7 @@ struct Solution {
     radiated: Vec<f64>,
     factor_entries: usize,
     warnings: Vec<String>,
+    ranges: Vec<TableRange>,
 }
 
 impl Solution {
@@ -499,7 +633,7 @@ fn run(model: &Model, resolved: &Resolved, step: &Step, limits: &Limits) -> Resu
         Procedure::HeatTransfer { transient } => transient,
         _ => None,
     };
-    let mesh = HeatMesh::new(model, resolved, limits.max_dofs)?;
+    let mut mesh = HeatMesh::new(model, resolved, limits.max_dofs)?;
     let graph = NodeGraph::new(mesh.labels.len(), mesh.elements.iter().map(|e| e.nodes.as_slice()));
     let mut warnings = Vec::new();
     let rows = tie_rows(model, resolved, &mesh, &mut warnings)?;
@@ -511,100 +645,91 @@ fn run(model: &Model, resolved: &Resolved, step: &Step, limits: &Limits) -> Resu
     if eqs.neq() == 0 {
         return Err(Error::Invalid("every temperature is prescribed; there is nothing to solve".into()));
     }
+    // A transient step's properties start at the initial temperature, a steady one's at the
+    // constants.
+    let taken = transient.filter(|_| !mesh.variables.is_empty()).map(|tr| vec![tr.initial_temperature; mesh.labels.len()]);
+    if let Some(t) = &taken {
+        mesh.update(t);
+    }
     let HeatSystem { k, c, f, radiation } = assemble(model, resolved, &mesh, &graph, step, transient.is_some())?;
     let n = mesh.labels.len();
-    // The temperatures from the free ones q, checked finite.
-    let expand = |q: &[f64]| -> Result<Vec<f64>> {
-        let t = eqs.expand(q, true);
-        if t.iter().any(|x| !x.is_finite()) {
-            return Err(Error::Singular("the temperatures are not finite; the model is ill-conditioned".into()));
-        }
-        Ok(t)
-    };
-    // Reduce, factor and solve M T = rhs (the prescribed values applied): one Newton iteration.
-    let solve_once = |m: &Csr, rhs: &[f64]| -> Result<(Vec<f64>, usize)> {
-        let [reduced] = eqs.reduce([m])?;
-        let chol = factor(&reduced, limits, &mesh, &eqs)?;
-        let mut q = eqs.rhs(rhs, m);
-        chol.solve(&mut q)?;
-        Ok((expand(&q)?, chol.entries()))
-    };
-    let iterations = MAX_RADIATION_ITERATIONS.min(limits.max_newton_iterations);
-    let (times, frames, rate, radiated, factor_entries) = match transient.zip(c.as_ref()) {
-        Some((tr, c)) => {
+    let mut p = Problem { model, resolved, step, limits, graph, mesh, eqs, radiation, k, c, f, taken, factored: None, entries: 0 };
+    let (times, frames, rate, radiated) = match transient.filter(|_| p.c.is_some()) {
+        Some(tr) => {
             let steps = tr.increments();
             let dt = tr.end_time / steps as f64;
-            // (C + θΔt K) Tₙ₊₁ = (C − (1 − θ)Δt K) Tₙ + Δt f, the prescribed values held from the
-            // first increment on (their part moves to the right-hand side); the radiation
-            // weighted alike, θ r(Tₙ₊₁) + (1 − θ) r(Tₙ). Without radiation the matrix is factored
-            // once.
-            let a = c.add_scaled(tr.theta * dt, &k)?;
-            let b = c.add_scaled(-(1.0 - tr.theta) * dt, &k)?;
-            let linear = if radiation.is_empty() {
-                let [reduced] = eqs.reduce([&a])?;
-                Some(factor(&reduced, limits, &mesh, &eqs)?)
-            } else {
-                None
-            };
             let every = (steps.saturating_mul(n) / MAX_TEMPERATURE_VALUES.max(1)).saturating_add(1);
             let mut t = vec![tr.initial_temperature; n];
-            let mut radiated = radiate(&radiation, &mesh.layout, &t, None)?.0;
+            let mut radiated = radiate(&p.radiation, &p.mesh.layout, &t, None)?.0;
             let mut previous = t.clone();
             let (mut frames, mut times) = (vec![t.clone()], vec![0.0]);
-            let mut rhs = vec![0.0; n];
-            let mut entries = linear.as_ref().map_or(0, Factor::entries);
-            let mut newton = None;
+            let mut stopped = None;
+            // A = C + θΔt K and B = C − (1 − θ)Δt K, built once when nothing makes them follow
+            // the temperature.
+            let scaled = |p: &Problem| -> Result<(Csr, Csr)> {
+                let c = p.c.as_ref().ok_or_else(|| Error::Internal("transient heat capacity".into()))?;
+                Ok((c.add_scaled(tr.theta * dt, &p.k)?, c.add_scaled(-(1.0 - tr.theta) * dt, &p.k)?))
+            };
+            let fixed = if p.mesh.variables.is_empty() && p.radiation.is_empty() { Some(scaled(&p)?) } else { None };
             fieldcraft_model::progress::stage("Time increment", Some(steps as f64), "");
             for i in 1..=steps {
                 fieldcraft_model::progress::count((i - 1) as f64);
-                fieldcraft_model::progress::check()?;
-                b.mul(&t, &mut rhs);
-                for ((r, fj), lost) in rhs.iter_mut().zip(&f).zip(&radiated) {
-                    *r += dt * fj - (1.0 - tr.theta) * dt * lost;
-                }
-                let next = match &linear {
-                    Some(chol) => {
-                        let mut q = eqs.rhs(&rhs, &a);
-                        chol.solve(&mut q)?;
-                        expand(&q)?
+                // (C + θΔt K) Tₙ₊₁ = (C − (1 − θ)Δt K) Tₙ + Δt f, the prescribed values held from the
+                // first increment on (their part moves to the right-hand side), the radiation
+                // weighted alike, θ r(Tₙ₊₁) + (1 − θ) r(Tₙ). C and K are those of the properties
+                // last taken (fully implicit in the properties).
+                let system = |p: &Problem| {
+                    let (a, mut rhs) = match &fixed {
+                        Some((a, b)) => (Cow::Borrowed(a), mul(b, &t)),
+                        None => {
+                            let (a, b) = scaled(p)?;
+                            (Cow::Owned(a), mul(&b, &t))
+                        }
+                    };
+                    for ((r, fj), lost) in rhs.iter_mut().zip(&p.f).zip(&radiated) {
+                        *r += dt * fj - (1.0 - tr.theta) * dt * lost;
                     }
-                    None => {
-                        let system = newton.get_or_insert_with(|| Newton::new(&radiation, &mesh.layout, &eqs, &a, tr.theta * dt, iterations));
-                        let (next, lost) = system.solve(&rhs, &t, &mut entries, solve_once).map_err(|e| at_increment(e, i))?;
-                        radiated = lost;
-                        next
-                    }
+                    Ok::<_, Error>((a, rhs))
                 };
+                let (next, lost, settled) = p.settle(t.clone(), tr.theta * dt, system).map_err(|e| at_increment(e, i))?;
+                if !settled {
+                    stopped.get_or_insert(i);
+                }
+                radiated = lost;
                 previous = std::mem::replace(&mut t, next);
                 if i % every == 0 || i == steps {
                     frames.push(t.clone());
                     times.push(if i == steps { tr.end_time } else { i as f64 * dt });
                 }
             }
+            if let Some(i) = stopped {
+                warnings.push(unsettled(&format!("first in increment {i}"), p.cap()));
+            }
             let rate = t.iter().zip(&previous).map(|(a, b)| (a - b) / dt).collect();
-            (times, frames, rate, radiated, entries)
-        }
-        None if radiation.is_empty() => {
-            let [reduced] = eqs.reduce([&k])?;
-            let chol = factor(&reduced, limits, &mesh, &eqs)?;
-            let mut q = eqs.rhs(&f, &k);
-            chol.solve(&mut q)?;
-            (vec![0.0], vec![expand(&q)?], vec![0.0; n], vec![0.0; n], chol.entries())
+            (times, frames, rate, radiated)
         }
         None => {
-            let start = steady_start(&radiation, &f, held);
-            if start <= 0.0 {
-                return Err(Error::Invalid(
-                    "the radiation's surroundings are at 0 K and nothing supplies heat or holds a temperature: the steady temperature is 0 K everywhere, where the radiation fixes nothing; add heat, hold a temperature or raise the ambient".into(),
-                ));
+            let start = if p.radiation.is_empty() {
+                vec![0.0; n]
+            } else {
+                let start = steady_start(&p.radiation, &p.f, held);
+                if start <= 0.0 {
+                    return Err(Error::Invalid(
+                        "the radiation's surroundings are at 0 K and nothing supplies heat or holds a temperature: the steady temperature is 0 K everywhere, where the radiation fixes nothing; add heat, hold a temperature or raise the ambient".into(),
+                    ));
+                }
+                vec![start; n]
+            };
+            let (t, radiated, settled) = p.settle(start, 1.0, |p: &Problem| Ok((Cow::Owned(p.k.clone()), p.f.clone())))?;
+            if !settled {
+                warnings.push(unsettled("the steady step", p.cap()));
             }
-            let mut entries = 0;
-            let (t, radiated) =
-                Newton::new(&radiation, &mesh.layout, &eqs, &k, 1.0, iterations).solve(&f, &vec![start; n], &mut entries, solve_once)?;
-            (vec![0.0], vec![t], vec![0.0; n], radiated, entries)
+            (vec![0.0], vec![t], vec![0.0; n], radiated)
         }
     };
-    Ok(Solution { mesh, eqs, k, c, f, times, frames, rate, radiated, factor_entries, warnings })
+    let ranges = p.mesh.ranges(&frames, transient.is_some());
+    let Problem { mesh, eqs, k, c, f, entries: factor_entries, .. } = p;
+    Ok(Solution { mesh, eqs, k, c, f, times, frames, rate, radiated, factor_entries, warnings, ranges })
 }
 
 /// The increment an error of a transient step happened in, when it is a radiation solve that
@@ -627,48 +752,114 @@ fn steady_start(faces: &[RadiatingFace], f: &[f64], held: f64) -> f64 {
     if lumped.is_finite() { lumped.max(held) } else { held }
 }
 
-/// A radiation solve: A T + s r(T) = g, r the radiation of `faces`, by Newton's method in at most
-/// `iterations` iterations.
-struct Newton<'a> {
-    faces: &'a [RadiatingFace],
-    layout: &'a DofLayout,
-    eqs: &'a Reduction,
-    a: &'a Csr,
-    /// |A|, entry by entry: the size of the conducted (and stored) heat.
-    size: Csr,
-    scale: f64,
-    iterations: usize,
+/// The heat problem of one step as it is iterated: the mesh with its properties as last taken,
+/// the matrices assembled from them, and the radiating faces.
+struct Problem<'a> {
+    model: &'a Model,
+    resolved: &'a Resolved,
+    step: &'a Step,
+    limits: &'a Limits,
+    graph: NodeGraph,
+    mesh: HeatMesh,
+    eqs: Reduction,
+    radiation: Vec<RadiatingFace>,
+    k: Csr,
+    c: Option<Csr>,
+    f: Vec<f64>,
+    /// The temperatures the temperature-dependent properties were last taken at (`None`: the
+    /// constants).
+    taken: Option<Vec<f64>>,
+    /// The factor of the last linear system, kept while its matrix stays the same.
+    factored: Option<Factor>,
+    /// The size of the last factor.
+    entries: usize,
 }
 
-impl<'a> Newton<'a> {
-    fn new(faces: &'a [RadiatingFace], layout: &'a DofLayout, eqs: &'a Reduction, a: &'a Csr, scale: f64, iterations: usize) -> Self {
-        let mut size = a.clone();
-        size.val.iter_mut().for_each(|v| *v = v.abs());
-        Newton { faces, layout, eqs, a, size, scale, iterations }
+impl Problem<'_> {
+    /// Most solves of one [`Problem::settle`]: Newton's with radiation, Picard's without.
+    fn cap(&self) -> usize {
+        if self.radiation.is_empty() { MAX_PICARD_ITERATIONS } else { MAX_RADIATION_ITERATIONS.min(self.limits.max_newton_iterations) }
     }
 
-    /// T from `start`: (A + s J(Tᵏ)) Tᵏ⁺¹ = g − s (r(Tᵏ) − J(Tᵏ) Tᵏ), each iteration solved by
-    /// `solve` (its factor's size into `entries`), until every free equation's residual
-    /// g − A T − s r(T) is at most [`RADIATION_TOLERANCE`] of the largest net heat flow at a node,
-    /// |g| + |A T| + s |r|, plus its own round-off, [`ROUND_OFF`] (|g| + |A| |T| + s |r|).
-    /// Returns T and r(T).
-    fn solve(
-        &self,
-        g: &[f64],
-        start: &[f64],
-        entries: &mut usize,
-        solve: impl Fn(&Csr, &[f64]) -> Result<(Vec<f64>, usize)>,
-    ) -> Result<(Vec<f64>, Vec<f64>)> {
-        let s = self.scale;
-        let mut t = start.to_vec();
-        let mut m = self.a.clone();
+    /// Reduce, factor and solve M T = rhs (the prescribed values applied), the temperatures
+    /// checked finite.
+    fn solve(&mut self, m: &Csr, rhs: &[f64], keep: bool) -> Result<Vec<f64>> {
+        let chol = match self.factored.take() {
+            Some(chol) => chol,
+            None => {
+                let [reduced] = self.eqs.reduce([m])?;
+                factor(&reduced, self.limits, &self.mesh, &self.eqs)?
+            }
+        };
+        let mut q = self.eqs.rhs(rhs, m);
+        chol.solve(&mut q)?;
+        self.entries = chol.entries();
+        if keep {
+            self.factored = Some(chol);
+        }
+        let t = self.eqs.expand(&q, true);
+        if t.iter().any(|x| !x.is_finite()) {
+            return Err(Error::Singular("the temperatures are not finite; the model is ill-conditioned".into()));
+        }
+        Ok(t)
+    }
+
+    /// Solve A(T) T + s r(T) = g(T) from `start`, `system` giving A and g of the properties last
+    /// taken, r the radiation. Both nonlinearities share one loop: each iteration takes the
+    /// temperature-dependent properties at the last temperatures (unless they settled there), and
+    /// Newton's method linearizes the radiation there, (A + s J(Tᵏ)) Tᵏ⁺¹ = g − s (r(Tᵏ) − J(Tᵏ) Tᵏ),
+    /// until every free equation's residual g − A T − s r(T) is at most [`RADIATION_TOLERANCE`] of
+    /// the largest net heat flow at a node, |g| + |A T| + s |r|, plus its own round-off,
+    /// [`ROUND_OFF`] (|g| + |A| |T| + s |r|), and the last solve moved no temperature by more
+    /// than [`PICARD_TOLERANCE`] from those its properties were taken at. At most
+    /// [`Problem::cap`] solves; radiation still out of balance then is an error, properties that
+    /// have not settled are reported by the `false` returned. Returns T, r(T) and whether the
+    /// properties settled.
+    fn settle<'f>(
+        &mut self,
+        start: Vec<f64>,
+        s: f64,
+        system: impl Fn(&Problem) -> Result<(Cow<'f, Csr>, Vec<f64>)>,
+    ) -> Result<(Vec<f64>, Vec<f64>, bool)> {
+        let radiating = !self.radiation.is_empty();
+        let variable = !self.mesh.variables.is_empty();
+        let cap = self.cap();
+        let mut t = start;
+        let (mut a, mut g) = system(self)?;
+        let mut lost = vec![0.0; t.len()];
+        let (mut solved, mut steady, mut balanced) = (false, !variable, !radiating);
         let (mut residual, mut flows) = (f64::INFINITY, 0.0);
-        for k in 0..=self.iterations {
+        for k in 0..=cap {
             fieldcraft_model::progress::check()?;
-            m.val.copy_from_slice(&self.a.val);
-            let (lost, jt) = radiate(self.faces, self.layout, &t, Some((&mut m, s)))?;
-            let at = mul(self.a, &t);
-            let sizes = mul(&self.size, &t.iter().map(|v| v.abs()).collect::<Vec<_>>());
+            if variable && solved {
+                steady = self.taken.as_ref().is_some_and(|p| settled(p, &t));
+                // (Not at the last check: nothing would solve with them.)
+                if !steady && k < cap {
+                    self.mesh.update(&t);
+                    let HeatSystem { k, c, f, .. } = assemble(self.model, self.resolved, &self.mesh, &self.graph, self.step, self.c.is_some())?;
+                    (self.k, self.c, self.f, self.taken, self.factored) = (k, c, f, Some(t.clone()), None);
+                    (a, g) = system(self)?;
+                }
+            }
+            if !radiating {
+                if solved && steady {
+                    return Ok((t, lost, true));
+                }
+                if k == cap {
+                    break;
+                }
+                t = self.solve(&a, &g, true)?;
+                solved = true;
+                continue;
+            }
+            let mut m = a.as_ref().clone();
+            let jt;
+            (lost, jt) = radiate(&self.radiation, &self.mesh.layout, &t, Some((&mut m, s)))?;
+            let at = mul(&a, &t);
+            // |A|, entry by entry: the size of the conducted (and stored) heat.
+            let mut size = a.as_ref().clone();
+            size.val.iter_mut().for_each(|v| *v = v.abs());
+            let sizes = mul(&size, &t.iter().map(|v| v.abs()).collect::<Vec<_>>());
             let out: Vec<f64> = g.iter().zip(&at).zip(&lost).map(|((g, a), r)| g - a - s * r).collect();
             flows = g.iter().zip(&at).zip(&lost).fold(0.0_f64, |m, ((g, a), r)| m.max(g.abs() + a.abs() + s * r.abs()));
             let terms: Vec<f64> = g.iter().zip(&sizes).zip(&lost).map(|((g, c), r)| g.abs() + c + s * r.abs()).collect();
@@ -676,34 +867,43 @@ impl<'a> Newton<'a> {
             // stricter, never looser.)
             let (out, terms) = (self.eqs.restrict(&out), self.eqs.restrict(&terms));
             residual = out.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
-            if out.iter().zip(&terms).all(|(r, size)| r.abs() <= RADIATION_TOLERANCE * flows + ROUND_OFF * size.abs()) {
-                return Ok((t, lost));
+            balanced = out.iter().zip(&terms).all(|(r, size)| r.abs() <= RADIATION_TOLERANCE * flows + ROUND_OFF * size.abs());
+            if balanced && steady {
+                return Ok((t, lost, true));
             }
-            if k == self.iterations {
+            if k == cap {
                 break;
             }
             let rhs: Vec<f64> = g.iter().zip(lost.iter().zip(&jt)).map(|(g, (r, jt))| g - s * (r - jt)).collect();
-            (t, *entries) = solve(&m, &rhs)?;
+            t = self.solve(&m, &rhs, false)?;
+            solved = true;
         }
-        Err(Error::NotConverged(format!(
-            "the radiation did not settle in {} Newton iterations (heat out of balance {residual:.3e} against flows of {flows:.3e})",
-            self.iterations
-        )))
+        if !balanced {
+            return Err(Error::NotConverged(format!(
+                "the radiation did not settle in {cap} Newton iterations (heat out of balance {residual:.3e} against flows of {flows:.3e})"
+            )));
+        }
+        Ok((t, lost, false))
     }
 }
 
-/// The steady temperatures of a coupled temperature–displacement step, by node label (sorted).
-pub(crate) fn temperatures(model: &Model, resolved: &Resolved, step: &Step, limits: &Limits) -> Result<(Vec<u32>, Vec<f64>)> {
-    let mut s = run(model, resolved, step, limits)?;
-    let t = s.frames.pop().unwrap_or_default();
-    Ok((s.mesh.labels, t))
-}
-
 /// The steady temperatures of a step's thermal conditions at the nodes `labels` (sorted), `None`
-/// at the nodes conduction does not reach.
-pub(crate) fn temperatures_at(model: &Model, resolved: &Resolved, step: &Step, limits: &Limits, labels: &[u32]) -> Result<Vec<Option<f64>>> {
-    let (solved, t) = temperatures(model, resolved, step, limits)?;
-    Ok(labels.iter().map(|l| solved.binary_search(l).ok().and_then(|i| t.get(i)).copied()).collect())
+/// at the nodes conduction does not reach; the heat solution's own warnings (properties that did
+/// not settle) go to `warnings`, the tables it read beyond their ranges to `ranges`.
+pub(crate) fn temperatures_at(
+    model: &Model,
+    resolved: &Resolved,
+    step: &Step,
+    limits: &Limits,
+    labels: &[u32],
+    warnings: &mut Vec<String>,
+    ranges: &mut Vec<TableRange>,
+) -> Result<Vec<Option<f64>>> {
+    let mut s = run(model, resolved, step, limits)?;
+    warnings.extend(s.warnings.into_iter().map(|w| format!("the step's heat conduction: {w}")));
+    ranges.append(&mut s.ranges);
+    let t = s.frames.pop().unwrap_or_default();
+    Ok(labels.iter().map(|l| s.mesh.labels.binary_search(l).ok().and_then(|i| t.get(i)).copied()).collect())
 }
 
 /// Solve a heat transfer step: the step named `step`, or the model's only one.
@@ -751,6 +951,7 @@ pub fn solve_heat(model: &Model, step: Option<&str>, limits: &Limits) -> Result<
         reaction_total,
         stats,
         warnings,
+        table_ranges: s.ranges,
     })
 }
 
