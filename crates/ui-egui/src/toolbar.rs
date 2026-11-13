@@ -81,12 +81,24 @@ pub fn panel_key(tab: Tab, panel: &str) -> String {
     format!("{}/{panel}", tab.id())
 }
 
-/// A milestone badge ("M5") with its top right corner at `corner`.
-fn badge(p: &egui::Painter, t: &Tokens, corner: egui::Pos2, m: &str) {
+/// The kit's ribbon icon's side (it is centred across the button).
+const ICON_SIDE: f32 = 26.0;
+
+/// Where a milestone badge `size` goes on the button `whole`: in its top-right corner, moved right
+/// of the icon when the button is too narrow for both (it never covers the icon).
+fn badge_rect(whole: Rect, size: egui::Vec2) -> Rect {
+    let k = solidcraft_theme::Tokens::get();
+    let icon_right = whole.center().x + ICON_SIDE / 2.0;
+    let left = (whole.right() - k.space_2 - size.x).max(icon_right + k.space_2);
+    Rect::from_min_size(pos2(left, whole.top() + k.space_2), size)
+}
+
+/// A milestone badge ("M5") on the button `whole` ([`badge_rect`]).
+fn badge(p: &egui::Painter, t: &Tokens, whole: Rect, m: &str) {
     let k = solidcraft_theme::Tokens::get();
     let text = p.layout_no_wrap(m.to_string(), FontId::proportional(k.font_badge), t.text_dim);
     let pad = k.space_2;
-    let r = Rect::from_min_size(pos2(corner.x - text.size().x - 2.0 * pad, corner.y), text.size() + vec2(2.0 * pad, 0.0));
+    let r = badge_rect(whole, text.size() + vec2(2.0 * pad, 0.0));
     p.rect_filled(r, k.radius_sm, t.panel_header);
     p.rect_stroke(r, k.radius_sm, k.primary_border(t.border), egui::StrokeKind::Inside);
     p.galley(r.min + vec2(pad, 0.0), text, t.text_dim);
@@ -239,7 +251,7 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
             let Some(c) = shown.get(d.group).and_then(|s| s.get(d.index)) else { continue };
             let s = panels.get(d.group).and_then(|p| p.iter().position(|e| e.id == c.id)).and_then(|i| states.get(d.group)?.get(i));
             if let Some(m) = c.milestone() {
-                badge(ui.painter(), &t, d.whole.right_top() + vec2(-2.0, 2.0), m);
+                badge(ui.painter(), &t, d.whole, m);
             }
             if let Some(s) = s {
                 let _ = d.response.clone().backing_on_hover_text(&s.tip);
@@ -591,5 +603,18 @@ mod tests {
         run(&mut app, Vec::new());
         assert_eq!(ctx.memory(|m| m.focused()), Some(menu_style(&ctx).focus_id(first)));
         assert_eq!(app.ui.menu.as_deref(), Some(key.as_str()));
+    }
+
+    /// A milestone badge keeps clear of its button's icon, even on the narrowest button (A3-15).
+    #[test]
+    fn badges_keep_off_the_icon() {
+        // The kit centres the icon this far below the button's top.
+        const ICON_CENTRE: f32 = 16.0;
+        for width in [ribbon::BUTTON_MIN_WIDTH, 70.0, ribbon::BUTTON_MAX_WIDTH, 120.0] {
+            let whole = Rect::from_min_size(pos2(100.0, 40.0), vec2(width, ribbon::BUTTON_HEIGHT));
+            let icon = Rect::from_center_size(pos2(whole.center().x, whole.top() + ICON_CENTRE), vec2(ICON_SIDE, ICON_SIDE));
+            let badge = badge_rect(whole, vec2(20.0, 12.0));
+            assert!(!badge.intersects(icon), "{width}: badge {badge:?}, icon {icon:?}");
+        }
     }
 }
