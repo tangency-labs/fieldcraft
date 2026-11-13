@@ -1,7 +1,8 @@
 //! The application bar: the window's title bar, drawn by the kit's application bar
 //! (`solidcraft_ui_kit::app_bar`) as SolidCraft's is: FieldCraft's mark and name, Home (the
 //! samples), File and its actions (save, undo, redo), a quick-access button (the theme), the
-//! model's document tab, Solve, the command search, Settings, Help, Report a bug and the version.
+//! model's document tab, Solve, Settings, Help, Report a bug and the version. The command search
+//! is at the end of the ribbon's tab row, SolidCraft's default place for it ([`crate::toolbar`]).
 //! The kit's window chrome (`solidcraft_ui_kit::window_chrome`, [`crate::titlebar`]) makes its
 //! empty space move the window and draws the caption buttons on Windows and Linux; macOS keeps
 //! its traffic lights over the bar's left end.
@@ -32,7 +33,7 @@ const HANDLES: app_bar::Handles<'static> = app_bar::Handles {
     file_rect: &["app_bar:file"],
     button: &["app_bar:"],
     separator: "app_bar:separator:",
-    search: "app_bar:search",
+    search: "ribbon:search",
     report: "app_bar:report",
     settings: "app_bar:settings",
     version: "app_bar:version",
@@ -111,7 +112,6 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
     let busy = app.busy().is_some();
     let (save_tip, undo_tip, redo_tip) =
         (format!("Save ({})", shortcut("S")), format!("Undo ({})", shortcut("Z")), format!("Redo ({})", shortcut("Shift+Z")));
-    let search_key = shortcut("K");
     let version = format!("v{}", crate::VERSION);
     let url = release_notes();
     let button = |id, icon, tip, enabled, wide_only| BarButton { id, icon, tip, enabled, narrow: true, wide_only };
@@ -135,8 +135,8 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
             tip: "Report a bug: draft a GitHub issue with the version, the OS and the last error; nothing is sent until you submit it",
             icon_only: false,
         },
-        search: true,
-        search_shortcut: Some(&search_key),
+        search: false,
+        search_shortcut: None,
         assistant: false,
         version: Some(app_bar::Version { text: &version, url: &url }),
         handles: HANDLES,
@@ -185,11 +185,6 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
         }
         app.place("app_bar:theme", rect);
     }
-    // The closed command search: a click opens the command palette.
-    if let Some(search) = out.search {
-        search_field(app, ui, search, &search_key);
-        app.place("app_bar:search", search);
-    }
     // Solve: right-aligned where the kit leaves room for an offer pill, before the right cluster.
     let k = solidcraft_theme::Tokens::get();
     let solve_w = kit::icon_label_width(ui, if out.offer_labeled { SOLVE } else { "" }, Some(SOLVE_ICON), true);
@@ -200,12 +195,6 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
         solve.left() - 8.0
     } else {
         out.controls_left - 8.0
-    };
-    // The open search field covers the bar from its right edge leftward, as SolidCraft's does:
-    // the document tab ends before it (and is left out when no room remains).
-    let tabs_end = match out.search.filter(|_| app.ui.palette) {
-        Some(field) => tabs_end.min(crate::palette::open_field_at(ui.ctx().content_rect(), field).x - 8.0),
-        None => tabs_end,
     };
     document_tab(app, ui, r, out.tabs_start, tabs_end);
     let home_at = solidcraft_ui_registry::rect_of("app_bar:home").unwrap_or(out.file);
@@ -226,34 +215,6 @@ fn quick_button(ui: &mut egui::Ui, key: &str, icon: &'static str, rect: Rect, ti
     }
     icons::paint(ui, icon, Rect::from_center_size(rect.center(), vec2(18.0, 18.0)), Look::AppBar);
     resp.backing_on_hover_text(tip).clicked()
-}
-
-/// The command search's closed field (the kit's), opening the command palette when clicked.
-fn search_field(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, key: &str) {
-    // While the search is open its own field is drawn here, over the bar (`palette::popup`): the
-    // kit's one search editor, drawn once.
-    if app.ui.palette {
-        return;
-    }
-    let geometry = solidcraft_ui_kit::SearchFieldGeometry {
-        height: rect.height(),
-        radius: solidcraft_ui_kit::CommandSearch::field_radius(0.0, false),
-        progress: 0.0,
-    };
-    // The title bar is dark in both themes: the closed field takes the dark palette, as Solve
-    // does, so it is not a white box on the dark bar in the light theme.
-    let bar = crate::theme::kit(true);
-    let _bar = solidcraft_theme::scoped_panel_tokens(bar);
-    let mut field = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("fc_app_bar_search"));
-    field.visuals_mut().weak_text_color = Some(bar.text_dim);
-    let mut empty = String::new();
-    solidcraft_ui_kit::CommandSearch::field(&mut field, &mut empty, false, false, false, geometry, Some(key), 0);
-    let resp = ui.interact(rect, ui.scope_id().with("fc_app_bar_search_open"), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Search commands"));
-    if resp.backing_on_hover_text(format!("Search commands (S or {key})")).clicked() {
-        app.ui.palette = !app.ui.palette;
-        app.ui.menu = None;
-    }
 }
 
 /// Solve: the one prominent action, the kit's primary icon-label button (with its label when
@@ -278,17 +239,9 @@ fn solve_button(app: &mut ModelApp, ui: &mut egui::Ui, solve: Rect, labeled: boo
 /// the model and its + starts a new one: both are File › New (`file.new`), which asks first
 /// when that would discard unsaved changes.
 fn document_tab(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
-    let k = solidcraft_theme::Tokens::get();
     let migrated = app.session.migrated_from.map(|n| format!(" (from format {n})")).unwrap_or_default();
     let name = format!("{}{migrated}", app.model_name());
     let dirty = app.session.is_dirty();
-    // Beside the open search the tab shows the model's whole name or nothing: a name cut short
-    // reads as neither. The kit's tab fits its name up to its widest (40 points of insets).
-    let label = format!("{name}{}", if dirty { " •" } else { "" });
-    let natural = ui.painter().layout_no_wrap(label, kit::type_face::semibold(k.font_button), k.app_bar_text).size().x + 40.0;
-    if app.ui.palette && natural > (x1 - x0 - TAB_STRIP_ROOM).min(TAB_MAX) {
-        return;
-    }
     if x1 - x0 < TAB_STRIP_ROOM + TAB_MIN {
         return;
     }
@@ -334,11 +287,9 @@ fn document_tab(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32
     }
 }
 
-/// Room the kit's tab strip keeps beside its tabs (its + button), and its narrowest and widest
-/// tab.
+/// Room the kit's tab strip keeps beside its tabs (its + button), and its narrowest tab.
 const TAB_STRIP_ROOM: f32 = 34.0;
 const TAB_MIN: f32 = 72.0;
-const TAB_MAX: f32 = 200.0;
 
 /// Where the tab strip publishes its parts in the widget registry.
 const TAB_HANDLES: app_bar::TabHandles<'static> = app_bar::TabHandles {
@@ -380,7 +331,7 @@ fn help_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
         });
     };
     note(ui, "Left drag orbits (or pans or zooms: the navigation bar), right or middle drag pans, the wheel zooms, F or a double click fits.");
-    note(ui, &format!("S or {} searches every command; the command line at the bottom runs `id {{json}}`.", shortcut("K")));
+    note(ui, &format!("S or {} searches every command; `id {{json}}` typed there runs it.", shortcut("K")));
     crate::frame::menu_separator(ui);
     let row =
         |ui: &mut egui::Ui, id: &str, label: &str, tip: &str| crate::frame::menu_row(ui, id, label, None, true).backing_on_hover_text(tip).clicked();
@@ -423,14 +374,8 @@ mod tests {
 
     /// The bar's regions after a frame of a window `width` wide.
     fn regions(width: f32, integrated: bool) -> std::collections::BTreeMap<&'static str, Rect> {
-        regions_with(width, integrated, false)
-    }
-
-    /// [`regions`], with the command search open or not.
-    fn regions_with(width: f32, integrated: bool, search: bool) -> std::collections::BTreeMap<&'static str, Rect> {
         let mut app = ModelApp::new(Session::default());
         app.integrated_titlebar = integrated;
-        app.ui.palette = search;
         let ctx = egui::Context::default();
         for _ in 0..2 {
             let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 600.0))), ..Default::default() };
@@ -440,23 +385,8 @@ mod tests {
         app.layout
     }
 
-    /// The open command search covers the bar from its field leftward; the document tab ends
-    /// before it, so no part of the model's name shows beside the field.
-    #[test]
-    fn the_open_search_leaves_no_part_of_the_document_tab_beside_it() {
-        for width in [1440.0, 1100.0] {
-            let open = regions_with(width, false, true);
-            let field = open.get("app_bar:search").copied().unwrap_or(Rect::NOTHING);
-            let left = crate::palette::open_field_at(Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 600.0)), field).x;
-            if let Some(tab) = open.get("document_tab") {
-                assert!(tab.right() <= left, "{width}: the tab {tab:?} runs under the open field from {left}");
-            }
-            assert!(regions(width, false).contains_key("document_tab"), "{width}: the tab shows while the search is closed");
-        }
-    }
-
     /// Left to right as in SolidCraft: Home, File, its actions, the theme, the document tab, Solve,
-    /// the search, Settings, Help and Report a bug; the left group starts after the traffic
+    /// Settings, Help and Report a bug; the left group starts after the traffic
     /// lights, and Solve and the right cluster stay put.
     #[test]
     fn the_title_bar_is_laid_out_as_solidcrafts() {
@@ -475,7 +405,6 @@ mod tests {
                 "app_bar:theme",
                 "document_tab",
                 "app_bar:solve",
-                "app_bar:search",
                 "app_bar:settings",
                 "app_bar:help",
                 "app_bar:report",
@@ -527,53 +456,5 @@ mod tests {
         }
         let menu = app.layout.get("menu:help").copied().unwrap_or_else(|| panic!("Help menu not drawn"));
         assert!(menu.bottom() <= screen.bottom(), "{menu:?}");
-    }
-
-    /// In the light theme the closed search field is drawn in the dark title bar's palette, not
-    /// as a white box on the dark bar (A3-13).
-    #[test]
-    fn the_search_field_takes_the_dark_bars_palette_in_the_light_theme() {
-        let mut app = ModelApp::new(Session::default());
-        app.ui.dark = false;
-        let ctx = egui::Context::default();
-        crate::theme::apply(&ctx, false);
-        let mut shapes = Vec::new();
-        for _ in 0..2 {
-            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, 600.0))), ..Default::default() };
-            let mut out = ctx.run_ui(raw, |ui| app_bar(&mut app, ui));
-            out.textures_delta.clear();
-            shapes = out.shapes;
-        }
-        let field = app.layout.get("app_bar:search").copied().unwrap_or_else(|| panic!("search not drawn"));
-        let fills: Vec<egui::Color32> = shapes
-            .iter()
-            .filter_map(|s| match &s.shape {
-                egui::Shape::Rect(r) if r.rect == field => Some(r.fill),
-                _ => None,
-            })
-            .collect();
-        let dark = crate::theme::kit(true).input_fill();
-        assert!(fills.contains(&dark), "field fills {fills:?}, dark bar's input fill {dark:?}");
-    }
-
-    /// Beside the open search a model name that would be cut leaves the tab out, instead of
-    /// showing it cut in the middle (A3-17).
-    #[test]
-    fn the_open_search_shows_the_whole_name_or_no_tab() {
-        let name = "A model with a name far too long for the document tab beside the search";
-        let drawn = |search: bool| {
-            let mut app = ModelApp::new(Session::default());
-            app.session.path = Some(format!("/tmp/{name}.fieldcraft"));
-            app.ui.palette = search;
-            let ctx = egui::Context::default();
-            for _ in 0..2 {
-                let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 600.0))), ..Default::default() };
-                let mut out = ctx.run_ui(raw, |ui| app_bar(&mut app, ui));
-                out.textures_delta.clear();
-            }
-            app.layout.contains_key("document_tab")
-        };
-        assert!(drawn(false), "the tab shows while the search is closed");
-        assert!(!drawn(true), "a cut name beside the open search");
     }
 }
