@@ -178,7 +178,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, column: egui::Rect) {
         kit::text(ui, spec.id, kit::Text::Note("form:command"));
         if let Some(target) = selection::target(spec.id, &params) {
             kit::section_heading(ui, "Target");
-            ui.horizontal(|ui| {
+            ui.vertical(|ui| {
                 let tip = match target {
                     selection::Target::Members => "The selection becomes the set's members (geometry by name, the mesh by label)",
                     selection::Target::Set | selection::Target::TargetSet => {
@@ -532,6 +532,28 @@ mod tests {
         let cancel = solidcraft_ui_registry::rect_of("dialog:cancel").expect("the kit's Cancel");
         click(cancel.center(), &mut app);
         assert!(app.dialog.is_none(), "Cancel closes the form");
+    }
+
+    /// The Target row's note sits under its button on a line of its own, never wrapped beside
+    /// it (A3-10).
+    #[test]
+    fn the_target_note_is_under_its_button() {
+        let ctx = egui::Context::default();
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        app.start("model.set.create").unwrap();
+        frame(&mut app, &ctx, vec![]);
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))), ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+        out.textures_delta.clear();
+        let rect = |text: &str| {
+            out.shapes.iter().find_map(|c| match &c.shape {
+                egui::Shape::Text(t) if t.galley.text() == text => Some(t.galley.rect.translate(t.pos.to_vec2())),
+                _ => None,
+            })
+        };
+        let button = rect("Use selection").expect("the button");
+        let note = rect("Pick in the viewport, or choose below").expect("the note, on one line");
+        assert!(note.top() >= button.bottom(), "{note:?} beside {button:?}");
     }
 
     /// A card's values start at one column, after its longest name (A3-5).

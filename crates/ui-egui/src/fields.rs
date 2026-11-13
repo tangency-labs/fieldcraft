@@ -143,7 +143,7 @@ pub fn number(ui: &mut Ui, id: Id, value: Option<f64>, hint: &str, integer: bool
     };
     let bad = parse(&draft.text).is_none();
     // The kit's editor, keyed by `id`, in the error colours while the text is not a number.
-    let r = sized(ui, width, |ui| kit::cell_editor(ui, id, &mut draft.text, hint, bad));
+    let r = editor(ui, id, &mut draft.text, hint, bad, width);
     let out = if r.changed() {
         match parse(&draft.text) {
             Some(v) => {
@@ -191,7 +191,18 @@ pub fn combo(ui: &mut Ui, id: Id, selected: &str, options: &[&str], width: f32) 
 /// A one-line text field (the kit's editor) keyed by `id` (see [`number`]), in the error colours
 /// while `bad`; its response.
 pub fn checked_text(ui: &mut Ui, id: Id, value: &mut String, hint: &str, bad: bool, width: f32) -> egui::Response {
-    sized(ui, width, |ui| kit::cell_editor(ui, id, value, hint, bad))
+    editor(ui, id, value, hint, bad, width)
+}
+
+/// The kit's editor `width` wide with `hint` as its placeholder when the hint fits it whole;
+/// a longer hint is not cut: the field shows none and says it on hover.
+fn editor(ui: &mut Ui, id: Id, value: &mut String, hint: &str, bad: bool, width: f32) -> egui::Response {
+    let t = solidcraft_theme::Tokens::get();
+    // The editor's text is the kit's monospaced label font, inset at both sides.
+    let room = width - 2.0 * (t.form_inset + t.space_4);
+    let fits = crate::elide::width(ui, hint, &egui::FontId::monospace(t.font_label)) <= room;
+    let r = sized(ui, width, |ui| kit::cell_editor(ui, id, value, if fits { hint } else { "" }, bad));
+    if fits || hint.is_empty() { r } else { r.backing_on_hover_text(hint) }
 }
 
 /// A one-line text field (the kit's editor) with a greyed hint, keyed by `id` (see [`number`]); true

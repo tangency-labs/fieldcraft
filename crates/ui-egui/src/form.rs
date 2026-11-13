@@ -1500,6 +1500,20 @@ mod tests {
         }
     }
 
+    /// A placeholder too long for its field is not cut: the field shows none and says it on
+    /// hover (A3-10).
+    #[test]
+    fn placeholders_are_never_cut() {
+        for (id, params) in [("mesh.tet.generate", json!({})), ("mesh.hex.generate", json!({})), ("model.set.create", json!({"name": "s"}))] {
+            let shapes = drawn_in_panel(&egui::Context::default(), id, params);
+            let cut: Vec<String> = shapes
+                .iter()
+                .filter_map(|s| if let egui::Shape::Text(t) = s { t.galley.elided.then(|| t.galley.text().to_string()) } else { None })
+                .collect();
+            assert!(cut.is_empty(), "{id}: {cut:?}");
+        }
+    }
+
     fn mm() -> DisplaySystem {
         DisplaySystem::new(fieldcraft_model::units::Preset::MmTonneS)
     }
