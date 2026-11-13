@@ -202,7 +202,15 @@ fn scalar(f: &Field, v: &Value, units: &DisplaySystem) -> String {
                 .unwrap_or_default(),
             _ => crate::context::value_text(v),
         },
-        Kind::Rows { .. } => v.as_array().map_or_else(|| crate::context::value_text(v), |a| plural(a.len(), "row")),
+        // Each row by its values: a face as "F3:+z of Case", other rows their fields in order.
+        Kind::Rows { fields, .. } => list(v, |row| {
+            let o = row.as_object()?;
+            if let (Some(face), Some(body)) = (o.get("face").and_then(Value::as_str), o.get("body").and_then(Value::as_str)) {
+                return Some(format!("{face} of {body}"));
+            }
+            let parts: Vec<String> = fields.iter().filter_map(|f| o.get(f.key).filter(|x| !x.is_null()).map(|x| scalar(f, x, units))).collect();
+            (!parts.is_empty()).then(|| parts.join(" "))
+        }),
         Kind::List { item, .. } => match v.as_array() {
             Some(a) => a.iter().map(|x| scalar(item, x, units)).collect::<Vec<_>>().join("; "),
             None => crate::context::value_text(v),
@@ -360,6 +368,18 @@ mod tests {
         assert_eq!(quantity(0.3), "0.3");
         assert_eq!(quantity(-2.5), "−2.5");
         assert_eq!(quantity(7.85e-9), "7.85e−9");
+    }
+
+    /// A size control on faces lists them by name, never as a count of rows (A4-13).
+    #[test]
+    fn face_rows_read_as_face_names() {
+        use fieldcraft_model::{GeometryRef, SizeControl, SizeRegion};
+        let mut m = Model::default();
+        let faces = vec![GeometryRef::face("Case", "F3:+z").unwrap(), GeometryRef::face("Case", "F4:-z").unwrap()];
+        m.set_size_control("Top", SizeControl { region: SizeRegion::Geometry(faces), size: 0.002 }).unwrap();
+        let top = text(&rows(&m, Def::SizeControl, "Top", &DisplaySystem::default()).unwrap());
+        assert!(top.contains("Faces: F3:+z of Case, F4:-z of Case"), "{top}");
+        assert!(!top.contains("row"), "{top}");
     }
 
     /// Definitions read in their forms' words and units, never as JSON (#335).
