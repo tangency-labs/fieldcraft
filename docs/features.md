@@ -45,7 +45,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Structured Hex | Hex Mesh — Structured hex mesh of a body: automatic, or extruded, swept, revolved or mapped (the Method drop-down) | ready | `mesh.hex.generate`, (`mesh.hex.sweep`), (`mesh.hex.mapped`) |
 | Structured Hex | Partitioned Mesh — One mesh of a partitioned part, a method per cell (hex, tet, or all hex as conforming blocks); cells joined across partitions, tet cells to hex cells through conforming pyramids | ready | `mesh.cells`, (`mesh.hex.blocks`) |
 | Structured Hex | Extrude to Surface — Hex layers from a meshed or planar section up to a curved target surface, following the side faces | ready | `mesh.hex.extrude` |
-| Structured Hex | Mesh Plan — A hex-meshing plan from the features that built a body (sweeps, blocks, O-grids, layers, imprints, copies); saved, editable, applied with the structured meshers | ready | `mesh.plan`, `mesh.plan.apply` |
+| Structured Hex | Mesh Plan — A hex-meshing plan from the features that built a body (sweeps, blocks, O-grids, layers, imprints, copies); saved, editable, applied with the structured meshers | ready | `mesh.plan`, `mesh.plan.apply`, `mesh.plan.delete` |
 | Structured Hex | Mesh Block — A mapped block of hex, wedge or quad elements between corner points; projection blocking (a block topology projected onto the part) | ready | `mesh.block`, `mesh.hex.project` |
 | Structured Hex | Decompose — Find sweepable and mappable regions of 3D parts (extruded cross-sections are already cut into blocks by Hex Mesh) | coming soon (M5) |  |
 | Automatic Hex | Octree Hex — Unstructured all-hex mesh of any part: adaptive grid, boundary layers on every sharp edge, untangled and proven valid | ready | `mesh.hex.octree` |
@@ -54,7 +54,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Improve | Smooth — Smooth node positions, keeping every element valid | coming soon (M6) |  |
 | Improve | Untangle — Repair inverted elements | coming soon (M6) |  |
 | Improve | Layers — Boundary padding and layers through thin walls | coming soon (M6) |  |
-| Improve | Relax Nodes — Relax the nodes inside a sphere to fix spikes and slivers; surface nodes slide on the geometry; kept as a field to apply again after a remesh | ready | `mesh.node.relax`, `mesh.node.relax.apply` |
+| Improve | Relax Nodes — Relax the nodes inside a sphere to fix spikes and slivers; surface nodes slide on the geometry; kept as a field to apply again after a remesh | ready | `mesh.node.relax`, `mesh.node.relax.apply`, `mesh.node.relax.delete` |
 | Improve | Move Nodes — Drag nodes of the mesh, the nodes round them following by a falloff or harmonically, on the geometry; the original drawn as a ghost and the elements coloured by how their quality changes | ready | `mesh.node.move` |
 | Edit | Node — Add a node | ready | `mesh.node.add`, `mesh.node.remove` |
 | Edit | Element — Add an element on existing nodes | ready | `mesh.element.add`, `mesh.element.remove`, `mesh.clear` |
@@ -121,7 +121,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Contact | General Contact — Contact between everything that may touch, or self contact of a surface, with friction (explicit dynamics and nonlinear static steps) | ready | `interaction.contact.general`, `interaction.contact.edit`, `interaction.contact.delete` |
 | Contact | Contact Pair — Contact between two surfaces: with friction in explicit dynamics, mortar contact with friction in nonlinear static steps | ready | `interaction.contact.pair` |
 | Contact | Find Contacts — Find the parts of the mesh that touch, and make contact pairs of them | ready | `interaction.contact.find` |
-| Contact | Rigid Wall — A fixed rigid plane a set's nodes cannot pass, with friction, in an explicit dynamics step | ready | `interaction.rigid_wall`, `interaction.rigid_wall.delete` |
+| Contact | Rigid Wall — A fixed rigid plane a set's nodes cannot pass, with friction, in an explicit dynamics step | ready | `interaction.rigid_wall`, `interaction.rigid_wall.edit`, `interaction.rigid_wall.delete` |
 | Connectors | Bolt Load — Bolt pretension | coming soon (M7) |  |
 | Connectors | Spring — Spring or dashpot to the ground or between two points, along a direction or their line | ready | `model.spring.create`, `model.spring.edit`, `model.spring.delete` |
 | Connectors | Point Mass — Point mass and rotary inertia at nodes or a reference point | ready | `model.mass.create`, `model.mass.edit`, `model.mass.delete` |

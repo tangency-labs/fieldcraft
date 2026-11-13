@@ -61,9 +61,11 @@ pub const SET: &[Field] = &[
         "Geometry",
         &[
             reference("body", "Body", C::Body).help("A body of the open design.").req(),
-            text("face", "Face").help("A persistent face name of the body (e.g. F3); the whole body when empty.").hint("persistent face name"),
-            text("edge", "Edge").help("A persistent edge name of the body."),
-            text("vertex", "Vertex").help("A persistent vertex name of the body."),
+            topology("face", "Face", Side3::Face, "body")
+                .help("A persistent face name of the body (e.g. F3); the whole body when empty.")
+                .hint("persistent face name"),
+            topology("edge", "Edge", Side3::Edge, "body").help("A persistent edge name of the body."),
+            topology("vertex", "Vertex", Side3::Vertex, "body").help("A persistent vertex name of the body."),
         ],
     )
     .help("Bodies of the design, or their named faces, edges or vertices. Kept by name, so the set survives remeshing.")
@@ -738,7 +740,9 @@ const BOX_FACES: &[(&str, &str)] =
 const BOX_FACE: Field = choice("", "Box face", BOX_FACES).help("A face of the domain's box, at the smallest or largest X, Y or Z.").req();
 const OBSTACLE_FACE_FIELDS: &[Field] = &[
     reference("body", "Body", C::Body).help("An obstacle body of the design.").req(),
-    text("face", "Face").help("A persistent face name of the body (e.g. F3); it also selects the face's split pieces.").req(),
+    topology("face", "Face", Side3::Face, "body")
+        .help("A persistent face name of the body (e.g. F3); it also selects the face's split pieces.")
+        .req(),
 ];
 const OBSTACLE_FACE: Field = group("face", "Face", OBSTACLE_FACE_FIELDS).help("The obstacle face.").req();
 const SURFACE_CONDITION: &[Variant] = &[
@@ -1715,7 +1719,7 @@ pub const HEX_OCTREE: &[Field] = &[
 /// A face by body and persistent name, a row of a face list.
 const FACE_ROW: &[Field] = &[
     reference("body", "Body", C::Body).help("A body of the open design.").req(),
-    text("face", "Face").help("A persistent face name of the body (e.g. F3).").req().hint("persistent face name"),
+    topology("face", "Face", Side3::Face, "body").help("A persistent face name of the body (e.g. F3).").req().hint("persistent face name"),
 ];
 const fn face_rows(key: &'static str, label: &'static str) -> Field {
     rows(key, label, FACE_ROW)
@@ -1790,7 +1794,7 @@ pub const PLANAR: &[Field] = &[
         .help("The 2D element type.")
         .def("\"quad4\""),
     BODY,
-    text("face", "Face").help("A planar face of the body to mesh.").hint("a planar face of the body"),
+    topology("face", "Face", Side3::Face, "body").help("A planar face of the body to mesh.").hint("a planar face of the body"),
     TOLERANCE,
     table("polygon", "Polygon", D::Length, &["x", "y"], PLANAR_POINTS)
         .help("An outline to mesh instead of a face: three or more points in the XY plane, in order round it.")
@@ -1962,7 +1966,9 @@ pub const RENUMBER: &[Field] = &[
 /// Design edges by persistent name, `[{"body", "edge"}, …]`.
 const SEED_EDGES: &[Field] = &[
     reference("body", "Body", C::Body).help("The body the edge is on.").req(),
-    text("edge", "Edge").help("The persistent edge name (geometry.bodies lists them); without its ~k number, every edge of that name.").req(),
+    topology("edge", "Edge", Side3::Edge, "body")
+        .help("The persistent edge name (geometry.bodies lists them); without its ~k number, every edge of that name.")
+        .req(),
 ];
 
 pub const SEED_EDGE: &[Field] = &[
@@ -2054,9 +2060,9 @@ pub const TAG: &[Field] = &[
         "Geometry",
         &[
             reference("body", "Body", C::Body).help("A body of the open design.").req(),
-            text("face", "Face").help("A persistent face name."),
-            text("edge", "Edge").help("A persistent edge name."),
-            text("vertex", "Vertex").help("A persistent vertex name."),
+            topology("face", "Face", Side3::Face, "body").help("A persistent face name."),
+            topology("edge", "Edge", Side3::Edge, "body").help("A persistent edge name."),
+            topology("vertex", "Vertex", Side3::Vertex, "body").help("A persistent vertex name."),
         ],
     )
     .help("The geometry the mesh entities are tagged with.")
@@ -2207,9 +2213,9 @@ pub const CENTRE: &[Field] = &[
         "Geometry",
         &[
             reference("body", "Body", C::Body).help("A body of the open design.").req(),
-            text("face", "Face").help("A persistent face name of the body."),
-            text("edge", "Edge").help("A persistent edge name of the body."),
-            text("vertex", "Vertex").help("A persistent vertex name of the body."),
+            topology("face", "Face", Side3::Face, "body").help("A persistent face name of the body."),
+            topology("edge", "Edge", Side3::Edge, "body").help("A persistent edge name of the body."),
+            topology("vertex", "Vertex", Side3::Vertex, "body").help("A persistent vertex name of the body."),
         ],
     )
     .help("Faces or edges (a hole's faces or rim give its centre), or one vertex."),
@@ -2227,7 +2233,7 @@ pub const DATUM_POINT: &[Field] = &[
                 "Vertex",
                 &[
                     reference("body", "Body", C::Body).help("The body the vertex belongs to.").req(),
-                    text("vertex", "Vertex")
+                    topology("vertex", "Vertex", Side3::Vertex, "body")
                         .help("The vertex's persistent name: pick it with Select: Vertices and Use selection (geometry.bodies lists every body's vertices).")
                         .req(),
                 ],
@@ -2237,7 +2243,7 @@ pub const DATUM_POINT: &[Field] = &[
                 "On an edge",
                 &[
                     reference("body", "Body", C::Body).help("The body the edge belongs to.").req(),
-                    text("edge", "Edge").help("The edge's persistent name.").req(),
+                    topology("edge", "Edge", Side3::Edge, "body").help("The edge's persistent name.").req(),
                     range("fraction", "Fraction", D::None, 0.0, 1.0).help("How far along the edge from its start: 0.5 is its midpoint.").def("0.5"),
                 ],
             ),
@@ -2246,7 +2252,7 @@ pub const DATUM_POINT: &[Field] = &[
                 "Face centre",
                 &[
                     reference("body", "Body", C::Body).help("The body the face belongs to.").req(),
-                    text("face", "Face").help("The face's persistent name.").req(),
+                    topology("face", "Face", Side3::Face, "body").help("The face's persistent name.").req(),
                 ],
             ),
             variant(
@@ -2368,7 +2374,9 @@ pub const FACES_MERGE: &[Field] = &[
 pub const FACE_ABSORB: &[Field] = &[
     text("name", "Name").help("The absorption's name (with From check: the prefix of each one's, Name-1, Name-2, …).").hint("Absorb"),
     group("face", "Face", FACE_ROW).help("The tiny or sliver face to absorb; leave empty with From check."),
-    text("into", "Into").help("The neighbour face that absorbs it, by persistent name.").hint("the neighbour sharing the longest edges"),
+    topology("into", "Into", Side3::Face, "")
+        .help("The neighbour face that absorbs it, by persistent name.")
+        .hint("the neighbour sharing the longest edges"),
     flag("from_check", "From check").help("Absorb every small and sliver face the last Check Geometry found, each into its best neighbour."),
 ];
 pub const STITCH: &[Field] = &[
@@ -3328,6 +3336,25 @@ mod tests {
             assert!(problems(RENDER_SAVE, &json!({"name": "R", "view": "V", "frames": frames})).is_empty(), "{frames}");
         }
         assert!(!problems(RENDER_SAVE, &json!({"name": "R", "view": "V", "frames": [-1, 4]})).is_empty());
+    }
+
+    /// A1-11: persistent face, edge and vertex names are topology fields of their sibling body,
+    /// which the form's Pick fills from the selection.
+    #[test]
+    fn persistent_names_are_topology_fields() {
+        let geometry = field_of("model.set.create", "geometry");
+        let Kind::Rows { fields, .. } = geometry.kind else { panic!("{geometry:?}") };
+        let kinds: Vec<_> = fields
+            .iter()
+            .filter_map(|f| if let Kind::Topology { entity, body_key } = f.kind { Some((f.key, entity, body_key)) } else { None })
+            .collect();
+        assert_eq!(kinds, [("face", Side3::Face, "body"), ("edge", Side3::Edge, "body"), ("vertex", Side3::Vertex, "body")]);
+        for (command, key) in [("mesh.seed.edge", "edges"), ("geometry.centre", "geometry"), ("mesh.hex.extrude", "source")] {
+            let Kind::Rows { fields, .. } = field_of(command, key).kind else { panic!("{command}") };
+            assert!(fields.iter().any(|f| matches!(f.kind, Kind::Topology { body_key: "body", .. })), "{command}");
+        }
+        assert!(matches!(field_of("geometry.face.absorb", "into").kind, Kind::Topology { entity: Side3::Face, .. }));
+        assert!(matches!(field_of("mesh.planar", "face").kind, Kind::Topology { entity: Side3::Face, body_key: "body" }));
     }
 
     /// Unit overrides are one unit per quantity, every quantity listed by its name.
