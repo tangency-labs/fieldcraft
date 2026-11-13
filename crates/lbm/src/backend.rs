@@ -114,6 +114,11 @@ pub trait Backend {
     fn conducting(&self) -> &[Vec<u32>];
     /// Obstacles that cover no cell centre.
     fn empty_obstacles(&self) -> &[String];
+    /// With interpolated walls, how the obstacles' links bounce back (a backend runs the links
+    /// of the flow it was made from).
+    fn wall_links(&self) -> Option<crate::flow::WallLinks> {
+        None
+    }
 }
 
 /// Makes a device backend from a prepared flow (its initial state included) and its setup.

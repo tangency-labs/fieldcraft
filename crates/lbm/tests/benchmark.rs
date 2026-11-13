@@ -37,6 +37,7 @@ fn schafer_turek_2d1(dx: f64, time_step: Option<f64>, collision: Collision) -> (
         collision: Some(collision),
         turbulence: None,
         steady: None,
+        walls: Default::default(),
     };
     let m = model(1.0, nu, dom, procedure);
     let r = solve_fluid(&m, None, std::slice::from_ref(&cyl), &Limits::default()).unwrap();
@@ -113,6 +114,7 @@ fn schafer_turek_2d2(cells: f64, lattice: f64, end_time: f64, window: f64, colli
         collision: Some(collision),
         turbulence: None,
         steady: None,
+        walls: Default::default(),
     };
     let m = model(1.0, nu, dom, procedure);
     let r = solve_fluid(&m, None, std::slice::from_ref(&cyl), &Limits::default()).unwrap();
@@ -181,6 +183,7 @@ fn lid_driven_cavity_re100(n: usize, collision: Collision) -> (f64, f64) {
         collision: Some(collision),
         turbulence: None,
         steady: None,
+        walls: Default::default(),
     };
     let r = solve_fluid(&model(1.0, 0.01, d, procedure), None, &[], &Limits::default()).unwrap();
     let last = r.frames.last().unwrap();

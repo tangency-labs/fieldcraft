@@ -258,6 +258,7 @@ fn an_advance_failure_keeps_the_uninterrupted_reporting_boundary() {
         sigma: None,
         turbulence: None,
         steady: Some(Steady { window: Some(160.0 * dt), tolerance: 1e-6, min_time: None, divergence: None, monitors: vec![], averaging: None }),
+        walls: Default::default(),
     };
     let m = model(1.0, 0.01, d, p);
     let normal = solve_fluid(&m, None, &[], &Limits::default()).unwrap();
@@ -284,6 +285,7 @@ fn rounded_steady_windows_can_retain_more_than_the_history_sampling_target() {
         sigma: None,
         turbulence: None,
         steady: Some(Steady { window: Some(17.0), tolerance: 1e-6, min_time: Some(169999.0), divergence: None, monitors: vec![], averaging: None }),
+        walls: Default::default(),
     };
     let m = model(1.0, 0.1, domain([0.0; 3], [1.0; 3], 1.0), p);
     let normal = solve_fluid(&m, None, &[], &Limits::default()).unwrap();

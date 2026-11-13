@@ -14,10 +14,6 @@ use fieldcraft_model::{FaceCondition, Outflow, Profile};
 
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
 
-fn sci(v: &[f64]) -> String {
-    v.iter().map(|x| format!("{x:.3e}")).collect::<Vec<_>>().join(", ")
-}
-
 /// Plane Poiseuille flow between walls at y = 0 and y = 1, driven by a body force; periodic in x
 /// and z (one cell each). τ = 1; returns the largest error of the velocity over its peak.
 fn plane_poiseuille(n: usize, magic: f64) -> f64 {
@@ -206,13 +202,6 @@ fn pipe_poiseuille_on_a_staircase_wall_converges() {
     assert!(l2[2] < l2[0] && l2[2] < 0.05, "{l2:?}");
 }
 
-/// The Stokes drag coefficient K = F / (6 π μ R U) of a simple cubic array of spheres at volume
-/// fraction c (H. Hasimoto, JFM 5(2):317–328, 1959, with the higher terms of A. S. Sangani,
-/// A. Acrivos, Int. J. Multiphase Flow 8(4):343–360, 1982), U the mean velocity over the cell.
-fn hasimoto(c: f64) -> f64 {
-    1.0 / (1.0 - 1.7601 * c.cbrt() + c - 1.5593 * c * c + 3.9799 * c.powf(8.0 / 3.0) - 3.0734 * c.powf(10.0 / 3.0))
-}
-
 /// A sphere of radius `r` cells at the centre of a periodic box of `l` cells, the fluid driven by
 /// a small body force (Re ≪ 1); returns the measured K over Hasimoto's, and the relative mass
 /// drift.
@@ -243,6 +232,7 @@ fn sphere_drag(r: f64, l: usize, steps: u64) -> (f64, f64) {
             collision: None,
             turbulence: None,
             steady: None,
+            walls: Default::default(),
         },
     );
     let (setup, mut flow) = prepare(&m, std::slice::from_ref(&ball));
@@ -302,6 +292,7 @@ fn channel_with_a_parabolic_inlet_and_a_pressure_outlet_develops_poiseuille_flow
         collision: None,
         turbulence: None,
         steady: None,
+        walls: Default::default(),
     };
     let m = model(1.0, nu, d, procedure);
     let r = solve_fluid(&m, Some("Run"), &[], &Limits::default()).unwrap();
@@ -355,6 +346,7 @@ fn pressure_driven_poiseuille_holds_its_end_pressures() {
         magic: None,
         sigma: None,
         steady: None,
+        walls: Default::default(),
         collision: None,
         turbulence: None,
     };
@@ -400,6 +392,7 @@ fn a_short_channel_at_re_100_survives_backflow_at_the_outlet() {
         magic: None,
         sigma: None,
         steady: None,
+        walls: Default::default(),
         collision: None,
         turbulence: None,
     };
@@ -437,6 +430,7 @@ fn a_wake_at_a_pressure_outlet_distorts_only_the_last_layer() {
         magic: None,
         sigma: None,
         steady: None,
+        walls: Default::default(),
         collision: None,
         turbulence: None,
     };
@@ -548,6 +542,7 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
             collision: Some(collision),
             turbulence: None,
             steady: None,
+            walls: Default::default(),
         };
         if let (fieldcraft_model::Procedure::Fluid { turbulence: t, .. }, true) = (&mut p, vreman) {
             *t = Some(fieldcraft_model::Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None });
@@ -680,6 +675,7 @@ fn results_are_bit_for_bit_reproducible() {
             collision: None,
             turbulence: None,
             steady: None,
+            walls: Default::default(),
         },
     );
     let a = solve_fluid(&m, None, std::slice::from_ref(&ball), &Limits::default()).unwrap();

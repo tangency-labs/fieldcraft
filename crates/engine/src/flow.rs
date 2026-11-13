@@ -618,6 +618,7 @@ pub(crate) mod tests {
             eddy_viscosity_ratio: None,
             frozen: None,
             free_surface: None,
+            wall_links: None,
         };
         FluidResult {
             baffles: Box::default(),

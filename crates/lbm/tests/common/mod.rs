@@ -50,6 +50,7 @@ pub fn collide(end_time: f64, time_step: f64, magic: Option<f64>, collision: Col
         collision: Some(collision),
         turbulence: None,
         steady: None,
+        walls: Default::default(),
     }
 }
 
@@ -79,6 +80,7 @@ pub fn ball_channel(
         collision: Some(collision),
         turbulence,
         steady: None,
+        walls: Default::default(),
     };
     (model(1.0, 0.01, d, p), ball)
 }
@@ -133,6 +135,39 @@ pub fn run_all(setup: &Setup, flow: &mut Flow) {
     for _ in 0..setup.steps {
         flow.step().unwrap();
     }
+}
+
+/// Numbers in scientific notation, for the tests' printed errors.
+pub fn sci(v: &[f64]) -> String {
+    v.iter().map(|x| format!("{x:.3e}")).collect::<Vec<_>>().join(", ")
+}
+
+/// The least-squares slope of ln|error| against ln(cells): the order of convergence over several
+/// grids (the error of a curved wall on a lattice moves with how the wall cuts each grid's links,
+/// so the order between two grids alone is noisy).
+pub fn fitted_order(cells: &[usize], errors: &[f64]) -> f64 {
+    let x: Vec<f64> = cells.iter().map(|k| (*k as f64).ln()).collect();
+    let y: Vec<f64> = errors.iter().map(|e| e.abs().ln()).collect();
+    let n = x.len() as f64;
+    let (mx, my) = (x.iter().sum::<f64>() / n, y.iter().sum::<f64>() / n);
+    let sxy: f64 = x.iter().zip(&y).map(|(a, b)| (a - mx) * (b - my)).sum();
+    let sxx: f64 = x.iter().map(|a| (a - mx) * (a - mx)).sum();
+    -sxy / sxx
+}
+
+/// The Stokes drag coefficient K = F / (6 π μ R U) of a simple cubic array of spheres at volume
+/// fraction c (H. Hasimoto, JFM 5(2):317–328, 1959, with the higher terms of A. S. Sangani,
+/// A. Acrivos, Int. J. Multiphase Flow 8(4):343–360, 1982), U the mean velocity over the cell.
+pub fn hasimoto(c: f64) -> f64 {
+    1.0 / (1.0 - 1.7601 * c.cbrt() + c - 1.5593 * c * c + 3.9799 * c.powf(8.0 / 3.0) - 3.0734 * c.powf(10.0 / 3.0))
+}
+
+/// A fluid step `p` with the wall treatment `w`.
+pub fn with_walls(mut p: Procedure, w: fieldcraft_model::WallTreatment) -> Procedure {
+    if let Procedure::Fluid { walls, .. } = &mut p {
+        *walls = w;
+    }
+    p
 }
 
 /// The convergence order of errors at resolutions growing by `ratio` each.

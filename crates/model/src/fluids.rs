@@ -1359,6 +1359,7 @@ mod tests {
             collision: None,
             turbulence: None,
             steady: None,
+            walls: Default::default(),
         };
         m.add_step(Step::new("Run", fluid.clone()), None).unwrap();
         assert!(matches!(m.remove_fluid_domain("Flow"), Err(Error::InUse(_))));
@@ -1405,6 +1406,7 @@ mod tests {
                     collision,
                     turbulence,
                     steady,
+                    walls: Default::default(),
                 },
                 other => other,
             };
@@ -1457,6 +1459,7 @@ mod tests {
                 collision: None,
                 turbulence: None,
                 steady: None,
+                walls: Default::default(),
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1469,6 +1472,7 @@ mod tests {
                 collision: None,
                 turbulence: None,
                 steady: None,
+                walls: Default::default(),
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1481,6 +1485,7 @@ mod tests {
                 collision: None,
                 turbulence: None,
                 steady: None,
+                walls: Default::default(),
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1493,6 +1498,7 @@ mod tests {
                 collision: None,
                 turbulence: None,
                 steady: None,
+                walls: Default::default(),
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1505,6 +1511,7 @@ mod tests {
                 collision: None,
                 turbulence: None,
                 steady: None,
+                walls: Default::default(),
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1517,6 +1524,7 @@ mod tests {
                 collision: None,
                 turbulence: None,
                 steady: None,
+                walls: Default::default(),
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1529,6 +1537,7 @@ mod tests {
                 collision: None,
                 turbulence: None,
                 steady: None,
+                walls: Default::default(),
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1541,6 +1550,7 @@ mod tests {
                 collision: None,
                 turbulence: None,
                 steady: None,
+                walls: Default::default(),
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1553,6 +1563,7 @@ mod tests {
                 collision: None,
                 turbulence: None,
                 steady: None,
+                walls: Default::default(),
             },
         ] {
             assert!(m.add_step(Step::new("Bad", bad.clone()), None).is_err(), "{bad:?}");
@@ -1569,6 +1580,7 @@ mod tests {
             collision: None,
             turbulence: None,
             steady: Some(st),
+            walls: Default::default(),
         };
         let rule = crate::Steady { monitors: vec![], tolerance: 1e-3, window: None, min_time: None, divergence: None, averaging: None };
         let monitored = crate::Steady {

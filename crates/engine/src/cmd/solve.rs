@@ -2474,6 +2474,7 @@ pub(crate) mod tests {
             eddy_viscosity_ratio: None,
             frozen: None,
             free_surface: None,
+            wall_links: None,
         };
         // Per preset: the mean temperature's mean and rms, and the residual's mean, as shown.
         for (preset, mean_t, rms_t, residual, units) in [

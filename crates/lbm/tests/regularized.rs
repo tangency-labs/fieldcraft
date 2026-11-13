@@ -13,10 +13,6 @@ use fieldcraft_model::{BoxFace, Collision, FaceCondition, Outflow, Procedure, Pr
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
 const REGULARIZED: Collision = Collision::Regularized;
 
-fn sci(v: &[f64]) -> String {
-    v.iter().map(|x| format!("{x:.3e}")).collect::<Vec<_>>().join(", ")
-}
-
 /// A fluid step of `steps` time steps of 1 (lattice units).
 fn steps(steps: u64, collision: Collision) -> Procedure {
     Procedure::Fluid {
@@ -30,6 +26,7 @@ fn steps(steps: u64, collision: Collision) -> Procedure {
         collision: Some(collision),
         turbulence: None,
         steady: None,
+        walls: Default::default(),
     }
 }
 
@@ -254,6 +251,7 @@ fn cylinder_failure(cells: f64, re: f64, steps_run: u64, collision: Collision) -
         collision: Some(collision),
         turbulence: None,
         steady: None,
+        walls: Default::default(),
     };
     let m = model(1.0, d / re, dom, p);
     let setup = Setup::new(&m, None, std::slice::from_ref(&cyl), &Limits::default()).unwrap();
@@ -302,6 +300,7 @@ fn channel(n: usize, collision: Collision) -> (f64, f64, f64, f64) {
         collision: Some(collision),
         turbulence: None,
         steady: None,
+        walls: Default::default(),
     };
     let r = solve_fluid(&model(1.0, nu, d, p), None, &[], &Limits::default()).unwrap();
     let last = r.frames.last().unwrap();

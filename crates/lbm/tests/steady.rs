@@ -26,6 +26,7 @@ fn fluid(end_time: f64, time_step: f64, steady: Option<Steady>) -> Procedure {
         collision: None,
         turbulence: None,
         steady,
+        walls: Default::default(),
     }
 }
 
@@ -178,6 +179,7 @@ fn an_unstable_flow_stops_as_diverged() {
                 collision: None,
                 turbulence: None,
                 steady,
+                walls: Default::default(),
             },
         )
     };

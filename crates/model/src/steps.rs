@@ -76,7 +76,8 @@ pub enum Procedure {
     /// `sigma` is the hybrid recursive regularised collision's σ ([`HrrSigma`], 0.99 by default,
     /// used only with `collision: "hrr"`). With `steady`, the run stops on its own once the flow stops changing ([`Steady`]); its
     /// length is then the most it may run. `turbulence` adds a subgrid eddy viscosity
-    /// ([`Turbulence`]; none by default).
+    /// ([`Turbulence`]; none by default). `walls` is how the links into obstacles bounce back
+    /// ([`WallTreatment`], halfway by default).
     Fluid {
         domain: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -97,6 +98,8 @@ pub enum Procedure {
         turbulence: Option<Turbulence>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         steady: Option<Steady>,
+        #[serde(default, skip_serializing_if = "WallTreatment::is_halfway")]
+        walls: WallTreatment,
     },
     /// Heat conduction: the steady temperature field, or its history over time when `transient`
     /// is given. Temperature boundary conditions and heat loads (flux, convection, sources)
@@ -153,6 +156,35 @@ impl Collision {
     /// `hrr`): open boundaries and stability limits treat the two alike.
     pub fn is_regularized(self) -> bool {
         matches!(self, Collision::Regularized | Collision::Hrr)
+    }
+}
+
+/// How a lattice Boltzmann fluid step bounces its populations back at the obstacles' walls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WallTreatment {
+    /// Every wall halfway between a fluid cell and a solid one: a curved obstacle is a staircase
+    /// of cell faces (the default).
+    #[default]
+    Halfway,
+    /// Each link into an obstacle bounces back where the obstacle's surface crosses it, by
+    /// Bouzidi, Firdaouss and Lallemand's linear interpolation (Phys. Fluids 13:3452, 2001):
+    /// curved walls second order in position. The box's own walls stay halfway (they lie
+    /// halfway), and heat keeps its halfway walls.
+    Interpolated,
+}
+
+impl WallTreatment {
+    /// `halfway` or `interpolated`, as written in the model.
+    pub fn name(self) -> &'static str {
+        match self {
+            WallTreatment::Halfway => "halfway",
+            WallTreatment::Interpolated => "interpolated",
+        }
+    }
+
+    pub fn is_halfway(&self) -> bool {
+        *self == WallTreatment::Halfway
     }
 }
 

@@ -186,6 +186,10 @@ pub struct FluidStats {
     /// Reported by the solve, not saved, like `frozen`.
     #[serde(skip)]
     pub free_surface: Option<FreeSurfaceStats>,
+    /// With interpolated walls: how the obstacles' wall links bounced back. Reported by the solve,
+    /// not saved, like `frozen`.
+    #[serde(skip)]
+    pub wall_links: Option<crate::flow::WallLinks>,
 }
 
 /// How a free surface fared over the run (masses in model units).
@@ -673,6 +677,15 @@ fn run_checkpointed(
     for body in flow.empty_obstacles() {
         warnings.push(format!("obstacle `{body}` covers no cell centre: it is smaller than the spacing or outside the box"));
     }
+    if let Some(w) = flow.wall_links().filter(|w| w.halfway() > 0) {
+        warnings.push(format!(
+            "interpolated walls: {} of {} wall links kept halfway bounce-back ({} with the surface nearer than half a link and no fluid cell behind them to interpolate from, {} with no crossing of the surface found); refine the spacing where obstacles nearly touch",
+            w.halfway(),
+            w.halfway() + w.interpolated,
+            w.no_second_node,
+            w.no_crossing
+        ));
+    }
     if flow.name() != "cpu" {
         warnings
             .push(format!("solved on {}: single precision, deterministic on this device, within the backend's tolerance of the CPU", flow.name()));
@@ -759,6 +772,7 @@ fn run_checkpointed(
             eddy_viscosity_ratio: setup.turbulent().then(|| flow.eddy_viscosity_ratio()),
             frozen: flow.frozen(),
             free_surface,
+            wall_links: flow.wall_links(),
         },
         warnings,
         steady,
