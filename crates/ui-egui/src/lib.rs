@@ -304,6 +304,9 @@ pub struct Viewport {
     /// The overlays drawn over the viewport last frame (legend, selection bar, gizmo, navigation
     /// bar): a fit leaves them free ([`framing::free_part`]).
     pub overlays: Vec<egui::Rect>,
+    /// Frames left in which the model is framed again if part of it is out of the free part
+    /// ([`framing::RECHECK_FRAMES`]).
+    pub recheck: u8,
     /// What the current drag does to the camera, chosen when it starts.
     pub drag: Option<NavMode>,
     /// The point the current orbit turns about (drawn as a marker while orbiting).
@@ -426,6 +429,9 @@ pub struct ModelApp {
     pub features_open: std::collections::BTreeSet<(String, u64)>,
     /// Whether results were shown last frame (the Results tab comes up when they appear).
     results_shown: bool,
+    /// The step and mode shown last ([`fieldcraft_engine::results::ResultsView`]): another one
+    /// is framed if part of it is out of view.
+    shape_shown: Option<(String, usize)>,
     /// The framing the viewport does when it next draws ([`framing::Reframe`]).
     reframe: Option<framing::Reframe>,
     /// The session's camera requests seen ([`Session::camera_requests`]: a saved view shown).
@@ -579,6 +585,7 @@ impl ModelApp {
             reply: None,
             features_open: Default::default(),
             results_shown: false,
+            shape_shown: None,
             reframe: None,
             camera_seen: 0,
             framed_document: None,
@@ -2210,6 +2217,12 @@ impl ModelApp {
             self.reframe = framing::Reframe::merge(self.reframe, framing::Reframe::IfOffscreen);
         }
         self.results_shown = shown;
+        // Another step or mode shown: its shape is framed if part of it is out of view.
+        let shape = self.session.results_view.as_ref().map(|v| (v.step.clone(), v.mode));
+        if shape.is_some() && shape != self.shape_shown {
+            self.viewport.recheck = framing::RECHECK_FRAMES;
+        }
+        self.shape_shown = shape;
         self.check_selection();
         self.follow_form_filter();
         // A refusal goes once the command can run.
@@ -3667,6 +3680,31 @@ mod tests {
                 let at = crate::viewport::to_screen(&app, c).unwrap();
                 assert!(!legend.contains(at) && view.contains(at), "{w}×{h}: corner {k} at {at:?}, legend {legend:?}");
             }
+        }
+    }
+
+    /// A window made smaller frames a model it would cut off, and another mode shown frames its
+    /// shape (A3-19).
+    #[test]
+    fn a_resize_or_another_mode_keeps_the_model_framed() {
+        let mut app = ModelApp::new(Session::default());
+        let ctx = egui::Context::default();
+        app.run("file.sample", json!({"name": "cantilever"})).unwrap();
+        for _ in 0..3 {
+            draw(&mut app, &ctx, 1680.0, 1050.0);
+        }
+        assert!(app.framed(), "framed at first");
+        for _ in 0..3 {
+            draw(&mut app, &ctx, 1024.0, 700.0);
+        }
+        assert!(app.framed(), "framed after the resize: {:?}", app.cam);
+        app.run("solve.run", json!({})).unwrap();
+        for mode in 1..=6 {
+            app.run("results.modes", json!({"step": "Modes", "mode": mode})).unwrap();
+            for _ in 0..2 {
+                draw(&mut app, &ctx, 1280.0, 800.0);
+            }
+            assert!(app.framed(), "mode {mode}: {:?}", app.cam);
         }
     }
 

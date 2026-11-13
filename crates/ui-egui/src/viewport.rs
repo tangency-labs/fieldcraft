@@ -38,10 +38,23 @@ const NO_ZOOM: f64 = 1e-9; // unit-factors: a zoom ratio
 
 pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     let rect = ui.available_rect_before_wrap();
+    // A resize that cuts off a model that was framed frames it again (a model already partly out
+    // of view, zoomed in on purpose, is left as it is).
+    let resized = app.viewport.rect.is_some_and(|old| (old.size() - rect.size()).length() > 0.5);
+    if resized && app.framed() {
+        app.viewport.recheck = crate::framing::RECHECK_FRAMES;
+    }
     app.viewport.rect = Some(rect);
     app.place("viewport", rect);
     let t = Tokens::get(app.ui.dark);
     app.viewport.overlays = overlays(app, ui, rect, &t);
+    // The overlays settle a frame or two after a resize or another step: the model is checked
+    // again until they have.
+    if app.viewport.recheck > 0 {
+        app.viewport.recheck -= 1;
+        app.reframe = crate::framing::Reframe::merge(app.reframe, crate::framing::Reframe::IfOffscreen);
+        ui.ctx().request_repaint();
+    }
     app.apply_reframe();
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
     let boxing = app.pick.box_mode && app.pick.filter.boxes();
