@@ -3873,8 +3873,8 @@ mod tests {
         }
     }
 
-    /// The View menu's Show rows are menu rows as its Style rows are, so their text starts at
-    /// one inset (A3-16).
+    /// The display menu's Show rows are menu rows as its Projection rows are, so their text starts
+    /// at one inset (A3-16).
     #[test]
     fn the_view_menu_rows_share_one_inset() {
         let mut app = ModelApp::new(Session::default());
@@ -3884,8 +3884,11 @@ mod tests {
             app.ui.menu = Some("view".into());
             draw(&mut app, &ctx, 1280.0, 800.0);
         }
-        let (style, show) = (region(&app, "view_menu:style"), region(&app, "view_menu:show"));
-        assert!((style.left() - show.left()).abs() < 0.5 && (style.width() - show.width()).abs() < 0.5, "style {style:?}, show {show:?}");
+        let (show, projection) = (region(&app, "view_menu:show"), region(&app, "view_menu:perspective"));
+        assert!(
+            (projection.left() - show.left()).abs() < 0.5 && (projection.width() - show.width()).abs() < 0.5,
+            "projection {projection:?}, show {show:?}"
+        );
     }
 
     /// The selection bar's "Select" sits on the middle of its drop-down, not on its top (A3-11).

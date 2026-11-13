@@ -203,7 +203,7 @@ fn legend_layout(plot: &Plot, painter: &egui::Painter, rect: Rect, bar: Option<R
     }
     // Reserve the full-size title, metadata and clickable extremes before giving the bands
     // their room. Keep the over-limit band full height so its true/clamped maxima stay legible.
-    let nav = crate::viewport::nav_bar_rect(rect);
+    let nav = crate::navigation::bar_rect(rect);
     let bottom = if frame.left() < nav.right() && frame.right() > nav.left() { nav.top() - LEGEND_GAP } else { rect.bottom() - 12.0 };
     let over_height = bands.filter(|b| b.over).map_or(0.0, |_| SWATCH.y);
     let band_height = bands.map_or(SWATCH.y, |b| ((bottom - frame.top() - fixed_height - over_height) / b.count.max(1) as f32).clamp(1.0, SWATCH.y));
@@ -1350,7 +1350,7 @@ mod tests {
                 for (target, node) in targets {
                     assert!(layout.frame.contains_rect(target), "{target:?} outside {:?}", layout.frame);
                     assert!(target.height() >= 12.0, "extremes retain their readable font");
-                    assert!(!target.intersects(crate::viewport::nav_bar_rect(view)));
+                    assert!(!target.intersects(crate::navigation::bar_rect(view)));
                     focus_node(&mut app, &plot, node);
                     assert_eq!(app.cam.target, plot.extreme_position(node).unwrap());
                     assert!(app.probe.is_some());

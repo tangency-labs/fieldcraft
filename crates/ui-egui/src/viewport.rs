@@ -25,7 +25,7 @@ use crate::menu::{self, Target};
 use crate::navigation::{self, NavButton};
 use crate::selection::{Filter, Mode};
 use crate::theme::Tokens;
-use crate::{ModelApp, NavMode, Style};
+use crate::{ModelApp, NavMode};
 use solidcraft_ui_kit as kit;
 use solidcraft_ui_kit::BackingTooltipExt as _;
 
@@ -101,7 +101,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     crate::results_panel::show(app, ui, rect, &t);
     crate::path_panel::overlay(app, &painter, rect, &t);
     axis_view(app, ui, content);
-    nav_bar(app, ui, content);
+    navigation::bar(app, ui, content);
 }
 
 /// The part of the viewport `rect` clear of the cards over it, a shell gap from each: below the
@@ -127,7 +127,7 @@ pub(crate) fn beside_card(app: &ModelApp, rect: Rect) -> Rect {
 /// the results legend, the selection bar (where it was drawn last), the orientation gizmo, the
 /// navigation bar and the cards.
 fn overlays(app: &mut ModelApp, ui: &egui::Ui, rect: Rect, content: Rect, t: &Tokens) -> Vec<Rect> {
-    let mut out: Vec<Rect> = [axis_view_rect(content), nav_bar_rect(content)].into_iter().filter(|r| content.contains_rect(*r)).collect();
+    let mut out: Vec<Rect> = [axis_view_rect(content), navigation::bar_rect(content)].into_iter().filter(|r| content.contains_rect(*r)).collect();
     out.extend(app.shell.covered());
     if let Some(plot) = app.plot() {
         let bar = selection_bar_rect(ui.ctx());
@@ -394,17 +394,6 @@ fn context_menu(app: &mut ModelApp, response: &egui::Response) {
             }
         }
     });
-}
-
-/// A View-menu row that shows or hides something: a checked menu row, flipped by a click.
-fn toggle_row(ui: &mut egui::Ui, label: &str, on: &mut bool) -> egui::Response {
-    let mut row = kit::MenuItem::new(label, label, "");
-    row.checked = Some(*on);
-    let r = row.show(ui);
-    if r.clicked() {
-        *on = !*on;
-    }
-    r
 }
 
 const SELECTION_BAR: &str = "fc_selection_bar";
@@ -713,7 +702,7 @@ fn sampled_note(app: &ModelApp, painter: &egui::Painter, rect: Rect, t: &Tokens)
 
 /// How wide the sampled-symbols note may be: up to the navigation bar, with a gap.
 fn sampled_note_width(rect: Rect) -> f32 {
-    let bar = nav_bar_rect(rect);
+    let bar = navigation::bar_rect(rect);
     let right = if rect.contains_rect(bar) { bar.left() - 12.0 } else { rect.right() - 10.0 };
     (right - rect.left() - 10.0).max(80.0)
 }
@@ -762,164 +751,6 @@ fn axis_view(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
     }
 }
 
-/// The navigation bar's slots: (key, kind, icon, name, tooltip, shortcut). The kit draws them
-/// as SolidCraft's navigation bar draws its own.
-const NAV: [(&str, kit::NavigationKind, &str, &str, &str, Option<&str>); 8] = [
-    ("orbit", kit::NavigationKind::Tool, "ui.orbit", "Orbit", "Orbit: left drag turns the view", None),
-    ("pan", kit::NavigationKind::Tool, "ui.pan", "Pan", "Pan: left drag moves the view (or right or middle drag)", None),
-    ("zoom", kit::NavigationKind::Tool, "ui.zoom", "Zoom", "Zoom: left drag up and down (or the wheel)", None),
-    ("separator", kit::NavigationKind::Separator, "", "", "", None),
-    ("fit", kit::NavigationKind::Action, "ui.fit", "Fit", "Fit the model (or a double click)", Some("F")),
-    ("home", kit::NavigationKind::Action, "ui.home", "Home view", "Home view", None),
-    ("perspective", kit::NavigationKind::Toggle, "ui.perspective", "Perspective", "Perspective or orthographic", None),
-    ("style", kit::NavigationKind::Menu, "ui.style", "Display", "Visual style and what is shown", None),
-];
-
-/// How wide a slot of `kind` is on the bar.
-fn nav_slot_width(kind: kit::NavigationKind) -> f32 {
-    let m = kit::NavigationMetrics::for_size(kit::NavigationSize::Regular);
-    match kind {
-        kit::NavigationKind::Separator => kit::NAV_SEPARATOR,
-        kit::NavigationKind::Menu => m.icon + kit::NAV_MENU_LEFT + kit::NAV_MENU_RIGHT + kit::NAV_CHEVRON + kit::NAV_MENU_GAP,
-        _ => m.button,
-    }
-}
-
-pub(crate) fn nav_bar_rect(rect: Rect) -> Rect {
-    let m = kit::NavigationMetrics::for_size(kit::NavigationSize::Regular);
-    let inner = NAV.iter().map(|s| nav_slot_width(s.1)).sum::<f32>() + kit::NAV_GAP * (NAV.len() - 1) as f32;
-    let width = inner + 2.0 * (kit::NAV_BORDER + kit::NAV_PADDING);
-    Rect::from_min_size(pos2(rect.center().x - width / 2.0, rect.bottom() - m.height() - kit::NAV_BOTTOM), vec2(width, m.height()))
-}
-
-/// The navigation bar, bottom centre: navigation modes, fit, home, projection, and the display
-/// menu (style, geometry, mesh, nodes). The kit paints the bar's surface and slots, as
-/// SolidCraft's; the display menu is FieldCraft's own (its switches and slider are more than the
-/// kit's slot menus hold).
-fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
-    let bar = nav_bar_rect(rect);
-    if !rect.contains_rect(bar) {
-        return;
-    }
-    app.place("nav_bar", bar);
-    let m = kit::NavigationMetrics::for_size(kit::NavigationSize::Regular);
-    let mut x = bar.left() + kit::NAV_BORDER + kit::NAV_PADDING;
-    let slots: Vec<kit::nav_bar::SlotView> = NAV
-        .iter()
-        .enumerate()
-        .map(|(index, &(key, kind, icon, name, tip, shortcut))| {
-            let rect = Rect::from_min_size(pos2(x, bar.top() + kit::NAV_BORDER + kit::NAV_PADDING), vec2(nav_slot_width(kind), m.button));
-            x = rect.right() + kit::NAV_GAP;
-            let selected = match key {
-                "orbit" => app.nav == NavMode::Orbit,
-                "pan" => app.nav == NavMode::Pan,
-                "zoom" => app.nav == NavMode::Zoom,
-                "perspective" => app.ui.perspective,
-                "style" => app.ui.menu.as_deref() == Some("view"),
-                _ => false,
-            };
-            kit::nav_bar::SlotView {
-                index,
-                id: key,
-                kind,
-                icon,
-                text: name.into(),
-                name: name.into(),
-                tip: tip.into(),
-                key: shortcut.map(str::to_string),
-                selected,
-                enabled: true,
-                hidden: false,
-                show_text: false,
-                rect,
-                alias: None,
-            }
-        })
-        .collect();
-    let responses = kit::nav_bar::paint_slots(ui, bar, kit::NavigationSize::Regular, kit::NavigationEdge::Bottom, &slots, None);
-    let mut style_button = None;
-    for (slot, resp) in slots.iter().zip(&responses) {
-        if resp.clicked() {
-            match slot.id {
-                "orbit" => app.nav = NavMode::Orbit,
-                "pan" => app.nav = NavMode::Pan,
-                "zoom" => app.nav = NavMode::Zoom,
-                "fit" => app.fit_view(),
-                "home" => {
-                    app.home_view();
-                }
-                "perspective" => app.ui.perspective = !app.ui.perspective,
-                "style" => app.toggle_menu("view"),
-                _ => {}
-            }
-        }
-        if slot.id == "style" {
-            style_button = Some(slot.rect);
-        }
-    }
-    if let Some(br) = style_button {
-        crate::frame::settings_menu(app, ui, "view", br, |app, ui| {
-            crate::frame::menu_heading(ui, "Style");
-            for s in Style::ALL {
-                let mut row = kit::MenuItem::new(s.label(), s.label(), "");
-                row.checked = Some(app.ui.style == s);
-                let r = row.show(ui);
-                if s == Style::ALL[0] {
-                    app.place("view_menu:style", r.rect);
-                }
-                if r.clicked() {
-                    app.ui.style = s;
-                }
-            }
-            crate::frame::menu_separator(ui);
-            crate::frame::menu_heading(ui, "Show");
-            // Checked menu rows, as the Style rows above: one text inset for the whole menu.
-            let mut first = None;
-            for (label, on) in [
-                ("Geometry", &mut app.ui.show_geometry),
-                ("Mesh", &mut app.ui.show_mesh),
-                ("Nodes", &mut app.ui.show_nodes),
-                ("Loads & BCs", &mut app.ui.show_loads),
-                ("Interactions", &mut app.ui.show_interactions),
-            ] {
-                let r = toggle_row(ui, label, on);
-                first.get_or_insert(r.rect);
-            }
-            if let Some(r) = first {
-                app.place("view_menu:show", r);
-            }
-            kit::scope(ui, |ui| {
-                let (lo, hi) = fieldcraft_render::glyphs::SIZE_RANGE;
-                kit::row(ui, "Symbol size", |ui| {
-                    kit::slider(
-                        ui,
-                        &mut app.ui.symbol_size,
-                        lo..=hi,
-                        kit::Slider { step: Some(1.0), format: |v| format!("{v:.0} pt"), ..Default::default() },
-                    )
-                })
-                .backing_on_hover_text("The size of boundary condition, load and interaction symbols on screen, at any zoom");
-            });
-            crate::frame::menu_separator(ui);
-            toggle_row(ui, "Browser", &mut app.ui.show_tree);
-            toggle_row(ui, "Timeline", &mut app.ui.show_timeline);
-            crate::frame::menu_separator(ui);
-            crate::frame::menu_heading(ui, "Navigation");
-            kit::scope(ui, |ui| {
-                let current = navigation::preset(&app.ui.nav_preset);
-                let labels: Vec<&str> = navigation::NAV_PRESETS.iter().map(|p| p.label).collect();
-                let mut selected = navigation::NAV_PRESETS.iter().position(|p| p.id == current.id).unwrap_or(0);
-                kit::choice_row(ui, "Preset", "fc_nav_preset", &mut selected, &labels).backing_on_hover_text(current.help);
-                if let Some(p) = navigation::NAV_PRESETS.get(selected).filter(|p| p.id != current.id) {
-                    app.ui.nav_preset = p.id.into();
-                    app.ui.reverse_zoom = p.reverse_zoom;
-                }
-                kit::checkbox(ui, "Reverse zoom", &mut app.ui.reverse_zoom).backing_on_hover_text("The wheel zooms the other way");
-            });
-        });
-    }
-}
-
 /// The screen point (points) of a world point in the viewport drawn last frame.
 pub fn to_screen(app: &ModelApp, p: Vec3) -> Option<Pos2> {
     let rect = app.viewport.rect?;
@@ -930,7 +761,7 @@ pub fn to_screen(app: &ModelApp, p: Vec3) -> Option<Pos2> {
 
 #[cfg(test)]
 mod tests {
-    use super::{click, cpu_size, nav_bar_rect, sampled_note_width};
+    use super::{click, cpu_size, sampled_note_width};
     use crate::ModelApp;
     use crate::selection::Mode;
 
@@ -970,6 +801,6 @@ mod tests {
     fn the_sampled_note_stays_left_of_the_navigation_bar() {
         let view = egui::Rect::from_min_size(egui::pos2(300.0, 80.0), egui::vec2(900.0, 700.0));
         let w = sampled_note_width(view);
-        assert!(view.left() + 10.0 + w < nav_bar_rect(view).left());
+        assert!(view.left() + 10.0 + w < crate::navigation::bar_rect(view).left());
     }
 }
