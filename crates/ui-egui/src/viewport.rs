@@ -47,7 +47,15 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     app.viewport.rect = Some(rect);
     app.place("viewport", rect);
     let t = Tokens::get(app.ui.dark);
-    app.viewport.overlays = overlays(app, ui, rect, &t);
+    // The view runs under the cards; its overlays keep to the part clear of them.
+    let content = beside_card(app, rect);
+    // The selection bar (an area of its own) is laid out before the overlays are measured, so a
+    // model framed this frame keeps clear of it from the first frame on.
+    let empty = app.display().bounds.is_empty() && app.busy().is_none();
+    if !empty {
+        selection_bar(app, ui, content);
+    }
+    app.viewport.overlays = overlays(app, ui, rect, content, &t);
     // The overlays settle a frame or two after a resize or another step: the model is checked
     // again until they have.
     if app.viewport.recheck > 0 {
@@ -80,41 +88,50 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     } else {
         paint_cpu(app, ui, &painter, rect);
     }
-    sampled_note(app, &painter, rect, &t);
+    sampled_note(app, &painter, content, &t);
     hover_label(app, &painter, &t);
     pivot_marker(app, &painter, &t);
     if let Some((a, b)) = app.pick.dragging {
         let r = Rect::from_two_pos(a, b);
         painter.rect(r, 0.0, t.pick_selected.gamma_multiply(0.12), Stroke::new(1.0, t.pick_selected), egui::StrokeKind::Inside);
     }
-    if app.display().bounds.is_empty() && app.busy().is_none() {
-        start_screen(app, ui, rect);
-    } else {
-        selection_bar(app, ui, rect);
+    if empty {
+        start_screen(app, ui, content);
     }
     crate::results_panel::show(app, ui, rect, &t);
     crate::path_panel::overlay(app, &painter, rect, &t);
-    axis_view(app, ui, rect);
-    nav_bar(app, ui, rect);
+    axis_view(app, ui, content);
+    nav_bar(app, ui, content);
 }
 
-/// The part of the viewport `rect` right of the browser card, where the overlays anchored at the
-/// left (the legend, the Start card, the sampled-symbols note) go; all of it without the card.
+/// The part of the viewport `rect` clear of the cards over it, a shell gap from each: below the
+/// top cards, right of the browser card and above the History card, as SolidCraft's
+/// `shell::content`. The overlays (the legend, the Start card, the selection bar, the compass, the
+/// navigation bar and the sampled-symbols note) keep to it; all of `rect` without cards.
 pub(crate) fn beside_card(app: &ModelApp, rect: Rect) -> Rect {
-    match app.shell.browser.filter(|c| c.intersects(rect)) {
-        Some(card) => Rect::from_min_max(pos2(kit::within(card.right(), rect.left(), rect.right()), rect.top()), rect.max),
-        None => rect,
+    let gap = kit::SHELL_GAP;
+    let mut content = rect;
+    for card in app.shell.cards.iter().filter(|c| c.intersects(rect)) {
+        content.min.y = kit::within(card.bottom() + gap, content.top(), content.bottom());
     }
+    if let Some(card) = app.shell.browser.filter(|c| c.intersects(rect)) {
+        content.min.x = kit::within(card.right() + gap, content.left(), content.right());
+    }
+    if let Some(history) = app.shell.history.filter(|h| h.intersects(rect)) {
+        content.max.y = kit::within(history.top() - gap, content.top(), content.bottom());
+    }
+    content
 }
 
-/// Where this frame's overlays go over the viewport `rect`: the results legend, the selection
-/// bar (where it was drawn last), the orientation gizmo and the navigation bar.
-fn overlays(app: &mut ModelApp, ui: &egui::Ui, rect: Rect, t: &Tokens) -> Vec<Rect> {
-    let mut out: Vec<Rect> = [axis_view_rect(rect), nav_bar_rect(rect)].into_iter().filter(|r| rect.contains_rect(*r)).collect();
+/// Where this frame's overlays go over the viewport `rect`, in its `content` ([`beside_card`]):
+/// the results legend, the selection bar (where it was drawn last), the orientation gizmo, the
+/// navigation bar and the cards.
+fn overlays(app: &mut ModelApp, ui: &egui::Ui, rect: Rect, content: Rect, t: &Tokens) -> Vec<Rect> {
+    let mut out: Vec<Rect> = [axis_view_rect(content), nav_bar_rect(content)].into_iter().filter(|r| content.contains_rect(*r)).collect();
     out.extend(app.shell.covered());
     if let Some(plot) = app.plot() {
         let bar = selection_bar_rect(ui.ctx());
-        let legend = crate::results_panel::legend_rect(&plot, &ui.painter_at(rect), beside_card(app, rect), bar, t);
+        let legend = crate::results_panel::legend_rect(&plot, &ui.painter_at(rect), content, bar, t);
         app.place("legend", legend);
         out.push(legend);
     }
@@ -135,9 +152,9 @@ fn start_screen(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
     let mut pick = false;
     let k = solidcraft_theme::Tokens::get();
     // Clear of the view compass (top right) and the navigation bar (bottom centre).
-    let beside = beside_card(app, rect);
-    let free = Rect::from_min_max(beside.min + vec2(12.0, 12.0), beside.max - vec2(START_RIGHT, START_BOTTOM));
+    let free = Rect::from_min_max(rect.min + vec2(12.0, 12.0), rect.max - vec2(START_RIGHT, START_BOTTOM));
     let area = Rect::from_center_size(free.center(), vec2(START_W.min(free.width()), START_H.min(free.height())));
+    app.place("start_card", area);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::top_down(egui::Align::Min)));
     let card = egui::Frame::NONE
         .fill(k.dialog_body)
@@ -688,19 +705,17 @@ fn sampled_note(app: &ModelApp, painter: &egui::Painter, rect: Rect, t: &Tokens)
         return;
     }
     let text = format!("Symbols sampled: {}", notes.join("; "));
-    let left = beside_card(app, rect).left();
-    let room = sampled_note_width(rect, left);
+    let room = sampled_note_width(rect);
     let k = solidcraft_theme::Tokens::get();
     let galley = painter.layout(text, egui::FontId::proportional(k.font_small), t.text_dim, room);
-    painter.galley(pos2(left + k.space_10, rect.bottom() - k.space_10 - galley.size().y), galley, t.text_dim);
+    painter.galley(pos2(rect.left() + k.space_10, rect.bottom() - k.space_10 - galley.size().y), galley, t.text_dim);
 }
 
-/// How wide the sampled-symbols note starting at `left` may be: up to the navigation bar, with a
-/// gap.
-fn sampled_note_width(rect: Rect, left: f32) -> f32 {
+/// How wide the sampled-symbols note may be: up to the navigation bar, with a gap.
+fn sampled_note_width(rect: Rect) -> f32 {
     let bar = nav_bar_rect(rect);
     let right = if rect.contains_rect(bar) { bar.left() - 12.0 } else { rect.right() - 10.0 };
-    (right - left - 10.0).max(80.0)
+    (right - rect.left() - 10.0).max(80.0)
 }
 
 /// The standard view looking along `d` from outside (the one whose eye side is nearest `d`).
@@ -954,7 +969,7 @@ mod tests {
     #[test]
     fn the_sampled_note_stays_left_of_the_navigation_bar() {
         let view = egui::Rect::from_min_size(egui::pos2(300.0, 80.0), egui::vec2(900.0, 700.0));
-        let w = sampled_note_width(view, view.left());
+        let w = sampled_note_width(view);
         assert!(view.left() + 10.0 + w < nav_bar_rect(view).left());
     }
 }

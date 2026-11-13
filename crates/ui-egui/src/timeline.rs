@@ -191,11 +191,6 @@ fn entries(list: &[Item], open: &BTreeSet<usize>) -> Vec<Entry> {
     out
 }
 
-/// Where the strip keeps which runs are open: the strip's own view state, for the session.
-fn open_runs_id() -> egui::Id {
-    egui::Id::unique("fc_timeline_open_runs")
-}
-
 /// The journal's items as the kit's History strip lays them out. Its slots are journal
 /// positions: a step's id is its command's position, and a run's chip covers its commands'.
 struct Steps<'a> {
@@ -220,7 +215,13 @@ impl Steps<'_> {
             label: &label,
             icon: icon(item),
             icon_accent: None,
-            state: history_bar::StepState { rolled_back: item.start >= self.done, suppressed: !reachable, ..Default::default() },
+            state: history_bar::StepState {
+                rolled_back: item.start >= self.done,
+                suppressed: !reachable,
+                // The floating card dots the last command done.
+                last_done: item.end == self.done,
+                ..Default::default()
+            },
             error: false,
             warning: false,
             ink: None,
@@ -299,84 +300,120 @@ fn icon(item: &Item) -> &'static str {
     fieldcraft_engine::catalogue::entry_of(&item.command).map_or("ui.views", |c| c.id)
 }
 
-/// The History bar (bottom): the kit's header (grip, title and the History controls) and strip
-/// (a chip per command or run, the marker after the current state). Its controls, a click on a
-/// command and a dragged marker undo or redo through [`ModelApp::roll_to`]; the journal cannot be
-/// reordered.
+/// The History bar (bottom), as SolidCraft's: in the floating layout a kit Panel card along the
+/// bottom of the viewport, over it (`Container::floating_card(..).bottom_strip_rect`), recorded in
+/// `app.shell.history`; in the compact layout a strip docked along the window's bottom edge.
 pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
-    let mut roll: Option<usize> = None;
-    let mut toggle: Option<usize> = None;
-    // History is a workspace panel surface along the bottom edge.
     let host = kit::Container::new(ui.ctx(), kit::Surface::Panel);
-    let panel = host.edge("fc_timeline", kit::Edge::Bottom).exact_size(HEIGHT).show_separator_line(false);
-    host.show_edge(ui, panel, host.edge_frame(t.timeline), |ui| {
-        let r = ui.max_rect();
-        app.place("timeline", r);
-        ui.painter().line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, t.border));
-        let (undo, redo) = app.session.undo_depth();
-        let (list, done) = cached_items(app);
-        let oldest = done.saturating_sub(undo);
-        let accent = solidcraft_theme::TabAccent::current(ui.ctx());
-        let bar = history_bar::Bar {
-            title: "History",
-            marker_tip: "The model is here: drag to roll it back or forward",
-            play: false,
-            playing: false,
-            play_labels: kit::PlayLabels { play: "Play", stop: "Stop" },
-            accent,
-            drag_accent: accent,
-            // Slots are journal positions: the marker stands after the commands done.
-            marker: done,
-            steps: list.last().map_or(0, |i| i.end),
-            floating: false,
-            // The journal is a record of what was done, in order: its steps never move.
-            reorder: false,
-            handles: HANDLES,
-        };
-        let head = history_bar::header(ui, &bar, r);
-        let mut actions = head.actions;
-        if list.is_empty() {
-            let k = solidcraft_theme::Tokens::get();
-            ui.painter().text(
-                pos2(head.x, r.center().y),
-                Align2::LEFT_CENTER,
-                "Every command that changes the model appears here",
-                FontId::proportional(k.font_label),
-                k.text_dim,
-            );
-        } else {
-            let strip = Rect::from_min_max(pos2(head.x, r.top()), r.right_bottom());
-            let open: BTreeSet<usize> = ui.data(|d| d.get_temp(open_runs_id())).unwrap_or_default();
-            let shown = entries(&list, &open);
-            let mut steps = Steps { list: &list, entries: &shown, done, oldest, t: &t, accent, toggle: None };
-            actions.extend(history_bar::strip(ui, &bar, r, strip, "fc_timeline_strip", &mut steps).actions);
-            toggle = steps.toggle;
+    let (roll, toggle) = if host.floating() {
+        let rect = floating_rect(ui.available_rect_before_wrap());
+        // A window too short for the card leaves History out rather than drawing into a
+        // negative-size rectangle.
+        if !rect.is_finite() || rect.width() < 1.0 || rect.height() < HEIGHT - 1.0 {
+            return;
         }
-        for action in actions {
-            roll = match action {
-                history_bar::Action::Seek(history_bar::Seek::First) => Some(oldest),
-                history_bar::Action::Seek(history_bar::Seek::Back) => Some(done.saturating_sub(1)),
-                history_bar::Action::Seek(history_bar::Seek::Forward) => Some(done + 1),
-                history_bar::Action::Seek(history_bar::Seek::Last) => Some(done + redo),
-                history_bar::Action::Seek(history_bar::Seek::Slot { slot, .. }) => Some(slot),
-                // A command's chip rolls the model to just after it, when the history reaches it.
-                history_bar::Action::Select { step, .. } => usize::try_from(step).ok().map(|at| at + 1).filter(|end| *end >= oldest),
-                _ => roll,
-            };
-        }
-    });
-    if let Some(start) = toggle {
-        ui.data_mut(|d| {
-            let open = d.get_temp_mut_or_default::<BTreeSet<usize>>(open_runs_id());
-            if !open.remove(&start) {
-                open.insert(start);
-            }
+        app.shell.history = Some(rect);
+        app.place("timeline", rect);
+        let frame = host.frame(ui.ctx(), t.timeline, kit::frame::Side::Left);
+        host.area(egui::Id::unique("fc_timeline_card"))
+            .fixed_pos(rect.min)
+            .show(ui.ctx(), |ui| {
+                // The card takes its size in the area (and keeps the pointer off the view under it).
+                let (card, _) = ui.allocate_exact_size(rect.size(), egui::Sense::hover());
+                kit::Container::paint_panel_frame(ui.painter(), frame, card);
+                let mut child = ui.new_child(egui::UiBuilder::new().id_salt("fc_timeline").max_rect(card));
+                child.set_clip_rect(card);
+                contents(app, &mut child, &t, true)
+            })
+            .inner
+    } else {
+        let panel = host.edge("fc_timeline", kit::Edge::Bottom).exact_size(HEIGHT).show_separator_line(false);
+        let shown = host.show_edge(ui, panel, host.edge_frame(t.timeline), |ui| {
+            let r = ui.max_rect();
+            app.place("timeline", r);
+            ui.painter().line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, t.border));
+            contents(app, ui, &t, false)
         });
+        shown.inner
+    };
+    if let Some(start) = toggle
+        && !app.timeline_open.remove(&start)
+    {
+        app.timeline_open.insert(start);
     }
     if let Some(target) = roll {
         app.roll_to(target);
     }
+}
+
+/// Where the floating History card goes in `available` (the viewport below the application
+/// bar): the kit's shared bottom strip, a shell gap from the edges.
+pub(crate) fn floating_rect(available: Rect) -> Rect {
+    kit::Container::floating_card(kit::Surface::Panel).bottom_strip_rect(available, HEIGHT)
+}
+
+/// The kit's header (grip, title and the History controls) and strip (a chip per command or run,
+/// the marker after the current state) in `ui`'s rect. Returns where to roll the model and the
+/// run to open or fold. Its controls, a click on a command and a dragged marker undo or redo
+/// through [`ModelApp::roll_to`]; the journal cannot be reordered.
+fn contents(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, floating: bool) -> (Option<usize>, Option<usize>) {
+    let mut roll: Option<usize> = None;
+    let mut toggle: Option<usize> = None;
+    let r = ui.max_rect();
+    let (undo, redo) = app.session.undo_depth();
+    let (list, done) = cached_items(app);
+    let oldest = done.saturating_sub(undo);
+    let accent = solidcraft_theme::TabAccent::current(ui.ctx());
+    let bar = history_bar::Bar {
+        title: "History",
+        marker_tip: "The model is here: drag to roll it back or forward",
+        play: false,
+        playing: false,
+        play_labels: kit::PlayLabels { play: "Play", stop: "Stop" },
+        accent,
+        drag_accent: accent,
+        // Slots are journal positions: the marker stands after the commands done.
+        marker: done,
+        steps: list.last().map_or(0, |i| i.end),
+        floating,
+        // The journal is a record of what was done, in order: its steps never move.
+        reorder: false,
+        handles: HANDLES,
+    };
+    let head = history_bar::header(ui, &bar, r);
+    let mut actions = head.actions;
+    if list.is_empty() {
+        let k = solidcraft_theme::Tokens::get();
+        ui.painter().text(
+            pos2(head.x, r.center().y),
+            Align2::LEFT_CENTER,
+            "Every command that changes the model appears here",
+            FontId::proportional(k.font_label),
+            k.text_dim,
+        );
+    } else {
+        let strip = Rect::from_min_max(pos2(head.x, r.top()), r.right_bottom());
+        // A run that is no longer one (undone, another model) forgets it was open.
+        app.timeline_open.retain(|start| list.iter().any(|i| i.start == *start && i.count() > 1));
+        let shown = entries(&list, &app.timeline_open);
+        let mut steps = Steps { list: &list, entries: &shown, done, oldest, t, accent, toggle: None };
+        actions.extend(history_bar::strip(ui, &bar, r, strip, "fc_timeline_strip", &mut steps).actions);
+        toggle = steps.toggle;
+    }
+    for action in actions {
+        roll = match action {
+            history_bar::Action::Seek(history_bar::Seek::First) => Some(oldest),
+            history_bar::Action::Seek(history_bar::Seek::Back) => Some(done.saturating_sub(1)),
+            history_bar::Action::Seek(history_bar::Seek::Forward) => Some(done + 1),
+            history_bar::Action::Seek(history_bar::Seek::Last) => Some(done + redo),
+            history_bar::Action::Seek(history_bar::Seek::Slot { slot, .. }) => Some(slot),
+            // A command's chip rolls the model to just after it, when the history reaches it.
+            history_bar::Action::Select { step, .. } => usize::try_from(step).ok().map(|at| at + 1).filter(|end| *end >= oldest),
+            _ => roll,
+        };
+    }
+    (roll, toggle)
 }
 
 #[cfg(test)]
@@ -484,16 +521,45 @@ mod tests {
             draw(app, vec![press(false)]);
             draw(app, Vec::new());
         };
-        let open = || ctx.data(|d| d.get_temp::<BTreeSet<usize>>(open_runs_id())).unwrap_or_default();
         for _ in 0..3 {
             draw(&mut app, Vec::new());
         }
         let chip = solidcraft_ui_registry::handle_at("timeline:run:0").expect("the run's chip");
         click(&mut app, chip);
-        assert_eq!(open(), BTreeSet::from([0]));
+        assert_eq!(app.timeline_open, BTreeSet::from([0]));
         assert_eq!(solidcraft_ui_registry::handles("timeline:step:Add Node").len(), 3, "each command shown");
         click(&mut app, chip);
-        assert!(open().is_empty());
+        assert!(app.timeline_open.is_empty());
         assert_eq!(app.session.journal.len(), 3, "opening a run rolls nothing back");
+    }
+
+    /// History is an inset card over the viewport, a shell gap from the window's edges, as
+    /// SolidCraft's; the view runs under it, and its navigation bar sits above it.
+    #[test]
+    fn history_is_a_card_over_the_viewport() {
+        let mut app = ModelApp::new(Session::default());
+        app.run("mesh.node.add", json!({"label": 1, "xyz": [0, 0, 0]})).unwrap();
+        let ctx = egui::Context::default();
+        let size = vec2(1400.0, 900.0);
+        for _ in 0..3 {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+            out.textures_delta.clear();
+        }
+        let card = app.shell.history.expect("the History card");
+        let gap = kit::SHELL_GAP;
+        assert_eq!(app.layout.get("timeline"), Some(&card));
+        assert!((card.height() - HEIGHT).abs() < 0.5, "{card:?}");
+        assert!((card.left() - gap).abs() < 0.5 && (card.right() - (size.x - gap)).abs() < 0.5, "{card:?}");
+        let view = app.layout.get("viewport").copied().unwrap_or(Rect::NOTHING);
+        assert!(view.contains_rect(card), "the view runs under the card: {view:?} {card:?}");
+        assert!((card.bottom() - (view.bottom() - gap)).abs() < 0.5, "{card:?} {view:?}");
+        let content = crate::viewport::beside_card(&app, view);
+        assert!(content.bottom() <= card.top() - gap + 0.5, "{content:?}");
+        assert!(crate::viewport::nav_bar_rect(content).bottom() < card.top(), "the navigation bar sits above History");
+        // The card's area is the card, frame after frame: the view above it keeps the pointer.
+        let card_layer = egui::LayerId::new(egui::Order::Background, egui::Id::unique("fc_timeline_card"));
+        assert_eq!(ctx.layer_id_at(card.center()), Some(card_layer));
+        assert_ne!(ctx.layer_id_at(card.center_top() - vec2(0.0, 20.0)), Some(card_layer));
     }
 }

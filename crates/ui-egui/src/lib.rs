@@ -525,6 +525,8 @@ pub struct ModelApp {
     pub command_line: String,
     /// Browser sections that are unfolded.
     pub tree_open: std::collections::BTreeSet<String>,
+    /// The History runs shown one command at a time (their first journal position).
+    pub timeline_open: std::collections::BTreeSet<usize>,
     /// The definition selected in the browser: (kind, name), its properties on the right.
     pub selected: Option<(browser::Def, String)>,
     /// The edge seed selected in the browser (by its edge), its properties on the right; never
@@ -642,6 +644,7 @@ impl ModelApp {
             palette_text: String::new(),
             command_line: String::new(),
             tree_open: ["mesh", "results"].into_iter().map(str::to_string).collect(),
+            timeline_open: Default::default(),
             selected: None,
             selected_seed: None,
             selected_mesh: false,
@@ -3662,10 +3665,8 @@ mod tests {
                 let in_view = |c: Option<(egui::Rect, egui::Rect)>| {
                     c.is_some_and(|(r, i)| i.is_positive() && i.height() >= (r.height() * 0.6).min(r.height() - 0.5))
                 };
-                // Over the first card, which is in view before any scrolling.
-                let first = ctx
-                    .data(|d| d.get_temp::<(egui::Rect, egui::Rect)>(samples::card_id(samples::ordered()[0].name)))
-                    .map_or(egui::pos2(w / 2.0, h / 2.0), |(_, visible)| visible.center());
+                // Over the Start card, which scrolls as a whole.
+                let first = region(&app, "start_card").center();
                 for _ in 0..40 {
                     if in_view(card(&ctx)) {
                         break;
@@ -3867,7 +3868,8 @@ mod tests {
             assert!(!legend.intersects(bar), "{w}×{h}: legend {legend:?}, selection bar {bar:?}");
             let view = app.viewport.rect.unwrap();
             assert!(view.contains_rect(legend), "{w}×{h}: legend {legend:?} outside the viewport {view:?}");
-            assert_eq!(legend.top() == view.top() + 12.0, at_top, "{w}×{h}: legend {legend:?}, viewport {view:?}");
+            let content = viewport::beside_card(&app, view);
+            assert_eq!(legend.top() == content.top() + 12.0, at_top, "{w}×{h}: legend {legend:?}, content {content:?}");
         }
     }
 
