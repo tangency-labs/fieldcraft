@@ -760,6 +760,25 @@ const fn face(key: &'static str, label: &'static str) -> Field {
     variants(key, label, FACE_CONDITION).hint("wall")
 }
 
+/// A wall of the fluid: a box face by name, or an obstacle face.
+const FLUID_WALL: Field = name_or("", "Wall", &BOX_FACE, "Obstacle face", OBSTACLE_FACE_FIELDS);
+/// The walls a monitored force or heat sums.
+const MONITOR_FACES: Field =
+    list("faces", "Walls", &FLUID_WALL, fieldcraft_model::steps::MAX_MONITOR_FACES).help("Box faces or obstacle faces, summed.").req();
+/// A steady-state monitor, one per row.
+const FLOW_MONITOR: &[Field] = &[variants(
+    "",
+    "Monitor",
+    &[
+        variant("mass_flow", "Mass flow", &[choice("face", "Box face", BOX_FACES).help("The box face the flow passes through.").req()]),
+        variant("force", "Force on walls", &[MONITOR_FACES]),
+        variant("heat", "Heat into walls", &[MONITOR_FACES]),
+        variant("mean_temperature", "Mean temperature", &[]),
+    ],
+)
+.help("What the monitor watches.")
+.req()];
+
 const fn thermal_face(key: &'static str, label: &'static str) -> Field {
     variants(key, label, THERMAL_CONDITION).hint("adiabatic")
 }
@@ -1199,9 +1218,9 @@ const PROCEDURE: Field = variants(
                         positive("divergence", "Divergence limit", D::None)
                             .help("Stop as diverged when a monitored quantity changes by more than this fraction over a window (after the minimum time).")
                             .hint("off"),
-                        json("monitors", "Also monitor")
-                            .help("Quantities watched besides the velocity (and temperature) residual, as JSON: mass_flow through a box face, force or heat on walls, mean_temperature.")
-                            .hint("[{\"type\": \"force\", \"faces\": [\"x_min\"]}]"),
+                        rows("monitors", "Also monitor", FLOW_MONITOR)
+                            .help("Quantities watched besides the velocity (and temperature) residual: mass flow through a box face, force or heat on walls, the mean temperature.")
+                            .hint("the residuals only"),
                     ],
                 )
                 .help("Stop on its own once the flow stops changing; End time or Steps is then the longest it runs.")
@@ -1760,6 +1779,10 @@ pub const BLOCK: &[Field] = &[
 
 /// Most points a 2D mesh outline takes (`mesh.planar` refuses more).
 const PLANAR_POINTS: usize = 100_000;
+/// Most holes a 2D mesh outline takes.
+const PLANAR_HOLES: usize = 10_000;
+/// One hole of a 2D outline.
+const PLANAR_HOLE: Field = table("", "Hole", D::Length, &["x", "y"], PLANAR_POINTS);
 
 pub const PLANAR: &[Field] = &[
     positive("size", "Element size", D::Length).help("Target element edge length.").req(),
@@ -1772,7 +1795,7 @@ pub const PLANAR: &[Field] = &[
     table("polygon", "Polygon", D::Length, &["x", "y"], PLANAR_POINTS)
         .help("An outline to mesh instead of a face: three or more points in the XY plane, in order round it.")
         .hint("instead of a face"),
-    json("holes", "Holes").numbers(&[("", D::Length)]).help("Holes in the polygon, as JSON point lists."),
+    list("holes", "Holes", &PLANAR_HOLE, PLANAR_HOLES).help("Holes in the polygon, each an outline of three or more x, y points."),
     text("name", "Body name").help("Name of the new 2D body.").hint("Plane"),
     int("max_elements", "Max elements", 1, 4_000_000).help("Cap on the elements created."),
 ];
@@ -2264,11 +2287,16 @@ pub const IMAGE_SAVE: &[Field] = &[
         .hint(r#"{"yaw": -70, "pitch": 18, "fit": true}"#),
 ];
 pub const VIEW_NAME: &[Field] = &[reference("name", "View", C::SavedView).help("The saved view.").req()];
+const RENDER_ALL_FRAMES: Field = choice("", "All frames", &[("all", "All frames")]);
+const RENDER_FRAME_RANGE: Field = tuple_from("", "Range", &["From", "To"], 2, true, 0.0);
+
 pub const RENDER_SAVE: &[Field] = &[
     text("name", "Name").help("The render's name; a render of that name is replaced.").req(),
     reference("view", "View", C::SavedView).help("The saved view the clip shows (view.save keeps one).").req(),
     reference("step", "Step", C::Step).help("The step whose frames it plays.").hint("the view's step"),
-    json("frames", "Frames").help("\"all\", or [from, to]: the frames drawn, from 0, inclusive.").hint("\"all\""),
+    name_or_value("frames", "Frames", &RENDER_ALL_FRAMES, &RENDER_FRAME_RANGE)
+        .help("Every frame, or a range from one frame to another (from 0, inclusive).")
+        .hint("all"),
     int("fps", "Frames per second", 1, 120).help("The clip's frame rate.").def("12"),
     group(
         "hold",
@@ -2609,6 +2637,11 @@ pub const SOLVE_FLUID: &[Field] = &[
         .help("Restore the explicit restart file using the same model, geometry and CPU settings. Thread count and checkpoint cadence may change. GPU and browser restart are not supported yet."),
     flag("estimate", "Estimate only").help("Return the run's memory estimate without solving."),
 ];
+/// A fluid wall a probe reads: a box face, an obstacle face's name, or body/face.
+const PROBE_WALL: Field = text("", "Wall").help("A box face (x_min … z_max), an obstacle face by name (F2:top), or body/face.").req();
+/// Most walls a probe reads (`solve.probe` refuses more).
+const PROBE_WALLS: usize = 100;
+
 pub const SOLVE_PROBE: &[Field] = &[
     SOLVED.req(),
     labels("nodes", "Nodes", LabelOf::Node).help("Node labels to read.").hint("labels: 1, 2, 10-20"),
@@ -2618,8 +2651,8 @@ pub const SOLVE_PROBE: &[Field] = &[
     int("frame", "Frame", 0, 1_000_000_000).help("The frame to read, for explicit and transient steps."),
     flag("elements", "Element results").help("Also read element results (stresses) around the nodes."),
     points("points", "Fluid points", D::Length, 10_000).help("Points in the fluid to read."),
-    json("forces", "Fluid walls").help("Walls whose fluid forces to sum, as JSON.").hint("[\"x_min\", \"F2:top\"]"),
-    json("heat", "Fluid walls (heat)").help("Walls whose heat histories to read, as JSON.").hint("[\"y_min\", \"F2:top\"]"),
+    list("forces", "Fluid walls", &PROBE_WALL, PROBE_WALLS).help("Walls whose fluid force histories to read."),
+    list("heat", "Fluid walls (heat)", &PROBE_WALL, PROBE_WALLS).help("Walls whose heat histories to read."),
     group(
         "line",
         "Fluid line",
@@ -3176,8 +3209,25 @@ mod tests {
         }
         raw.sort();
         raw.dedup();
-        for typed in ["mesh.planar polygon", "mesh.seed.edge edges", "mesh.seed.clear edges", "results.xy y", "model.units overrides"] {
+        for typed in [
+            "mesh.planar polygon",
+            "mesh.seed.edge edges",
+            "mesh.seed.clear edges",
+            "results.xy y",
+            "model.units overrides",
+            "mesh.planar holes",
+            "solve.probe forces",
+            "solve.probe heat",
+            "model.step.create monitors",
+            "model.step.edit monitors",
+            "results.render.save frames",
+        ] {
             assert!(!raw.iter().any(|r| r == typed), "{typed} is typed");
+        }
+        // What stays JSON: whole blocking topologies (a follow-up), a camera, and the hex blocks.
+        for r in &raw {
+            let command = r.split(' ').next().unwrap_or_default();
+            assert!(["mesh.hex.project", "mesh.block", "view.save", "view.image.save"].contains(&command), "{r} is raw JSON");
         }
     }
 
@@ -3259,6 +3309,25 @@ mod tests {
         ] {
             assert!(matches!(field_of(command, key).kind, Kind::Ref(r) if r == c), "{command} {key}");
         }
+    }
+
+    /// A1-09: lists and name-or-values check each part: a hole's points, a probe's walls, a
+    /// monitor's walls, a render's frames.
+    #[test]
+    fn lists_and_frames_are_typed() {
+        assert!(problems(PLANAR, &json!({"size": 1, "polygon": [[0, 0], [9, 0], [9, 9]], "holes": [[[1, 1], [2, 1], [2, 2]]]})).is_empty());
+        assert!(!problems(PLANAR, &json!({"size": 1, "holes": [[[1, 1, 1]]]})).is_empty());
+        assert!(problems(SOLVE_PROBE, &json!({"step": "Flow", "forces": ["x_min", "F2:top"]})).is_empty());
+        assert!(!problems(SOLVE_PROBE, &json!({"step": "Flow", "forces": ["x_min", 3]})).is_empty());
+        let monitors = json!([{"type": "mass_flow", "face": "x_max"}, {"type": "force", "faces": ["x_min", {"body": "Ball", "face": "F3"}]}, {"type": "mean_temperature"}]);
+        for m in monitors.as_array().unwrap() {
+            assert!(object_problems(FLOW_MONITOR, m.as_object().unwrap()).is_empty(), "{m}");
+        }
+        assert!(!object_problems(FLOW_MONITOR, json!({"type": "mass_flow", "face": "top"}).as_object().unwrap()).is_empty());
+        for frames in [json!("all"), json!([0, 4])] {
+            assert!(problems(RENDER_SAVE, &json!({"name": "R", "view": "V", "frames": frames})).is_empty(), "{frames}");
+        }
+        assert!(!problems(RENDER_SAVE, &json!({"name": "R", "view": "V", "frames": [-1, 4]})).is_empty());
     }
 
     /// Unit overrides are one unit per quantity, every quantity listed by its name.
