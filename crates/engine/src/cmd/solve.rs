@@ -554,7 +554,7 @@ fn nonlinear_history(s: &Session, step: &str, r: &fieldcraft_solver::StaticResul
 /// The surfaces of a fluid domain's obstacles: bodies of the open design (triangulated at the
 /// domain's tolerance) or imported surfaces, by name. The geometry is in millimetres; the
 /// surfaces come out in metres, as the domain is.
-fn obstacles(s: &Session, domain: &FluidDomain) -> Result<Vec<Obstacle>> {
+pub(super) fn obstacles(s: &Session, domain: &FluidDomain) -> Result<Vec<Obstacle>> {
     let tolerance = obstacle_tolerance(domain);
     let mut out = Vec::with_capacity(domain.obstacles.len());
     for body in &domain.obstacles {

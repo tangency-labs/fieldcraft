@@ -18,6 +18,7 @@ mod image;
 mod initial;
 mod linearize;
 pub(crate) mod mesh;
+mod openfoam;
 
 pub use datum::edit_params as datum_edit_params;
 pub use datum::preview as datum_preview;
@@ -226,7 +227,8 @@ pub static ALL: &[CommandSpec] = &[
     edit::REDO,
     deck::WRITE,
     deck::READ,
-    deck::OPENFOAM,
+    openfoam::WRITE,
+    openfoam::READ,
     solve::RUN,
     solve::STATIC,
     solve::NONLINEAR,

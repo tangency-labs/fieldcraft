@@ -16,6 +16,11 @@
 //!   to a Courant limit (the lattice's time step is the LBM's own). A Smagorinsky model becomes
 //!   OpenFOAM's (its `Ck` from the constant, `Ce` 1.048), with Van Driest damping when the step
 //!   has it.
+//! - With a [`Gas`] the case is compressible (`rhoCentralFoam`, laminar, ideal gas): pressure
+//!   faces above the ambient hold their total pressure and temperature (inlets), the others are
+//!   non-reflecting outlets at the ambient; walls are adiabatic.
+//! - Fields are written as ASCII, and `Allrun` writes the cell centres (`0/C`), so the results
+//!   can be read back ([`read_field`]).
 //!
 //! Everything is SI, as the model stores it and OpenFOAM reads it: no unit conversion happens
 //! here. What the case cannot express yet is refused by name ([`crate::Error::Unsupported`]).
@@ -43,11 +48,51 @@ pub struct ObstacleSurface<'a> {
     pub faces: &'a [String],
 }
 
-/// A box refined to the lattice spacing (metres).
+/// A box refined to `spacing` (metres; the lattice spacing when left out, rounded to the
+/// background cell over a power of two).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RefineBox {
     pub min: [f64; 3],
     pub max: [f64; 3],
+    pub spacing: Option<f64>,
+}
+
+/// An ideal gas for a compressible case (SI).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Gas {
+    /// The absolute pressure the model's gauge pressures are above (Pa).
+    pub ambient: f64,
+    /// The total temperature at inlets and the initial temperature (K).
+    pub temperature: f64,
+    /// kg/mol.
+    pub molar_mass: f64,
+    /// At constant pressure (J/(kg·K)).
+    pub specific_heat: f64,
+    pub prandtl: f64,
+}
+
+/// The universal gas constant (J/(mol·K)).
+pub const GAS_CONSTANT: f64 = 8.314_462_618;
+
+impl Gas {
+    /// Dry air at 1 atm and 20 °C.
+    pub const AIR: Gas = Gas { ambient: 101_325.0, temperature: 293.15, molar_mass: 0.028_964_7, specific_heat: 1004.5, prandtl: 0.71 };
+
+    /// The ratio of specific heats.
+    pub fn gamma(&self) -> f64 {
+        self.specific_heat / (self.specific_heat - GAS_CONSTANT / self.molar_mass)
+    }
+
+    fn check(&self) -> Result<()> {
+        let positive = [self.ambient, self.temperature, self.molar_mass, self.specific_heat, self.prandtl].iter().all(|v| v.is_finite() && *v > 0.0);
+        let g = self.gamma();
+        if !positive || !(g.is_finite() && g > 1.0 && g < 2.0) {
+            return Err(unsupported(
+                "a gas whose ambient pressure, temperature, molar mass, specific heat and Prandtl number are not positive, or whose ratio of specific heats is not between 1 and 2",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// How the case is meshed and run.
@@ -64,11 +109,13 @@ pub struct CaseOptions {
     pub processes: u32,
     /// The Courant number the time step adapts to.
     pub max_courant: f64,
+    /// Compressible flow of this gas (`rhoCentralFoam`) instead of incompressible (`pimpleFoam`).
+    pub gas: Option<Gas>,
 }
 
 impl Default for CaseOptions {
     fn default() -> Self {
-        CaseOptions { cell_factor: 2, refine_boxes: Vec::new(), location: None, processes: 1, max_courant: 0.8 }
+        CaseOptions { cell_factor: 2, refine_boxes: Vec::new(), location: None, processes: 1, max_courant: 0.8, gas: None }
     }
 }
 
@@ -183,6 +230,24 @@ pub fn write_case(model: &Model, step: Option<&str>, obstacles: &[ObstacleSurfac
         *c = n as u64;
     }
     let level = options.cell_factor.trailing_zeros();
+    let mut boxes = Vec::with_capacity(options.refine_boxes.len());
+    for b in &options.refine_boxes {
+        let box_level = match b.spacing {
+            None => level,
+            Some(h) if h.is_finite() && h > 0.0 => {
+                let l = (background / h).log2().round();
+                if !(0.0..=10.0).contains(&l) {
+                    return Err(unsupported("a refinement box spacing that is not the background cell over 1 to 1024"));
+                }
+                l as u32
+            }
+            Some(_) => return Err(unsupported("a refinement box spacing that is not positive")),
+        };
+        if b.min.iter().chain(&b.max).any(|v| !v.is_finite()) || (0..3).any(|i| b.min[i] >= b.max[i]) {
+            return Err(unsupported("a refinement box whose min is not below its max"));
+        }
+        boxes.push((*b, box_level));
+    }
     let location = match options.location {
         Some(p) => p,
         None => find_location(domain, background, obstacles)?,
@@ -190,24 +255,44 @@ pub fn write_case(model: &Model, step: Option<&str>, obstacles: &[ObstacleSurfac
 
     files.insert("system/blockMeshDict".into(), block_mesh(domain, cells)?);
     files.insert("system/surfaceFeatureExtractDict".into(), feature_extract(&surfaces));
-    files.insert("system/snappyHexMeshDict".into(), snappy(&surfaces, level, &options.refine_boxes, location));
-    for (field, text) in fields(domain, density, &surfaces) {
-        files.insert(format!("0/{field}"), text);
-    }
-    files.insert(
-        "constant/transportProperties".into(),
-        dictionary("transportProperties", &format!("transportModel Newtonian;\nnu {};\n", num(viscosity / density))),
-    );
-    files.insert("constant/turbulenceProperties".into(), turbulence_properties(turbulence.as_ref(), &mut notes)?);
+    files.insert("system/snappyHexMeshDict".into(), snappy(&surfaces, level, &boxes, location));
     let frames = (*frames).max(1);
-    files.insert("system/controlDict".into(), control(duration, frames, options.max_courant));
-    files.insert("system/fvSchemes".into(), dictionary("fvSchemes", FV_SCHEMES));
-    files.insert("system/fvSolution".into(), dictionary("fvSolution", FV_SOLUTION));
+    let solver = match options.gas {
+        None => {
+            for (field, text) in fields(domain, density, &surfaces) {
+                files.insert(format!("0/{field}"), text);
+            }
+            files.insert(
+                "constant/transportProperties".into(),
+                dictionary("transportProperties", &format!("transportModel Newtonian;\nnu {};\n", num(viscosity / density))),
+            );
+            files.insert("constant/turbulenceProperties".into(), turbulence_properties(turbulence.as_ref(), &mut notes)?);
+            files.insert("system/fvSchemes".into(), dictionary("fvSchemes", FV_SCHEMES));
+            files.insert("system/fvSolution".into(), dictionary("fvSolution", FV_SOLUTION));
+            "pimpleFoam"
+        }
+        Some(gas) => {
+            gas.check()?;
+            notes.push(format!("compressible: ideal gas, γ {:.4}; the material's density is not used", gas.gamma()));
+            if turbulence.is_some() {
+                notes.push("the subgrid model is not mapped in a compressible case: the flow is laminar".into());
+            }
+            for (field, text) in gas_fields(domain, &gas, &surfaces) {
+                files.insert(format!("0/{field}"), text);
+            }
+            files.insert("constant/thermophysicalProperties".into(), thermophysical(&gas, viscosity));
+            files.insert("constant/turbulenceProperties".into(), dictionary("turbulenceProperties", "simulationType laminar;\n"));
+            files.insert("system/fvSchemes".into(), dictionary("fvSchemes", GAS_SCHEMES));
+            files.insert("system/fvSolution".into(), dictionary("fvSolution", GAS_SOLUTION));
+            "rhoCentralFoam"
+        }
+    };
+    files.insert("system/controlDict".into(), control(solver, duration, frames, options.max_courant));
     files.insert("system/decomposeParDict".into(), dictionary("decomposeParDict", &format!("numberOfSubdomains {processes};\nmethod scotch;\n")));
-    files.insert("Allrun".into(), allrun(&step.name, processes));
+    files.insert("Allrun".into(), allrun(&step.name, solver, processes));
     files.insert("case.foam".into(), String::new());
 
-    Ok(Case { files, patches, background_cells: cells, location, solver: "pimpleFoam", notes })
+    Ok(Case { files, patches, background_cells: cells, location, solver, notes })
 }
 
 fn fluid_step<'m>(model: &'m Model, name: Option<&str>) -> Result<&'m Step> {
@@ -476,7 +561,7 @@ fn feature_extract(surfaces: &Surfaces) -> String {
     dictionary("surfaceFeatureExtractDict", &s)
 }
 
-fn snappy(surfaces: &Surfaces, level: u32, boxes: &[RefineBox], location: [f64; 3]) -> String {
+fn snappy(surfaces: &Surfaces, level: u32, boxes: &[(RefineBox, u32)], location: [f64; 3]) -> String {
     let mut geometry = String::new();
     let mut features = String::new();
     let mut refinement = String::new();
@@ -486,9 +571,9 @@ fn snappy(surfaces: &Surfaces, level: u32, boxes: &[RefineBox], location: [f64; 
         let _ = writeln!(refinement, "        {name} {{ level ({level} {level}); patchInfo {{ type wall; }} }}");
     }
     let mut regions = String::new();
-    for (i, b) in boxes.iter().enumerate() {
+    for (i, (b, box_level)) in boxes.iter().enumerate() {
         let _ = writeln!(geometry, "    refine{i} {{ type searchableBox; min {}; max {}; }}", vector(b.min), vector(b.max));
-        let _ = writeln!(regions, "        refine{i} {{ mode inside; levels ((1e15 {level})); }}");
+        let _ = writeln!(regions, "        refine{i} {{ mode inside; levels ((1e15 {box_level})); }}");
     }
     let body = format!(
         "castellatedMesh true;\nsnap true;\naddLayers false;\n\n\
@@ -553,6 +638,101 @@ fn fields(d: &FluidDomain, density: f64, surfaces: &Surfaces) -> [(&'static str,
     ]
 }
 
+/// `0/U`, `0/p` (absolute) and `0/T` of a compressible case.
+fn gas_fields(d: &FluidDomain, gas: &Gas, surfaces: &Surfaces) -> [(&'static str, String); 3] {
+    let g = num(gas.gamma());
+    let t0 = num(gas.temperature);
+    let ambient = num(gas.ambient);
+    let far = (0..3).map(|i| d.max[i] - d.min[i]).fold(0.0, f64::max);
+    let mut u = String::new();
+    let mut p = String::new();
+    let mut t = String::new();
+    for face in BoxFace::ALL {
+        let (fu, fp, ft) = match *d.faces.get(face) {
+            FaceCondition::Velocity { velocity, .. } => (
+                format!("type fixedValue; value uniform {};", vector(velocity)),
+                "type zeroGradient;".to_string(),
+                format!("type fixedValue; value uniform {t0};"),
+            ),
+            FaceCondition::Pressure { pressure, .. } if pressure > 0.0 => {
+                let p0 = num(gas.ambient + pressure);
+                (
+                    "type pressureInletOutletVelocity; value uniform (0 0 0);".to_string(),
+                    format!("type totalPressure; rho none; psi thermo:psi; gamma {g}; p0 uniform {p0}; value uniform {p0};"),
+                    format!("type totalTemperature; gamma {g}; T0 uniform {t0}; value uniform {t0};"),
+                )
+            }
+            FaceCondition::Pressure { pressure, .. } => {
+                let pa = num(gas.ambient + pressure);
+                (
+                    "type inletOutlet; inletValue uniform (0 0 0); value uniform (0 0 0);".to_string(),
+                    format!(
+                        "type waveTransmissive; field p; phi phi; rho rho; psi thermo:psi; gamma {g}; fieldInf {pa}; lInf {}; value uniform {pa};",
+                        num(far)
+                    ),
+                    format!("type inletOutlet; inletValue uniform {t0}; value uniform {t0};"),
+                )
+            }
+            FaceCondition::Slip {} | FaceCondition::Periodic {} => {
+                ("type symmetryPlane;".into(), "type symmetryPlane;".into(), "type symmetryPlane;".into())
+            }
+            FaceCondition::Wall {} => ("type noSlip;".into(), "type zeroGradient;".into(), "type zeroGradient;".into()),
+            FaceCondition::MovingWall { velocity } => {
+                (format!("type fixedValue; value uniform {};", vector(velocity)), "type zeroGradient;".into(), "type zeroGradient;".into())
+            }
+        };
+        let n = face.name();
+        let _ = writeln!(u, "    {n} {{ {fu} }}");
+        let _ = writeln!(p, "    {n} {{ {fp} }}");
+        let _ = writeln!(t, "    {n} {{ {ft} }}");
+    }
+    for (_, regions) in surfaces {
+        for (_, patch, condition) in regions {
+            let fu = match condition {
+                SurfaceCondition::Wall {} => "type noSlip;".to_string(),
+                SurfaceCondition::MovingWall { velocity } => format!("type fixedValue; value uniform {};", vector(*velocity)),
+            };
+            let _ = writeln!(u, "    {patch} {{ {fu} }}");
+            let _ = writeln!(p, "    {patch} {{ type zeroGradient; }}");
+            let _ = writeln!(t, "    {patch} {{ type zeroGradient; }}");
+        }
+    }
+    let file = |class: &str, object: &str, dim: &str, internal: String, b: &str| {
+        field_file(class, object, &format!("dimensions {dim};\n\ninternalField uniform {internal};\n\nboundaryField\n{{\n{b}}}\n"))
+    };
+    [
+        ("U", file("volVectorField", "U", "[0 1 -1 0 0 0 0]", vector(d.initial_velocity), &u)),
+        ("p", file("volScalarField", "p", "[1 -1 -2 0 0 0 0]", ambient, &p)),
+        ("T", file("volScalarField", "T", "[0 0 0 1 0 0 0]", t0, &t)),
+    ]
+}
+
+fn thermophysical(gas: &Gas, viscosity: f64) -> String {
+    dictionary(
+        "thermophysicalProperties",
+        &format!(
+            "thermoType\n{{\n    type hePsiThermo;\n    mixture pureMixture;\n    transport const;\n    thermo hConst;\n    equationOfState perfectGas;\n    specie specie;\n    energy sensibleInternalEnergy;\n}}\n\n\
+mixture\n{{\n    specie {{ molWeight {}; }}\n    thermodynamics {{ Cp {}; Hf 0; }}\n    transport {{ mu {}; Pr {}; }}\n}}\n",
+            num(gas.molar_mass * 1000.0),
+            num(gas.specific_heat),
+            num(viscosity),
+            num(gas.prandtl)
+        ),
+    )
+}
+
+const GAS_SCHEMES: &str = "fluxScheme Kurganov;\n\
+ddtSchemes { default Euler; }\n\
+gradSchemes { default Gauss linear; }\n\
+divSchemes { default none; div(tauMC) Gauss linear; }\n\
+laplacianSchemes { default Gauss linear corrected; }\n\
+interpolationSchemes\n{\n    default linear;\n    reconstruct(rho) vanLeer;\n    reconstruct(U) vanLeerV;\n    reconstruct(T) vanLeer;\n}\n\
+snGradSchemes { default corrected; }\n";
+
+const GAS_SOLUTION: &str = "solvers\n{\n    \"(rho|rhoU|rhoE)\" { solver diagonal; }\n\
+    U { solver smoothSolver; smoother GaussSeidel; nSweeps 2; tolerance 1e-9; relTol 0.01; }\n\
+    e { $U; tolerance 1e-10; relTol 0; }\n}\n";
+
 /// OpenFOAM's Smagorinsky model takes `Ck` and `Ce` with `Cs² = Ck √(Ck/Ce)`; the model's
 /// constant is `Cs`, so `Ck = (Cs² √Ce)^(2/3)` at OpenFOAM's usual `Ce` 1.048.
 const CE: f64 = 1.048;
@@ -586,22 +766,31 @@ fn turbulence_properties(t: Option<&Turbulence>, notes: &mut Vec<String>) -> Res
     Ok(dictionary("turbulenceProperties", &body))
 }
 
-fn control(duration: f64, frames: u32, courant: f64) -> String {
+fn control(solver: &str, duration: f64, frames: u32, courant: f64) -> String {
     let interval = duration / f64::from(frames);
     let first = (interval / 1000.0).min(1e-6);
+    // A running mean of the incompressible LES from a third of the run; a compressible start-up
+    // has no such state.
+    let average = if solver == "pimpleFoam" {
+        format!(
+            "    fieldAverage\n    {{\n        type fieldAverage;\n        libs (fieldFunctionObjects);\n        timeStart {};\n        writeControl writeTime;\n\
+        fields ( U {{ mean on; prime2Mean on; base time; }} p {{ mean on; prime2Mean off; base time; }} );\n    }}\n",
+            num(duration / 3.0)
+        )
+    } else {
+        String::new()
+    };
     dictionary(
         "controlDict",
         &format!(
-            "application pimpleFoam;\nstartFrom latestTime;\nstartTime 0;\nstopAt endTime;\nendTime {};\ndeltaT {};\n\
-writeControl adjustable;\nwriteInterval {};\npurgeWrite 0;\nwriteFormat binary;\nwritePrecision 8;\ntimeFormat general;\ntimePrecision 8;\n\
+            "application {solver};\nstartFrom latestTime;\nstartTime 0;\nstopAt endTime;\nendTime {};\ndeltaT {};\n\
+writeControl adjustable;\nwriteInterval {};\npurgeWrite 0;\nwriteFormat ascii;\nwriteCompression off;\nwritePrecision 8;\ntimeFormat general;\ntimePrecision 8;\n\
 runTimeModifiable true;\nadjustTimeStep yes;\nmaxCo {};\n\n\
-functions\n{{\n    fieldAverage\n    {{\n        type fieldAverage;\n        libs (fieldFunctionObjects);\n        timeStart {};\n        writeControl writeTime;\n\
-        fields ( U {{ mean on; prime2Mean on; base time; }} p {{ mean on; prime2Mean off; base time; }} );\n    }}\n}}\n",
+functions\n{{\n{average}}}\n",
             num(duration),
             num(first),
             num(interval),
             num(courant),
-            num(duration / 3.0)
         ),
     )
 }
@@ -618,21 +807,138 @@ const FV_SOLUTION: &str = "solvers\n{\n    p { solver GAMG; smoother DIC; tolera
     \"(U|UFinal)\" { solver smoothSolver; smoother symGaussSeidel; tolerance 1e-6; relTol 0; }\n}\n\n\
 PIMPLE\n{\n    momentumPredictor yes;\n    nOuterCorrectors 1;\n    nCorrectors 2;\n    nNonOrthogonalCorrectors 1;\n}\n";
 
-fn allrun(step: &str, processes: u32) -> String {
+fn allrun(step: &str, solver: &str, processes: u32) -> String {
     let step: String = step.chars().filter(|c| !c.is_control()).collect();
     let mut s = format!(
         "#!/bin/sh\n# FieldCraft fluid step `{step}` as an OpenFOAM case: mesh, solve, reconstruct.\n\
 # Run in this directory with OpenFOAM's environment; NP overrides the ranks ({processes}).\n\
 set -e\ncd \"$(dirname \"$0\")\"\nNP=${{NP:-{processes}}}\n\
 run() {{ log=\"log.$1\"; echo \"$*  > $log\"; \"$@\" > \"$log\" 2>&1; }}\n\
-run blockMesh\nrun surfaceFeatureExtract\nrun snappyHexMesh -overwrite\nrun checkMesh\n"
+run blockMesh\nrun surfaceFeatureExtract\nrun snappyHexMesh -overwrite\nrun checkMesh\n\
+run postProcess -func writeCellCentres -time 0\n"
     );
-    s.push_str(
+    let _ = write!(
+        s,
         "if [ \"$NP\" -gt 1 ]; then\n    rm -rf processor*\n    run decomposePar -force\n\
-    echo \"mpirun -np $NP pimpleFoam -parallel  > log.pimpleFoam\"\n    mpirun -np \"$NP\" pimpleFoam -parallel > log.pimpleFoam 2>&1\n\
-    run reconstructPar\nelse\n    run pimpleFoam\nfi\n",
+    echo \"mpirun -np $NP {solver} -parallel  > log.{solver}\"\n    mpirun -np \"$NP\" {solver} -parallel > log.{solver} 2>&1\n\
+    run reconstructPar\n    rm -rf processor*\nelse\n    run {solver}\nfi\n",
     );
     s
+}
+
+/// The most values a field file may hold.
+pub const MAX_FIELD_VALUES: usize = 50_000_000;
+
+/// The internal field of an OpenFOAM field file (`internalField`), as written in ASCII.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FieldValues {
+    UniformScalar(f64),
+    UniformVector([f64; 3]),
+    Scalars(Vec<f64>),
+    Vectors(Vec<[f64; 3]>),
+}
+
+impl FieldValues {
+    /// The scalar of cell `i`.
+    pub fn scalar(&self, i: usize) -> Option<f64> {
+        match self {
+            FieldValues::UniformScalar(v) => Some(*v),
+            FieldValues::Scalars(v) => v.get(i).copied(),
+            _ => None,
+        }
+    }
+
+    /// The vector of cell `i`.
+    pub fn vector(&self, i: usize) -> Option<[f64; 3]> {
+        match self {
+            FieldValues::UniformVector(v) => Some(*v),
+            FieldValues::Vectors(v) => v.get(i).copied(),
+            _ => None,
+        }
+    }
+
+    /// The number of values (`None` when uniform).
+    pub fn count(&self) -> Option<usize> {
+        match self {
+            FieldValues::Scalars(v) => Some(v.len()),
+            FieldValues::Vectors(v) => Some(v.len()),
+            _ => None,
+        }
+    }
+}
+
+fn read_error(message: impl Into<String>) -> Error {
+    Error::Read { format: FORMAT, message: message.into() }
+}
+
+/// The internal field of an ASCII field file: `uniform` with a scalar or a vector, or a
+/// `nonuniform List<scalar>` / `List<vector>` (binary files are refused by name).
+pub fn read_field(text: &str) -> Result<FieldValues> {
+    let start = text.find("internalField").ok_or_else(|| read_error("no internalField"))?;
+    let header = text.get(..start).unwrap_or("").replace(';', " ; ");
+    let words: Vec<&str> = header.split_whitespace().collect();
+    if words.windows(2).any(|w| w == ["format", "binary"]) {
+        return Err(read_error("a binary field file (write the case with `writeFormat ascii`)"));
+    }
+    let rest = text.get(start + "internalField".len()..).unwrap_or("");
+    let end = rest.find("boundaryField").unwrap_or(rest.len());
+    let spaced = rest.get(..end).unwrap_or("").replace('(', " ( ").replace(')', " ) ").replace(';', " ; ");
+    let mut t = spaced.split_whitespace();
+    let mut next = |what: &str| t.next().ok_or_else(|| read_error(format!("the internal field ends before {what}")));
+    let number = |s: &str| {
+        s.parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite())
+            .ok_or_else(|| read_error(format!("`{}` is not a finite number", s.chars().take(32).collect::<String>())))
+    };
+    match next("its kind")? {
+        "uniform" => match next("its value")? {
+            "(" => {
+                let v = [number(next("a vector")?)?, number(next("a vector")?)?, number(next("a vector")?)?];
+                Ok(FieldValues::UniformVector(v))
+            }
+            s => Ok(FieldValues::UniformScalar(number(s)?)),
+        },
+        "nonuniform" => {
+            let kind = next("its list type")?;
+            let n: usize = next("its count")?.parse().map_err(|_| read_error("a list count that is not a whole number"))?;
+            if n > MAX_FIELD_VALUES {
+                return Err(Error::Limit(format!("{n} values in a field (at most {MAX_FIELD_VALUES})")));
+            }
+            if next("its list")? != "(" {
+                return Err(read_error("a list that does not start with `(`"));
+            }
+            let out = match kind {
+                "List<scalar>" => {
+                    let mut v = Vec::with_capacity(n);
+                    for _ in 0..n {
+                        v.push(number(next("its values end")?)?);
+                    }
+                    FieldValues::Scalars(v)
+                }
+                "List<vector>" => {
+                    let mut v = Vec::with_capacity(n);
+                    for _ in 0..n {
+                        if next("a vector")? != "(" {
+                            return Err(read_error("a vector that does not start with `(`"));
+                        }
+                        let x = [number(next("a vector")?)?, number(next("a vector")?)?, number(next("a vector")?)?];
+                        if next("a vector")? != ")" {
+                            return Err(read_error("a vector of more than three components"));
+                        }
+                        v.push(x);
+                    }
+                    FieldValues::Vectors(v)
+                }
+                other => return Err(read_error(format!("a field of `{}` (scalars and vectors only)", other.chars().take(32).collect::<String>()))),
+            };
+            if next("its list's end")? != ")" {
+                return Err(read_error(format!("a list longer than its count {n}")));
+            }
+            Ok(out)
+        }
+        other => Err(read_error(format!("an internal field that is `{}`, not uniform or nonuniform", other.chars().take(32).collect::<String>()))),
+    }
 }
 
 #[cfg(test)]
@@ -748,7 +1054,7 @@ mod tests {
             "condition": {"type": "moving_wall", "velocity": [0.5, 0.0, 0.0]}}]}));
         let options = CaseOptions {
             cell_factor: 4,
-            refine_boxes: vec![RefineBox { min: [0.0, 0.0, 0.0], max: [0.01, 0.002, 0.002] }],
+            refine_boxes: vec![RefineBox { min: [0.0, 0.0, 0.0], max: [0.01, 0.002, 0.002], spacing: None }],
             processes: 8,
             ..CaseOptions::default()
         };
@@ -789,5 +1095,61 @@ mod tests {
             let o = ObstacleSurface { body: "Cube", positions: pos, triangles: tris, tri_face: faces, faces: &n };
             assert!(write_case(&m, None, &[o], &CaseOptions { location: Some([0.009, 0.002, 0.002]), ..CaseOptions::default() }).is_err());
         }
+    }
+
+    #[test]
+    fn a_compressible_case_holds_total_pressure_inlets_and_wave_outlets() {
+        let m = channel(serde_json::json!({"faces": {"x_min": {"type": "pressure", "pressure": 2.99e7},
+            "x_max": {"type": "pressure", "pressure": 0.0}, "y_min": {"type": "slip"}}}));
+        let gas = Gas { ambient: 1e5, ..Gas::AIR };
+        let options = CaseOptions {
+            gas: Some(gas),
+            refine_boxes: vec![RefineBox { min: [0.003, 0.0, 0.0], max: [0.01, 0.001, 0.001], spacing: Some(0.000_125) }],
+            ..CaseOptions::default()
+        };
+        let case = write(&m, &options).unwrap();
+        assert_eq!(case.solver, "rhoCentralFoam");
+        assert!((gas.gamma() - 1.4).abs() < 2e-3, "{}", gas.gamma());
+        let p = &case.files["0/p"];
+        assert!(p.contains("x_min { type totalPressure;") && p.contains("p0 uniform 3e7;"), "{p}");
+        assert!(p.contains("x_max { type waveTransmissive;") && p.contains("fieldInf 1e5;"), "{p}");
+        assert!(p.contains("internalField uniform 1e5;") && p.contains("[1 -1 -2 0 0 0 0]"), "{p}");
+        let t = &case.files["0/T"];
+        assert!(t.contains("x_min { type totalTemperature;") && t.contains("Cube_F1_mz { type zeroGradient; }"), "{t}");
+        let thermo = &case.files["constant/thermophysicalProperties"];
+        assert!(thermo.contains("molWeight 2.89647e1;") && thermo.contains("mu 1.8e-5;"), "{thermo}");
+        assert!(!case.files.contains_key("0/nut") && !case.files.contains_key("constant/transportProperties"));
+        assert!(case.files["system/controlDict"].contains("application rhoCentralFoam;"));
+        assert!(case.files["Allrun"].contains("mpirun -np \"$NP\" rhoCentralFoam -parallel") && case.files["Allrun"].contains("writeCellCentres"));
+        // 1 mm background over 0.125 mm: level 3.
+        assert!(case.files["system/snappyHexMeshDict"].contains("levels ((1e15 3))"));
+        assert!(case.notes.iter().any(|n| n.contains("laminar")), "{:?}", case.notes);
+        let bad = CaseOptions { gas: Some(Gas { molar_mass: 0.0, ..Gas::AIR }), ..CaseOptions::default() };
+        assert!(write(&m, &bad).is_err());
+    }
+
+    #[test]
+    fn reads_ascii_internal_fields() {
+        let head = "FoamFile\n{\n    format ascii;\n    class volVectorField;\n}\n// * * //\ndimensions [0 1 -1 0 0 0 0];\n\n";
+        let vectors = format!(
+            "{head}internalField nonuniform List<vector> \n3\n(\n(1 2 3)\n(4 5 6)\n(-1e-3 0 7.5)\n)\n;\n\nboundaryField\n{{\n    a {{ type fixedValue; value uniform (9 9 9); }}\n}}\n"
+        );
+        assert_eq!(read_field(&vectors).unwrap(), FieldValues::Vectors(vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [-1e-3, 0.0, 7.5]]));
+        let scalars = format!("{head}internalField   nonuniform List<scalar> 2(101325 1.5e5);\nboundaryField {{}}\n");
+        assert_eq!(read_field(&scalars).unwrap(), FieldValues::Scalars(vec![101_325.0, 1.5e5]));
+        assert_eq!(read_field(&format!("{head}internalField uniform (0 0 1);\n")).unwrap(), FieldValues::UniformVector([0.0, 0.0, 1.0]));
+        assert_eq!(read_field(&format!("{head}internalField uniform 293.15;\n")).unwrap().scalar(7), Some(293.15));
+        for bad in [
+            "internalField nonuniform List<scalar> 3(1 2);",
+            "internalField nonuniform List<scalar> 1(1 2);",
+            "internalField nonuniform List<vector> 1((1 2));",
+            "internalField nonuniform List<tensor> 1((1 2 3 4 5 6 7 8 9));",
+            "internalField nonuniform List<scalar> 1(nan);",
+            "internalField nonuniform List<scalar> 99999999999(1);",
+            "no field here",
+        ] {
+            assert!(read_field(bad).is_err(), "{bad}");
+        }
+        assert!(read_field("FoamFile { format binary; }\ninternalField uniform 1;").unwrap_err().to_string().contains("binary"));
     }
 }

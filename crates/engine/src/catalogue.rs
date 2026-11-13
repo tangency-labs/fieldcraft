@@ -755,6 +755,7 @@ pub static CATALOGUE: &[Capability] = &[
     // ---- Results ----
     ready_more("results.deformed", "Deformed", Results, "Display", "The deformed shape of a solved step, to scale", &["results.clear"]),
     ready("results.contour", "Contours", Results, "Display", "Contours of displacement and stress, with a legend"),
+    ready("results.openfoam", "OpenFOAM Results", Results, "Display", "Read an OpenFOAM case's results back as its fluid step's results"),
     ready("results.modes", "Mode Shapes", Results, "Display", "Mode shapes and frequencies of a frequency step"),
     ready_more(
         "results.animate",
