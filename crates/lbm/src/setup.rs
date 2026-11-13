@@ -93,6 +93,10 @@ pub struct Obstacle {
     pub surface: BoundarySurface,
     /// Face names by tag; tags without a name are called `face0`, `face1`, ….
     pub faces: Vec<String>,
+    /// The exact surface of each face by tag, when known (an imported surface has none): the
+    /// cells near a curved face are decided by it, not by the chords of its triangles
+    /// ([`crate::voxel::decide_near_curved`]).
+    pub exact: Vec<Option<fieldcraft_mesh::tet::geometry::AnalyticSurface>>,
 }
 
 /// An obstacle of the domain as the run sees it.

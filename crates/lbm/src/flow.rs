@@ -657,7 +657,9 @@ impl Flow {
         for (k, faces) in setup.obstacles.iter().enumerate() {
             let o = obstacles.get(faces.index).ok_or_else(|| Error::NotFound(format!("obstacle {}", faces.index)))?;
             let mut inside = filled(n, false, "obstacle cells")?;
-            if voxelise(&o.surface, &grid, &mut inside)? == 0 {
+            voxelise(&o.surface, &grid, &mut inside)?;
+            crate::voxel::decide_near_curved(&o.surface, &o.exact, &grid, &mut inside)?;
+            if !inside.contains(&true) {
                 empty_obstacles.push(o.body.clone());
             }
             for (c, &solid) in inside.iter().enumerate() {

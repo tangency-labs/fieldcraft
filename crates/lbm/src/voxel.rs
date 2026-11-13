@@ -32,6 +32,7 @@
 
 use fieldcraft_mesh::predicates::{Point2, Point3, Sign, orient2d, orient3d, snap_to_domain};
 use fieldcraft_mesh::surface::BoundarySurface;
+use fieldcraft_mesh::tet::geometry::{AnalyticSurface, Tessellation};
 
 use crate::{Error, Result};
 
@@ -194,6 +195,93 @@ pub fn voxelise(surface: &BoundarySurface, grid: &Grid, inside: &mut [bool]) -> 
         }
     }
     Ok(marked)
+}
+
+/// Decide the cells whose centres lie between a curved face and the chords of its triangles by
+/// the face's exact surface (`exact[tag]`; planes and faces without one keep [`voxelise`]'s
+/// answer). A tessellation of a cylinder whose vertices stand at other angles from one section
+/// to the next (an isotropic triangulation) puts cell centres a chord's depth from the surface
+/// inside in one section and outside in the next: teeth one cell wide along the surface, which
+/// the walls then trap fluid between. Each such centre goes inside when it lies behind the
+/// exact surface of the face nearest it (the surface's normal turned outward like the face's
+/// triangles), at its closest point on that face. Returns how many cells changed.
+pub fn decide_near_curved(surface: &BoundarySurface, exact: &[Option<AnalyticSurface>], grid: &Grid, inside: &mut [bool]) -> Result<usize> {
+    let curved = |face: u32| exact.get(face as usize).copied().flatten().filter(|s| !matches!(s, AnalyticSurface::Plane { .. }));
+    if inside.len() != grid.len() {
+        return Err(Error::Invalid(format!("{} flags for {} cells", inside.len(), grid.len())));
+    }
+    if !surface.tri_face().iter().any(|&f| curved(f).is_some()) {
+        return Ok(0);
+    }
+    let pts = surface.points();
+    let at = |v: u32| pts.get(v as usize).copied().unwrap_or([0.0; 3]);
+    let h = grid.spacing;
+    let span = |axis: usize, lo: f64, hi: f64| -> (usize, usize) {
+        let n = grid.cells[axis];
+        let first = ((lo - grid.origin[axis]) / h - 0.5).ceil();
+        let last = ((hi - grid.origin[axis]) / h - 0.5).floor();
+        let clamp = |t: f64| if t.is_nan() || t < 0.0 { 0usize } else { (t as usize).min(n.saturating_sub(1)) };
+        (clamp(first), clamp(last))
+    };
+    // The centres within a triangle's chordal gap of it (twice its deepest point's distance from
+    // the surface: at its sides' middles and its centre), ascending.
+    let mut near: Vec<usize> = Vec::new();
+    for (tri, &face) in surface.triangles().iter().zip(surface.tri_face()) {
+        let Some(s) = curved(face) else { continue };
+        let corners = [at(tri[0]), at(tri[1]), at(tri[2])];
+        let [a, b, c] = corners;
+        let mid = |u: [f64; 3], v: [f64; 3]| [0.5 * (u[0] + v[0]), 0.5 * (u[1] + v[1]), 0.5 * (u[2] + v[2])];
+        let centre = [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0, (a[2] + b[2] + c[2]) / 3.0];
+        let gap = [mid(a, b), mid(b, c), mid(c, a), centre]
+            .into_iter()
+            .map(|x| s.project(x).map_or(0.0, |y| dot(sub(x, y), sub(x, y)).sqrt()))
+            .fold(0.0, f64::max);
+        let band = 2.0 * gap;
+        if !(band > 0.0 && band.is_finite()) {
+            continue;
+        }
+        let lo = [0, 1, 2].map(|k| a[k].min(b[k]).min(c[k]) - band);
+        let hi = [0, 1, 2].map(|k| a[k].max(b[k]).max(c[k]) + band);
+        let ((i0, i1), (j0, j1), (k0, k1)) = (span(0, lo[0], hi[0]), span(1, lo[1], hi[1]), span(2, lo[2], hi[2]));
+        for k in k0..=k1 {
+            for j in j0..=j1 {
+                for i in i0..=i1 {
+                    let p = [grid.centre_along(0, i), grid.centre_along(1, j), grid.centre_along(2, k)];
+                    if distance2(p, &corners) <= band * band {
+                        near.push(grid.index([i, j, k]));
+                    }
+                }
+            }
+        }
+    }
+    near.sort_unstable();
+    near.dedup();
+    let target = Tessellation::new(surface, exact.to_vec());
+    let mut changed = 0;
+    for cell in near {
+        let [i, j, k] = grid.coords(cell);
+        let p = [grid.centre_along(0, i), grid.centre_along(1, j), grid.centre_along(2, k)];
+        let Some(face) = target.nearest_face(p) else { continue };
+        let Some(s) = curved(face) else { continue };
+        // The face's closest point, on its exact surface (trimmed to the face) when that lies
+        // there; a point of its triangles otherwise, which decides nothing new.
+        let Some(q) = target.project_trimmed(face, p) else { continue };
+        if s.project(p) != Some(q) {
+            continue;
+        }
+        let Some(n) = target.face_normal(face, q) else { continue };
+        let side = dot(sub(p, q), n);
+        if side == 0.0 {
+            continue;
+        }
+        if let Some(flag) = inside.get_mut(cell)
+            && *flag != (side < 0.0)
+        {
+            *flag = side < 0.0;
+            changed += 1;
+        }
+    }
+    Ok(changed)
 }
 
 /// A bounding-volume tree over a surface's triangles for nearest-triangle queries.
@@ -389,6 +477,64 @@ mod tests {
             tags.extend([k as u32; 2]);
         }
         BoundarySurface::new(&positions, &triangles, &tags, &SurfaceOptions::default()).unwrap()
+    }
+
+    /// A cylinder of radius 3 along x (0 ≤ x ≤ 8, axis through y = z = 4), eight facets round
+    /// with every other section's vertices turned half a facet: tag 0 the side, 1 and 2 the caps.
+    fn staggered_cylinder() -> BoundarySurface {
+        use std::f64::consts::TAU;
+        let (r, n, sections) = (3.0, 8usize, 9usize);
+        let mut positions = Vec::new();
+        for s in 0..sections {
+            let turn = if s % 2 == 1 { 0.5 } else { 0.0 };
+            for k in 0..n {
+                let a = TAU * (k as f64 + turn) / n as f64;
+                positions.push([s as f64, 4.0 + r * a.cos(), 4.0 + r * a.sin()]);
+            }
+        }
+        let (c0, c1) = (positions.len() as u32, positions.len() as u32 + 1);
+        positions.extend([[0.0, 4.0, 4.0], [(sections - 1) as f64, 4.0, 4.0]]);
+        let v = |s: usize, k: usize| (s * n + k % n) as u32;
+        let (mut triangles, mut tags) = (Vec::new(), Vec::new());
+        for s in 0..sections - 1 {
+            for k in 0..n {
+                // Outward: counter-clockwise seen from outside.
+                if s % 2 == 0 {
+                    triangles.extend([[v(s, k), v(s, k + 1), v(s + 1, k)], [v(s, k + 1), v(s + 1, k + 1), v(s + 1, k)]]);
+                } else {
+                    triangles.extend([[v(s, k), v(s + 1, k + 1), v(s + 1, k)], [v(s, k), v(s, k + 1), v(s + 1, k + 1)]]);
+                }
+                tags.extend([0, 0]);
+            }
+        }
+        for k in 0..n {
+            triangles.push([c0, v(0, k + 1), v(0, k)]);
+            triangles.push([c1, v(sections - 1, k), v(sections - 1, k + 1)]);
+            tags.extend([1, 2]);
+        }
+        BoundarySurface::new(&positions, &triangles, &tags, &SurfaceOptions::default()).unwrap()
+    }
+
+    /// The cells between the cylinder and its chords are decided by the cylinder: every section
+    /// alike, as the exact inside test says. By the chords alone, which stand at other angles in
+    /// alternate sections, they are not.
+    #[test]
+    fn cells_near_a_curved_face_follow_its_exact_surface() {
+        let s = staggered_cylinder();
+        let grid = Grid { origin: [0.5, 0.03, 0.07], spacing: 0.25, cells: [28, 32, 32] };
+        let exact_inside = |c: usize| {
+            let [_, y, z] = grid.centre(c);
+            (y - 4.0).hypot(z - 4.0) < 3.0
+        };
+        let mut inside = vec![false; grid.len()];
+        voxelise(&s, &grid, &mut inside).unwrap();
+        assert!((0..grid.len()).any(|c| inside[c] != exact_inside(c)));
+        let cylinder = AnalyticSurface::Cylinder { origin: [0.0, 4.0, 4.0], axis: [1.0, 0.0, 0.0], radius: 3.0 };
+        let exact = vec![Some(cylinder), None, None];
+        let changed = decide_near_curved(&s, &exact, &grid, &mut inside).unwrap();
+        assert!(changed > 0);
+        let wrong: Vec<[f64; 3]> = (0..grid.len()).filter(|&c| inside[c] != exact_inside(c)).map(|c| grid.centre(c)).collect();
+        assert!(wrong.is_empty(), "{} cells off the cylinder's answer, first {:?}", wrong.len(), wrong.first());
     }
 
     #[test]
