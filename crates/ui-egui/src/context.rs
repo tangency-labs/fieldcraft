@@ -147,6 +147,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, column: egui::Rect) {
         }
     }
     let session = &app.session;
+    let selection = &app.pick.selection;
     // The set Use selection will make on OK is offered with the others.
     let pending = app.dialog.as_ref().and_then(|d| d.pending_set.as_ref()).and_then(|s| s.get("name")).and_then(Value::as_str).map(str::to_string);
     let Some(d) = app.dialog.as_mut() else { return };
@@ -247,6 +248,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, column: egui::Rect) {
                     refused,
                     problems: &problems,
                     picked: picked.clone(),
+                    selection: Some(selection),
                 };
                 let out = crate::form::show(ui, t, &cx, fields, &mut obj);
                 invalid = out.invalid;
