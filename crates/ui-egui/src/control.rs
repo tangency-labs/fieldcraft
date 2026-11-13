@@ -477,7 +477,9 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     app.answer_replace_mesh(a == "replace");
                     ok(json!({"busy": app.busy()}))
                 }
-                (crate::files::Prompt::Delete(_), Some(a @ ("delete" | "cancel"))) => {
+                // A refused delete (in use) says why and stays up, as its only button is Close.
+                (crate::files::Prompt::Delete(ask), Some("delete")) if !ask.allowed() => err(format!("not allowed: {}", ask.question())),
+                (crate::files::Prompt::Delete(_), Some(a @ ("delete" | "cancel" | "close"))) => {
                     app.answer_delete(a == "delete");
                     ok(json!({"status": app.status}))
                 }
@@ -1055,6 +1057,23 @@ mod tests {
         let r = call(&mut app, "ui.dialog", json!({"params": {"label": 3, "xyz": [1, 2, 3]}, "run": true}));
         assert_eq!(r["ok"], true, "{r}");
         assert!(app.dialog.is_none() && app.session.model.node(3).is_some());
+    }
+
+    /// Deleting a definition in use is refused: `ui.prompt` "delete" answers why, deletes nothing
+    /// and leaves the prompt up to be closed (A4-10).
+    #[test]
+    fn a_refused_delete_answers_an_error() {
+        let mut app = ModelApp::new(Session::default());
+        app.open_sample("cantilever");
+        app.wait_loaded();
+        let load = app.session.model.loads().keys().next().cloned().unwrap();
+        app.ask_delete(crate::browser::Def::Load, &load);
+        let r = call(&mut app, "ui.prompt", json!({"answer": "delete"}));
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(r["error"].as_str().is_some_and(|e| e.starts_with("not allowed: ") && e.contains(&load)), "{r}");
+        assert!(app.session.model.loads().contains_key(&load) && app.prompt.is_some());
+        assert_eq!(call(&mut app, "ui.prompt", json!({"answer": "close"}))["ok"], true);
+        assert!(app.prompt.is_none() && app.session.model.loads().contains_key(&load));
     }
 
     /// A sample opens as a job however it is asked for (the Samples window, `engine.execute`):
