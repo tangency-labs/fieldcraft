@@ -44,8 +44,11 @@ constant. A curve is linear between its points and held at its end values outsid
 
 Adding such an entry makes a material that keeps the whole curves (saved in the model, so a later
 library update never changes its results) and takes each curve's value at `temperature`
-(default 20 C) as its constant. The solvers and the deck writers use the constants. A
-`temperature` outside a curve takes its end value and the reply warns.
+(default 20 C) as its constant. The heat transfer solver follows the conductivity, specific
+heat and density curves: each element takes its properties at its mean temperature, iterated to
+convergence (see [heat transfer](heat-transfer.md)), with a warning where the temperatures leave
+a curve. The other solvers and the deck writers use the constants. A `temperature` outside a
+curve takes its end value and the reply warns.
 
 Every curve cites a document a reader can open and check. Aluminium has no curves yet: the
 EN 1999-1-2 design equations are not reproduced in any open source we could check. Liquid water is

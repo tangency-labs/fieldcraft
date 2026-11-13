@@ -68,7 +68,10 @@ step lists the thermal and the mechanical conditions together and is solved by `
 Material properties: `thermal.conductivity` (k, or [kx, ky, kz] along the global axes),
 `thermal.specific_heat` with `density` (transient steps), `thermal.expansion` and
 `thermal.reference_temperature` (thermal strain) ([Materials](materials.md#thermal-properties-thermal)).
-Mechanical boundary conditions and loads are ignored by heat transfer steps.
+`temperature_dependent` tables of the conductivity (isotropic), specific heat and density,
+`[[kelvin, value], …]` in SI, replace those constants (each table needs its constant beside it);
+the [material library](material-library.md) adds cited ones. Mechanical boundary conditions and
+loads are ignored by heat transfer steps.
 
 ## Theory
 
@@ -98,7 +101,8 @@ increment on:
 (C + θΔt K) Tₙ₊₁ = (C − (1 − θ)Δt K) Tₙ + Δt f
 ```
 
-The left-hand matrix is factored once for the step.
+The left-hand matrix is factored once for the step, or again after each reassembly when
+temperature tables make the properties follow the temperature.
 
 **Radiation to the surroundings.** A radiation load makes a face lose, per node,
 
@@ -134,8 +138,10 @@ When that start is 0 K (surroundings at 0 K, no heat supplied, no temperature he
 temperature would be 0 K, where radiation has no tangent: the solve is refused with that reason
 ("add heat, hold a temperature or raise the ambient"). A transient increment weights
 the radiation by θ as it does K, (C + θΔt K) Tₙ₊₁ + θΔt r(Tₙ₊₁) = (C − (1 − θ)Δt K) Tₙ − (1 − θ)Δt
-r(Tₙ) + Δt f, from Tₙ, so Crank–Nicolson stays second order. Without a radiation load the solve
-is the linear one above, unchanged.
+r(Tₙ) + Δt f, from Tₙ, so with constant properties Crank–Nicolson stays second order. (With
+temperature tables C and K are taken at the end of the increment, fully implicit in the
+properties, and θ = ½ is first order in them.) Without a radiation load or temperature tables
+the solve is the linear one above, unchanged.
 
 **Constraints and reactions.** Prescribed temperatures and ties are eliminated by the
 transformation of the structural solver (`constraints::Reduction`), T = T_f q + T_p T̄. A tie makes
@@ -143,6 +149,25 @@ each secondary node's temperature the mortar-weighted average of the main nodes 
 T_A = Σ_J w_AJ T_J, with the displacement tie's weights: the interface has no resistance and the
 heat leaving one side enters the other. The heat each prescribed node supplies is the reaction
 T_pᵀ (K T + C Ṫ − f), Ṫ over the last increment in a transient step.
+
+**Temperature-dependent properties.** With property tables K = K(T) and C = C(T): the problem
+is nonlinear and solved by Picard iteration. Each element takes its conductivity and ρc at the
+mean of its nodal temperatures (linear between table points, the end value outside a table);
+the system is assembled, factored and solved again until no temperature moves by more than
+10⁻¹⁰ of the largest, at most 100 solves for a steady step or for each increment (fully
+implicit: the properties at the end of the increment). The steady step starts from the
+constants, each increment from the previous one's temperatures; a run that stops at the cap,
+or whose temperatures leave a table the step reads (a steady step reads the conductivity
+alone), says so in its warnings. With radiation as well, both nonlinearities share one loop:
+each Newton iteration first takes the properties at the last temperatures (reassembling K and C),
+then linearises the radiation there, and the solve ends when the heat balances (the radiation's
+criterion above) and the properties have settled (the 10⁻¹⁰ above), within the radiation's 50
+iterations; radiation still out of balance then is "did not converge", properties still moving a
+warning. With k linear in T across a slab held at T₀ and T₁, the
+Kirchhoff transform θ = ∫k dT is linear in x (Carslaw and Jaeger 1959, §1.7) and linear elements
+reproduce it exactly at the nodes: `crates/solver/tests/temperature_dependent.rs` checks this with
+the library's EN 1993-1-2 steel curve (20 to 700 C, the profile sagging 45 K below the straight
+line of a constant conductivity).
 
 ![Thermal conditions on a conducting solid](../../media/manual/structural-heat-transfer-1.svg)
 
@@ -193,8 +218,10 @@ alike; isotropic expansion only ([Explicit dynamics](explicit-dynamics.md)).
    reported as "the temperature is undetermined at node N: no temperature boundary condition,
    convection or radiation reaches its part of the model". With radiation, each Newton iteration
    factors K + J (steady) or C + θΔt (K + J) (transient) afresh.
-6. **Solve.** Steady: once. Transient: n increments, each a right-hand side and a back
-   substitution; the progress counts increments and the run checks for cancellation between them.
+6. **Solve.** Steady: once (with temperature tables, until the Picard iteration settles; with
+   radiation, until Newton's does). Transient: n increments, each a right-hand side and a back
+   substitution (with temperature tables, a new assembly and factorization per Picard solve);
+   the progress counts increments and the run checks for cancellation between them.
    Frames: the initial one and, to keep at most 50 000 000 temperature values (frames × nodes),
    every k-th increment, the last always kept. A non-finite temperature is refused as
    ill-conditioned.
@@ -295,6 +322,7 @@ clamps the legend at 100 MPa (deformation scale 173).
 | Hollow cylinder, radial conduction | theory: T = T₁(1 − ln r / ln 2) and the heat flow | hex20 6 × 6: < 2·10⁻⁴ of ΔT; hex8 16 × 16: < 2·10⁻³; heat flow within 10 times that | as stated | `thick_cylinder_radial_conduction` |
 | Semi-infinite solid with a step temperature, 100 hex8 | theory: erfc(x / 2√(κt)) (Carslaw & Jaeger 1959, §2.4) | < 5·10⁻³ for θ = ½ (200 increments) and θ = 1 (800) | as stated | `transient_conduction_into_a_semi_infinite_solid` |
 | Two blocks of k = 10 and 40, non-matching meshes tied, ends at 20 and 100 | theory: series resistances (Incropera & DeWitt, §3.1) | interface 84, T and flux −640 to < 10⁻⁴ % | 10⁻⁹ rel. | `tie-heat-series` |
+| Steel slab, conductivity falling with T (EN 1993-1-2 curve), ends at 20 and 700 °C, 8 hex8 | theory: Kirchhoff transform θ = ∫k dT linear in z (Carslaw & Jaeger 1959, §1.7) | T at z = 50, 100, 150 and the flux exact; hex20 within 1.7·10⁻³ of T (kelvin) at its midside nodes; the profile sags 45 K below a constant conductivity's | 10⁻⁹ rel. (hex8) | `kirchhoff-slab-steel`, `a_conductivity_falling_with_the_temperature_bows_the_slab_profile_as_kirchhoff_says` |
 | Free thermal expansion, orthotropic α, every solid | theory: ΔL = α L ΔT, no stress | 10⁻¹²; stress < 10⁻⁶ | exact | `free_thermal_expansion_is_stress_free` |
 | Bar held at both ends | theory: σ = −E α ΔT for any ν | 10⁻⁸ relative | exact | `constrained_bar_carries_minus_e_alpha_dt` |
 | Bimetal strip, hex20 | theory: κ = 3 Δα ΔT / (2h) (Timoshenko 1925) | tip within 2 % | 2 % | `bimetal_strip_bends_as_timoshenko_says` |
@@ -323,7 +351,8 @@ clamps the legend at 100 MPa (deformation scale 173).
 - Coupled steps are steady and one way; transient coupled analysis is not implemented.
 - Radiation goes to the surroundings only: faces do not exchange radiation with each other (no
   view factors, no enclosures), surfaces are gray and the emissivity is constant.
-- Properties are constant in temperature; no contact conductance (ties are
+- Properties are constant in temperature unless the material has `temperature_dependent` tables
+  (conductivity tables are isotropic); no contact conductance (ties are
   perfect conductors); conductivity along the global axes only.
 - Transient steps use fixed, equal increments (at most 100 000).
 - Ties in heat transfer take linear faces only (tet4, wedge6, hex8).
