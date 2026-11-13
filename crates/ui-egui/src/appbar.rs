@@ -84,9 +84,9 @@ fn release_notes() -> String {
     format!("https://github.com/tangency-labs/fieldcraft/releases/tag/v{}", crate::VERSION)
 }
 
-/// Solve's width with its word, and as just its mark.
-const SOLVE_WIDE: f32 = 74.0;
-const SOLVE_NARROW: f32 = 30.0;
+/// Solve's label and icon: the kit's primary icon-label action.
+const SOLVE: &str = "Solve";
+const SOLVE_ICON: &str = "play";
 
 pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
@@ -191,8 +191,9 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
         app.place("app_bar:search", search);
     }
     // Solve: right-aligned where the kit leaves room for an offer pill, before the right cluster.
-    let solve_w = if out.offer_labeled { SOLVE_WIDE } else { SOLVE_NARROW };
-    let solve = Rect::from_min_size(pos2(out.offer.right() - solve_w, cy - 12.0), vec2(solve_w, 24.0));
+    let k = solidcraft_theme::Tokens::get();
+    let solve_w = kit::icon_label_width(ui, if out.offer_labeled { SOLVE } else { "" }, Some(SOLVE_ICON), true);
+    let solve = Rect::from_center_size(pos2(out.offer.right() - solve_w / 2.0, cy), vec2(solve_w, k.control_height));
     let tabs_end = if out.offer.width() >= solve_w {
         solve_button(app, ui, solve, out.offer_labeled);
         app.place("app_bar:solve", solve);
@@ -250,34 +251,19 @@ fn search_field(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, key: &str) {
     }
 }
 
-/// Solve: the one prominent action, a filled button with its label when `labeled`. It runs
-/// `solve.run`: greyed while the model misses what it needs, every missing piece listed in the
-/// tooltip.
+/// Solve: the one prominent action, the kit's primary icon-label button (with its label when
+/// `labeled`). It runs `solve.run`: greyed (the kit's disabled look) while the model misses what
+/// it needs, every missing piece listed in the tooltip.
 fn solve_button(app: &mut ModelApp, ui: &mut egui::Ui, solve: Rect, labeled: bool) {
-    let t = Tokens::get(app.ui.dark);
     let missing = app.unavailable("solve.run");
     let can = missing.is_none() && app.busy().is_none();
-    let resp = ui.interact(solve, ui.scope_id().with("fc_solve"), if can { Sense::click() } else { Sense::hover() });
-    let fill = if resp.hovered() && can {
-        t.accent_hover
-    } else if can {
-        t.accent
-    } else {
-        Color32::from_white_alpha(24)
-    };
-    ui.painter().rect_filled(solve, solidcraft_theme::Tokens::get().radius_sm, fill);
-    // The play mark and label in the ink for the accent fill; white on the greyed one (the title
-    // bar is dark in both themes).
-    let ink = if can { t.on_accent } else { Color32::WHITE };
-    let c = pos2(solve.left() + 15.0, solve.center().y);
-    ui.painter().add(egui::Shape::convex_polygon(vec![c + vec2(-3.5, -5.5), c + vec2(5.5, 0.0), c + vec2(-3.5, 5.5)], ink, Stroke::NONE));
-    if labeled {
-        ui.painter().text(pos2(solve.left() + 28.0, solve.center().y), Align2::LEFT_CENTER, "Solve", crate::theme::label_font(ui.ctx(), 13.0), ink);
-    }
     let head = if missing.is_some() { "Solve: not ready yet (or try Home › Samples)" } else { "Solve every step and show the results" };
     let tip = fieldcraft_engine::requirement::Unavailable::tip(head, missing.as_ref());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can, "Solve"));
-    if resp.backing_on_hover_text(tip).clicked() && can {
+    let mut slot = ui.new_child(egui::UiBuilder::new().max_rect(solve).id_salt("fc_solve").layout(egui::Layout::left_to_right(egui::Align::Center)));
+    let resp = kit::icon_label_action(&mut slot, if labeled { SOLVE } else { "" }, Some(SOLVE_ICON), can, true);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can, SOLVE));
+    let resp = if can { resp.backing_on_hover_text(tip) } else { resp.backing_on_disabled_hover_text(tip) };
+    if resp.clicked() && can {
         app.solve_all();
     }
 }
@@ -445,5 +431,15 @@ mod tests {
             }
             assert!(at(&m, "app_bar:report").right() < 1400.0 && at(&m, "app_bar:solve").left() > 700.0);
         }
+    }
+
+    /// Solve is the kit's primary icon-label action, at the kit's control height (it was a
+    /// hand-painted 24 pt rect with its own fill, mark and label font).
+    #[test]
+    fn solve_is_the_kits_primary_action() {
+        let m = regions(1400.0, false);
+        let solve = m.get("app_bar:solve").copied().unwrap_or_else(|| panic!("Solve not drawn"));
+        let k = solidcraft_theme::Tokens::get();
+        assert!((solve.height() - k.control_height).abs() < 0.5, "{solve:?}");
     }
 }
