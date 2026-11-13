@@ -30,7 +30,7 @@ use fieldcraft_model::fluid_zones::DEFAULT_FAN_RELAXATION;
 use fieldcraft_model::units::kelvin_above;
 use fieldcraft_model::{
     BoxFace, Collision, Directional, FaceCondition, FluidDomain, HrrSigma, Model, Procedure, Resistance, SurfaceCondition, ThermalCondition,
-    Turbulence, WallModel,
+    Turbulence, WallModel, WallTreatment,
 };
 
 use crate::rheology::{Rheology, shear_rate_at_stress};
@@ -271,6 +271,8 @@ pub struct Setup {
     pub van_driest: Option<f64>,
     /// The wall model of the fluid cells next to no-slip walls (none: the bounce-back alone).
     pub wall_model: Option<WallModel>,
+    /// How the links into obstacles bounce back: halfway, or where the surface crosses them.
+    pub walls: WallTreatment,
     /// The characteristic velocity in model and lattice units, and its lattice Mach number.
     pub velocity: f64,
     pub lattice_velocity: f64,
@@ -517,7 +519,7 @@ impl Setup {
     pub fn new(model: &Model, step: Option<&str>, obstacles: &[Obstacle], limits: &Limits) -> Result<Setup> {
         // The model checked the domain and its material when they were defined.
         let (s, domain) = fluid_step(model, step)?;
-        let Procedure::Fluid { end_time, steps, time_step, frames, magic, sigma, collision, turbulence, steady, .. } = &s.procedure else {
+        let Procedure::Fluid { end_time, steps, time_step, frames, magic, sigma, collision, turbulence, steady, walls, .. } = &s.procedure else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
         if turbulence.as_ref().is_some_and(|t| t.wall_model() == Some(WallModel::SpaldingBounceHalfway)) {
@@ -525,6 +527,20 @@ impl Setup {
                 "wall_model `spalding_bounce_halfway` is disabled because its wall-row checkerboard mode grows; remove `wall_model` for resolved no-slip walls, or explicitly choose and validate another wall treatment. `spalding_bounce` uses a different, on-node wall location".into(),
             ));
         }
+        // Interpolated walls replace the bounce-back of the obstacles' links; the wall models and
+        // the free surface rebuild or reflect those populations their own way.
+        if *walls == WallTreatment::Interpolated {
+            let refuse = |what: String| {
+                Err(Error::Invalid(format!("not supported yet: interpolated walls (`walls: \"interpolated\"`) {what}; use `walls: \"halfway\"`")))
+            };
+            if turbulence.as_ref().and_then(|t| t.wall_model()).is_some() {
+                return refuse("with a wall model (`wall_model`)".into());
+            }
+            if domain.free_surface.is_some() {
+                return refuse("with a free surface (`free_surface`)".into());
+            }
+        }
+        let walls = *walls;
         let domain = domain.clone();
         let (smagorinsky, vreman, turbulent_prandtl, van_driest, wall_model) = match turbulence {
             None => (0.0, 0.0, 0.9, None, None),
@@ -1004,6 +1020,7 @@ impl Setup {
             vreman,
             van_driest,
             wall_model,
+            walls,
             turbulent_prandtl,
             velocity: u_char,
             lattice_velocity,

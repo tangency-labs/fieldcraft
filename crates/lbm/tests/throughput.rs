@@ -38,6 +38,7 @@ fn cell_updates_per_second() {
                 collision: Some(collision),
                 turbulence: None,
                 steady: None,
+                walls: Default::default(),
             },
         );
         let (setup, mut flow) = prepare(&m, &obstacles);
@@ -79,6 +80,7 @@ fn scaling_over_threads() {
             sigma: None,
             collision: None,
             steady: None,
+            walls: Default::default(),
             turbulence: None,
         },
     );

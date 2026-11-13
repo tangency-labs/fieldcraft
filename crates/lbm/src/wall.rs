@@ -64,7 +64,7 @@
 use fieldcraft_parallel as parallel;
 
 use crate::Result;
-use crate::flow::{Link, Rule, filled};
+use crate::flow::{Link, filled};
 use crate::lattice::{CS2, Q, W, c, equilibrium, opposite};
 use crate::voxel::Grid;
 
@@ -191,7 +191,7 @@ impl Walls {
             for l in links {
                 // A no-slip wall's links: bounce-back, or the specular reflection of the
                 // wall-function bounce.
-                let (Rule::Bounce { group, .. } | Rule::Reflect { group, .. }) = l.rule else { continue };
+                let Some(group) = l.rule.wall_group() else { continue };
                 let Some(Some(velocity)) = walls.get(group as usize) else { continue };
                 let q = usize::from(l.q);
                 let cq = c(q);
@@ -676,6 +676,7 @@ pub(crate) fn spalding_friction(speed: f64, y: f64, nu: f64, kappa: f64, b: f64)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flow::Rule;
     use crate::lattice::C;
 
     /// In the viscous sublayer u⁺ = y⁺, so u_τ² = ν U / y; in the log layer u⁺ = ln(y⁺)/κ + B.

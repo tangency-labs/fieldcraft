@@ -670,6 +670,11 @@ impl GpuFlow {
         if flow.has_baffles() {
             return Err(Error::Invalid("baffles are not supported on the GPU yet: solve on the CPU".into()));
         }
+        if flow.wall_links().is_some() {
+            return Err(Error::Invalid(
+                "not supported yet: interpolated walls (`walls: \"interpolated\"`) on the GPU backend: solve on the CPU (`backend: \"cpu\"`)".into(),
+            ));
+        }
         if let Some(r) = flow.rheology() {
             return Err(Error::Invalid(format!(
                 "the GPU backend does not step a shear-dependent viscosity yet (a {} fluid): solve on the CPU (`backend: \"cpu\"`)",
@@ -860,7 +865,9 @@ impl GpuFlow {
         for (l, link) in links.iter().enumerate() {
             let (kind, from, group, q2, du) = match link.rule {
                 Rule::Pull { from } => (KIND_PULL, from, 0, 0, 0.0),
+                // Refused above until the GPU interpolates.
                 Rule::Bounce { group, du } => (KIND_BOUNCE, 0, group, 0, du),
+                Rule::Interpolated { group, .. } => (KIND_BOUNCE, 0, group, 0, 0.0),
                 Rule::Reflect { from, q, group } => (KIND_REFLECT, from, group, u32::from(q), 0.0),
                 Rule::Open => (KIND_OPEN, 0, 0, 0, 0.0),
             };

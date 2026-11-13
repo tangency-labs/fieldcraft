@@ -20,6 +20,23 @@
 //!   wall-function bounce (`spalding_bounce`, [`crate::bounce`]) the outermost cell layer at a
 //!   wall face is the wall instead: those boundary nodes run their eq. 14 in place of the
 //!   collision and are not fluid cells.
+//! - **Interpolated walls** (`walls: "interpolated"`): each link into an obstacle bounces back
+//!   where the obstacle's surface crosses it, at the fraction `q` of the link from the fluid
+//!   cell ([`crate::voxel::link_fraction`]), by the linear interpolation of M. Bouzidi,
+//!   M. Firdaouss, P. Lallemand, *Momentum transfer of a Boltzmann-lattice fluid with
+//!   boundaries*, Phys. Fluids 13(11):3452, 2001. With `f*` the post-collision populations,
+//!   `q̄` the direction toward the wall and `x_ff = x_f + c_q` the next fluid cell away from it:
+//!   `f_q(x_f) = 2q f*_q̄(x_f) + (1 − 2q) f*_q̄(x_ff) + δ` for `q < ½`, and
+//!   `f_q(x_f) = (f*_q̄(x_f) + (2q − 1) f*_q(x_f) + δ) / (2q)` for `q ≥ ½`, `δ` Ladd's moving-wall
+//!   term (so a moving wall adds `δ` and `δ / (2q)`, as P. Lallemand, L.-S. Luo, *Lattice
+//!   Boltzmann method for moving boundaries*, JCP 184:406, 2003, write Bouzidi et al.'s scheme).
+//!   At `q = ½` both are halfway bounce-back. A link with `q < ½` whose `x_ff` is not a fluid
+//!   cell (another wall, a box face that is not periodic) has no second node to interpolate
+//!   from and keeps halfway bounce-back, as does a link no crossing was found on; both are
+//!   counted ([`WallLinks`]) and reported. The scheme is not mass conservative: the populations
+//!   a wall sends back no longer sum to those it received. The box's walls lie halfway along
+//!   their links already and keep halfway bounce-back, as do thin walls and, with heat, the
+//!   temperature lattice.
 //! - **Inlets and outlets:** Zou & He 1997 (Phys. Fluids 9:1591) on the first layer of cells: the
 //!   unknown incoming populations are the opposite ones plus the equilibrium difference
 //!   (bounce-back of the non-equilibrium part), the density (velocity inlet) or the normal velocity
@@ -40,7 +57,11 @@
 //! - **Forces:** momentum exchange on every wall link (Ladd 1994; R. Mei, D. Yu, W. Shyy, L.-S.
 //!   Luo, *Force evaluation in the lattice Boltzmann method involving curved geometry*, PRE
 //!   65:041203, 2002): a population `f*` leaving a fluid cell toward the wall and the one `f'`
-//!   coming back transfer `c_out f* − c_in f'` to the wall. Under the wall model a wall also
+//!   coming back transfer `c_out f* − c_in f'` to the wall. On an interpolated wall link the
+//!   exchange is Galilean invariant, `(c_out − u_w) f* − (c_in − u_w) f'` with `u_w` the wall's
+//!   velocity (Y. Wen, Z. Zhou, C. Shu, H. Ho, J. Fan, *Galilean invariant fluid–solid
+//!   interfacial dynamics in lattice Boltzmann simulations*, JCP 266:161–170, 2014), `f'` the
+//!   interpolated population; at rest it is the same as the others'. Under the wall model a wall also
 //!   takes the momentum each reconstruction of its wall cells removes ([`crate::wall`]); under
 //!   the on-node bounce, the momentum its boundary nodes take from the fluid ([`crate::bounce`]).
 //! - **Fans and porous zones:** a porous zone (a vent, grille, filter or perforated plate) adds
@@ -120,7 +141,7 @@
 //! only its own populations; the wall forces are summed in link order. There are no parallel
 //! reductions, so the result is the same bit for bit on any number of threads and platform.
 
-use fieldcraft_model::{BoxFace, Collision, FaceCondition, Outflow, Profile, ThermalCondition, WallModel};
+use fieldcraft_model::{BoxFace, Collision, FaceCondition, Outflow, Profile, ThermalCondition, WallModel, WallTreatment};
 
 use fieldcraft_parallel as parallel;
 
@@ -143,10 +164,26 @@ pub enum Rule {
     Pull { from: u32 },
     /// Bounce-back at a wall of force group `group`; `du` is the moving-wall term.
     Bounce { group: u32, du: f64 },
+    /// Bouzidi et al.'s interpolated bounce-back at an obstacle wall of force group `group`, with
+    /// the flow's [`Interpolation`] number `slot` (kept aside so a rule stays as small as the
+    /// others).
+    Interpolated { group: u32, slot: u32 },
     /// Specular reflection at a slip face: direction `q` from cell `from`.
     Reflect { from: u32, q: u8, group: u32 },
     /// From outside an inlet or outlet: set by the open boundary after streaming.
     Open,
+}
+
+impl Rule {
+    /// The force group of a wall link (a bounce-back, interpolated or not, or a reflection);
+    /// `None` for a pull or an open face.
+    #[inline(always)]
+    pub fn wall_group(&self) -> Option<u32> {
+        match *self {
+            Rule::Bounce { group, .. } | Rule::Interpolated { group, .. } | Rule::Reflect { group, .. } => Some(group),
+            Rule::Pull { .. } | Rule::Open => None,
+        }
+    }
 }
 
 /// A population, direction `q` of `cell`, and where it comes from.
@@ -155,6 +192,56 @@ pub struct Link {
     pub cell: u32,
     pub q: u8,
     pub rule: Rule,
+}
+
+/// The population an interpolated wall link sends back into its cell, direction `q`, at the
+/// fraction `frac` of the link (see the module notes): from the post-collision populations `out`
+/// leaving the cell toward the wall, `next_out` leaving the next fluid cell toward it (read only
+/// when `frac < ½`) and `same` of the cell in direction `q`, and the moving-wall term `du`.
+#[inline(always)]
+pub fn bouzidi(frac: f64, out: f64, next_out: f64, same: f64, du: f64) -> f64 {
+    if frac < 0.5 { 2.0 * frac * out + (1.0 - 2.0 * frac) * next_out + du } else { (out + (2.0 * frac - 1.0) * same + du) / (2.0 * frac) }
+}
+
+/// An interpolated wall link's data ([`Rule::Interpolated`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Interpolation {
+    /// The fluid cell one link further from the wall (at `+c_q`, across periodic faces), read
+    /// when `q < ½` (the link's own cell otherwise).
+    pub next: u32,
+    /// The fraction of the link from the cell to where the surface crosses it,
+    /// `[crate::voxel::MIN_LINK_FRACTION, 1]`.
+    pub q: f64,
+    /// Ladd's moving-wall term, as for [`Rule::Bounce`].
+    pub du: f64,
+}
+
+/// [`bouzidi`] on the populations `f` (direction stride `s`) of cell `cell`, direction `q`.
+#[inline(always)]
+fn interpolated_value(f: &[f64], s: usize, cell: usize, q: usize, link: Interpolation) -> Option<f64> {
+    let out = *f.get(opposite(q) * s + cell)?;
+    let next_out = if link.q < 0.5 { *f.get(opposite(q) * s + link.next as usize)? } else { 0.0 };
+    let same = if link.q < 0.5 { 0.0 } else { *f.get(q * s + cell)? };
+    Some(bouzidi(link.q, out, next_out, same, link.du))
+}
+
+/// How the links into obstacles bounce back with interpolated walls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WallLinks {
+    /// Links that interpolate where the surface crosses them.
+    pub interpolated: u64,
+    /// Links with `q < ½` whose next cell away from the wall is not a fluid cell: halfway
+    /// bounce-back.
+    pub no_second_node: u64,
+    /// Links on which no crossing with the surface was found: halfway bounce-back.
+    pub no_crossing: u64,
+}
+
+impl WallLinks {
+    /// The links that fell back to halfway bounce-back.
+    pub fn halfway(&self) -> u64 {
+        self.no_second_node + self.no_crossing
+    }
 }
 
 /// An inlet or outlet cell.
@@ -534,6 +621,13 @@ pub struct Flow {
     /// The momentum transferred to each group in the last step (lattice units).
     forces: Vec<[f64; 3]>,
     groups: Vec<Group>,
+    /// With interpolated walls: each group's wall velocity (lattice units), for the Galilean
+    /// invariant momentum exchange, and how the obstacles' links bounce back (empty and `None`
+    /// with halfway walls).
+    wall_velocity: Vec<[f64; 3]>,
+    wall_links: Option<WallLinks>,
+    /// The interpolated links' data, by slot.
+    interpolations: Vec<Interpolation>,
     /// Per direction, the index offset of the neighbour a population streams from.
     offset: [isize; Q],
     fluid_cells: usize,
@@ -668,7 +762,7 @@ impl Flow {
                     fluid[c] = false;
                 }
             }
-            trees.push((TriangleTree::new(&o.surface), o.surface.tri_face()));
+            trees.push((TriangleTree::new(&o.surface), o.surface.tri_face(), &o.exact[..]));
             base.push(groups.len() as u32);
             groups.extend(faces.names.iter().map(|name| Group { name: name.clone(), body: Some(o.body.clone()) }));
             obstacle_walls.extend((0..faces.names.len()).map(|t| Some(setup.to_lattice(faces.velocities.get(t).copied().unwrap_or([0.0; 3])))));
@@ -798,7 +892,7 @@ impl Flow {
         // obstacle cell `solid`: the face of the triangle nearest the link's midpoint.
         let obstacle_link = |cell: usize, solid: u32, q: usize| -> Rule {
             let k = owner.get(solid as usize).copied().unwrap_or(NONE) as usize;
-            let (Some((tree, tags)), Some(faces), Some(&first)) = (trees.get(k), setup.obstacles.get(k), base.get(k)) else {
+            let (Some((tree, tags, _)), Some(faces), Some(&first)) = (trees.get(k), setup.obstacles.get(k), base.get(k)) else {
                 return Rule::Bounce { group: 0, du: 0.0 };
             };
             let (centre, cq) = (grid.centre(cell), c(q));
@@ -806,6 +900,33 @@ impl Flow {
             let tag = tree.nearest(mid).and_then(|t| tags.get(t as usize).copied()).unwrap_or(0);
             let u = faces.velocities.get(tag as usize).copied().unwrap_or([0.0; 3]);
             Rule::Bounce { group: first + tag, du: moving_wall(q, u) }
+        };
+        // With interpolated walls, an obstacle link's bounce-back where the surface crosses it
+        // (Bouzidi et al.), or halfway when it has no crossing or no second fluid cell.
+        let interpolate = setup.walls == WallTreatment::Interpolated;
+        let mut wall_links = interpolate.then(WallLinks::default);
+        let mut interpolations: Vec<Interpolation> = Vec::new();
+        let interpolated = |cell: usize, solid: u32, q: usize, rule: Rule, counts: &mut WallLinks, slots: &mut Vec<Interpolation>| -> Rule {
+            let Rule::Bounce { group, du } = rule else { return rule };
+            let k = owner.get(solid as usize).copied().unwrap_or(NONE) as usize;
+            let Some((tree, tags, exact)) = trees.get(k) else { return rule };
+            let (centre, cq) = (grid.centre(cell), c(q));
+            // The solid centre where the link really ends (unwrapped across a periodic face).
+            let end = [0, 1, 2].map(|a| centre[a] - cq[a] * grid.spacing);
+            let Some(frac) = crate::voxel::link_fraction(tree, tags, exact, centre, end) else {
+                counts.no_crossing += 1;
+                return rule;
+            };
+            // The next fluid cell away from the wall, across periodic faces.
+            let next = crate::surface::neighbour(&grid, periodic, grid.coords(cell), q).filter(|n| fluid.get(*n).copied().unwrap_or(false));
+            if frac < 0.5 && next.is_none() {
+                counts.no_second_node += 1;
+                return rule;
+            }
+            counts.interpolated += 1;
+            let slot = slots.len() as u32;
+            slots.push(Interpolation { next: next.unwrap_or(cell) as u32, q: frac, du });
+            Rule::Interpolated { group, slot }
         };
 
         // The links that do not stream from the neighbour the shifted copies read.
@@ -858,7 +979,10 @@ impl Flow {
                                 if let (true, Some(solid), Rule::Bounce { group, .. }) = (q < QT, conducting_at(from as usize), rule) {
                                     interface.push(Interface { cell: cell as u32, q: q as u8, solid, group, link: links.len() as u32, weight: 0.0 });
                                 }
-                                rule
+                                match wall_links.as_mut() {
+                                    Some(counts) => interpolated(cell, from, q, rule, counts, &mut interpolations),
+                                    None => rule,
+                                }
                             }
                         }
                     }
@@ -1115,9 +1239,19 @@ impl Flow {
         // The links and open cells grew by pushes: their spare capacity (up to as much again)
         // goes back before the steps.
         links.shrink_to_fit();
+        interpolations.shrink_to_fit();
 
-        // Van Driest's damping and the wall model: each no-slip group's wall velocity, in group
-        // order.
+        // Each no-slip group's wall velocity, in group order (the box faces, then the obstacle
+        // faces), for Van Driest's damping, the wall model and interpolated walls.
+        let group_walls: Vec<Option<[f64; 3]>> = BoxFace::ALL.iter().map(|f| wall_velocity(*f)).chain(obstacle_walls).collect();
+        let wall_velocities = if interpolate {
+            let mut v: Vec<[f64; 3]> = group_walls.iter().map(|w| w.unwrap_or([0.0; 3])).collect();
+            // The thin walls' groups, after them, are at rest.
+            v.resize(groups.len(), [0.0; 3]);
+            v
+        } else {
+            Vec::new()
+        };
         let nu = (setup.tau_plus - 0.5) / 3.0;
         let walls = if on_node {
             // Van Driest's damping from the interior nodes next to the boundary nodes.
@@ -1125,8 +1259,7 @@ impl Flow {
                 node_list.iter().map(|w| (w.interior, usize::from(w.axis), i32::from(w.inward), w.group)).collect();
             setup.van_driest.map(|a| Walls::on_node(&grid, &bulk, &cells, Some(a), nu)).transpose()?
         } else if setup.van_driest.is_some() || setup.wall_model.is_some() {
-            let groups: Vec<Option<[f64; 3]>> = BoxFace::ALL.iter().map(|f| wall_velocity(*f)).chain(obstacle_walls).collect();
-            Some(Walls::new(&grid, &fluid, &links, &groups, setup.van_driest, nu)?)
+            Some(Walls::new(&grid, &fluid, &links, &group_walls, setup.van_driest, nu)?)
         } else {
             None
         };
@@ -1158,6 +1291,9 @@ impl Flow {
             acceleration: setup.acceleration,
             forces: vec![[0.0; 3]; groups.len()],
             groups,
+            wall_velocity: wall_velocities,
+            wall_links,
+            interpolations,
             offset,
             fluid_cells,
             steps_done: 0,
@@ -1398,6 +1534,8 @@ impl Flow {
             + bytes(&self.zone_of)
             + bytes(&self.open_scratch)
             + bytes(&self.baffles)
+            + bytes(&self.interpolations)
+            + bytes(&self.wall_velocity)
             + self.zone_cells.iter().map(bytes).sum::<u64>()
             + self.outlets.heap_bytes();
         if let Some(t) = &self.thermal {
@@ -1469,6 +1607,21 @@ impl Flow {
     /// Obstacles that cover no cell centre.
     pub fn empty_obstacles(&self) -> &[String] {
         &self.empty_obstacles
+    }
+
+    /// With interpolated walls, how the obstacles' links bounce back.
+    pub fn wall_links(&self) -> Option<WallLinks> {
+        self.wall_links
+    }
+
+    /// The interpolated links' data, by [`Rule::Interpolated`] slot.
+    pub fn interpolations(&self) -> &[Interpolation] {
+        &self.interpolations
+    }
+
+    /// Each force group's wall velocity (lattice units) with interpolated walls; empty otherwise.
+    pub fn wall_velocities(&self) -> &[[f64; 3]] {
+        &self.wall_velocity
     }
 
     pub fn steps_done(&self) -> u64 {
@@ -1812,8 +1965,7 @@ impl Flow {
             if q >= QT {
                 continue;
             }
-            if let (Rule::Bounce { group, .. } | Rule::Reflect { group, .. }, Some(back)) =
-                (link.rule, thermal_rule(g, s, groups, cell, q, link.rule))
+            if let (Some(group), Some(back)) = (link.rule.wall_group(), thermal_rule(g, s, groups, cell, q, link.rule))
                 && !t.conjugate.get(group as usize).copied().unwrap_or(false)
                 && !t.resets(link.cell)
             {
@@ -2409,7 +2561,7 @@ impl Flow {
         let block = self.block;
         let n = self.n;
         let s = self.stride;
-        let (f, links, offset) = (&self.f, &self.links, &self.offset);
+        let (f, links, offset, interpolations) = (&self.f, &self.links, &self.offset, &self.interpolations);
         let mut blocks = cell_blocks(&mut self.g, s, n, block);
         parallel::for_each_mut(&mut blocks, |b, g| {
             let start = b * block;
@@ -2432,6 +2584,7 @@ impl Flow {
                 let v = match link.rule {
                     Rule::Pull { from } => f.get(q * s + from as usize).copied(),
                     Rule::Bounce { du, .. } => f.get(opposite(q) * s + cell).map(|out| out + du),
+                    Rule::Interpolated { slot, .. } => interpolations.get(slot as usize).and_then(|i| interpolated_value(f, s, cell, q, *i)),
                     Rule::Reflect { from, q: q2, .. } => f.get(q2 as usize * s + from as usize).copied(),
                     // A placeholder the open boundary replaces.
                     Rule::Open => f.get(opposite(q) * s + cell).copied(),
@@ -2453,6 +2606,18 @@ impl Flow {
                         // c_out f* − c_in f' with c_out = −c_q.
                         for a in 0..3 {
                             force[a] -= cq[a] * (out + back);
+                        }
+                    }
+                }
+                Rule::Interpolated { group, .. } => {
+                    let out = self.f.get(opposite(q) * s + cell).copied().unwrap_or(0.0);
+                    // What the streaming just sent back (the same interpolation, not recomputed).
+                    let back = self.g.get(q * s + cell).copied().unwrap_or(out);
+                    let uw = self.wall_velocity.get(group as usize).copied().unwrap_or([0.0; 3]);
+                    if let Some(force) = self.forces.get_mut(group as usize) {
+                        // (c_out − u_w) f* − (c_in − u_w) f' with c_out = −c_q (Wen et al. 2014).
+                        for a in 0..3 {
+                            force[a] -= cq[a] * (out + back) + uw[a] * (out - back);
                         }
                     }
                 }
@@ -2692,11 +2857,14 @@ fn thermal_rule(g: &[f64], s: usize, groups: &[ThermalCondition], cell: usize, q
     let back = g.get(opposite(q) * s + cell).copied()?;
     match rule {
         Rule::Pull { from } => g.get(q * s + from as usize).copied(),
-        Rule::Bounce { group, .. } | Rule::Reflect { group, .. } => Some(match groups.get(group as usize).copied().unwrap_or_default() {
-            ThermalCondition::Adiabatic {} => back,
-            ThermalCondition::Temperature { value } => -back + 2.0 * WT.get(q).copied().unwrap_or(0.0) * value,
-            ThermalCondition::Flux { value } => back + value,
-        }),
+        // Heat keeps its walls halfway on interpolated links too.
+        Rule::Bounce { group, .. } | Rule::Interpolated { group, .. } | Rule::Reflect { group, .. } => {
+            Some(match groups.get(group as usize).copied().unwrap_or_default() {
+                ThermalCondition::Adiabatic {} => back,
+                ThermalCondition::Temperature { value } => -back + 2.0 * WT.get(q).copied().unwrap_or(0.0) * value,
+                ThermalCondition::Flux { value } => back + value,
+            })
+        }
         Rule::Open => Some(back),
     }
 }
@@ -2740,6 +2908,10 @@ impl crate::backend::Backend for Flow {
             acceleration,
             forces,
             groups,
+            // Fixed by the setup (the links carry their rules and are saved).
+            wall_velocity: _,
+            wall_links: _,
+            interpolations,
             offset: _,
             fluid_cells: _,
             steps_done,
@@ -2808,6 +2980,15 @@ impl crate::backend::Backend for Flow {
                     fixed(a, 1)?;
                     fixed(a, group as u64)?;
                     fixed(a, du.to_bits())?;
+                }
+                Rule::Interpolated { group, slot } => {
+                    let i =
+                        interpolations.get(slot as usize).copied().ok_or_else(|| Error::Invalid(format!("interpolated link {slot} is missing")))?;
+                    fixed(a, 4)?;
+                    fixed(a, group as u64)?;
+                    fixed(a, i.next as u64)?;
+                    fixed(a, i.q.to_bits())?;
+                    fixed(a, i.du.to_bits())?;
                 }
                 Rule::Reflect { from, q, group } => {
                     fixed(a, 2)?;
@@ -3046,6 +3227,10 @@ impl crate::backend::Backend for Flow {
 
     fn empty_obstacles(&self) -> &[String] {
         &self.empty_obstacles
+    }
+
+    fn wall_links(&self) -> Option<WallLinks> {
+        self.wall_links
     }
 
     fn conducting(&self) -> &[Vec<u32>] {

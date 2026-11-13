@@ -641,6 +641,7 @@ mod tests {
             collision: None,
             turbulence: None,
             steady: Some(rule),
+            walls: Default::default(),
         };
         m.add_step(Step::new("Run", p), None).unwrap();
         Setup::new(&m, None, &[], &Limits::default()).unwrap()
