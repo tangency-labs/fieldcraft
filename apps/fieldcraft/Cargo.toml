@@ -41,6 +41,12 @@ getrandom = "0.4"
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.4"
 
+# An NSProcessInfo activity held while the control server runs, so a locked or covered window is
+# not App Napped and the channel keeps answering (src/control_server.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSProcessInfo", "NSString"] }
+
 # The exception filter and minidump of a native crash (src/native_crash.rs).
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
