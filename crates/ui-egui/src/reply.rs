@@ -275,18 +275,19 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
         acts.push(Act::Rerun);
     }
     ui.add_space(4.0);
-    ui.add(egui::Label::new(RichText::new(summary_in(&reply.command, &reply.value, Some(app.session.units()))).color(t.text_dim)).wrap());
+    kit::status_line(ui, &summary_in(&reply.command, &reply.value, Some(app.session.units())), kit::StatusTone::Dim);
     ui.add_space(4.0);
     let units = Some(app.session.units());
     match reply.command.as_str() {
         "deck.read" => {
-            ui.label(
-                RichText::new("Model data only. Analysis history was not imported; review unread keywords and warnings before solving.")
-                    .color(t.text_dim),
+            kit::status_line(
+                ui,
+                "Model data only. Analysis history was not imported; review unread keywords and warnings before solving.",
+                kit::StatusTone::Dim,
             );
             value(ui, t, egui::Id::unique("fc_deck_read"), &reply.value, 0);
         }
-        "model.check" => diagnostics(app, ui, t, &reply.value, &mut acts),
+        "model.check" => diagnostics(app, ui, &reply.value, &mut acts),
         c if SOLVES.contains(&c) => solve_summary(ui, t, &reply.value, units),
         "model.activity" => activity(ui, t, &reply.value),
         "geometry.bodies" => bodies(ui, t, &reply.value, app.session.units(), &mut acts),
@@ -381,39 +382,47 @@ fn defeature_list(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySyste
         }
         ui.add_space(4.0);
     }
-    egui::Grid::new("fc_defeature").num_columns(4).spacing(vec2(10.0, 2.0)).striped(true).show(ui, |ui| {
-        for h in ["In mesh", "Feature", "Kind", "Size"] {
-            ui.label(RichText::new(h).color(t.text_dim));
-        }
-        ui.end_row();
+    let columns = [
+        kit::Column::new("In mesh", 0.0).min_content_width(kit::row_height()),
+        kit::Column::new("Feature", 2.0).flex(),
+        kit::Column::new("Kind", 1.0).flex(),
+        kit::Column::new("Size", 1.0).flex(),
+    ];
+    kit::table_custom(ui, "fc_defeature", &columns, "", |ui, table| {
+        table.headers(ui, |_, _| false);
         for c in candidates.iter().take(MAX_ENTITIES) {
             let Some(id) = c["id"].as_u64() else { continue };
-            let mut on = c["suppressed"] != true;
-            let by = c["by"].as_str().unwrap_or(&name).to_string();
-            let hover = if on { format!("Switch off: defeature {name} takes it out") } else { format!("Switch on: defeature {by} keeps it") };
-            if kit::checkbox(ui, "", &mut on).backing_on_hover_text(hover).changed() {
-                acts.push(Act::Defeature { name: if on { by } else { name.clone() }, feature: id, on });
-            }
-            let label = format!("F{id} {}", c["name"].as_str().unwrap_or_default());
-            let text = if c["proposed"] == true { RichText::new(label).color(t.warm) } else { RichText::new(label) };
-            match c["faces"].as_array().and_then(|f| f.first()).and_then(Value::as_str).filter(|_| on) {
-                Some(face) => {
-                    if ui.link(text).backing_on_hover_text("Pick its face in the viewport").clicked() {
-                        let entity = fieldcraft_model::Entity::Face(face.to_string());
-                        acts.push(Act::Pick(fieldcraft_model::GeometryRef { body: body.to_string(), entity }));
+            table.row(ui, &format!("F{id}"), false, |row| {
+                let mut on = c["suppressed"] != true;
+                let by = c["by"].as_str().unwrap_or(&name).to_string();
+                let hover = if on { format!("Switch off: defeature {name} takes it out") } else { format!("Switch on: defeature {by} keeps it") };
+                row.cell(|ui| {
+                    if kit::checkbox(ui, "", &mut on).backing_on_hover_text(hover).changed() {
+                        acts.push(Act::Defeature { name: if on { by } else { name.clone() }, feature: id, on });
                     }
-                }
-                None => {
-                    ui.label(text);
-                }
-            }
-            let method = match c["method"].as_str() {
-                Some("virtual") => " (virtual)",
-                _ => "",
-            };
-            ui.label(format!("{}{method}", c["category"].as_str().unwrap_or_default()));
-            ui.label(format!("{} {}", crate::describe::quantity(sig(c["size"].as_f64().unwrap_or(0.0))), geometry_unit(units, Q::Length)));
-            ui.end_row();
+                });
+                // A proposed feature says so in words, not only in a colour.
+                let proposed = if c["proposed"] == true { " · proposed" } else { "" };
+                let label = format!("F{id} {}{proposed}", c["name"].as_str().unwrap_or_default());
+                row.cell(|ui| match c["faces"].as_array().and_then(|f| f.first()).and_then(Value::as_str).filter(|_| on) {
+                    Some(face) => {
+                        if kit::text_button(ui, &label, true).backing_on_hover_text("Pick its face in the viewport").clicked() {
+                            let entity = fieldcraft_model::Entity::Face(face.to_string());
+                            acts.push(Act::Pick(fieldcraft_model::GeometryRef { body: body.to_string(), entity }));
+                        }
+                    }
+                    None => {
+                        kit::text(ui, &label, kit::Text::Cell);
+                    }
+                });
+                let method = match c["method"].as_str() {
+                    Some("virtual") => " (virtual)",
+                    _ => "",
+                };
+                row.cell(|ui| kit::text(ui, &format!("{}{method}", c["category"].as_str().unwrap_or_default()), kit::Text::Cell));
+                let size = format!("{} {}", crate::describe::quantity(sig(c["size"].as_f64().unwrap_or(0.0))), geometry_unit(units, Q::Length));
+                row.cell(|ui| kit::text(ui, &size, kit::Text::Cell));
+            });
         }
     });
     more_than(ui, t, candidates.len(), MAX_ENTITIES);
@@ -441,6 +450,7 @@ fn feature_graph(
 ) -> Vec<crate::selection::Item> {
     use crate::feature_graph::{describe, paint_glyph};
     let mut hovered = Vec::new();
+    let radius = solidcraft_theme::Tokens::get().radius_sm;
     let bodies = v["bodies"].as_array().map(Vec::as_slice).unwrap_or_default();
     for (bi, b) in bodies.iter().enumerate() {
         let body = b["body"].as_str().unwrap_or_default();
@@ -489,10 +499,10 @@ fn feature_graph(
                 let hover_text = if f.faces.is_empty() { "Show its details" } else { "Select the faces it made; show its details" };
                 let resp = resp.backing_on_hover_text(hover_text);
                 if resp.hovered() {
-                    ui.painter().set(bg, egui::Shape::rect_filled(rect, 3.0, t.hover));
+                    ui.painter().set(bg, egui::Shape::rect_filled(rect, radius, t.hover));
                     hovered = face_items(body, &f.faces);
                 } else if open {
-                    ui.painter().set(bg, egui::Shape::rect_filled(rect, 3.0, t.subheading_bg));
+                    ui.painter().set(bg, egui::Shape::rect_filled(rect, radius, t.subheading_bg));
                 }
                 if resp.clicked() {
                     acts.push(Act::Open(key));
@@ -532,39 +542,35 @@ fn model_fix(message: &str) -> Option<(&'static str, Act)> {
 
 /// Check Model: each diagnostic with its severity, the item it is about and its message, and a
 /// button to where it is fixed.
-fn diagnostics(app: &ModelApp, ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
+fn diagnostics(app: &ModelApp, ui: &mut egui::Ui, v: &Value, acts: &mut Vec<Act>) {
     let list = v["diagnostics"].as_array().map(Vec::as_slice).unwrap_or_default();
     if list.is_empty() {
-        ui.label(RichText::new("✔ The model is ready to solve.").color(t.ok));
+        kit::check_status_line(ui, "fc_check:ready", "The model is ready to solve.", kit::CheckStatus::Ok);
         return;
     }
     for (i, d) in list.iter().enumerate() {
         let error = d["severity"] == "error";
         let subject = d["subject"].as_str().unwrap_or_default();
         let message = d["message"].as_str().unwrap_or_default();
-        ui.horizontal_top(|ui| {
-            let (mark, colour, tip) = if error { ("⛔", t.error, "Error: blocks solving") } else { ("⚠", t.warm, "Warning") };
-            ui.label(RichText::new(mark).color(colour)).backing_on_hover_text(tip);
-            ui.vertical(|ui| {
-                ui.set_width(ui.available_width() - 70.0);
-                ui.label(RichText::new(subject).strong());
-                ui.add(egui::Label::new(message).wrap());
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                if let Some((kind, name)) = subject_definition(app, subject) {
-                    if kit::button(ui, "Show", kit::Button::Small).backing_on_hover_text(format!("Select {subject} to see and edit it")).clicked() {
-                        acts.push(Act::Select(kind, name));
-                    }
-                } else if subject == "model"
-                    && let Some((text, act)) = model_fix(message)
-                    && kit::button(ui, text, kit::Button::Small).clicked()
-                {
-                    acts.push(act);
+        let (status, tip) = if error { (kit::CheckStatus::Error, "Error: blocks solving") } else { (kit::CheckStatus::Warning, "Warning") };
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            if let Some((kind, name)) = subject_definition(app, subject) {
+                if kit::button(ui, "Show", kit::Button::Small).backing_on_hover_text(format!("Select {subject} to see and edit it")).clicked() {
+                    acts.push(Act::Select(kind, name));
                 }
+            } else if subject == "model"
+                && let Some((text, act)) = model_fix(message)
+                && kit::button(ui, text, kit::Button::Small).clicked()
+            {
+                acts.push(act);
+            }
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                kit::check_status_line(ui, &format!("fc_check:{i}"), subject, status).backing_on_hover_text(tip);
+                kit::text(ui, message, kit::Text::Report("fc_check:message", false));
             });
         });
         if i + 1 < list.len() {
-            ui.separator();
+            kit::divider(ui, &format!("fc_check:{i}"));
         }
     }
 }
@@ -603,31 +609,26 @@ fn quality(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
     };
     let (invalid, undetermined) =
         (v.pointer("/invalid/count").and_then(Value::as_u64).unwrap_or(0), v.pointer("/undetermined/count").and_then(Value::as_u64).unwrap_or(0));
-    egui::Grid::new("fc_quality_counts").num_columns(2).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
-        let mut row = |k: &str, text: RichText| {
-            ui.label(RichText::new(k).color(t.text_dim));
-            ui.label(text);
-            ui.end_row();
-        };
-        row("Elements", RichText::new(count(n("measured"))));
-        row("Valid", RichText::new(count(n("valid"))));
-        row("Invalid", if invalid > 0 { RichText::new(count(invalid)).color(t.error) } else { RichText::new("0") });
-        if undetermined > 0 {
-            row("Undetermined", RichText::new(count(undetermined)).color(t.warm));
-        }
-        if let Some(vol) = v.get("volume").and_then(Value::as_f64).filter(|x| *x > 0.0) {
-            row("Volume", RichText::new(number(vol)));
-        }
-        // A surface mesh's area; a solid mesh has none to show.
-        if let Some(area) = v.get("area").and_then(Value::as_f64).filter(|x| *x > 0.0) {
-            row("Area", RichText::new(number(area)));
-        }
-    });
+    let row = |ui: &mut egui::Ui, k: &str, text: &str, error: bool| {
+        kit::row(ui, k, |ui| kit::text(ui, text, kit::Text::Value("fc_quality_counts", error)));
+    };
+    row(ui, "Elements", &count(n("measured")), false);
+    row(ui, "Valid", &count(n("valid")), false);
+    row(ui, "Invalid", &count(invalid), invalid > 0);
+    if undetermined > 0 {
+        row(ui, "Undetermined", &count(undetermined), false);
+    }
+    if let Some(vol) = v.get("volume").and_then(Value::as_f64).filter(|x| *x > 0.0) {
+        row(ui, "Volume", &number(vol), false);
+    }
+    // A surface mesh's area; a solid mesh has none to show.
+    if let Some(area) = v.get("area").and_then(Value::as_f64).filter(|x| *x > 0.0) {
+        row(ui, "Area", &number(area), false);
+    }
     for (key, what) in [("invalid", "invalid"), ("undetermined", "undetermined")] {
         let l = labels(key);
         if !l.is_empty()
-            && ui
-                .button(format!("Select the {} {what} elements", count(l.len() as u64)))
+            && kit::button(ui, format!("Select the {} {what} elements", count(l.len() as u64)), kit::Button::Normal)
                 .backing_on_hover_text("Select and frame them in the viewport")
                 .clicked()
         {
@@ -635,8 +636,7 @@ fn quality(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
         }
     }
     if let Some(worst) = v.pointer("/metrics/scaled_jacobian/worst").and_then(Value::as_u64).and_then(|w| u32::try_from(w).ok())
-        && ui
-            .button("Relax around worst element")
+        && kit::button(ui, "Relax around worst element", kit::Button::Normal)
             .backing_on_hover_text("Open Relax Nodes with its sphere round the element of smallest scaled Jacobian; preview, then OK")
             .clicked()
     {
@@ -646,16 +646,14 @@ fn quality(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
         let Some(m) = v.pointer(&format!("/metrics/{key}")).filter(|m| m.is_object()) else { continue };
         let f = |k: &str| m.get(k).and_then(Value::as_f64);
         ui.add_space(6.0);
-        ui.label(RichText::new(label).strong());
-        ui.label(
-            RichText::new(format!(
-                "min {} · mean {} · max {}",
-                f("min").map_or("—".into(), number),
-                f("mean").map_or("—".into(), number),
-                f("max").map_or("—".into(), number)
-            ))
-            .color(t.text_dim),
+        kit::text(ui, label, kit::Text::Heading("fc_quality_metric"));
+        let range = format!(
+            "min {} · mean {} · max {}",
+            f("min").map_or("—".into(), number),
+            f("mean").map_or("—".into(), number),
+            f("max").map_or("—".into(), number)
         );
+        kit::status_line(ui, &range, kit::StatusTone::Dim);
         let counts: Vec<u64> = m.pointer("/histogram/counts").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_u64).collect();
         let range: Vec<f64> = m.pointer("/histogram/range").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_f64).collect();
         if let ([lo, hi], false) = (range.as_slice(), counts.is_empty()) {
@@ -664,7 +662,7 @@ fn quality(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
         if let Some(worst) = m.get("worst").and_then(Value::as_u64).and_then(|w| u32::try_from(w).ok()) {
             let value = if low_bad { f("min") } else { f("max") };
             let text = format!("Worst: element {worst}{}", value.map(|x| format!(" ({})", number(x))).unwrap_or_default());
-            if ui.link(text).backing_on_hover_text("Select and frame it in the viewport").clicked() {
+            if kit::text_button(ui, &text, true).backing_on_hover_text("Select and frame it in the viewport").clicked() {
                 acts.push(Act::Elements(vec![worst]));
             }
         }
@@ -672,7 +670,7 @@ fn quality(ui: &mut egui::Ui, t: &Tokens, v: &Value, acts: &mut Vec<Act>) {
     if let Some(skipped) = v.get("skipped").and_then(Value::as_object).filter(|s| !s.is_empty()) {
         ui.add_space(6.0);
         let text: Vec<String> = skipped.iter().map(|(k, n)| format!("{k}: {}", n.as_u64().map_or_else(|| n.to_string(), count))).collect();
-        ui.label(RichText::new(format!("Not measured: {}", text.join(", "))).color(t.text_dim));
+        kit::status_line(ui, &format!("Not measured: {}", text.join(", ")), kit::StatusTone::Dim);
     }
 }
 
@@ -682,7 +680,7 @@ fn histogram(ui: &mut egui::Ui, t: &Tokens, counts: &[u64], range: (f64, f64), l
     let width = ui.available_width().clamp(120.0, 320.0);
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 48.0), egui::Sense::hover());
     let p = ui.painter_at(rect);
-    p.rect_filled(rect, 2.0, t.panel_header);
+    p.rect_filled(rect, solidcraft_theme::Tokens::get().radius_sm, t.panel_header);
     let top = counts.iter().copied().max().unwrap_or(0).max(1) as f32;
     let w = rect.width() / counts.len() as f32;
     let bins = counts.len().max(1) as f32;
@@ -726,26 +724,22 @@ fn bodies(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySystem, acts:
             .zip(corner(1))
             .map(|(lo, hi)| format!("{} × {} × {} {length}", q(sig(hi[0] - lo[0])), q(sig(hi[1] - lo[1])), q(sig(hi[2] - lo[2]))));
         let id = egui::Id::unique(("fc_reply_body", i));
-        if ui.link(RichText::new(name).strong()).backing_on_hover_text("Pick this body in the viewport").clicked() {
+        if kit::text_button(ui, name, true).backing_on_hover_text("Pick this body in the viewport").clicked() {
             acts.push(Act::Pick(pick(name, fieldcraft_model::Entity::Body)));
         }
-        egui::Grid::new(id.with("grid")).num_columns(2).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
-            let mut row = |k: &str, text: String| {
-                ui.label(RichText::new(k).color(t.text_dim));
-                ui.label(text);
-                ui.end_row();
-            };
-            if let Some(v) = b["volume"].as_f64() {
-                row("Volume", format!("{} {volume}", q(sig(v))));
-            }
-            if let Some(a) = b["area"].as_f64() {
-                row("Area", format!("{} {area}", q(sig(a))));
-            }
-            row("Faces, edges", format!("{}, {}", faces.len(), edges.len()));
-            if let Some(size) = size {
-                row("Size", size);
-            }
-        });
+        let row = |ui: &mut egui::Ui, k: &str, text: String| {
+            kit::row(ui, k, |ui| kit::text(ui, &text, kit::Text::Cell));
+        };
+        if let Some(v) = b["volume"].as_f64() {
+            row(ui, "Volume", format!("{} {volume}", q(sig(v))));
+        }
+        if let Some(a) = b["area"].as_f64() {
+            row(ui, "Area", format!("{} {area}", q(sig(a))));
+        }
+        row(ui, "Faces, edges", format!("{}, {}", faces.len(), edges.len()));
+        if let Some(size) = size {
+            row(ui, "Size", size);
+        }
         body_list(ui, t, id.with("faces"), "Faces", faces, &|f| (f["name"].as_str().unwrap_or_default().to_string(), None), name, length, acts);
         body_list(
             ui,
@@ -758,7 +752,7 @@ fn bodies(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySystem, acts:
             length,
             acts,
         );
-        ui.separator();
+        kit::divider(ui, &format!("fc_reply_body_{i}"));
     }
 }
 
@@ -782,7 +776,7 @@ fn body_list(
         for item in items.iter().take(MAX_ENTITIES) {
             let (name, length) = read(item);
             ui.horizontal(|ui| {
-                if ui.link(&name).backing_on_hover_text("Pick it in the viewport").clicked() {
+                if kit::text_button(ui, &name, true).backing_on_hover_text("Pick it in the viewport").clicked() {
                     let entity =
                         if title == "Edges" { fieldcraft_model::Entity::Edge(name.clone()) } else { fieldcraft_model::Entity::Face(name.clone()) };
                     acts.push(Act::Pick(fieldcraft_model::GeometryRef { body: body.to_string(), entity }));
@@ -818,24 +812,32 @@ fn activity(ui: &mut egui::Ui, t: &Tokens, v: &Value) {
         ui.label(RichText::new("No analysis steps yet: Steps › Step creates one.").color(t.text_dim));
         return;
     }
-    egui::ScrollArea::horizontal().id_salt("fc_reply_activity").show(ui, |ui| {
-        egui::Grid::new("fc_reply_activity_grid").striped(true).spacing(vec2(10.0, 3.0)).show(ui, |ui| {
-            ui.label("");
-            for (s, step) in steps.iter().zip(v["steps"].as_array().into_iter().flatten()) {
-                ui.label(RichText::new(*s).strong()).backing_on_hover_text(step["procedure"].as_str().unwrap_or_default());
-            }
-            ui.end_row();
-            for (key, kind) in [("boundary_conditions", "BC"), ("loads", "Load")] {
-                for (name, active) in v[key].as_object().into_iter().flatten() {
-                    ui.label(name.as_str()).backing_on_hover_text(kind);
+    let procedures: Vec<&str> = v["steps"].as_array().into_iter().flatten().map(|s| s["procedure"].as_str().unwrap_or_default()).collect();
+    let columns: Vec<kit::Column<'_>> =
+        std::iter::once(kit::Column::new("", 2.0).flex()).chain(steps.iter().map(|s| kit::Column::new(s, 1.0).flex())).collect();
+    kit::table_custom(ui, "fc_reply_activity", &columns, "", |ui, table| {
+        table.headers(ui, |ui, i| {
+            let Some((step, procedure)) = i.checked_sub(1).and_then(|i| steps.get(i).zip(procedures.get(i))) else { return false };
+            kit::text(ui, step, kit::Text::NameCell(true)).backing_on_hover_text(*procedure);
+            true
+        });
+        for (key, kind) in [("boundary_conditions", "BC"), ("loads", "Load")] {
+            for (name, active) in v[key].as_object().into_iter().flatten() {
+                table.row(ui, &format!("{key}:{name}"), false, |row| {
+                    row.cell(|ui| kit::text(ui, name, kit::Text::NameCell(false)).backing_on_hover_text(kind));
                     for s in &steps {
                         let on = active.as_array().is_some_and(|a| a.iter().any(|x| x == *s));
-                        ui.label(if on { RichText::new("✔").color(t.ok) } else { RichText::new("—").color(t.text_dim) });
+                        row.cell(|ui| {
+                            if on {
+                                kit::check_status_line(ui, &format!("fc_reply_activity:{name}:{s}"), "Active", kit::CheckStatus::Ok);
+                            } else {
+                                kit::text(ui, "—", kit::Text::Cell).backing_on_hover_text("Not active in this step");
+                            }
+                        });
                     }
-                    ui.end_row();
-                }
+                });
             }
-        });
+        }
     });
 }
 
@@ -902,7 +904,7 @@ fn solve_summary(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: Option<&Displa
         ("frames", "Frames", Row::Count),
     ];
     let mut shown: Vec<&str> = Vec::new();
-    egui::Grid::new("fc_reply_solve").num_columns(2).spacing(vec2(10.0, 3.0)).show(ui, |ui| {
+    {
         for (key, label, row) in &rows {
             let Some(x) = m.get(*key).filter(|x| !x.is_null()) else { continue };
             shown.push(key);
@@ -923,35 +925,35 @@ fn solve_summary(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: Option<&Displa
                 Row::Text => inline(x),
             };
             if let Some(text) = text {
-                ui.label(RichText::new(*label).color(t.text_dim));
-                ui.add(egui::Label::new(text).wrap());
-                ui.end_row();
+                kit::row(ui, label, |ui| kit::text(ui, &text, kit::Text::Cell));
             }
         }
-    });
+    }
     // Heat removed is the supplied flow with the other sign: one row says it.
     shown.push("heat_removed");
     if let Some(modes) = m.get("modes").and_then(Value::as_array).filter(|a| !a.is_empty()) {
         shown.push("modes");
         kit::section_count(ui, "fc_reply_solve_modes", "Modes", true, Some(modes.len()), |ui| {
-            egui::Grid::new("fc_reply_solve_modes_grid").striped(true).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
-                let buckling = modes.iter().any(|x| x.get("load_factor").is_some());
-                ui.label(RichText::new("Mode").small().color(t.text_dim));
-                ui.label(RichText::new(if buckling { "Load factor" } else { "Frequency [Hz]" }).small().color(t.text_dim));
-                ui.end_row();
-                for x in modes.iter().take(MAX_ROWS) {
-                    ui.label(x["mode"].as_u64().map_or_else(String::new, |n| n.to_string()));
-                    ui.label(x.get(if buckling { "load_factor" } else { "frequency" }).and_then(Value::as_f64).map_or("—".into(), number));
-                    ui.end_row();
-                }
-            });
+            let buckling = modes.iter().any(|x| x.get("load_factor").is_some());
+            let rows: Vec<Vec<String>> = modes
+                .iter()
+                .take(MAX_ROWS)
+                .map(|x| {
+                    vec![
+                        x["mode"].as_u64().map_or_else(String::new, |n| n.to_string()),
+                        x.get(if buckling { "load_factor" } else { "frequency" }).and_then(Value::as_f64).map_or("—".into(), number),
+                    ]
+                })
+                .collect();
+            text_table(ui, "fc_reply_solve_modes", &["Mode", if buckling { "Load factor" } else { "Frequency [Hz]" }], &rows);
             more(ui, t, modes.len());
         });
     }
     if let Some(w) = m.get("warnings").and_then(Value::as_array) {
         shown.push("warnings");
-        for x in w {
-            ui.add(egui::Label::new(RichText::new(format!("⚠ {}", inline(x).unwrap_or_else(|| crate::context::value_text(x)))).color(t.warm)).wrap());
+        for (i, x) in w.iter().enumerate() {
+            let text = inline(x).unwrap_or_else(|| crate::context::value_text(x));
+            kit::check_status_line(ui, &format!("fc_reply_solve_warning:{i}"), &text, kit::CheckStatus::Warning);
         }
     }
     // The rest: the solver's internals (equations, factor entries, Lanczos vectors…) and lists.
@@ -972,13 +974,10 @@ fn solve_summary(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: Option<&Displa
 fn value(ui: &mut egui::Ui, t: &Tokens, id: egui::Id, v: &Value, depth: usize) {
     match v {
         Value::Object(m) => {
-            egui::Grid::new(id).num_columns(2).spacing(vec2(10.0, 3.0)).show(ui, |ui| {
-                for (k, x) in m.iter().filter(|(k, x)| k.as_str() != "summary" && inline(x).is_some()) {
-                    ui.label(RichText::new(k.replace('_', " ")).color(t.text_dim));
-                    ui.add(egui::Label::new(inline(x).unwrap_or_default()).wrap());
-                    ui.end_row();
-                }
-            });
+            for (k, x) in m.iter().filter(|(k, x)| k.as_str() != "summary" && inline(x).is_some()) {
+                let text = inline(x).unwrap_or_default();
+                kit::row(ui, &k.replace('_', " "), |ui| kit::text(ui, &text, kit::Text::Cell));
+            }
             for (k, x) in m.iter().filter(|(_, x)| inline(x).is_none()) {
                 let title = match x {
                     Value::Array(a) => format!("{} ({})", k.replace('_', " "), a.len()),
@@ -1024,23 +1023,32 @@ fn table(ui: &mut egui::Ui, t: &Tokens, id: egui::Id, rows: &[Value]) {
             }
         }
     }
-    egui::ScrollArea::horizontal().id_salt(id.with("scroll")).show(ui, |ui| {
-        egui::Grid::new(id).striped(true).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
-            for c in &columns {
-                ui.label(RichText::new(c.replace('_', " ")).small().color(t.text_dim));
-            }
-            ui.end_row();
-            for r in rows.iter().take(MAX_ROWS) {
-                for c in &columns {
-                    ui.add(
-                        egui::Label::new(r.get(*c).map_or_else(String::new, |x| inline(x).unwrap_or_else(|| crate::context::value_text(x)))).extend(),
-                    );
-                }
-                ui.end_row();
-            }
-        });
-    });
+    let headings: Vec<String> = columns.iter().map(|c| c.replace('_', " ")).collect();
+    let headings: Vec<&str> = headings.iter().map(String::as_str).collect();
+    let cells: Vec<Vec<String>> = rows
+        .iter()
+        .take(MAX_ROWS)
+        .map(|r| columns.iter().map(|c| r.get(*c).map_or_else(String::new, |x| inline(x).unwrap_or_else(|| crate::context::value_text(x)))).collect())
+        .collect();
+    text_table(ui, &format!("fc_reply_table_{}", id.value()), &headings, &cells);
     more(ui, t, rows.len());
+}
+
+/// A read-only kit table: `headings` over columns that share the width, one text cell per value.
+/// An unnamed first column holds the rows' names.
+pub(crate) fn text_table(ui: &mut egui::Ui, id: &str, headings: &[&str], rows: &[Vec<String>]) {
+    let columns: Vec<kit::Column<'_>> = headings.iter().map(|h| kit::Column::new(h, 1.0).flex()).collect();
+    let named = headings.first().is_some_and(|h| h.is_empty());
+    kit::table_custom(ui, id, &columns, "", |ui, table| {
+        table.headers(ui, |_, _| false);
+        for (i, row) in rows.iter().enumerate() {
+            table.row(ui, &i.to_string(), false, |cells| {
+                for (c, text) in row.iter().enumerate().take(headings.len()) {
+                    cells.cell(|ui| kit::text(ui, text, if c == 0 && named { kit::Text::NameCell(false) } else { kit::Text::Cell }));
+                }
+            });
+        }
+    });
 }
 
 fn more(ui: &mut egui::Ui, t: &Tokens, n: usize) {
