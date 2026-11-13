@@ -1278,7 +1278,7 @@ impl ModelApp {
                     datums.union(scene::datum_preview(&mut s, d, &self.display.1.bounds, &t));
                 }
                 scene::seeds(&mut s, &self.session.model, &self.pick.names, &self.display.1, &t);
-                scene::sizes(&mut s, &self.session.model, &self.pick.names, &self.display.1, &t);
+                scene::sizes(&mut s, &self.session.model, &self.pick.names, &self.display.1, self.session.units(), &t);
             }
             self.scene = (Some(key), s, datums);
         }
