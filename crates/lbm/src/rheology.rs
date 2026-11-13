@@ -36,11 +36,16 @@
 //!
 //! # Temperature
 //! Cross-WLF reads the cell's temperature from the scalar lattice (the previous step's, which the
-//! collision of the momentum precedes); the other models ignore it.
+//! collision of the momentum precedes); the other models ignore it. A Newtonian fluid with a
+//! viscosity table ([`fieldcraft_model::curves`]) takes the same path: its viscosity μ(T) does not
+//! depend on the shear rate, so F is linear and the first step lands on the cell's τ.
 //!
 //! No code of any lattice Boltzmann package was read; this is written from the papers.
 
-use fieldcraft_model::Fluid;
+use std::sync::Arc;
+
+use fieldcraft_model::curves::sorted_value;
+use fieldcraft_model::{Fluid, TemperatureTable};
 
 /// The largest relaxation time τ⁺ a cell takes: the viscosity is capped there. Beyond it the
 /// scheme stays stable but its time accuracy degrades; a shear-thinning fluid at rest reaches it.
@@ -105,8 +110,48 @@ impl Clamps {
     }
 }
 
+/// Most points of a viscosity table the lattice follows: every table a material may hold.
+pub const MAX_TABLE_POINTS: usize = fieldcraft_model::curves::MAX_POINTS;
+
+/// A Newtonian fluid's viscosity table μ(T), `[kelvin, μ]` in model units, shared so the
+/// rheology stays cheap to clone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViscosityTable {
+    points: Arc<[[f64; 2]]>,
+    /// The smallest and the largest viscosity.
+    range: [f64; 2],
+}
+
+impl ViscosityTable {
+    /// The table of `t`, `None` unless it has 2 to [`MAX_TABLE_POINTS`] points with strictly
+    /// increasing finite temperatures and finite positive viscosities (a validated material's
+    /// table always has).
+    pub fn new(t: &TemperatureTable) -> Option<ViscosityTable> {
+        let valid = (2..=MAX_TABLE_POINTS).contains(&t.0.len())
+            && t.0.iter().all(|&[kelvin, mu]| kelvin.is_finite() && mu.is_finite() && mu > 0.0)
+            && t.0.windows(2).all(|w| matches!(w, [a, b] if a[0] < b[0]));
+        if !valid {
+            return None;
+        }
+        let range = t.0.iter().fold([f64::INFINITY, 0.0], |[lo, hi], p| [lo.min(p[1]), hi.max(p[1])]);
+        Some(ViscosityTable { points: t.0.as_slice().into(), range })
+    }
+
+    /// The smallest and the largest viscosity, over every temperature.
+    pub fn range(&self) -> [f64; 2] {
+        self.range
+    }
+
+    /// The viscosity at `kelvin`, held at the end values outside the table (a NaN temperature
+    /// reads the first point); the interval found by bisection.
+    #[inline]
+    pub fn at(&self, kelvin: f64) -> f64 {
+        sorted_value(&self.points, kelvin)
+    }
+}
+
 /// A shear-dependent fluid in lattice units.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Rheology {
     /// The model, in model (SI) units.
     pub fluid: Fluid,
@@ -119,6 +164,8 @@ pub struct Rheology {
     /// The temperature, in kelvin, of the lattice's 0 ([`crate::ThermalSetup::zero`]), or the
     /// temperature of a flow without heat (which only Cross-WLF would read, and it needs heat).
     pub zero: f64,
+    /// A Newtonian fluid's viscosity table, followed in place of `fluid`'s constant.
+    pub table: Option<ViscosityTable>,
 }
 
 impl Rheology {
@@ -126,7 +173,11 @@ impl Rheology {
     /// where the viscosity is).
     #[inline(always)]
     fn tau_at(&self, rate: f64, kelvin: f64) -> f64 {
-        let tau = 0.5 + 3.0 * self.fluid.viscosity(rate * self.rate_scale, kelvin) * self.viscosity_scale;
+        let mu = match &self.table {
+            Some(t) => t.at(kelvin),
+            None => self.fluid.viscosity(rate * self.rate_scale, kelvin),
+        };
+        let tau = 0.5 + 3.0 * mu * self.viscosity_scale;
         if tau.is_nan() { f64::INFINITY } else { tau }
     }
 
@@ -134,6 +185,10 @@ impl Rheology {
     /// rest or at an unbounded rate, since every model here is monotone in γ̇ (infinite where it
     /// has no bound: a power law with n ≠ 1, a shear-thickening Carreau–Yasuda fluid).
     pub fn largest_tau(&self, kelvin: f64) -> f64 {
+        if let Some(t) = &self.table {
+            // At any temperature: a gas is more viscous hot, a liquid cold.
+            return 0.5 + 3.0 * t.range[1] * self.viscosity_scale;
+        }
         [0.0, f64::MAX].into_iter().map(|rate| self.tau_at(rate, kelvin)).fold(0.0, f64::max)
     }
 
@@ -144,6 +199,17 @@ impl Rheology {
     pub fn relax(&self, p: &[f64; 6], rho: f64, temperature: f64) -> (f64, Clamp) {
         let [lo, hi] = self.tau;
         let kelvin = temperature + self.zero;
+        if self.table.is_some() {
+            // The viscosity does not depend on the shear: the cell's τ directly, clamped.
+            let tau = self.tau_at(0.0, kelvin);
+            return if tau < lo {
+                (lo, Clamp::Low)
+            } else if tau > hi || tau.is_nan() {
+                (hi, Clamp::High)
+            } else {
+                (tau, Clamp::None)
+            };
+        }
         let pp = crate::turbulence::flux_norm2(p);
         // σ = τ γ̇, from P = −2 ρ c_s² τ S with c_s² = 1/3.
         let sigma = 3.0 * pp.sqrt() / (std::f64::consts::SQRT_2 * rho);
@@ -245,7 +311,7 @@ mod tests {
     use crate::lattice::CS2;
 
     fn rheology(fluid: Fluid) -> Rheology {
-        Rheology { fluid, rate_scale: 1.0, viscosity_scale: 1.0, tau: [0.505, MAX_TAU], zero: 0.0 }
+        Rheology { fluid, rate_scale: 1.0, viscosity_scale: 1.0, tau: [0.505, MAX_TAU], zero: 0.0, table: None }
     }
 
     /// The flux of simple shear at rate γ̇ relaxed with τ: `P_xy = −2 ρ c_s² τ (γ̇/2)`.
@@ -322,5 +388,44 @@ mod tests {
         assert!((shear_rate_at_stress(&newtonian, 2.0, 0.0).unwrap() - 2000.0).abs() < 1e-8);
         assert_eq!(shear_rate_at_stress(&fluid, 0.0, 0.0), None);
         assert_eq!(shear_rate_at_stress(&fluid, f64::NAN, 0.0), None);
+    }
+
+    /// A viscosity table: each cell relaxes with the table's viscosity at its own temperature,
+    /// whatever its shear.
+    #[test]
+    fn a_viscosity_table_follows_the_cell_temperature() {
+        let water = TemperatureTable(vec![[280.0, 0.12], [300.0, 0.06], [320.0, 0.04]]);
+        let r = Rheology { zero: 290.0, table: ViscosityTable::new(&water), ..rheology(Fluid::Newtonian { viscosity: 0.06 }) };
+        for (temperature, mu) in [(0.0, 0.09), (10.0, 0.06), (20.0, 0.05), (-40.0, 0.12), (60.0, 0.04)] {
+            let tau = 0.5 + 3.0 * mu;
+            for rate in [0.0, 1e-3, 3e-2] {
+                let (got, clamp) = r.relax(&shear(rate, tau, 1.0), 1.0, temperature);
+                assert_eq!(clamp, Clamp::None);
+                assert!((got - tau).abs() < 1e-12, "{temperature}: {got} vs {tau}");
+            }
+        }
+        assert!((r.largest_tau(1000.0) - (0.5 + 3.0 * 0.12)).abs() < 1e-15);
+        let table = r.table.as_ref().unwrap();
+        assert_eq!(table.range(), [0.04, 0.12]);
+        // Held at its ends, a NaN temperature at the first point, exact at its points.
+        for (kelvin, mu) in [(f64::NEG_INFINITY, 0.12), (100.0, 0.12), (f64::NAN, 0.12), (300.0, 0.06), (f64::INFINITY, 0.04), (1e9, 0.04)] {
+            assert_eq!(table.at(kelvin), mu, "{kelvin}");
+        }
+        // A full table: the bisection finds each interval, the value linear within it.
+        let full = ViscosityTable::new(&TemperatureTable((0..MAX_TABLE_POINTS).map(|i| [i as f64, 1.0 + i as f64]).collect())).unwrap();
+        for x in [0.25, 17.5, 128.0, 200.75, 254.5] {
+            assert!((full.at(x) - (1.0 + x)).abs() < 1e-12, "{x}: {}", full.at(x));
+        }
+        for bad in [
+            (0..=MAX_TABLE_POINTS).map(|i| [i as f64, 1.0]).collect(),
+            vec![],
+            vec![[280.0, 0.1]],
+            vec![[300.0, 0.1], [280.0, 0.2]],
+            vec![[280.0, 0.1], [300.0, 0.0]],
+            vec![[280.0, 0.1], [300.0, f64::NAN]],
+            vec![[f64::INFINITY, 0.1], [f64::INFINITY, 0.2]],
+        ] {
+            assert!(ViscosityTable::new(&TemperatureTable(bad)).is_none());
+        }
     }
 }

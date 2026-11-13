@@ -14,7 +14,8 @@
 //! characteristic velocity is the largest of the inlet and wall velocities, the initial velocity,
 //! `√(2 Δp / ρ)` across pressure faces and, for a driving acceleration `a`, the smaller of the
 //! viscous plane-channel peak `a H² / (8 ν)` (H the box's smallest extent) and the free-fall speed
-//! `√(2 a L)` (L its largest).
+//! `√(2 a L)` (L its largest). With a viscosity table both take its thinnest viscosity: the
+//! fastest flow, and the smallest τ⁺.
 //!
 //! # Limits
 //! A run is refused, naming the numbers and what to change, when the lattice Mach number of the
@@ -29,11 +30,11 @@ use fieldcraft_mesh::surface::BoundarySurface;
 use fieldcraft_model::fluid_zones::DEFAULT_FAN_RELAXATION;
 use fieldcraft_model::units::kelvin_above;
 use fieldcraft_model::{
-    BoxFace, Collision, Directional, FaceCondition, FluidDomain, HrrSigma, Model, Procedure, Resistance, SurfaceCondition, ThermalCondition,
-    Turbulence, WallModel, WallTreatment,
+    BoxFace, Collision, Directional, FaceCondition, FluidDomain, HrrSigma, Model, Procedure, Resistance, SurfaceCondition, TemperatureDependent,
+    ThermalCondition, Turbulence, WallModel, WallTreatment,
 };
 
-use crate::rheology::{Rheology, shear_rate_at_stress};
+use crate::rheology::{Rheology, ViscosityTable, shear_rate_at_stress};
 use crate::voxel::Grid;
 use crate::{Error, Limits, Result};
 
@@ -452,8 +453,18 @@ fn zones(domain: &FluidDomain, grid: &Grid, viscosity: f64, dt: f64, density: f6
     Ok(out)
 }
 
+/// The conductivity, specific heat and density tables of `d` the fluid solver does not follow
+/// yet, as the end of a warning: "conductivity, density at their constants (…)".
+fn held_tables(d: &TemperatureDependent) -> Option<String> {
+    let held: Vec<&str> = d.tables().map(|(what, _)| what).filter(|what| *what != "viscosity").collect();
+    let its = if held.len() == 1 { "its" } else { "their" };
+    (!held.is_empty())
+        .then(|| format!("{} at {its} constant (the values the material keeps), not following {its} temperature table yet", held.join(", ")))
+}
+
 /// The domain's conducting obstacles in lattice units (`rho_c` the fluid's `ρ c`), their
-/// geometry from `geometry` (the caller's obstacles).
+/// geometry from `geometry` (the caller's obstacles); a solid whose material has temperature
+/// tables is warned of in `warnings` (its constants hold).
 fn solids(
     model: &Model,
     domain: &FluidDomain,
@@ -462,6 +473,7 @@ fn solids(
     rho_c: f64,
     dt: f64,
     h: f64,
+    warnings: &mut Vec<String>,
 ) -> Result<Vec<SolidSetup>> {
     let scale = dt / (h * h);
     let mut out = Vec::with_capacity(t.solids.len());
@@ -477,6 +489,9 @@ fn solids(
                 "conducting solid `{}`: a phase change in a conducting solid is not supported yet (only the fluid melts and freezes)",
                 c.body
             )));
+        }
+        if let Some(held) = m.and_then(|m| m.temperature_dependent.as_ref()).and_then(held_tables) {
+            warnings.push(format!("conducting solid `{}`: the fluid solver holds material `{}`'s {held}", c.body, c.material));
         }
         let props = m.and_then(|m| m.thermal.as_ref());
         let (Some(k), Some(cp), Some(density)) = (props.and_then(|p| p.conductivity), props.and_then(|p| p.specific_heat), m.and_then(|m| m.density))
@@ -744,6 +759,42 @@ impl Setup {
         let grid = Grid { origin: domain.min, spacing: domain.spacing, cells };
         let h = domain.spacing;
 
+        // A half model whose inputs cross its symmetry plane solves something else than half.
+        let mut warnings = domain.symmetry_warnings();
+        warnings.extend(obstacle_symmetry_warnings(&domain, obstacles));
+        // A Newtonian fluid's viscosity table, followed cell by cell when the fluid carries heat
+        // (each cell's temperature) and nothing needs one viscosity (a turbulence model, porous
+        // zones); otherwise the constant holds. The fluid's other tables hold their constants.
+        let tables = material.and_then(|m| m.temperature_dependent.as_ref());
+        let table = match tables.and_then(|d| d.viscosity.as_ref()).filter(|_| newtonian.is_some()) {
+            Some(t) if domain.thermal.is_some() && turbulence.is_none() && domain.porous.is_empty() => {
+                Some(ViscosityTable::new(t).ok_or_else(|| {
+                    Error::Invalid(format!(
+                        "material `{}`: the viscosity table must have 2 to {} points, at increasing finite temperatures, each with a finite positive viscosity",
+                        domain.material,
+                        crate::rheology::MAX_TABLE_POINTS,
+                    ))
+                })?)
+            }
+            Some(_) => {
+                // A free surface carries no heat yet, so adding heat is no remedy there.
+                let remedy = if domain.free_surface.is_some() { "; a free-surface flow carries no heat yet, so it keeps the constant" } else { "" };
+                warnings.push(format!(
+                    "material `{}`: the viscosity is held at its constant {:e}; the fluid solver follows the viscosity table only with heat in the fluid (`thermal`) and without a turbulence model or porous zones{remedy}",
+                    domain.material,
+                    fluid.newtonian().unwrap_or_default()
+                ));
+                None
+            }
+            None => None,
+        };
+        if let Some(held) = tables.and_then(held_tables) {
+            warnings.push(format!("material `{}`: the fluid solver holds the {held}", domain.material));
+        }
+        // The thinnest kinematic viscosity a cell takes: a viscosity table's lowest, else the
+        // constant (a shear-dependent fluid has none).
+        let thinnest = table.as_ref().map(|t| t.range()[0] / density).or(newtonian);
+
         // The characteristic velocity.
         let mut u_char: f64 = norm(domain.initial_velocity);
         let mut pressures = Vec::new();
@@ -780,7 +831,8 @@ impl Setup {
             u_char = u_char.max((2.0 * a * large).sqrt());
         } else if a > 0.0 {
             let large = extents.iter().copied().fold(0.0, f64::max);
-            let viscous = match newtonian {
+            // The thinnest viscosity flows fastest, so the Mach check holds in every cell.
+            let viscous = match thinnest {
                 Some(viscosity) => a * small * small / (8.0 * viscosity),
                 // A plane channel's wall stress ρ a H / 2 holds for any fluid; at its wall shear
                 // rate γ̇_w the Newtonian peak speed is γ̇_w H / 4.
@@ -810,7 +862,9 @@ impl Setup {
         };
 
         // The time step and the number of steps.
-        let diffusive = (AUTO_TAU_MAX - 0.5) * h * h / (3.0 * viscosity);
+        // Sized at the thinnest viscosity, whose τ⁺ is the smallest, so a step the solver chose
+        // never puts a cell below the floor.
+        let diffusive = (AUTO_TAU_MAX - 0.5) * h * h / (3.0 * thinnest.unwrap_or(viscosity));
         let auto = if u_char > 0.0 { (TARGET_LATTICE_VELOCITY * h / u_char).min(diffusive) } else { diffusive };
         let (dt, n) = match (*time_step, *end_time, *steps) {
             (Some(dt), Some(t), _) => {
@@ -857,20 +911,32 @@ impl Setup {
                 "the lattice Mach number is {mach:.3} (velocity {u_char} with time step {dt} and spacing {h}), above {MAX_MACH}: lower the time step"
             )));
         }
-        // A half model whose inputs cross its symmetry plane solves something else than half.
-        let mut warnings = domain.symmetry_warnings();
-        warnings.extend(obstacle_symmetry_warnings(&domain, obstacles));
         // A shear-dependent fluid in lattice units; its temperatures count from the scalar
         // lattice's zero.
-        let rheology = newtonian.is_none().then(|| Rheology {
+        let viscosity_scale = dt / (density * h * h);
+        // A viscosity table's τ range, from its thinnest to its most viscous point: a cell's
+        // temperature never takes it outside, so no cell is clamped.
+        let table_tau = table.as_ref().map(|t| t.range().map(|mu| 0.5 + 3.0 * mu * viscosity_scale));
+        let rheology = (newtonian.is_none() || table.is_some()).then(|| Rheology {
             fluid,
             rate_scale: 1.0 / dt,
-            viscosity_scale: dt / (density * h * h),
-            tau: [MIN_TAU, crate::rheology::MAX_TAU],
+            viscosity_scale,
+            tau: table_tau.map_or([MIN_TAU, crate::rheology::MAX_TAU], |[_, high]| [MIN_TAU, high.max(crate::rheology::MAX_TAU)]),
             zero: domain.thermal.as_ref().map_or(initial_kelvin, |t| t.temperature_zero),
+            table,
         });
         let shear_dependent_tau = rheology.as_ref().map(|r| crate::solve::ShearDependentTau { characteristic: tau_plus, range: r.tau });
-        let tau_plus = if let Some(r) = &rheology {
+        let tau_plus = if let Some([thinnest, _]) = table_tau {
+            // A viscosity table: the thinnest viscosity sets the smallest τ⁺ a cell takes, refused
+            // below the floor as a constant viscosity is.
+            if !(thinnest >= MIN_TAU) {
+                return Err(Error::Invalid(format!(
+                    "the relaxation time τ = {thinnest:.5} at the thinnest viscosity of material `{}`'s viscosity table is below {MIN_TAU}: the grid cannot resolve it at this time step; refine the spacing or raise the time step",
+                    domain.material
+                )));
+            }
+            tau_plus.max(thinnest)
+        } else if let Some(r) = &rheology {
             // A shear-dependent fluid: τ⁺ at the characteristic shear rate, while each cell takes
             // its own within [τ_min, τ_max]. A cell sheared past τ_min's viscosity is floored
             // there (counted), so only a fluid floored at every shear rate is refused.
@@ -887,6 +953,8 @@ impl Setup {
             }
             tau_plus
         };
+        // The smallest τ⁺ a cell takes, for the stability warnings below: a table's thinnest.
+        let smallest_tau = table_tau.map_or(tau_plus, |[thinnest, _]| thinnest);
         let magic_given = magic.is_some();
         let magic = magic.unwrap_or(DEFAULT_MAGIC);
         let tau_minus = 0.5 + magic / (tau_plus - 0.5);
@@ -978,7 +1046,7 @@ impl Setup {
                     faces,
                     heat_scale: rho_c * h * h * h / dt,
                     conductivity: alpha,
-                    solids: solids(model, &domain, t, obstacles, rho_c, dt, h)?,
+                    solids: solids(model, &domain, t, obstacles, rho_c, dt, h, &mut warnings)?,
                     contacts: contacts(t, rho_c, dt, h)?,
                     phase,
                 })
@@ -1082,9 +1150,9 @@ impl Setup {
         if collision != Collision::Hrr && sigma.is_some() {
             warnings.push(format!("the hybrid collision's σ (`sigma`) has no effect with the {} collision", collision.name()));
         }
-        if tau_plus < 0.51 && collision == Collision::Trt {
+        if smallest_tau < 0.51 && collision == Collision::Trt {
             warnings.push(format!(
-                "τ = {tau_plus:.4} is close to ½: under-resolved flows may go unstable; a finer spacing or the regularized collision (`collision: \"regularized\"`) is safer"
+                "τ = {smallest_tau:.4} is close to ½: under-resolved flows may go unstable; a finer spacing or the regularized collision (`collision: \"regularized\"`) is safer"
             ));
         }
         // Below MIN_TAU (reachable only with a turbulence model) the TRT velocity inlet did not
@@ -1092,18 +1160,18 @@ impl Setup {
         // at τ = 0.5005, 5e-3 and more at 0.5025–0.503), and with Λ = 3/16 the uniform stream
         // itself is linearly unstable for τ ≤ 0.502 at that speed (tests/trt_stability.rs); a
         // uniform inflow has no eddy viscosity to lift the inlet cell's τ.
-        if tau_plus < MIN_TAU
+        if smallest_tau < MIN_TAU
             && collision == Collision::Trt
             && domain.free_surface.is_none()
             && BoxFace::ALL.iter().any(|f| matches!(domain.faces.get(*f), FaceCondition::Velocity { .. }))
         {
             warnings.push(format!(
-                "τ = {tau_plus:.4} is below {MIN_TAU}, where the two-relaxation-time velocity inlet is not stable: a uniform inflow has no eddy viscosity to raise it; a finer spacing or a longer time step is safer"
+                "τ = {smallest_tau:.4} is below {MIN_TAU}, where the two-relaxation-time velocity inlet is not stable: a uniform inflow has no eddy viscosity to raise it; a finer spacing or a longer time step is safer"
             ));
         }
-        if tau_plus < REGULARIZED_TAU_LIMIT && collision.is_regularized() {
+        if smallest_tau < REGULARIZED_TAU_LIMIT && collision.is_regularized() {
             warnings.push(format!(
-                "τ = {tau_plus:.4} is below {REGULARIZED_TAU_LIMIT}, where even the regularized collision went unstable on a coarse bluff-body grid: the inlet and outlet still reflect pressure waves there; a finer spacing is safer"
+                "τ = {smallest_tau:.4} is below {REGULARIZED_TAU_LIMIT}, where even the regularized collision went unstable on a coarse bluff-body grid: the inlet and outlet still reflect pressure waves there; a finer spacing is safer"
             ));
         }
         if collision != Collision::Trt && magic_given {
