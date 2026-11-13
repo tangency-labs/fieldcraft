@@ -25,7 +25,7 @@ pub const RUN: CommandSpec = CommandSpec {
     params: r#"{} — solves every step in order with its procedure's solver (solve.static, solve.frequency, solve.explicit, solve.fluid with their default caps) and keeps the results; stops at the first step that fails, naming it"#,
     form: Some(&[]),
     kind: CommandKind::Model,
-    requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection, Requirement::Step],
+    requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection, Requirement::Step, Requirement::ActiveStep],
     run: run_all,
 };
 

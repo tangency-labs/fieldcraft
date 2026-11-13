@@ -157,6 +157,19 @@ impl Model {
         self.analyze().1
     }
 
+    /// The static steps (static, nonlinear static, buckling) that activate none of the model's
+    /// boundary conditions and loads although it has some: such a step holds and loads nothing,
+    /// so it cannot be solved. A frequency step may be free-free; a dynamic one may fly free.
+    pub fn idle_steps(&self) -> impl Iterator<Item = &crate::Step> {
+        let defined = !self.boundary_conditions.is_empty() || !self.loads.is_empty();
+        self.steps.iter().filter(move |s| {
+            defined
+                && s.boundary_conditions.is_empty()
+                && s.loads.is_empty()
+                && matches!(s.procedure, Procedure::Static {} | Procedure::NonlinearStatic(_) | Procedure::Buckle { .. })
+        })
+    }
+
     /// Resolve the model for writing or solving. Fails with every error the check finds.
     pub fn resolve(&self) -> Result<Resolved> {
         let (mut resolved, diagnostics) = self.analyze();
@@ -535,8 +548,23 @@ impl Model {
         if self.steps.is_empty() {
             d.error("model", "there is no analysis step");
         }
+        let idle: BTreeSet<&str> = self.idle_steps().map(|s| s.name.as_str()).collect();
         for s in &self.steps {
             let subject = format!("step `{}`", s.name);
+            // A step that leaves every boundary condition and load out: named with what it leaves
+            // out, rather than the singular stiffness the solver would meet (A4-3).
+            if idle.contains(s.name.as_str()) {
+                let names = |kind: &str, n: Vec<&String>| {
+                    (!n.is_empty()).then(|| format!("{kind} {}", n.iter().map(|x| format!("`{x}`")).collect::<Vec<_>>().join(", ")))
+                };
+                let left: Vec<String> =
+                    [names("boundary conditions", self.boundary_conditions.keys().collect()), names("loads", self.loads.keys().collect())]
+                        .into_iter()
+                        .flatten()
+                        .collect();
+                d.error(&subject, format!("activates none of the model's {}: activate them in the step (Steps › Activate)", left.join(" and ")));
+                continue;
+            }
             let prescribes_motion = s
                 .boundary_conditions
                 .iter()

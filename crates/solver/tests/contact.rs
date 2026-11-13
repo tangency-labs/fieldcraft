@@ -625,7 +625,10 @@ fn what_implicit_contact_refuses() {
     let solve = |m: &Model| solve_nonlinear(m, Some("Step"), &Limits::default()).unwrap_err().to_string();
     // Linear analyses refuse every contact by name.
     let mut b = stacked(0.0, InitialPenetration::Adjust);
-    b.model.add_step(Step::new("Linear", Procedure::Static {}), None).unwrap();
+    // Holding and loading what the contact step does, so its contact is all it is refused for.
+    let held = b.model.step("Step").unwrap().clone();
+    let linear = Step { boundary_conditions: held.boundary_conditions, loads: held.loads, ..Step::new("Linear", Procedure::Static {}) };
+    b.model.add_step(linear, None).unwrap();
     let e = fieldcraft_solver::solve_static(&b.model, Some("Linear"), &Limits::default()).unwrap_err().to_string();
     assert!(e.contains("interface") && e.contains("linear static"), "{e}");
     // Arc-length control.
