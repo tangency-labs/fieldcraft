@@ -1037,6 +1037,11 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
         "tau_minus": r.stats.tau_minus,
         "magic": r.stats.magic,
         "collision": r.stats.collision.name(),
+        "wall_links": r.stats.wall_links.map(|w| json!({
+            "interpolated": w.interpolated,
+            "halfway_no_second_node": w.no_second_node,
+            "halfway_no_crossing": w.no_crossing,
+        })),
         "eddy_viscosity_ratio": r.stats.eddy_viscosity_ratio,
         "velocity_scale": r.stats.velocity,
         "lattice_velocity": r.stats.lattice_velocity,
@@ -2173,6 +2178,24 @@ pub(crate) mod tests {
         let expected = 0.1 * 0.1 / 1.0 * 0.125 * 0.125;
         assert!((bottom["mean"][0].as_f64().unwrap() / expected - 1.0).abs() < 1e-3, "{bottom}");
         assert_eq!(r["collision"], "trt", "{r}");
+        assert!(r["wall_links"].is_null(), "halfway walls have no interpolated links: {r}");
+        // Interpolated walls reach the solver: the box's faces stay halfway (the same shear,
+        // bit for bit), and the reply counts the obstacles' links (none here).
+        s.execute(
+            "model.step.edit",
+            &json!({"name": "Shear", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "frames": 4, "walls": "interpolated"}}),
+        )
+        .unwrap();
+        let ri = s.execute("solve.fluid", &json!({})).unwrap();
+        assert_eq!(ri["wall_links"], json!({"interpolated": 0, "halfway_no_second_node": 0, "halfway_no_crossing": 0}), "{ri}");
+        assert_eq!(ri["forces"], r["forces"], "{ri}");
+        assert!(
+            s.execute(
+                "model.step.edit",
+                &json!({"name": "Shear", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 50, "walls": "curved"}})
+            )
+            .is_err()
+        );
         // The regularised collision gives the same linear flow and wall shear, and says so.
         s.execute(
             "model.step.edit",

@@ -1204,6 +1204,9 @@ const PROCEDURE: Field = variants(
                 choice("collision", "Collision", &[("trt", "Two relaxation times"), ("regularized", "Regularized"), ("hrr", "Hybrid regularized")])
                     .help("The lattice Boltzmann collision. Regularized stays stable with τ close to ½ (fast flows on coarse grids, sharp corners), at a little more cost per step. Hybrid regularized blends in the strain rate of finite differences (σ), which damps the shortest waves.")
                     .def("\"trt\""),
+                choice("walls", "Obstacle walls", &[("halfway", "Halfway"), ("interpolated", "Interpolated")])
+                    .help("Where the links into obstacles bounce back. Halfway puts every wall halfway between cells, a staircase on curved walls. Interpolated puts it where the surface crosses each link (Bouzidi et al. 2001): curved walls second order, best with τ ≤ 1; not mass conservative; on the CPU and the GPU.")
+                    .def("\"halfway\""),
                 positive("magic", "TRT Λ", D::None).help("The two-relaxation-time magic parameter; 0.1875 is usual.").hint("0.1875"),
                 range("sigma", "HRR σ", D::None, 0.0, 1.0)
                     .help("The hybrid collision's share of the populations' own stress, above 0 and at most 1 (1 is Regularized); the rest comes from finite differences of the velocity.")
