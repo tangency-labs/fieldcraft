@@ -197,7 +197,10 @@ impl history_bar::Contents for Steps<'_> {
 pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
     let mut roll: Option<usize> = None;
-    egui::Panel::bottom("fc_timeline").exact_size(HEIGHT).show_separator_line(false).frame(egui::Frame::NONE.fill(t.timeline)).show(ui, |ui| {
+    // History is a workspace panel surface along the bottom edge.
+    let host = kit::Container::new(ui.ctx(), kit::Surface::Panel);
+    let panel = host.edge("fc_timeline", kit::Edge::Bottom).exact_size(HEIGHT).show_separator_line(false);
+    host.show_edge(ui, panel, host.edge_frame(t.timeline), |ui| {
         let r = ui.max_rect();
         app.place("timeline", r);
         ui.painter().line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, t.border));
