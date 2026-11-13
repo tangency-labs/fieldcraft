@@ -248,10 +248,12 @@ fn hover_label(app: &ModelApp, painter: &egui::Painter, t: &Tokens) {
     if !painter.clip_rect().contains(at) {
         return;
     }
-    let galley = painter.layout_no_wrap(item.describe(), egui::FontId::proportional(12.0), t.overlay_text);
-    let r = Rect::from_min_size(at + vec2(14.0, 14.0), galley.size()).expand2(vec2(5.0, 2.0));
-    painter.rect_filled(r, 3.0, t.overlay);
-    painter.galley(r.min + vec2(5.0, 2.0), galley, t.overlay_text);
+    let k = solidcraft_theme::Tokens::get();
+    let galley = painter.layout_no_wrap(item.describe(), egui::FontId::proportional(k.font_body), t.overlay_text);
+    let pad = vec2(k.space_4, k.space_2);
+    let r = Rect::from_min_size(at + vec2(k.space_14, k.space_14), galley.size()).expand2(pad);
+    painter.rect_filled(r, k.radius_sm, t.overlay);
+    painter.galley(r.min + pad, galley, t.overlay_text);
 }
 
 /// The right-click menu: a set from the selection, clearing it, and the filter.
@@ -617,12 +619,14 @@ fn labels(app: &mut ModelApp, painter: &egui::Painter, t: &Tokens) {
     app.scene();
     let labels: Vec<(Vec3, String)> = app.scene.1.labels.iter().chain(&app.symbols.1.labels).map(|l| (l.p, l.text.clone())).collect();
     let offset = fieldcraft_render::LABEL_OFFSET as f32;
+    let k = solidcraft_theme::Tokens::get();
     for (p, text) in labels {
         if let Some(at) = to_screen(app, p) {
-            let galley = painter.layout_no_wrap(text, egui::FontId::proportional(12.0), t.overlay_text);
-            let r = Rect::from_min_size(at + vec2(offset, -offset - galley.size().y), galley.size()).expand2(vec2(4.0, 1.0));
-            painter.rect_filled(r, 3.0, t.overlay);
-            painter.galley(r.min + vec2(4.0, 1.0), galley, t.overlay_text);
+            let galley = painter.layout_no_wrap(text, egui::FontId::proportional(k.font_body), t.overlay_text);
+            let pad = vec2(k.space_4, k.space_2);
+            let r = Rect::from_min_size(at + vec2(offset, -offset - galley.size().y), galley.size()).expand2(pad);
+            painter.rect_filled(r, k.radius_sm, t.overlay);
+            painter.galley(r.min + pad, galley, t.overlay_text);
         }
     }
 }
@@ -637,8 +641,9 @@ fn sampled_note(app: &ModelApp, painter: &egui::Painter, rect: Rect, t: &Tokens)
     }
     let text = format!("Symbols sampled: {}", notes.join("; "));
     let room = sampled_note_width(rect);
-    let galley = painter.layout(text, egui::FontId::proportional(11.0), t.text_dim, room);
-    painter.galley(rect.left_bottom() + vec2(10.0, -10.0 - galley.size().y), galley, t.text_dim);
+    let k = solidcraft_theme::Tokens::get();
+    let galley = painter.layout(text, egui::FontId::proportional(k.font_small), t.text_dim, room);
+    painter.galley(rect.left_bottom() + vec2(k.space_10, -k.space_10 - galley.size().y), galley, t.text_dim);
 }
 
 /// How wide the sampled-symbols note may be: up to the navigation bar, with a gap.

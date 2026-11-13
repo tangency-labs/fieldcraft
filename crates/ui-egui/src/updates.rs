@@ -331,7 +331,7 @@ pub fn notice(app: &mut ModelApp, ui: &mut egui::Ui) {
     ui.label(small("·").color(t.text_dim));
     let notes = ui.add(egui::Link::new(small("What's new"))).backing_on_hover_text(release.url.as_str()).clicked();
     ui.label(small(&format!("FieldCraft {} is available —", release.version)).color(t.text));
-    ui.separator();
+    crate::palette::rule(ui);
     if notes {
         app.open_link(ui.ctx(), &release.url);
     }
@@ -381,7 +381,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
             }
             Finish::Package { file, command } => {
                 message(ui, &format!("FieldCraft {} is downloaded and verified:", staged.version));
-                ui.label(RichText::new(file.display().to_string()).monospace().size(11.0));
+                kit::text(ui, &file.display().to_string(), kit::Text::MonoNote("fc_update_package"));
                 message(ui, "Install it with your system's package manager:");
                 kit::read_only_text(ui, command);
             }

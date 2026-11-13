@@ -182,10 +182,12 @@ impl history_bar::Contents for Steps<'_> {
                 paint_badge(&p, chip, b, self.t);
             }
             if item.count() > 1 {
-                let text = p.layout_no_wrap(format!("{}", item.count()), FontId::proportional(9.0), self.t.text);
-                let b = Rect::from_min_size(chip.right_bottom() - text.size() - vec2(3.0, 1.0), text.size() + vec2(3.0, 1.0));
-                p.rect_filled(b, 3.0, self.t.panel_header);
-                p.galley(b.min + vec2(1.5, 0.5), text, self.t.text);
+                let k = solidcraft_theme::Tokens::get();
+                let text = p.layout_no_wrap(format!("{}", item.count()), FontId::proportional(k.font_badge), self.t.text);
+                let pad = vec2(k.space_3, k.space_2);
+                let b = Rect::from_min_size(chip.right_bottom() - text.size() - pad, text.size() + pad);
+                p.rect_filled(b, k.radius_sm, self.t.panel_header);
+                p.galley(b.min + pad / 2.0, text, self.t.text);
             }
         }
     }
