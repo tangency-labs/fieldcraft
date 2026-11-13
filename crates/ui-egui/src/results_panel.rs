@@ -5,7 +5,7 @@
 //! frames). Numbers go through one formatter ([`crate::results::number`]), in the display
 //! units ([`Plot::units`]): the result is stored in SI and converted here as it is shown.
 
-use egui::{Align2, Color32, FontId, Pos2, Rect, RichText, Stroke, pos2, vec2};
+use egui::{Align2, Color32, FontId, Pos2, Rect, Stroke, pos2, vec2};
 use fieldcraft_engine::results::{ComponentCheck, Field, FluidResult, Kind, Quantity, shown as shown_in, true_scale, unit_of, with_unit as titled};
 use fieldcraft_explicit::{Energies, ExplicitResult};
 use serde_json::{Value, json};
@@ -178,8 +178,9 @@ fn legend_layout(plot: &Plot, painter: &egui::Painter, rect: Rect, bar: Option<R
     if plot.stale {
         lines.push(("Stale: the model changed since this step was solved".into(), t.warm));
     }
-    let origin = rect.left_top() + vec2(12.0, 12.0);
-    let font = FontId::proportional(12.0);
+    let k = solidcraft_theme::Tokens::get();
+    let origin = rect.left_top() + vec2(k.space_12, k.space_12);
+    let font = FontId::proportional(k.font_body);
     let line_h = LEGEND_LINE;
     let bands = plot.contour.as_ref().map(|l| &l.bands);
     // As wide as its longest line (and the extremes' lines under the swatches).
@@ -190,7 +191,7 @@ fn legend_layout(plot: &Plot, painter: &egui::Painter, rect: Rect, bar: Option<R
         .chain(extremes)
         .map(|text| painter.layout_no_wrap(text, font.clone(), t.overlay_text).size().x)
         .fold(0.0_f32, f32::max);
-    let title_w = painter.layout_no_wrap(title.clone(), FontId::proportional(14.0), t.overlay_text).size().x;
+    let title_w = painter.layout_no_wrap(title.clone(), FontId::proportional(k.font_heading), t.overlay_text).size().x;
     let width = (widest.max(title_w) + 20.0).max(170.0);
     // Padding and title, the lines, then the swatches with the range lines under them.
     let fixed_height = 36.0 + line_h * lines.len() as f32 + if bands.is_some() { 16.0 + 2.0 * line_h } else { 0.0 };
@@ -220,10 +221,11 @@ fn swatches(b: &fieldcraft_render::contour::Bands) -> u32 {
 fn legend(plot: &Plot, painter: &egui::Painter, rect: Rect, bar: Option<Rect>, t: &Tokens) -> Vec<(Rect, u32)> {
     let Legend { frame, title, lines, band_height } = legend_layout(plot, painter, rect, bar, t);
     let origin = frame.min;
-    let (font, line_h) = (FontId::proportional(12.0), LEGEND_LINE);
-    painter.rect_filled(frame, 4.0, t.overlay);
+    let k = solidcraft_theme::Tokens::get();
+    let (font, line_h) = (FontId::proportional(k.font_body), LEGEND_LINE);
+    painter.rect_filled(frame, k.radius_sm, t.overlay);
     let mut y = origin.y + 8.0;
-    painter.text(pos2(origin.x + 10.0, y), Align2::LEFT_TOP, title, FontId::proportional(14.0), t.overlay_text);
+    painter.text(pos2(origin.x + 10.0, y), Align2::LEFT_TOP, title, FontId::proportional(k.font_heading), t.overlay_text);
     y += 20.0;
     for (text, color) in &lines {
         painter.text(pos2(origin.x + 10.0, y), Align2::LEFT_TOP, text, font.clone(), *color);
@@ -294,9 +296,10 @@ fn label_box(at: Pos2, size: egui::Vec2, bounds: Rect, avoid: Option<Rect>) -> R
 
 /// A box of `text` beside the screen point `at` ([`label_box`]); returns where it went.
 fn label_beside(painter: &egui::Painter, at: Pos2, text: String, bounds: Rect, avoid: Option<Rect>, t: &Tokens) -> Rect {
-    let galley = painter.layout_no_wrap(text, FontId::proportional(12.0), t.overlay_text);
+    let k = solidcraft_theme::Tokens::get();
+    let galley = painter.layout_no_wrap(text, FontId::proportional(k.font_body), t.overlay_text);
     let box_rect = label_box(at, galley.size() + 2.0 * LABEL_PAD, bounds, avoid);
-    painter.rect_filled(box_rect, 4.0, t.overlay);
+    painter.rect_filled(box_rect, k.radius_sm, t.overlay);
     painter.galley(box_rect.left_top() + LABEL_PAD, galley, t.overlay_text);
     box_rect
 }
@@ -343,20 +346,19 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
     let mut run: Vec<(&'static str, Value)> = Vec::new();
     let mut export: Option<Value> = None;
     let steps: Vec<(String, bool)> = app.session.result_steps().map(|(n, c)| (n.to_string(), c)).collect();
-    egui::Grid::new("fc_results_grid").num_columns(2).spacing(vec2(8.0, 4.0)).show(ui, |ui| {
-        ui.label("Step");
-        kit::bounded_dropdown_menu(ui, "fc_results_step", &plot.view.step, COMBO_WIDTH, |ui| {
+    kit::row(ui, "Step", |ui| {
+        kit::bounded_dropdown_menu(ui, "fc_results_step", &plot.view.step, ui.available_width(), |ui| {
             for (name, current) in &steps {
                 let label = if *current { name.clone() } else { format!("{name} (stale)") };
                 if ui.selectable_label(*name == plot.view.step, label).clicked() && *name != plot.view.step {
                     run.push(("results.deformed", json!({"step": name})));
                 }
             }
-        });
-        ui.end_row();
-        ui.label("Contours");
-        let shown = plot.view.contour.map_or("None", Field::label);
-        kit::bounded_dropdown_menu(ui, "fc_results_field", shown, COMBO_WIDTH, |ui| {
+        })
+    });
+    let shown = plot.view.contour.map_or("None", Field::label);
+    kit::row(ui, "Contours", |ui| {
+        kit::bounded_dropdown_menu(ui, "fc_results_field", shown, ui.available_width(), |ui| {
             if ui.selectable_label(plot.view.contour.is_none(), "None").clicked() {
                 run.push(("results.contour", json!({"field": "none"})));
             }
@@ -365,58 +367,47 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
                     run.push(("results.contour", json!({"field": f.id()})));
                 }
             }
-        });
-        ui.end_row();
-        // The legend's range: each end follows the field (Auto) or is clamped, e.g. below a
-        // singular peak (#191).
-        if let Some(l) = &plot.contour {
-            for (label, key, set, value) in
-                [("Legend max", "max", plot.view.range_max, l.bands.max), ("Legend min", "min", plot.view.range_min, l.bands.min)]
-            {
-                ui.label(label);
-                ui.horizontal(|ui| {
-                    let mut auto = set.is_none();
-                    let tip = format!("Follow the field's {}; untick to clamp the legend", if key == "max" { "maximum" } else { "minimum" });
-                    if kit::checkbox(ui, "Auto", &mut auto).backing_on_hover_text(tip).changed() {
-                        run.push(("results.contour", legend_params(plot, key, if auto { json!("auto") } else { json!(value) })));
-                    }
-                    // The clamp is stored in SI; the legend shows the display units.
-                    let mut v = set.map_or(value, |v| l.field.shown(&plot.result, v, &plot.units));
-                    let speed = (l.max.1 - l.min.1).abs().max(MIN_DRAG_SPAN) * 0.005;
-                    let drag = egui::DragValue::new(&mut v)
-                        .speed(speed)
-                        .custom_formatter(|v, _| number(v))
-                        .custom_parser(|s| s.replace(',', "").trim().parse::<f64>().ok());
-                    if ui.add_enabled(set.is_some(), drag).changed() {
-                        run.push(("results.contour", legend_params(plot, key, json!(v))));
-                    }
-                });
-                ui.end_row();
-            }
+        })
+    });
+    // The legend's range: each end follows the field (Auto) or is clamped, e.g. below a
+    // singular peak (#191).
+    if let Some(l) = &plot.contour {
+        for (label, key, set, value) in
+            [("Legend max", "max", plot.view.range_max, l.bands.max), ("Legend min", "min", plot.view.range_min, l.bands.min)]
+        {
+            kit::row(ui, label, |ui| {
+                let mut auto = set.is_none();
+                let tip = format!("Follow the field's {}; untick to clamp the legend", if key == "max" { "maximum" } else { "minimum" });
+                if kit::checkbox(ui, "Auto", &mut auto).backing_on_hover_text(tip).changed() {
+                    run.push(("results.contour", legend_params(plot, key, if auto { json!("auto") } else { json!(value) })));
+                }
+                // The clamp is stored in SI; the legend shows the display units.
+                let mut v = set.map_or(value, |v| l.field.shown(&plot.result, v, &plot.units));
+                let speed = (l.max.1 - l.min.1).abs().max(MIN_DRAG_SPAN) * 0.005;
+                if ui.add_enabled_ui(set.is_some(), |ui| kit::number_field(ui, &mut v, f64::MIN..=f64::MAX, speed, "")).inner.changed() {
+                    run.push(("results.contour", legend_params(plot, key, json!(v))));
+                }
+            });
         }
-        if plot.is_fluid() {
-            flow_rows(plot, ui, &mut run);
-        } else {
-            deformation_rows(plot, ui, &mut run);
+    }
+    if plot.is_fluid() {
+        flow_rows(plot, ui, &mut run);
+    } else {
+        deformation_rows(plot, ui, &mut run);
+    }
+    kit::row(ui, "Show", |ui| {
+        if plot.contour.is_some() {
+            kit::checkbox(ui, "Max/Min", &mut app.ui.result_extremes).backing_on_hover_text("Mark the nodes of the largest and smallest value");
         }
-        ui.label("Show");
-        ui.horizontal(|ui| {
-            if plot.contour.is_some() {
-                kit::checkbox(ui, "Max/Min", &mut app.ui.result_extremes).backing_on_hover_text("Mark the nodes of the largest and smallest value");
-            }
-            kit::checkbox(ui, "Loads & BCs", &mut app.ui.result_symbols)
-                .backing_on_hover_text("The symbols of the step's boundary conditions and loads");
-        });
-        ui.end_row();
+        kit::checkbox(ui, "Loads & BCs", &mut app.ui.result_symbols).backing_on_hover_text("The symbols of the step's boundary conditions and loads");
     });
     if let Kind::Explicit(e) = plot.result.kind() {
-        ui.separator();
+        kit::divider(ui, "fc_results_explicit");
         explicit(ui, e, plot, t, &mut run);
     } else if let Some((k, at, n)) = plot.frame().filter(|_| plot.is_fluid()) {
         // A fluid step: its frames, the slice, the obstacles and the streamlines following.
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.label("Frame");
+        kit::divider(ui, "fc_results_flow");
+        kit::row(ui, "Frame", |ui| {
             let mut frame = k;
             if kit::slider(
                 ui,
@@ -436,16 +427,15 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
                 run.push(("results.animate", json!({"on": animate})));
             }
         });
-        ui.label(RichText::new(format!("t = {}", with_unit(number(at), unit_of(Quantity::Time, &plot.units).as_deref()))).color(t.text_dim));
+        kit::status_line(ui, &format!("t = {}", with_unit(number(at), unit_of(Quantity::Time, &plot.units).as_deref())), kit::StatusTone::Dim);
         if let Kind::Fluid(f) = plot.result.kind() {
-            component_limits(ui, f, &plot.units, t);
-            port_transport(ui, f, plot.pick, &plot.units, t);
+            component_limits(ui, f, &plot.units);
+            port_transport(ui, f, plot.pick, &plot.units);
         }
     } else if let Some((k, factor, n)) = plot.frame().filter(|_| matches!(plot.result.kind(), Kind::Static(_))) {
         // A nonlinear static step: its increments, the deformed shape following the slider.
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.label("Increment");
+        kit::divider(ui, "fc_results_increments");
+        kit::row(ui, "Increment", |ui| {
             let mut frame = k;
             if kit::slider(
                 ui,
@@ -458,11 +448,11 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
                 run.push(("results.frame", json!({"frame": frame})));
             }
         });
-        ui.label(RichText::new(format!("load factor {}", number(factor))).color(t.text_dim));
+        kit::status_line(ui, &format!("load factor {}", number(factor)), kit::StatusTone::Dim);
     } else if let Kind::Frequency(f) = plot.result.kind() {
-        ui.separator();
-        ui.label(RichText::new("Modes").color(t.text_dim));
-        egui::ScrollArea::vertical().id_salt("fc_results_modes").max_height(150.0).show(ui, |ui| {
+        kit::divider(ui, "fc_results_modes");
+        kit::text(ui, "Modes", kit::Text::Heading("fc_results_modes"));
+        egui::ScrollArea::vertical().id_salt("fc_results_modes").max_height(kit::row_height() * 5.0).show(ui, |ui| {
             for (i, m) in f.modes.iter().enumerate() {
                 let mode = i + 1;
                 if ui
@@ -477,11 +467,11 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
             }
         });
     } else if let Kind::Heat(h) = plot.result.kind() {
-        ui.separator();
-        heat_flows(ui, &fieldcraft_engine::results::heat_flows(h, &plot.units), &plot.units, t);
+        kit::divider(ui, "fc_results_heat");
+        heat_flows(ui, &fieldcraft_engine::results::heat_flows(h, &plot.units), &plot.units);
     }
     if matches!(plot.result.kind(), Kind::Static(_)) {
-        ui.separator();
+        kit::divider(ui, "fc_results_reactions");
         ui.horizontal(|ui| {
             if kit::button(ui, "Reaction sums", kit::Button::Normal)
                 .backing_on_hover_text("Reaction force and moment per boundary-condition set (results.reactions)")
@@ -497,20 +487,20 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
             }
         });
         if let Some(r) = app.reactions.as_ref().filter(|r| r["step"] == plot.view.step.as_str()) {
-            reactions_table(ui, r, plot, t);
+            reactions_table(ui, r, plot);
         }
     }
     let mut xy_export = None;
     if app.xy.is_some() {
-        ui.separator();
+        kit::divider(ui, "fc_results_xy");
         xy_export = xy_section(app, plot, ui, t, &mut run);
     }
     if app.path_editor.is_some() {
-        ui.separator();
+        kit::divider(ui, "fc_results_path");
         crate::path_panel::controls(app, plot, ui, t);
     }
-    ui.separator();
-    if let Some(p) = probed(app, plot, ui, t) {
+    kit::divider(ui, "fc_results_probe");
+    if let Some(p) = probed(app, plot, ui) {
         export = Some(p);
     }
     if let Some(p) = export {
@@ -519,7 +509,7 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
     if let Some(p) = xy_export {
         app.export_csv_with("results.xy", p);
     }
-    ui.separator();
+    kit::divider(ui, "fc_results_views");
     let save_view = views_row(app, ui, &mut run);
     for (id, params) in run {
         // The reaction sums land in `app.reactions` (ModelApp::run_form).
@@ -540,8 +530,7 @@ fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Val
     let views = &app.session.view.views;
     let current = app.session.view.current.as_deref();
     let mut save = false;
-    ui.horizontal(|ui| {
-        ui.label("Views");
+    kit::row(ui, "Views", |ui| {
         let shown = current.unwrap_or(if views.is_empty() { "None saved" } else { "Choose…" });
         ui.add_enabled_ui(!views.is_empty(), |ui| {
             kit::bounded_dropdown_menu(ui, "fc_results_views", shown, COMBO_WIDTH, |ui| {
@@ -553,8 +542,7 @@ fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Val
                 }
             });
         });
-        save = ui
-            .button("Save View…")
+        save = kit::button(ui, "Save View…", kit::Button::Normal)
             .backing_on_hover_text("Keep the camera and this results display as a named view, saved with the model (view.save)")
             .clicked();
     });
@@ -563,8 +551,7 @@ fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Val
 
 /// The deformation rows of the results grid: Deformed (with its scale) and Animate.
 fn deformation_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)>) {
-    ui.label("Deformed");
-    ui.horizontal(|ui| {
+    kit::row(ui, "Deformed", |ui| {
         let mut deformed = plot.view.deformed;
         if kit::checkbox(ui, "", &mut deformed).changed() {
             run.push(("results.deformed", json!({"show": deformed})));
@@ -580,29 +567,25 @@ fn deformation_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str,
         }
         // The scale ticking Deformed draws with, also while it is off.
         let mut scale = plot.scale;
-        let drag = egui::DragValue::new(&mut scale)
-            .speed(plot.scale.abs().max(MIN_DRAG_SCALE) * 0.01)
-            .range(0.0..=fieldcraft_engine::results::MAX_DEFORMATION_SCALE)
-            .prefix("× ")
-            .custom_formatter(|v, _| number(v))
-            .custom_parser(|s| s.replace(',', "").trim().parse::<f64>().ok());
-        if ui.add_enabled(plot.view.deformed, drag).changed() {
+        let speed = plot.scale.abs().max(MIN_DRAG_SCALE) * 0.01;
+        let field = ui.add_enabled_ui(plot.view.deformed, |ui| {
+            kit::number_field(ui, &mut scale, 0.0..=fieldcraft_engine::results::MAX_DEFORMATION_SCALE, speed, "×")
+        });
+        if field.inner.backing_on_hover_text("The scale the displacements are drawn at").changed() {
             run.push(("results.deformed", json!({"scale": scale})));
         }
     });
-    ui.end_row();
-    ui.label("Animate");
-    let mut animate = plot.view.animate;
-    if ui
-        .checkbox(&mut animate, "")
-        .backing_on_hover_text(
-            "Animate shape and contours. Linear static results interpolate a proportional load; nonlinear steps play their converged increments with their own stresses, explicit steps play saved fields.",
-        )
-        .changed()
-    {
-        run.push(("results.animate", json!({"on": animate})));
-    }
-    ui.end_row();
+    kit::row(ui, "Animate", |ui| {
+        let mut animate = plot.view.animate;
+        if kit::checkbox(ui, "", &mut animate)
+            .backing_on_hover_text(
+                "Animate shape and contours. Linear static results interpolate a proportional load; nonlinear steps play their converged increments with their own stresses, explicit steps play saved fields.",
+            )
+            .changed()
+        {
+            run.push(("results.animate", json!({"on": animate})));
+        }
+    });
 }
 
 /// A fluid step's rows of the results grid: the slice (its normal, position), the obstacles'
@@ -611,20 +594,15 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
     use fieldcraft_engine::flow::{Axis, slice_position};
     let (Kind::Fluid(f), Some(flow)) = (plot.result.kind(), plot.flow.as_ref()) else { return };
     if plot.view.contour == Some(Field::WallHeatFlux) {
-        ui.label("Wall heat");
-        ui.label("Positive into wall; face average");
-        ui.end_row();
+        kit::row(ui, "Wall heat", |ui| kit::text(ui, "Positive into wall; face average", kit::Text::Cell));
         if plot.contour.is_none() {
-            ui.label("History");
-            ui.label("No wall heat recorded at this frame");
-            ui.end_row();
+            kit::row(ui, "History", |ui| kit::text(ui, "No wall heat recorded at this frame", kit::Text::Cell));
         }
     }
     let view = &flow.view;
-    ui.label("Slice");
-    ui.horizontal(|ui| {
+    kit::row(ui, "Slice", |ui| {
         if plot.view.contour == Some(Field::WallHeatFlux) {
-            ui.label("Hidden for wall heat");
+            kit::text(ui, "Hidden for wall heat", kit::Text::Cell);
             return;
         }
         let shown = view.slice.as_ref().map_or("None", |s| s.axis.id());
@@ -642,25 +620,19 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
             let length = |m: f64| shown_in(Quantity::Length, m, &plot.units);
             let (lo, hi) = (length(flow.grid.start(s.axis.index())), length(flow.grid.end(s.axis.index())));
             let mut at = length(slice_position(f, s));
-            let drag = egui::DragValue::new(&mut at)
-                .speed((hi - lo).abs().max(MIN_DRAG_SPAN) * 0.002)
-                .range(lo..=hi)
-                .custom_formatter(|v, _| number(v))
-                .custom_parser(|s| s.replace(',', "").trim().parse::<f64>().ok());
-            if ui.add(drag).backing_on_hover_text("Where the slice crosses its axis").changed() {
+            let speed = (hi - lo).abs().max(MIN_DRAG_SPAN) * 0.002;
+            if kit::number_field(ui, &mut at, lo..=hi, speed, "").backing_on_hover_text("Where the slice crosses its axis").changed() {
                 run.push(("results.slice", json!({"position": at})));
             }
         }
     });
-    ui.end_row();
-    ui.label("Obstacles");
-    let mut surface = view.surface;
-    if kit::checkbox(ui, "Coloured", &mut surface).backing_on_hover_text("Colour the part by the selected fluid field or wall heat").changed() {
-        run.push(("results.surface", json!({"show": surface})));
-    }
-    ui.end_row();
-    ui.label("Streamlines");
-    ui.horizontal(|ui| {
+    kit::row(ui, "Obstacles", |ui| {
+        let mut surface = view.surface;
+        if kit::checkbox(ui, "Coloured", &mut surface).backing_on_hover_text("Colour the part by the selected fluid field or wall heat").changed() {
+            run.push(("results.surface", json!({"show": surface})));
+        }
+    });
+    kit::row(ui, "Streamlines", |ui| {
         let mut on = view.streamlines.is_some();
         if kit::checkbox(ui, "", &mut on)
             .backing_on_hover_text("Streamlines from the inlet, coloured by speed or temperature when selected")
@@ -671,37 +643,33 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
         if let Some(sl) = &view.streamlines {
             if sl.seeds.is_some() {
                 // Given seeds (or a line of them): their number; `count` does not change them.
-                ui.label(format!("{} seeds", flow.seeds)).backing_on_hover_text("The seeds given to results.streamlines");
+                kit::text(ui, &format!("{} seeds", flow.seeds), kit::Text::Cell).backing_on_hover_text("The seeds given to results.streamlines");
             } else {
                 let mut count = sl.count;
-                let drag = egui::DragValue::new(&mut count).range(1..=fieldcraft_engine::flow::MAX_STREAMLINES).speed(1.0).suffix(" seeds");
-                if ui.add(drag).backing_on_hover_text("Seeds on the inlet face, upstream of the obstacles").changed() {
+                let field = kit::whole_number_field(ui, &mut count, 1..=fieldcraft_engine::flow::MAX_STREAMLINES, " seeds");
+                if field.backing_on_hover_text("Seeds on the inlet face, upstream of the obstacles").changed() {
                     run.push(("results.streamlines", json!({"count": count})));
                 }
                 if flow.seeds != sl.count as usize {
-                    ui.label(format!("{} traced", flow.seeds)).backing_on_hover_text("The seeds the grid across the inlet face fits");
+                    kit::text(ui, &format!("{} traced", flow.seeds), kit::Text::Inline)
+                        .backing_on_hover_text("The seeds the grid across the inlet face fits");
                 }
             }
         }
     });
-    ui.end_row();
 }
 
 /// The probed node's values, one row each, or how to probe one; the export's parameters when
 /// its Export CSV… is clicked.
-fn probed(app: &ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) -> Option<Value> {
+fn probed(app: &ModelApp, plot: &Plot, ui: &mut egui::Ui) -> Option<Value> {
     let Some(p) = app.probe.as_ref().filter(|p| p.step == plot.view.step && p.mode == plot.pick.mode && p.frame == plot.pick.frame) else {
-        ui.label(RichText::new("Click the model to probe a node").small().color(t.text_dim));
+        kit::status_line(ui, "Click the model to probe a node", kit::StatusTone::Dim);
         return None;
     };
-    ui.label(RichText::new(format!("Node {}", p.node)).strong());
-    egui::Grid::new("fc_results_probe").num_columns(2).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
-        for (what, value) in &p.rows {
-            ui.label(RichText::new(what).color(t.text_dim));
-            ui.add(egui::Label::new(value).extend());
-            ui.end_row();
-        }
-    });
+    kit::text(ui, &format!("Node {}", p.node), kit::Text::Heading("fc_results_probe"));
+    for (what, value) in &p.rows {
+        kit::row(ui, what, |ui| kit::copy_cell(ui, value, &format!("{what}: {value}"), false, "Copy the value"));
+    }
     kit::button(ui, "Export CSV…", kit::Button::Normal)
         .backing_on_hover_text("Write the node's results to a CSV file (results.export.csv)")
         .clicked()
@@ -723,8 +691,7 @@ fn probed(app: &ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) -> Option<
 fn explicit(ui: &mut egui::Ui, e: &ExplicitResult, plot: &Plot, t: &Tokens, run: &mut Vec<(&'static str, Value)>) {
     let time_unit = unit_of(Quantity::Time, &plot.units);
     if let Some((k, time, n)) = plot.frame() {
-        ui.horizontal(|ui| {
-            ui.label("Frame");
+        kit::row(ui, "Frame", |ui| {
             let mut frame = k;
             if kit::slider(
                 ui,
@@ -737,7 +704,7 @@ fn explicit(ui: &mut egui::Ui, e: &ExplicitResult, plot: &Plot, t: &Tokens, run:
                 run.push(("results.frame", json!({"frame": frame})));
             }
         });
-        ui.label(RichText::new(format!("t = {}", with_unit(number(time), time_unit.as_deref()))).color(t.text_dim));
+        kit::status_line(ui, &format!("t = {}", with_unit(number(time), time_unit.as_deref())), kit::StatusTone::Dim);
     }
     let h = &e.history;
     if h.time.is_empty() {
@@ -750,7 +717,7 @@ fn explicit(ui: &mut egui::Ui, e: &ExplicitResult, plot: &Plot, t: &Tokens, run:
         ("External work", t.error, |e| e.external),
     ];
     let energy_unit = unit_of(Quantity::Energy, &plot.units);
-    ui.label(RichText::new(titled("Energies", energy_unit.as_deref())).color(t.text_dim));
+    kit::text(ui, &titled("Energies", energy_unit.as_deref()), kit::Text::Heading("fc_results_energies"));
     let (time, energy) = (|s: f64| shown_in(Quantity::Time, s, &plot.units), |j: f64| shown_in(Quantity::Energy, j, &plot.units));
     let lines: Vec<Line> = series
         .iter()
@@ -779,22 +746,20 @@ fn explicit(ui: &mut egui::Ui, e: &ExplicitResult, plot: &Plot, t: &Tokens, run:
     // The values at the frame's time.
     let Some(at_now) = h.energies.get(nearest(now)) else { return };
     let frame = plot.frame().map_or_else(String::new, |(k, ..)| format!(", frame {k}"));
-    ui.label(RichText::new(format!("At t = {}{frame}", with_unit(number(now), time_unit.as_deref()))).small().color(t.text_dim));
-    egui::Grid::new("fc_results_energies").num_columns(2).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
-        for (name, color, f) in &series {
-            // The series' line as its key, the name in the text colour: line colours are not
-            // text colours (the accent, warm and error fall short of 4.5:1 on a dark panel).
-            ui.horizontal(|ui| {
-                let (key, _) = ui.allocate_exact_size(vec2(14.0, 10.0), egui::Sense::hover());
-                ui.painter().line_segment([key.left_center(), key.right_center()], Stroke::new(2.0, *color));
-                ui.label(*name);
-            });
-            ui.label(with_unit(number_in(energy(f(at_now)), scale), energy_unit.as_deref()));
-            ui.end_row();
-        }
-        ui.label(RichText::new("Balance").color(t.text_dim)).backing_on_hover_text("The energy balance's relative error");
-        ui.label(number(at_now.balance));
-        ui.end_row();
+    kit::status_line(ui, &format!("At t = {}{frame}", with_unit(number(now), time_unit.as_deref())), kit::StatusTone::Dim);
+    let k = solidcraft_theme::Tokens::get();
+    for (name, color, f) in &series {
+        // The series' line as its key beside the value, the name in the label colour: line
+        // colours are not text colours (the accent, warm and error fall short of 4.5:1 on a dark
+        // panel).
+        kit::row(ui, name, |ui| {
+            let (key, _) = ui.allocate_exact_size(vec2(k.space_14, k.space_10), egui::Sense::hover());
+            ui.painter().line_segment([key.left_center(), key.right_center()], Stroke::new(2.0, *color));
+            kit::text(ui, &with_unit(number_in(energy(f(at_now)), scale), energy_unit.as_deref()), kit::Text::Cell);
+        });
+    }
+    kit::row(ui, "Balance", |ui| {
+        kit::text(ui, &number(at_now.balance), kit::Text::Cell).backing_on_hover_text("The energy balance's relative error")
     });
 }
 
@@ -835,7 +800,8 @@ fn line_plot(ui: &mut egui::Ui, lines: &[Line], x_name: &str, x_unit: Option<&st
     let (outer, response) = ui.allocate_exact_size(vec2(ui.available_width(), PLOT_HEIGHT + AXIS_BOTTOM), egui::Sense::click_and_drag());
     let rect = Rect::from_min_max(outer.min + vec2(AXIS_LEFT, 0.0), outer.max - vec2(0.0, AXIS_BOTTOM));
     let painter = ui.painter_at(outer);
-    painter.rect_filled(rect, 2.0, t.field);
+    let k = solidcraft_theme::Tokens::get();
+    painter.rect_filled(rect, k.radius_sm, t.field);
     let finite = || lines.iter().flat_map(|l| l.points.iter()).filter(|(x, y)| x.is_finite() && y.is_finite());
     let (mut x0, mut x1) = finite().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), (x, _)| (a.min(*x), b.max(*x)));
     if !(x0 <= x1) {
@@ -847,7 +813,7 @@ fn line_plot(ui: &mut egui::Ui, lines: &[Line], x_name: &str, x_unit: Option<&st
     let lo = finite().map(|p| p.1).fold(0.0, f64::min);
     let hi = if hi > lo { hi } else { lo + 1.0 };
     let axes = Axes { rect, x0, x1, lo, hi };
-    let small = FontId::proportional(10.0);
+    let small = FontId::proportional(k.font_micro);
     let scale = hi.abs().max(lo.abs());
     painter.text(pos2(rect.left() - 4.0, rect.top()), Align2::RIGHT_TOP, number_in(hi, scale), small.clone(), t.text_dim);
     painter.text(pos2(rect.left() - 4.0, rect.bottom()), Align2::RIGHT_BOTTOM, number_in(lo, scale), small.clone(), t.text_dim);
@@ -934,21 +900,14 @@ pub fn xy_options(s: &fieldcraft_engine::Session, r: &fieldcraft_engine::StepRes
 fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, run: &mut Vec<(&'static str, Value)>) -> Option<Value> {
     let step = plot.view.step.clone();
     let mut close = false;
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("XY Plot").strong());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            close = kit::button(ui, "×", kit::Button::Small).backing_on_hover_text("Close the XY plot").clicked();
-        });
-    });
+    kit::panel::header(ui, "results.xy", "XY Plot", || close = true);
     if close {
         app.xy = None;
         return None;
     }
     let options = xy_options(&app.session, &plot.result);
     if options.is_empty() {
-        ui.label(
-            RichText::new("A linear static step has one state: plot a nonlinear static, explicit, heat or frequency step").small().color(t.text_dim),
-        );
+        kit::status_line(ui, "A linear static step has one state: plot a nonlinear static, explicit, heat or frequency step", kit::StatusTone::Dim);
         return None;
     }
     let probed = app.probe.as_ref().filter(|p| p.step == step).map(|p| p.node);
@@ -965,18 +924,20 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
         .unwrap_or_default();
     let shown = options.iter().find(|(_, y, x)| (y, x) == (&template.0, &template.1)).map_or("", |(l, ..)| l.as_str());
     let (mut picked, mut against) = template.clone();
-    kit::bounded_dropdown_menu(ui, "fc_results_xy", shown, ui.available_width() - 8.0, |ui| {
-        for (label, y, x) in &options {
-            if ui.selectable_label((y, x) == (&template.0, &template.1), label).clicked() {
-                (picked, against) = (y.clone(), x.clone());
+    kit::row(ui, "Quantity", |ui| {
+        kit::bounded_dropdown_menu(ui, "fc_results_xy", shown, ui.available_width(), |ui| {
+            for (label, y, x) in &options {
+                if ui.selectable_label((y, x) == (&template.0, &template.1), label).clicked() {
+                    (picked, against) = (y.clone(), x.clone());
+                }
             }
-        }
+        })
     });
     (xy.y, xy.x) = (Some(picked.clone()), against.clone());
     let y = if picked.get("field").is_some() {
         let Some(node) = xy.node else {
             (xy.key, xy.series) = (None, None);
-            ui.label(RichText::new("Click the model to pick the node").small().color(t.text_dim));
+            kit::status_line(ui, "Click the model to pick the node", kit::StatusTone::Dim);
             return None;
         };
         let mut y = picked;
@@ -1011,7 +972,7 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
         _ if axis == "mode" => Some(plot.view.mode.saturating_sub(1)),
         _ => None,
     };
-    ui.label(RichText::new(s["y"]["label"].as_str().unwrap_or_default()).small().color(t.text_dim));
+    kit::status_line(ui, s["y"]["label"].as_str().unwrap_or_default(), kit::StatusTone::Dim);
     let x_name = match axis {
         "load_factor" => "λ",
         "time" => "t",
@@ -1044,7 +1005,7 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
     }
     if let Some(i) = current {
         let at = |v: &[f64]| v.get(i).map_or("—".into(), |x| number(*x));
-        ui.label(RichText::new(format!("{x_label} {}: {}", at(&xs), at(&ys))).small().color(t.text_dim));
+        kit::status_line(ui, &format!("{x_label} {}: {}", at(&xs), at(&ys)), kit::StatusTone::Dim);
     }
     kit::button(ui, "Export CSV…", kit::Button::Normal)
         .backing_on_hover_text("Write the series to a CSV file (results.xy)")
@@ -1065,24 +1026,20 @@ impl ModelApp {
 
 /// A heat step's balance: the heat each heat load carries in (negative: out), the prescribed
 /// temperatures' total, and what is left over (about 0 when steady).
-fn heat_flows(ui: &mut egui::Ui, flows: &Value, units: &fieldcraft_model::DisplaySystem, t: &Tokens) {
-    ui.label(RichText::new(titled("Heat flow into the body", unit_of(Quantity::Power, units).as_deref())).color(t.text_dim));
-    egui::Grid::new("fc_results_heat").num_columns(2).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
-        let row = |ui: &mut egui::Ui, name: &str, v: Option<f64>| {
-            ui.label(name);
-            ui.label(v.map_or("—".into(), number));
-            ui.end_row();
-        };
-        for l in flows["loads"].as_array().into_iter().flatten() {
-            row(ui, &format!("{} ({})", l["name"].as_str().unwrap_or("?"), l["type"].as_str().unwrap_or("").replace('_', " ")), l["heat"].as_f64());
-        }
-        row(ui, "Prescribed temperatures", flows["reactions"].as_f64());
-        row(ui, "Imbalance", flows["imbalance"].as_f64());
-    });
+fn heat_flows(ui: &mut egui::Ui, flows: &Value, units: &fieldcraft_model::DisplaySystem) {
+    kit::text(ui, &titled("Heat flow into the body", unit_of(Quantity::Power, units).as_deref()), kit::Text::Heading("fc_results_heat"));
+    let row = |ui: &mut egui::Ui, name: &str, v: Option<f64>| {
+        kit::row(ui, name, |ui| kit::text(ui, &v.map_or("—".into(), number), kit::Text::Cell));
+    };
+    for l in flows["loads"].as_array().into_iter().flatten() {
+        row(ui, &format!("{} ({})", l["name"].as_str().unwrap_or("?"), l["type"].as_str().unwrap_or("").replace('_', " ")), l["heat"].as_f64());
+    }
+    row(ui, "Prescribed temperatures", flows["reactions"].as_f64());
+    row(ui, "Imbalance", flows["imbalance"].as_f64());
 }
 
 /// Directional open-face transport from the displayed fluid frame.
-fn port_transport(ui: &mut egui::Ui, f: &FluidResult, pick: fieldcraft_engine::results::Pick, units: &fieldcraft_model::DisplaySystem, t: &Tokens) {
+fn port_transport(ui: &mut egui::Ui, f: &FluidResult, pick: fieldcraft_engine::results::Pick, units: &fieldcraft_model::DisplaySystem) {
     let Ok(frame) = fieldcraft_engine::flow::frame_index(f, pick) else { return };
     if !f.open_faces.contains(&true) {
         return;
@@ -1090,38 +1047,38 @@ fn port_transport(ui: &mut egui::Ui, f: &FluidResult, pick: fieldcraft_engine::r
     kit::section(ui, "fc_inlets_outlets", "Inlets and outlets", false, |ui| {
         let report = fieldcraft_engine::results::fluid_ports(f, frame, units);
         let Some(faces) = report["faces"].as_array() else {
-            ui.label(RichText::new(report["error"].as_str().unwrap_or("Port fields unavailable")).color(t.error));
+            kit::status_line(ui, report["error"].as_str().unwrap_or("Port fields unavailable"), kit::StatusTone::Error);
             return;
         };
-        ui.label(RichText::new("From the displayed frame").small().color(t.text_dim));
+        kit::status_line(ui, "From the displayed frame", kit::StatusTone::Dim);
         let format =
             |v: &Value, quantity: &str| v.as_f64().map(|v| with_unit(number(v), report["units"][quantity].as_str())).unwrap_or_else(|| "—".into());
         for face in faces {
-            ui.label(RichText::new(face["face"].as_str().unwrap_or("?")).strong());
-            egui::Grid::new(("fc_port", face["face"].as_str().unwrap_or("?"))).num_columns(3).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
-                ui.label("");
-                ui.label("In");
-                ui.label("Out");
-                ui.end_row();
-                for (label, key, quantity) in [
-                    ("Volume flow", "volume_flow", "volume_flow"),
-                    ("Mass flow", "mass_flow", "mass_flow"),
-                    ("Mixed temperature", "temperature", "temperature"),
-                    ("Static pressure", "pressure", "pressure"),
-                    ("Sensible heat", "sensible_heat", "power"),
-                ] {
-                    ui.label(titled(label, report["units"][quantity].as_str()));
-                    let amount = |v: &Value| v.as_f64().map(number).unwrap_or_else(|| "—".into());
-                    ui.label(amount(&face["inflow"][key]));
-                    ui.label(amount(&face["outflow"][key]));
-                    ui.end_row();
-                }
-            });
+            let name = face["face"].as_str().unwrap_or("?");
+            kit::text(ui, name, kit::Text::Heading("fc_port"));
+            let rows: Vec<Vec<String>> = [
+                ("Volume flow", "volume_flow", "volume_flow"),
+                ("Mass flow", "mass_flow", "mass_flow"),
+                ("Mixed temperature", "temperature", "temperature"),
+                ("Static pressure", "pressure", "pressure"),
+                ("Sensible heat", "sensible_heat", "power"),
+            ]
+            .into_iter()
+            .map(|(label, key, quantity)| {
+                let amount = |v: &Value| v.as_f64().map(number).unwrap_or_else(|| "—".into());
+                vec![titled(label, report["units"][quantity].as_str()), amount(&face["inflow"][key]), amount(&face["outflow"][key])]
+            })
+            .collect();
+            crate::reply::text_table(ui, &format!("fc_port_{name}"), &["", "In", "Out"], &rows);
         }
-        ui.label(format!("Net mass out: {}", format(&report["net_mass_flow"], "mass_flow")));
-        ui.label(format!("Net heat out: {}", format(&report["net_sensible_heat"], "power")));
-        ui.label(RichText::new("Mass uses reference density. Heat is advective transport, relative to the mixed inflow temperature below; wall heat, conduction and storage are separate.").small().color(t.text_dim));
-        ui.label(format!("Mixed inflow temperature: {}", format(&report["heat_reference"], "temperature")));
+        kit::row(ui, "Net mass out", |ui| kit::text(ui, &format(&report["net_mass_flow"], "mass_flow"), kit::Text::Cell));
+        kit::row(ui, "Net heat out", |ui| kit::text(ui, &format(&report["net_sensible_heat"], "power"), kit::Text::Cell));
+        kit::status_line(
+            ui,
+            "Mass uses reference density. Heat is advective transport, relative to the mixed inflow temperature below; wall heat, conduction and storage are separate.",
+            kit::StatusTone::Dim,
+        );
+        kit::row(ui, "Mixed inflow temperature", |ui| kit::text(ui, &format(&report["heat_reference"], "temperature"), kit::Text::Cell));
     });
 }
 
@@ -1142,53 +1099,76 @@ fn by_margin(checks: &[ComponentCheck]) -> Vec<&ComponentCheck> {
 
 /// A fluid step's conducting solids against their temperature limits: the verdict, then per
 /// solid its peak, limit and margin, those over their limit first and marked.
-fn component_limits(ui: &mut egui::Ui, f: &FluidResult, units: &fieldcraft_model::DisplaySystem, t: &Tokens) {
+fn component_limits(ui: &mut egui::Ui, f: &FluidResult, units: &fieldcraft_model::DisplaySystem) {
     let checks = f.components();
     if checks.iter().all(|c| c.peak.is_none()) {
         return;
     }
-    ui.separator();
+    kit::divider(ui, "fc_results_components");
     let unit = unit_of(Quantity::Temperature, units);
-    ui.label(RichText::new(titled("Component temperatures", unit.as_deref())).color(t.text_dim));
+    kit::text(ui, &titled("Component temperatures", unit.as_deref()), kit::Text::Heading("fc_results_components"));
     let over = checks.iter().filter(|c| c.ok == Some(false)).count();
     let limited = checks.iter().filter(|c| c.limit.is_some()).count();
     match f.components_ok() {
         Some(true) => {
-            ui.label(RichText::new(format!("✔ Every component stays under its limit ({limited} checked)")).color(t.ok));
+            kit::check_status_line(
+                ui,
+                "fc_results_components:verdict",
+                &format!("Every component stays under its limit ({limited} checked)"),
+                kit::CheckStatus::Ok,
+            );
         }
         Some(false) => {
-            ui.label(RichText::new(format!("⚠ {over} of {limited} components over their limit")).color(t.error));
+            kit::check_status_line(
+                ui,
+                "fc_results_components:verdict",
+                &format!("{over} of {limited} components over their limit"),
+                kit::CheckStatus::Error,
+            );
         }
         None if limited == 0 => {
-            ui.label(RichText::new("No temperature limits: set one per conducting solid").small().color(t.text_dim));
+            kit::status_line(ui, "No temperature limits: set one per conducting solid", kit::StatusTone::Dim);
         }
         None => {}
     }
     let temperature = |k: f64| number(shown_in(Quantity::Temperature, k, units));
-    egui::Grid::new("fc_results_components").num_columns(4).spacing(vec2(8.0, 2.0)).striped(true).show(ui, |ui| {
-        let difference = unit_of(Quantity::TemperatureDifference, units);
-        for h in ["", "Peak", "Limit", &titled("Margin", difference.as_deref())] {
-            ui.label(RichText::new(h).small().color(t.text_dim));
-        }
-        ui.end_row();
+    let difference = unit_of(Quantity::TemperatureDifference, units);
+    let margin = titled("Margin", difference.as_deref());
+    let columns = [
+        kit::Column::new("", 1.6).flex(),
+        kit::Column::new("Peak", 1.0).flex(),
+        kit::Column::new("Limit", 1.0).flex(),
+        kit::Column::new(&margin, 1.0).flex(),
+    ];
+    kit::table_custom(ui, "fc_results_components", &columns, "", |ui, table| {
+        table.headers(ui, |_, _| false);
         for c in by_margin(&checks) {
-            let (mark, colour) = match c.ok {
-                Some(false) => ("⚠ ", t.error),
-                Some(true) => ("✔ ", t.ok),
-                None => ("", t.text),
-            };
             let tip = c.peak.map(|p| {
                 let at = with_unit(number(shown_in(Quantity::Time, p.time, units)), unit_of(Quantity::Time, units).as_deref());
                 if p.steady { format!("Steady value (t = {at})") } else { format!("Highest over the frames, at t = {at}") }
             });
-            let name = ui.label(RichText::new(format!("{mark}{}", c.body)).color(colour));
-            if let Some(tip) = tip {
-                name.backing_on_hover_text(tip);
-            }
-            ui.label(c.peak.map_or("—".into(), |p| temperature(p.temperature)));
-            ui.label(c.limit.map_or("—".into(), temperature));
-            ui.label(RichText::new(c.margin.map_or("—".into(), |m| number(shown_in(Quantity::TemperatureDifference, m, units)))).color(colour));
-            ui.end_row();
+            let over = c.ok == Some(false);
+            table.row(ui, &c.body, false, |row| {
+                row.cell(|ui| {
+                    // Over its limit: the error mark and the word in the margin say so, not only a colour.
+                    let name = match c.ok {
+                        Some(ok) => kit::check_status_line(
+                            ui,
+                            &format!("fc_results_components:{}", c.body),
+                            &c.body,
+                            if ok { kit::CheckStatus::Ok } else { kit::CheckStatus::Error },
+                        ),
+                        None => kit::text(ui, &c.body, kit::Text::Cell),
+                    };
+                    if let Some(tip) = &tip {
+                        name.backing_on_hover_text(tip);
+                    }
+                });
+                row.cell(|ui| kit::text(ui, &c.peak.map_or("—".into(), |p| temperature(p.temperature)), kit::Text::Cell));
+                row.cell(|ui| kit::text(ui, &c.limit.map_or("—".into(), temperature), kit::Text::Cell));
+                let margin = c.margin.map_or("—".into(), |m| number(shown_in(Quantity::TemperatureDifference, m, units)));
+                row.cell(|ui| kit::text(ui, &margin, kit::Text::Value("fc_results_components:margin", over)));
+            });
         }
     });
 }
@@ -1196,7 +1176,7 @@ fn component_limits(ui: &mut egui::Ui, f: &FluidResult, units: &fieldcraft_model
 /// The reaction sums: per set and over the model, the force and the moment about the point, and
 /// the applied total beside the reacted one (they balance in equilibrium). Round-off below a
 /// billionth of the largest force (moment) is 0.
-fn reactions_table(ui: &mut egui::Ui, r: &Value, plot: &Plot, t: &Tokens) {
+fn reactions_table(ui: &mut egui::Ui, r: &Value, plot: &Plot) {
     let vector = |v: &Value| -> Option<[f64; 3]> { serde_json::from_value(v.clone()).ok() };
     let rows: Vec<(String, Option<[f64; 3]>, Option<[f64; 3]>)> = r["sets"]
         .as_array()
@@ -1214,43 +1194,30 @@ fn reactions_table(ui: &mut egui::Ui, r: &Value, plot: &Plot, t: &Tokens) {
     let moment_scale = largest(&mut rows.iter().filter_map(|r| r.2));
     let (force, moment) = (unit_of(Quantity::Force, &plot.units), unit_of(Quantity::Moment, &plot.units));
     let about = vector(&r["about"]).unwrap_or_default();
-    ui.label(RichText::new(format!("Moments about ({})", components(&about, 0.0))).small().color(t.text_dim));
-    let cells = |ui: &mut egui::Ui, v: Option<[f64; 3]>, scale: f64| {
-        for k in 0..3 {
-            ui.add(egui::Label::new(v.and_then(|v| v.get(k).copied()).map_or("—".into(), |x| number_in(x, scale))).extend());
-        }
+    kit::status_line(ui, &format!("Moments about ({})", components(&about, 0.0)), kit::StatusTone::Dim);
+    let cells = |v: Option<[f64; 3]>, scale: f64| -> Vec<String> {
+        (0..3).map(|k| v.and_then(|v| v.get(k).copied()).map_or("—".into(), |x| number_in(x, scale))).collect()
     };
-    egui::Grid::new("fc_results_reactions").num_columns(4).spacing(vec2(8.0, 2.0)).striped(true).show(ui, |ui| {
-        for h in ["", "X", "Y", "Z"] {
-            ui.label(RichText::new(h).small().color(t.text_dim));
-        }
-        ui.end_row();
-        for (name, f, m) in &rows {
-            ui.label(RichText::new(name).strong());
-            ui.end_row();
-            ui.label(RichText::new(titled("F", force.as_deref())).color(t.text_dim));
-            cells(ui, *f, force_scale);
-            ui.end_row();
-            ui.label(RichText::new(titled("M", moment.as_deref())).color(t.text_dim));
-            cells(ui, *m, moment_scale);
-            ui.end_row();
-        }
-        if applied.is_some() {
-            ui.label(RichText::new(titled("Applied F", force.as_deref())).color(t.text_dim));
-            cells(ui, applied, force_scale);
-            ui.end_row();
-        }
-    });
+    let (f_label, m_label) = (titled("F", force.as_deref()), titled("M", moment.as_deref()));
+    for (name, f, m) in &rows {
+        kit::text(ui, name, kit::Text::Heading("fc_results_reactions"));
+        let table = [[vec![f_label.clone()], cells(*f, force_scale)].concat(), [vec![m_label.clone()], cells(*m, moment_scale)].concat()];
+        crate::reply::text_table(ui, &format!("fc_results_reactions_{name}"), &["", "X", "Y", "Z"], &table);
+    }
+    if applied.is_some() {
+        let table = [[vec![titled("Applied F", force.as_deref())], cells(applied, force_scale)].concat()];
+        crate::reply::text_table(ui, "fc_results_reactions_applied", &["", "X", "Y", "Z"], &table);
+    }
     // Equilibrium: the reactions over the whole model balance the applied loads.
     if let (Some(total), Some(applied)) = (rows.last().and_then(|r| r.1), applied) {
         let residual = (0..3).map(|k| (total[k] + applied[k]).abs()).fold(0.0, f64::max);
         let balanced = residual <= fieldcraft_engine::results::BALANCE_TOLERANCE * force_scale.max(f64::MIN_POSITIVE);
-        let (text, color) = if balanced {
-            ("✔ Reactions balance the applied loads".to_string(), t.ok)
+        if balanced {
+            kit::check_status_line(ui, "fc_results_reactions:balance", "Reactions balance the applied loads", kit::CheckStatus::Ok);
         } else {
-            (format!("Reactions and applied loads differ by {}", with_unit(number(residual), force.as_deref())), t.warm)
-        };
-        ui.label(RichText::new(text).small().color(color));
+            let text = format!("Reactions and applied loads differ by {}", with_unit(number(residual), force.as_deref()));
+            kit::check_status_line(ui, "fc_results_reactions:balance", &text, kit::CheckStatus::Warning);
+        }
     }
 }
 
@@ -1392,5 +1359,51 @@ mod tests {
         let over = label_box(pos2(100.0, 295.0), size, bounds, Some(low));
         assert_eq!(over.max.y, low.min.y - LABEL_PAD.y);
         assert!(!over.intersects(low));
+    }
+
+    /// The results controls, Path Plot and command replies draw with the kit's rows, tables,
+    /// number fields, dividers, buttons and status marks, and their painted text with the theme's
+    /// font sizes: none of egui's raw grids, drag values, separators, buttons, links or
+    /// checkboxes, no literal font size and no emoji for a severity (UI audit K4, K5, K7, K8).
+    #[test]
+    fn results_path_and_replies_draw_with_the_kit() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let raw = [
+            concat!("egui::", "Grid"),
+            concat!("egui::", "DragValue"),
+            concat!("ui.", "separator()"),
+            concat!("ui.", "button("),
+            concat!(".", "button(\""),
+            concat!("ui.", "link("),
+            concat!("egui::", "Link"),
+            concat!("ui.", "checkbox("),
+            concat!("ui.", "selectable_value("),
+            concat!("RichText::new(\"", "Path Plot\")"),
+            concat!("RichText::new(\"", "XY Plot\")"),
+            "\u{26d4}",
+            "\u{26a0}",
+            "\u{2714}",
+        ];
+        let mut bad = Vec::new();
+        for file in ["results_panel.rs", "reply.rs", "path_panel.rs", "results.rs"] {
+            let text = std::fs::read_to_string(dir.join(file)).unwrap();
+            // The source before its tests: the tests name what they look for.
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            for (n, line) in code.lines().enumerate() {
+                for r in raw {
+                    if line.contains(r) {
+                        bad.push(format!("{file}:{}: {r}", n + 1));
+                    }
+                }
+                // A painted font's size is a theme token, never a number.
+                if let Some(at) = line.find(concat!("FontId::", "proportional(")) {
+                    let arg = &line[at + concat!("FontId::", "proportional(").len()..];
+                    if arg.starts_with(|c: char| c.is_ascii_digit()) {
+                        bad.push(format!("{file}:{}: literal font size", n + 1));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "use the kit's rows, tables, fields, dividers, buttons and theme tokens: {bad:#?}");
     }
 }
