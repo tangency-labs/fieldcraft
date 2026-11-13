@@ -36,6 +36,13 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
         }
     };
     eprintln!("fieldcraft: control server listening on 127.0.0.1:{port}");
+    listen(listener, tx, ctx, REPLY_TIMEOUT);
+    rx
+}
+
+/// Accept connections on `listener` on a thread of their own, each served on its own thread;
+/// a request no one answers within `timeout` gets a timeout reply.
+fn listen(listener: TcpListener, tx: Sender<ControlRequest>, ctx: egui::Context, timeout: Duration) {
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             if OPEN.fetch_add(1, Ordering::Relaxed) >= MAX_CONNECTIONS {
@@ -47,12 +54,11 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
             let tx = tx.clone();
             let ctx = ctx.clone();
             std::thread::spawn(move || {
-                serve(stream, tx, ctx);
+                serve(stream, tx, ctx, timeout);
                 OPEN.fetch_sub(1, Ordering::Relaxed);
             });
         }
     });
-    rx
 }
 
 /// One line without its newline, or `None` at the end of the stream. A client that sends
@@ -87,7 +93,7 @@ fn read_line(r: &mut impl BufRead, max: usize) -> std::io::Result<Option<Vec<u8>
     }
 }
 
-fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context) {
+fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context, timeout: Duration) {
     let Ok(read) = stream.try_clone() else { return };
     let mut out = stream;
     let mut reader = BufReader::new(read);
@@ -116,7 +122,7 @@ fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context) {
                     break;
                 }
                 ctx.request_repaint();
-                let mut r = rrx.recv_timeout(REPLY_TIMEOUT).unwrap_or_else(|_| json!({"ok": false, "error": "timeout"}));
+                let mut r = rrx.recv_timeout(timeout).unwrap_or_else(|_| json!({"ok": false, "error": "timeout"}));
                 // A request waiting for a job (a solve, a mesher): its reply comes when the job
                 // ends, however long it runs; the job always answers, even when cancelled.
                 if r.get(fieldcraft_ui_egui::control::PENDING).is_some() {
@@ -164,5 +170,49 @@ mod tests {
         assert_eq!(got, vec!["{\"a\":1}", "", "{\"b\":2}", "last"]);
         let mut r = BufReader::with_capacity(4, b"0123456789\n".as_slice());
         assert!(read_line(&mut r, 5).is_err());
+    }
+
+    /// A server on an ephemeral port whose replies wait at most `timeout`.
+    fn server(timeout: Duration) -> (u16, Receiver<ControlRequest>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = channel();
+        listen(listener, tx, egui::Context::default(), timeout);
+        (port, rx)
+    }
+
+    fn ask(port: u16, line: &str) -> Value {
+        let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut out = stream.try_clone().unwrap();
+        writeln!(out, "{line}").unwrap();
+        let mut reply = String::new();
+        BufReader::new(stream).read_line(&mut reply).unwrap();
+        serde_json::from_str(&reply).unwrap()
+    }
+
+    /// Requests are answered with no frame ever run (the context below never paints, as with a
+    /// locked screen): the window's thread only has to take them off the channel. A connection
+    /// opened after others have been served is accepted and answered too.
+    #[test]
+    fn requests_are_answered_without_a_frame() {
+        let (port, rx) = server(REPLY_TIMEOUT);
+        std::thread::spawn(move || {
+            for req in rx {
+                let _ = req.reply.send(json!({"ok": true, "method": req.method}));
+            }
+        });
+        for id in 1..=3 {
+            let r = ask(port, &format!(r#"{{"id":{id},"method":"ui.inspect"}}"#));
+            assert_eq!(r, json!({"id": id, "ok": true, "method": "ui.inspect"}));
+        }
+    }
+
+    /// A request nobody takes is answered with a timeout by the server's own thread.
+    #[test]
+    fn an_unanswered_request_times_out() {
+        let (port, _rx) = server(Duration::from_millis(50));
+        let r = ask(port, r#"{"id":7,"method":"ui.inspect"}"#);
+        assert_eq!(r, json!({"id": 7, "ok": false, "error": "timeout"}));
     }
 }
