@@ -182,3 +182,75 @@ fn a_size_box_refines_the_grid_inside_it() {
     let e = octree_hex_mesh(&s, &deep, &shallow).unwrap_err().to_string();
     assert!(e.contains("max_depth"), "{e}");
 }
+
+/// A prism along x of length `l` over the right triangle (0, 0), (a, 0), (0, a) in (y, z), its
+/// two 45° wedges along x; every side divided into `n` and the length into `m`, five faces.
+fn wedge_prism(a: f64, l: f64, n: usize, m: usize) -> BoundarySurface {
+    let mut ids: BTreeMap<(usize, usize, usize), u32> = BTreeMap::new();
+    let mut pts: Vec<[f64; 3]> = Vec::new();
+    let mut id = |i: usize, j: usize, k: usize| -> u32 {
+        *ids.entry((i, j, k)).or_insert_with(|| {
+            pts.push([l * k as f64 / m as f64, a * i as f64 / n as f64, a * j as f64 / n as f64]);
+            (pts.len() - 1) as u32
+        })
+    };
+    let (mut tris, mut tags): (Vec<[u32; 3]>, Vec<u32>) = (Vec::new(), Vec::new());
+    // The ends: triangular grids, (i, j) with i + j ≤ n.
+    for (k, tag) in [(0, 0), (m, 1)] {
+        for i in 0..n {
+            for j in 0..n - i {
+                tris.push([id(i, j, k), id(i + 1, j, k), id(i, j + 1, k)]);
+                tags.push(tag);
+                if i + j + 1 < n {
+                    tris.push([id(i + 1, j, k), id(i + 1, j + 1, k), id(i, j + 1, k)]);
+                    tags.push(tag);
+                }
+            }
+        }
+    }
+    // The sides, each a strip of quads along x: z = 0 (j = 0), y = 0 (i = 0), the slope (i + j = n).
+    let sides: [(Box<dyn Fn(usize) -> (usize, usize)>, u32); 3] =
+        [(Box::new(|s| (s, 0)), 2), (Box::new(|s| (0, s)), 3), (Box::new(move |s| (n - s, s)), 4)];
+    for (at, tag) in &sides {
+        for s in 0..n {
+            for k in 0..m {
+                let ((i0, j0), (i1, j1)) = (at(s), at(s + 1));
+                let q = [id(i0, j0, k), id(i1, j1, k), id(i1, j1, k + 1), id(i0, j0, k + 1)];
+                tris.extend([[q[0], q[1], q[2]], [q[0], q[2], q[3]]]);
+                tags.extend([*tag, *tag]);
+            }
+        }
+    }
+    // Every triangle facing outward: away from the prism's centroid.
+    let centre = [l / 2.0, a / 3.0, a / 3.0];
+    for t in &mut tris {
+        let [p, q, r] = t.map(|v| pts[v as usize]);
+        let nrm = crate::vec3::cross(crate::vec3::sub(q, p), crate::vec3::sub(r, p));
+        let mid = [(p[0] + q[0] + r[0]) / 3.0, (p[1] + q[1] + r[1]) / 3.0, (p[2] + q[2] + r[2]) / 3.0];
+        if crate::vec3::dot(nrm, crate::vec3::sub(mid, centre)) < 0.0 {
+            t.swap(1, 2);
+        }
+    }
+    BoundarySurface::new(&pts, &tris, &tags, &crate::surface::SurfaceOptions::default()).unwrap()
+}
+
+/// A wedge's wall is measured no nearer its edge than the local size: the prism's 45° wedges are
+/// at least `h tan 45° = h` thick there, however finely the faces are tessellated. Measured at
+/// every triangle centre, the fine tessellation's thinnest wall was its triangles' distance from
+/// the edge, a twentieth of the coarse one's, and the grid it asked for refined with it (the
+/// partitioned bracket's octree, meshed from a finer surface, then failed).
+#[test]
+fn a_wedges_wall_does_not_depend_on_its_tessellation() {
+    let (a, l, h) = (10.0, 40.0, 2.0);
+    let options = OctreeOptions::default();
+    let mut thinnest = Vec::new();
+    for (n, m) in [(1, 1), (20, 40)] {
+        let s = wedge_prism(a, l, n, m);
+        let g = Geometry::new(&s, options.sharp_angle, options.blade_angle).unwrap();
+        let t = triangle_thickness(&g, &UniformSize(h));
+        thinnest.push(t.iter().copied().fold(f64::INFINITY, f64::min));
+    }
+    for (k, w) in thinnest.iter().enumerate() {
+        assert!(*w >= h * (1.0 - 1e-9), "tessellation {k}: the thinnest wall is {w}, under {h}: {thinnest:?}");
+    }
+}
