@@ -816,7 +816,7 @@ pub static CATALOGUE: &[Capability] = &[
     // Hide, show and isolate act on the browser's items, from their eyes and item menus; saved
     // views are also saved and shown from the Results panel's Views row.
     Capability {
-        more: &["view.save", "view.restore", "view.delete", "view.list"],
+        more: &["view.save", "view.restore", "view.delete", "view.list", "view.image.save"],
         ..covering(
             "view.show_all",
             "Show All",
@@ -1090,7 +1090,7 @@ mod tests {
     fn proposal_and_saved_view_commands_are_ribbon_rows() {
         assert!(find("geometry.defeature").is_some_and(|c| c.more.contains(&"geometry.defeature.propose")));
         let views = find("view.show_all").map(|c| c.more).unwrap_or_default();
-        for id in ["view.save", "view.restore", "view.delete", "view.list"] {
+        for id in ["view.save", "view.restore", "view.delete", "view.list", "view.image.save"] {
             assert!(views.contains(&id), "{id} is a row of Show All's drop-down");
         }
     }

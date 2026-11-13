@@ -14,6 +14,7 @@ pub(crate) mod file;
 pub(crate) mod forms;
 mod geometry;
 mod hex;
+mod image;
 mod initial;
 mod linearize;
 pub(crate) mod mesh;
@@ -93,6 +94,7 @@ pub static ALL: &[CommandSpec] = &[
     views::RESTORE,
     views::DELETE,
     views::LIST,
+    image::SAVE,
     datum::PARTITION,
     datum::DATUM_SUPPRESS,
     datum::PARTITION_SUPPRESS,
