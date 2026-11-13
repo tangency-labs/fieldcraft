@@ -3338,6 +3338,14 @@ mod tests {
         assert!(!problems(RENDER_SAVE, &json!({"name": "R", "view": "V", "frames": [-1, 4]})).is_empty());
     }
 
+    /// A render's frame range reads "From" and "To": the form shows a tuple's short lower-case
+    /// labels as axis letters ("to" would read "TO").
+    #[test]
+    fn render_frame_range_is_from_and_to() {
+        let Kind::NameOrValue { value, .. } = field_of("results.render.save", "frames").kind else { panic!("frames") };
+        assert!(matches!(value.kind, Kind::Tuple { labels: ["From", "To"], min: Some(0.0), whole: true, .. }), "{value:?}");
+    }
+
     /// A1-11: persistent face, edge and vertex names are topology fields of their sibling body,
     /// which the form's Pick fills from the selection.
     #[test]
