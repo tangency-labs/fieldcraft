@@ -866,7 +866,17 @@ pub(crate) fn project_to_face(ctx: &Ctx, f: usize, p: P) -> Option<P> {
         return Some(q);
     }
     let tag = face.id;
-    ctx.tree.closest(p, &|t| ctx.brep.tag(t) == Some(tag)).map(|h| h.point)
+    let hit = ctx.tree.closest(p, &|t| ctx.brep.tag(t) == Some(tag))?;
+    // On the exact surface of the member face the closest triangle tessellates, which lies
+    // within the chordal tolerance of it: a composite face is as exact as its members.
+    let member = ctx.brep.surface.tri_face().get(hit.triangle as usize);
+    let exact = face
+        .members
+        .iter()
+        .find(|(m, _)| Some(m) == member)
+        .and_then(|(_, s)| s.project(hit.point))
+        .filter(|q| dist(*q, hit.point) <= 2.0 * ctx.opts.chordal_tolerance.max(0.0) + 4.0 * ctx.tol);
+    Some(exact.unwrap_or(hit.point))
 }
 
 /// The point on every listed face (their common curve or corner) nearest `p`, by alternating

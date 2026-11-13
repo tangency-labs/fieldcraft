@@ -4,7 +4,7 @@
 //! the peak (at the upright's hole) agree between hex20 at 3 mm and 2 mm, and hex8 approaches them.
 //! For reference, a 48 016-element tet10 mesh of the unpartitioned part (curvature-refined, from
 //! the tet quality pipeline) gives a tip deflection of 0.5093 mm, 133.2 MPa at the fillet and a
-//! peak of 291.8 MPa; hex20 at 2 mm gives 0.5089 mm, 137.4 MPa and 297.0 MPa.
+//! peak of 291.8 MPa; hex20 at 2 mm gives 0.5095 mm, 132.4 MPa and 297.0 MPa.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use fieldcraft_engine::Session;
