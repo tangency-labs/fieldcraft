@@ -400,18 +400,19 @@ pub(crate) mod tests {
         assert!(s.model.size_controls().is_empty());
     }
 
-    /// A size box halves the tetrahedra inside it; a face control gives its face the size it
-    /// asks for, and the elements grow away from it no faster than the growth rate allows.
+    /// A size-3 box in a size-6 mesh makes the tetrahedra inside it those of a size-3 mesh; a
+    /// face control gives its face the size it asks for, and the elements grow away from it no
+    /// faster than the growth rate allows.
     #[test]
     fn tet_meshes_follow_size_controls() {
         let (mut s, _) = plate();
-        s.execute("mesh.tet.generate", &json!({"body": "Body1", "size": 6, "tolerance": 0.2})).unwrap();
+        s.execute("mesh.tet.generate", &json!({"body": "Body1", "size": 3, "tolerance": 0.2})).unwrap();
         let inside = |e: &&([f64; 3], [f64; 3])| [e.0, e.1].iter().all(|p| p[0] >= 30.0 && p[1] >= 0.0 && p[1] <= 10.0);
-        let before = mean(&edges(&s).iter().filter(inside).map(length).collect::<Vec<_>>());
+        let uniform = mean(&edges(&s).iter().filter(inside).map(length).collect::<Vec<_>>());
         s.execute("mesh.size.set", &json!({"name": "Zone", "size": 3, "box": {"min": [30, -1, -1], "max": [41, 10, 11]}})).unwrap();
         s.execute("mesh.tet.generate", &json!({"body": "Body1", "size": 6, "tolerance": 0.2})).unwrap();
-        let after = mean(&edges(&s).iter().filter(inside).map(length).collect::<Vec<_>>());
-        assert!((after / before - 0.5).abs() < 0.15, "box: {before} -> {after}");
+        let boxed = mean(&edges(&s).iter().filter(inside).map(length).collect::<Vec<_>>());
+        assert!((boxed / uniform - 1.0).abs() < 0.15, "box: {boxed} against {uniform} for a uniform size of 3");
 
         s.execute("mesh.size.clear", &json!({})).unwrap();
         let end = face_at_x(&s, 40.0);
