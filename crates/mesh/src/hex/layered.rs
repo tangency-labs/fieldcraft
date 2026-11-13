@@ -598,10 +598,6 @@ pub(crate) fn mesh(ctxs: &[Ctx], prepared: &Prepared, refine: u32) -> Result<(Ra
     }
     // The cross-section's nodes (curve interiors projected onto analytic walls) and quadrilaterals.
     let place = |c: usize, n: usize| -> Result<Vec<Q>> {
-        let pts3 = match spacing.get(c).copied().flatten() {
-            Some((seed, rev)) => crate::seeds::place(&curve3d(c), &seed.fractions(n, rev))?,
-            None => divide_polyline(ctx.field, &curve3d(c), n)?,
-        };
         let wall = arr
             .curves
             .get(c)
@@ -612,6 +608,15 @@ pub(crate) fn mesh(ctxs: &[Ctx], prepared: &Prepared, refine: u32) -> Result<(Ra
                 })
             })
             .filter(|s| !matches!(s, Surface::Plane { .. }));
+        // Divided along the wall's exact curve, not the tessellation's chords of it.
+        let curve = match wall {
+            Some(s) => super::onto_exact(&curve3d(c), &|p| s.project(p)),
+            None => curve3d(c),
+        };
+        let pts3 = match spacing.get(c).copied().flatten() {
+            Some((seed, rev)) => crate::seeds::place(&curve, &seed.fractions(n, rev))?,
+            None => divide_polyline(ctx.field, &curve, n)?,
+        };
         Ok(pts3.iter().map(|p| frame.coords(wall.and_then(|s| s.project(*p)).unwrap_or(*p)).0).collect())
     };
     let section::Section { nodes: nodes2, quads: region_quads, schemes } =

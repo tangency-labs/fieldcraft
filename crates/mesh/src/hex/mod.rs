@@ -245,6 +245,8 @@ pub(crate) struct Ctx<'a> {
     /// The seed on each B-rep edge (index into `opts.seeds`, and whether the edge runs from the
     /// seed's end to its start).
     pub edge_seeds: Vec<Option<(usize, bool)>>,
+    /// Each B-rep edge's exact polyline once made ([`Ctx::exact_edge_points`]).
+    exact: Vec<std::sync::OnceLock<Vec<P>>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -262,7 +264,8 @@ impl<'a> Ctx<'a> {
     ) -> Result<Ctx<'a>> {
         let curves: Vec<Vec<P>> = (0..brep.edges.len()).map(|e| brep.edge_points(e, true)).collect();
         let edge_seeds = crate::seeds::match_curves(&opts.seeds, &curves, seed_tolerance(opts, tol))?;
-        Ok(Ctx { brep, tree, field, opts, tol, edge_seeds })
+        let exact = (0..brep.edges.len()).map(|_| std::sync::OnceLock::new()).collect();
+        Ok(Ctx { brep, tree, field, opts, tol, edge_seeds, exact })
     }
 
     /// The seed on B-rep edge `e`, and whether it runs against the edge.
@@ -285,12 +288,39 @@ impl<'a> Ctx<'a> {
     /// when it has one, or the spacing `carried` to it from a biased seed on an edge it is tied
     /// to ([`Ctx::carried`]), else evenly in the size field.
     pub(crate) fn divide_edge(&self, e: usize, forward: bool, n: usize, carried: &[Option<(usize, bool)>]) -> Result<Vec<P>> {
-        let pts = self.brep.edge_points(e, forward);
+        let pts = self.exact_edge_points(e, forward);
         let carried = carried.get(e).copied().flatten().and_then(|(i, rev)| Some((self.opts.seeds.get(i)?, rev)));
         match self.seed_of(e).or(carried) {
             Some((seed, rev)) => crate::seeds::place(&pts, &seed.fractions(n, rev == forward)),
             None => crate::size::divide_polyline(self.field, &pts, n),
         }
+    }
+
+    /// B-rep edge `e` (traversed forwards or not) as a polyline on its exact curve
+    /// ([`onto_exact`], projecting onto the edge's faces' exact surfaces with
+    /// [`project_to_faces`]); the tessellation's polyline when a face of the edge has no exact
+    /// surface.
+    /// Made once per edge and context (the same points backwards when `forward` is false: the
+    /// halving is symmetric).
+    pub(crate) fn exact_edge_points(&self, e: usize, forward: bool) -> Vec<P> {
+        let Some(cell) = self.exact.get(e) else { return self.brep.edge_points(e, forward) };
+        let mut pts = cell.get_or_init(|| self.exact_forward(e)).clone();
+        if !forward {
+            pts.reverse();
+        }
+        pts
+    }
+
+    /// [`Ctx::exact_edge_points`] traversed forwards, computed.
+    fn exact_forward(&self, e: usize) -> Vec<P> {
+        let pts = self.brep.edge_points(e, true);
+        let Some(edge) = self.brep.edges.get(e) else { return pts };
+        let mut faces = edge.faces.to_vec();
+        faces.dedup();
+        if faces.iter().any(|&f| self.brep.faces.get(f).is_none_or(|x| x.snap.is_none())) {
+            return pts;
+        }
+        onto_exact(&pts, &|p| Some(project_to_faces(self, &faces, p)))
     }
 
     /// The seeds carried along `ties` (uses of B-rep edges divided alike) from biased seeds to
@@ -783,6 +813,46 @@ fn quad_shape(quadratic: bool, r: f64, s: f64) -> [[f64; 8]; 3] {
     }
     out
 }
+
+/// A curve's tessellated polyline `pts` (its vertices on the curve) made a polyline on the
+/// exact curve, so lengths along it are the curve's and a division of it does not depend on how
+/// the tessellation sampled the curve: each segment is halved, its midpoint taken onto the curve
+/// by `project`, until the projection lies within [`EXACT_CHORD`] of the segment's length from
+/// its chord (at most [`MAX_EXACT_DEPTH`] halvings). An arc sampled at 5° near its ends and 12°
+/// elsewhere had its divisions placed by the chords' lengths, off the even angles by 0.007°. The
+/// polyline itself when a projection fails or the points would pass [`MAX_EXACT_POINTS`].
+pub(crate) fn onto_exact(pts: &[P], project: &dyn Fn(P) -> Option<P>) -> Vec<P> {
+    let mut out: Vec<P> = Vec::with_capacity(pts.len());
+    out.extend(pts.first().copied());
+    for w in pts.windows(2) {
+        // Depth-first halving of the segment, its pieces in order (bounded by the depth).
+        let mut stack: Vec<(P, P, u32)> = vec![(w[1], w[0], 0)];
+        while let Some((b, a, depth)) = stack.pop() {
+            let mid = crate::vec3::mid(a, b);
+            let Some(m) = project(mid) else { return pts.to_vec() };
+            if depth >= MAX_EXACT_DEPTH || dist(m, mid) <= EXACT_CHORD * dist(a, b) {
+                out.push(b);
+                if out.len() > MAX_EXACT_POINTS {
+                    return pts.to_vec();
+                }
+            } else {
+                stack.push((b, m, depth + 1));
+                stack.push((m, a, depth + 1));
+            }
+        }
+    }
+    out
+}
+
+/// A segment of an exact polyline ([`onto_exact`]) is fine enough when its
+/// midpoint's projection onto the curve lies within this fraction of its length from it: its
+/// length is then the arc's to about `(8/3) 1e-8` of it.
+const EXACT_CHORD: f64 = 1e-4;
+/// Most halvings of a segment of a polyline on the way to its exact curve ([`onto_exact`]).
+const MAX_EXACT_DEPTH: u32 = 16;
+/// Most points of an exact polyline ([`onto_exact`]): past it (faces whose curve the projections do not
+/// settle on) the tessellation's polyline is used.
+const MAX_EXACT_POINTS: usize = 1 << 18;
 
 /// Projection rounds for a point on several faces (alternating projections onto each).
 const PROJECTION_ROUNDS: usize = 24;
