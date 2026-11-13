@@ -358,6 +358,17 @@ fn context_menu(app: &mut ModelApp, response: &egui::Response) {
     });
 }
 
+/// A View-menu row that shows or hides something: a checked menu row, flipped by a click.
+fn toggle_row(ui: &mut egui::Ui, label: &str, on: &mut bool) -> egui::Response {
+    let mut row = kit::MenuItem::new(label, label, "");
+    row.checked = Some(*on);
+    let r = row.show(ui);
+    if r.clicked() {
+        *on = !*on;
+    }
+    r
+}
+
 const SELECTION_BAR: &str = "fc_selection_bar";
 
 /// Where the selection bar was drawn last: egui keeps an area's rectangle after it stops being
@@ -814,18 +825,32 @@ fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
             for s in Style::ALL {
                 let mut row = kit::MenuItem::new(s.label(), s.label(), "");
                 row.checked = Some(app.ui.style == s);
-                if row.show(ui).clicked() {
+                let r = row.show(ui);
+                if s == Style::ALL[0] {
+                    app.place("view_menu:style", r.rect);
+                }
+                if r.clicked() {
                     app.ui.style = s;
                 }
             }
             crate::frame::menu_separator(ui);
             crate::frame::menu_heading(ui, "Show");
+            // Checked menu rows, as the Style rows above: one text inset for the whole menu.
+            let mut first = None;
+            for (label, on) in [
+                ("Geometry", &mut app.ui.show_geometry),
+                ("Mesh", &mut app.ui.show_mesh),
+                ("Nodes", &mut app.ui.show_nodes),
+                ("Loads & BCs", &mut app.ui.show_loads),
+                ("Interactions", &mut app.ui.show_interactions),
+            ] {
+                let r = toggle_row(ui, label, on);
+                first.get_or_insert(r.rect);
+            }
+            if let Some(r) = first {
+                app.place("view_menu:show", r);
+            }
             kit::scope(ui, |ui| {
-                kit::checkbox(ui, "Geometry", &mut app.ui.show_geometry);
-                kit::checkbox(ui, "Mesh", &mut app.ui.show_mesh);
-                kit::checkbox(ui, "Nodes", &mut app.ui.show_nodes);
-                kit::checkbox(ui, "Loads & BCs", &mut app.ui.show_loads);
-                kit::checkbox(ui, "Interactions", &mut app.ui.show_interactions);
                 let (lo, hi) = fieldcraft_render::glyphs::SIZE_RANGE;
                 kit::row(ui, "Symbol size", |ui| {
                     kit::slider(
@@ -838,10 +863,8 @@ fn nav_bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
                 .backing_on_hover_text("The size of boundary condition, load and interaction symbols on screen, at any zoom");
             });
             crate::frame::menu_separator(ui);
-            kit::scope(ui, |ui| {
-                kit::checkbox(ui, "Browser", &mut app.ui.show_tree);
-                kit::checkbox(ui, "Timeline", &mut app.ui.show_timeline);
-            });
+            toggle_row(ui, "Browser", &mut app.ui.show_tree);
+            toggle_row(ui, "Timeline", &mut app.ui.show_timeline);
             crate::frame::menu_separator(ui);
             crate::frame::menu_heading(ui, "Navigation");
             kit::scope(ui, |ui| {
