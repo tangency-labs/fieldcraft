@@ -1324,6 +1324,8 @@ dependencies = [
  "fieldcraft-update",
  "getrandom 0.4.3",
  "log",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
  "rfd",
  "rustls",
  "serde_json",

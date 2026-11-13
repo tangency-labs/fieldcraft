@@ -2,6 +2,13 @@
 //! tests drive the app through it; the UI thread answers each request between frames
 //! (`fieldcraft_ui_egui::control`).
 //!
+//! On macOS the server holds a process activity while it runs ([`awake`]): a locked screen or a
+//! covered window otherwise gets the app App Napped (priority 4, the background band), and under
+//! load its threads get no CPU, so connections are not even accepted. To check it by hand: start
+//! `fieldcraft --control PORT`, lock the screen (or cover the window) while something loads the
+//! CPU (a cargo build), then `ps -o pid,pri -p <pid>` stays well above 4 and a request such as
+//! `{"id":1,"method":"ui.inspect"}` is answered at once.
+//!
 //! Adapted from SolidCraft's `apps/solidcraft/src/control_server.rs` (MIT OR Apache-2.0), see
 //! ATTRIBUTION.md.
 
@@ -36,6 +43,7 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
         }
     };
     eprintln!("fieldcraft: control server listening on 127.0.0.1:{port}");
+    awake::hold();
     listen(listener, tx, ctx, REPLY_TIMEOUT);
     rx
 }
@@ -59,6 +67,48 @@ fn listen(listener: TcpListener, tx: Sender<ControlRequest>, ctx: egui::Context,
             });
         }
     });
+}
+
+/// Keeps the process out of App Nap while the control server runs.
+#[cfg(target_os = "macos")]
+mod awake {
+    use std::cell::OnceCell;
+
+    use objc2::rc::Retained;
+    use objc2::runtime::ProtocolObject;
+    use objc2_foundation::{NSActivityOptions, NSObjectProtocol, NSProcessInfo, NSString};
+
+    thread_local! {
+        /// The activity's token. The server runs until the process ends and the token is not
+        /// `Send`, so it stays with the thread that started the server (the main thread); the
+        /// activity ends when the token is released or the process exits.
+        static ACTIVITY: OnceCell<Retained<ProtocolObject<dyn NSObjectProtocol>>> = const { OnceCell::new() };
+    }
+
+    /// Begin the activity (once per thread): user-initiated work, so macOS does not nap the
+    /// app; idle system sleep stays allowed.
+    pub fn hold() {
+        ACTIVITY.with(|token| {
+            token.get_or_init(|| {
+                NSProcessInfo::processInfo().beginActivityWithOptions_reason(
+                    NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
+                    &NSString::from_str("FieldCraft control channel"),
+                )
+            });
+        });
+    }
+
+    /// Whether this thread holds the activity.
+    #[cfg(test)]
+    pub fn held() -> bool {
+        ACTIVITY.with(|token| token.get().is_some())
+    }
+}
+
+/// App Nap is macOS only.
+#[cfg(not(target_os = "macos"))]
+mod awake {
+    pub fn hold() {}
 }
 
 /// One line without its newline, or `None` at the end of the stream. A client that sends
@@ -206,6 +256,15 @@ mod tests {
             let r = ask(port, &format!(r#"{{"id":{id},"method":"ui.inspect"}}"#));
             assert_eq!(r, json!({"id": id, "ok": true, "method": "ui.inspect"}));
         }
+    }
+
+    /// Starting the server holds the activity that keeps macOS from napping the app.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_server_keeps_the_app_awake() {
+        assert!(!awake::held());
+        let _rx = start(0, egui::Context::default());
+        assert!(awake::held());
     }
 
     /// A request nobody takes is answered with a timeout by the server's own thread.
