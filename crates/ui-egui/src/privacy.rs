@@ -191,6 +191,8 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
                     section(ui, "Interface");
                     kit::checkbox(ui, "Translucent browser", &mut app.ui.browser_float)
                         .backing_on_hover_text("Show the view through the browser card");
+                    kit::checkbox(ui, "Eye beside the fold arrow", &mut app.ui.browser_eye_left)
+                        .backing_on_hover_text("Show each browser row's visibility eye before its icon, not at the row's end");
                     kit::checkbox(ui, "Status bar", &mut app.ui.status_bar)
                         .backing_on_hover_text("Show the model's size, the projection and the graphics device along the window's bottom");
                     if app.updates_available() {
