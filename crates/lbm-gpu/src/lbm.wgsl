@@ -1181,11 +1181,10 @@ fn collide_cell(cell: u32, lid: u32) {
     let wm = params.omega_minus;
     let sp = params.s_plus;
     let sm = params.s_minus;
-    // Equilibria are shifted by the weight like the populations. The rest population's is δρ less
-    // the other eighteen directions', summed as the pairs are collided: w₀ (δρ − 1.5 ρ u²) in exact
-    // arithmetic, but in f32 that formula left the equilibria a residual ∝ u² of one sign against
-    // δρ, which the collision took from the cell's mass every step (#776: 2e-6 of it over 80 000
-    // steps of a Couette flow on Apple Metal); this way they sum to δρ to the rounding of the sum.
+    // In exact arithmetic collision conserves mass, including Guo's force (its zeroth moment is
+    // zero). Close the rest population with the actual rounded outputs: closing just the
+    // equilibria fixed #776, but relaxation still rounded the mass away on NVIDIA (#906).
+    // The rest direction carries neither momentum nor momentum flux.
     var others = 0.0;
     for (var q = 1u; q < Q; q = q + 2u) {
         let o = q + 1u;
@@ -1193,7 +1192,6 @@ fn collide_cell(cell: u32, lid: u32) {
         let cu = dot(cv, u);
         let w = w_of(q);
         let eq_plus = w * (drho + rho * (4.5 * cu * cu - 1.5 * uu));
-        others = others + 2.0 * eq_plus;
         let eq_minus = w * rho * 3.0 * cu;
         let plus = 0.5 * (fq[q] + fq[o]);
         let minus = 0.5 * (fq[q] - fq[o]);
@@ -1206,13 +1204,13 @@ fn collide_cell(cell: u32, lid: u32) {
             s_plus = sp * w * (9.0 * cu * cf - 3.0 * uf);
             s_minus = sm * w * 3.0 * cf;
         }
-        f[post_index(q, cell, xyz)] = fq[q] - relax_plus - relax_minus + s_plus + s_minus;
-        f[post_index(o, cell, xyz)] = fq[o] - relax_plus + relax_minus + s_plus - s_minus;
+        let out_q = fq[q] - relax_plus - relax_minus + s_plus + s_minus;
+        let out_o = fq[o] - relax_plus + relax_minus + s_plus - s_minus;
+        others = others + (out_q + out_o);
+        f[post_index(q, cell, xyz)] = out_q;
+        f[post_index(o, cell, xyz)] = out_o;
     }
-    // Rest population: symmetric only.
-    var out0 = fq[0] - wp * (fq[0] - (drho - others));
-    if forced { out0 = out0 + sp * w_of(0u) * (-3.0 * uf); }
-    f[post_index(0u, cell, xyz)] = out0;
+    f[post_index(0u, cell, xyz)] = drho - others;
 }
 
 // The two-relaxation-time collision with the cell's own rate `wp` (a subgrid model's or the wall
@@ -1224,7 +1222,7 @@ fn collide_trt_rate(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array
     let sm = 1.0 - 0.5 * wm;
     let uu = dot(u, u);
     let uf = dot(u, force);
-    // The rest population's equilibrium is δρ less the others' (see collide_cell, #776).
+    // Close the mass with the actual rounded post-collision pairs, not just their equilibria.
     var others = 0.0;
     for (var q = 1u; q < Q; q = q + 2u) {
         let o = q + 1u;
@@ -1232,7 +1230,6 @@ fn collide_trt_rate(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array
         let cu = dot(cv, u);
         let w = w_of(q);
         let eq_plus = w * (drho + rho * (4.5 * cu * cu - 1.5 * uu));
-        others = others + 2.0 * eq_plus;
         let eq_minus = w * rho * 3.0 * cu;
         let plus = 0.5 * ((*fq)[q] + (*fq)[o]);
         let minus = 0.5 * ((*fq)[q] - (*fq)[o]);
@@ -1245,12 +1242,13 @@ fn collide_trt_rate(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array
             s_plus = sp * w * (9.0 * cu * cf - 3.0 * uf);
             s_minus = sm * w * 3.0 * cf;
         }
-        f[post_index(q, cell, xyz)] = (*fq)[q] - relax_plus - relax_minus + s_plus + s_minus;
-        f[post_index(o, cell, xyz)] = (*fq)[o] - relax_plus + relax_minus + s_plus - s_minus;
+        let out_q = (*fq)[q] - relax_plus - relax_minus + s_plus + s_minus;
+        let out_o = (*fq)[o] - relax_plus + relax_minus + s_plus - s_minus;
+        others = others + (out_q + out_o);
+        f[post_index(q, cell, xyz)] = out_q;
+        f[post_index(o, cell, xyz)] = out_o;
     }
-    var out0 = (*fq)[0] - wp * ((*fq)[0] - (drho - others));
-    if forced { out0 = out0 + sp * w_of(0u) * (-3.0 * uf); }
-    f[post_index(0u, cell, xyz)] = out0;
+    f[post_index(0u, cell, xyz)] = drho - others;
 }
 
 // Moment k's polynomial at direction q (fieldcraft_lbm::mrt: d'Humières et al. 2002's D3Q19

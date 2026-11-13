@@ -908,7 +908,9 @@ fn smagorinsky(mut p: Procedure, c: f64) -> Procedure {
 /// the model-off ones of this case, with a margin: velocity 1e-4, shear 2e-4. The density bound
 /// held on that card only: with the rest equilibrium's formula the TRT collision drained mass in
 /// f32 (2.2e-6 of it on Apple Metal, model off or on, #776); with the rest population closing the
-/// equilibria's sum it differs by 8e-12 there.
+/// equilibria's sum it differs by 8e-12 there. NVIDIA still accumulated 1.43e-6 after relaxation
+/// (#906); closing the actual post-collision pairs keeps density and total mass within the same
+/// bounds. Both layouts and all collisions must keep that budget, not just match CPU velocity.
 #[test]
 fn couette_flow_with_smagorinsky_matches_the_cpu() {
     for (collision, streaming) in cases() {
@@ -921,16 +923,19 @@ fn couette_flow_with_smagorinsky_matches_the_cpu() {
         d.faces.y_max = FaceCondition::MovingWall { velocity: [u_wall, 0.0, 0.0] };
         let m = model(rho, nu, d, smagorinsky(collide(5.0 * h * h / nu, dx, None, collision), c));
         let (setup, flow) = prepare(&m, &[]);
+        let mass0 = flow.mass();
         let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let drift = (gpu.mass().unwrap() - mass0).abs() / mass0;
         let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
         let bottom = BoxFace::ALL.iter().position(|f| f.name() == "y_min").unwrap();
         let shear = (fc[bottom][0] - fg[bottom][0]).abs() / fc[bottom][0].abs();
         let (rc, rg) = (Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio());
         println!(
-            "{collision:?} Smagorinsky Couette, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}, wall shear {shear:.2e}; ν_t/ν CPU {rc:.6} GPU {rg:.6}"
+            "{collision:?} Smagorinsky Couette, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}, mass drift {drift:.2e}, wall shear {shear:.2e}; ν_t/ν CPU {rc:.6} GPU {rg:.6}"
         );
         assert!(rc > 0.05, "the eddy viscosity shows: {rc}");
+        assert!(drift < 1e-6, "{collision:?} {streaming:?} mass drift {drift}");
         assert!(du < 1e-4 && drho < 1e-6, "{du} {drho}");
         assert!(shear < 2e-4, "{shear}");
         // Both backends report the last step's ratio: the same, to the f32 cancellation in 1/ω − 1/ω₀ (1.4e-4 of itself measured, regularised).
@@ -981,10 +986,15 @@ fn heated_couette_flow_with_smagorinsky_matches_the_cpu() {
         d.thermal = Some(t);
         let m = hot_model(rho, nu, alpha, d, smagorinsky(collide(6.0 * h * h / alpha, dx, None, collision), c));
         let (setup, cpu) = prepare(&m, &[]);
+        let mass0 = cpu.mass();
         let Some((mut cpu, mut gpu)) = both(&setup, cpu, streaming) else { continue };
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let drift = (gpu.mass().unwrap() - mass0).abs() / mass0;
         let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
-        println!("{collision:?} Smagorinsky heated Couette, GPU vs CPU: velocity {du:.2e} density {drho:.2e} temperature {dt:.2e} heat {dh:.2e}");
+        println!(
+            "{collision:?} Smagorinsky heated Couette, GPU vs CPU: velocity {du:.2e} density {drho:.2e} mass drift {drift:.2e} temperature {dt:.2e} heat {dh:.2e}"
+        );
+        assert!(drift < 1e-6, "{collision:?} {streaming:?} mass drift {drift}");
         assert!(du < 1e-4 && drho < 1e-6, "{du} {drho}");
         assert!(dt < 3e-4 && dh < 3e-4, "{dt} {dh}");
     }
