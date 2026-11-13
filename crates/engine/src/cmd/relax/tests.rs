@@ -440,8 +440,9 @@ fn mesh_and_strong_relaxation_are_the_same_bits_everywhere() {
     // tessellation comes from SolidCraft, so a SolidCraft bump moves the fingerprint too (v0.25.1).
     // The strong morph's harmonic solve runs to round-off since #612, which moved it again, and
     // SolidCraft v0.40's kernel tessellates the plate (its hole one face, its seam a vertex on
-    // the hole's rim) otherwise.
-    assert_eq!(one, 0x5830_647a_a2ce_89b1, "fingerprint {one:#018x}");
+    // the hole's rim) otherwise. Dividing the hex mesh's curves along their exact curves (the
+    // hole's rim nodes at even angles) moved it again.
+    assert_eq!(one, 0xac59_f4c7_831d_a8cc, "fingerprint {one:#018x}");
 }
 
 /// A mesher's result depends on the stored model alone: relaxing, undoing and relaxing again

@@ -782,6 +782,12 @@ fn seamed_tube(ri: f64, ro: f64, h: f64, n: usize) -> (BoundarySurface, Vec<Opti
 
 /// [`seamed_tube`], its vertices numbered inner rims first when `inner_first`.
 fn seamed_tube_numbered(ri: f64, ro: f64, h: f64, n: usize, inner_first: bool) -> (BoundarySurface, Vec<Option<Surface>>) {
+    seamed_tube_at(ri, ro, h, n, inner_first, &|k| angle(k, n))
+}
+
+/// [`seamed_tube_numbered`] with the rims' `n` vertices at the angles `at(k)` (increasing, in
+/// [0, 2π)), so the tessellation samples the circles unevenly.
+fn seamed_tube_at(ri: f64, ro: f64, h: f64, n: usize, inner_first: bool, at: &dyn Fn(usize) -> f64) -> (BoundarySurface, Vec<Option<Surface>>) {
     let mut g = Revolved { pts: Vec::new(), tris: Vec::new(), tags: Vec::new() };
     // Rings 0..4 are the outer and inner rims at z = 0, then at z = h; `slot` is where each is
     // numbered.
@@ -790,7 +796,7 @@ fn seamed_tube_numbered(ri: f64, ro: f64, h: f64, n: usize, inner_first: bool) -
     for s in 0..4 {
         let (r, z) = rims[(0..4).find(|&ring| slot(ring) == s).unwrap()];
         for k in 0..n {
-            let t = angle(k, n);
+            let t = at(k);
             g.pts.push([r * t.cos(), r * t.sin(), z]);
         }
     }
@@ -816,6 +822,37 @@ fn seamed_tube_numbered(ri: f64, ro: f64, h: f64, n: usize, inner_first: bool) -
         Some(Surface::Plane { point: [0.0, 0.0, h], normal: [0.0, 0.0, 1.0] }),
     ];
     (g.surface(&[vec![id(0, 0), id(2, 0)], vec![id(1, 0), id(3, 0)]]), surfaces)
+}
+
+/// A curve is divided along its exact curve, not along the tessellation's chords of it: the
+/// tube's rims, sampled at angles jittered by up to a fifth of their even spacing, get their
+/// nodes at even angles. Divided by the chords' lengths they were not (the merged hole of #512
+/// then had a node column on one seam and none a quarter turn round).
+#[test]
+fn rim_nodes_are_evenly_spaced_however_the_rims_are_sampled() {
+    use std::f64::consts::TAU;
+    let (ri, ro, h, n) = (0.5, 1.0, 1.0, 24);
+    // A fixed jitter of up to a fifth of the spacing, the first vertex (the seam's) kept at 0.
+    let jitter = |k: usize| if k == 0 { 0.0 } else { 0.2 * (TAU / n as f64) * ((k * 7919 % 13) as f64 / 6.0 - 1.0) };
+    let (s, faces) = seamed_tube_at(ri, ro, h, n, false, &|k| angle(k, n) + jitter(k));
+    for method in [HexMethod::Extrude, HexMethod::Sweep] {
+        let opts = HexOptions { method, chordal_tolerance: ro * (1.0 - (TAU / 64.0).cos()), ..HexOptions::default() };
+        let m = hex_mesh(&s, &faces, &UniformSize(0.2), &opts).unwrap();
+        assert_eq!(m.report.method, method, "{}", m.report.description);
+        let mut rim: Vec<f64> = m
+            .nodes
+            .iter()
+            .filter(|p| p[2] == 0.0 && ((p[0] * p[0] + p[1] * p[1]).sqrt() - ro).abs() < 1e-9)
+            .map(|p| p[1].atan2(p[0]).rem_euclid(TAU))
+            .collect();
+        rim.sort_by(f64::total_cmp);
+        assert!(rim.len() >= 16, "{method:?}: {} rim nodes", rim.len());
+        let step = TAU / rim.len() as f64;
+        for (i, t) in rim.iter().enumerate() {
+            let off = (t - rim[0] - i as f64 * step).abs();
+            assert!(off < 1e-7, "{method:?}: rim node {i} is {off} rad off the even spacing ({} nodes)", rim.len());
+        }
+    }
 }
 
 /// A block stepped along x (top at z = 1 for x < 1, at z = 2 beyond), each face planar, its
@@ -894,7 +931,8 @@ fn a_planar_face_lists_its_outer_loop_first_however_its_vertices_are_numbered() 
             let first = f.loops.first().and_then(|l| l.first()).map(|&(e, fwd)| brep.edge_points(e, fwd)).unwrap();
             assert!(first.iter().all(|p| (p[0].hypot(p[1]) - ro).abs() < 1e-9), "inner_first {inner_first}: face {} starts with {first:?}", f.id);
         }
-        let opts = HexOptions { method: HexMethod::Sweep, chordal_tolerance: ro * (1.0 - (std::f64::consts::PI / 32.0).cos()), ..HexOptions::default() };
+        let opts =
+            HexOptions { method: HexMethod::Sweep, chordal_tolerance: ro * (1.0 - (std::f64::consts::PI / 32.0).cos()), ..HexOptions::default() };
         let m = hex_mesh(&s, &faces, &UniformSize(0.2), &opts).unwrap();
         assert_eq!(m.report.method, HexMethod::Sweep, "inner_first {inner_first}: {}", m.report.description);
         assert!(m.report.gate.passed(), "inner_first {inner_first}");
