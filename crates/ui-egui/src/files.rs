@@ -1514,17 +1514,25 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         }
         Some(Prompt::Delete(ask)) => {
             let allowed = ask.allowed();
+            // Refused for the steps a boundary condition or load is active in: the way there.
+            let deactivate = ask.deactivate_label();
+            let ok = if allowed { "Delete" } else { deactivate.as_deref().unwrap_or("") };
             let (closed, action) = kit::Confirm::new(egui::Id::unique("fc_delete"), DELETE_ICON, "Delete")
                 .tone(kit::Tone::Danger)
-                .actions(if allowed { "Delete" } else { "" }, if allowed { "Cancel" } else { "Close" }, None)
-                .show(ctx, allowed, |ui| {
+                .actions(ok, if allowed { "Cancel" } else { "Close" }, None)
+                .show(ctx, allowed || deactivate.is_some(), |ui| {
                     message(ui, &ask.question());
                     if allowed && !ask.users.is_empty() {
                         note(ui, "They are deleted too; Undo brings everything back.");
                     }
+                    if deactivate.is_some() {
+                        note(ui, "Deactivating it there lets it be deleted next.");
+                    }
                 });
-            if let Some(delete) = answer(closed, action, allowed, false, false) {
-                app.answer_delete(delete);
+            match answer(closed, action, true, false, false) {
+                Some(true) if !allowed => app.answer_deactivate(),
+                Some(delete) => app.answer_delete(delete),
+                None => {}
             }
         }
         Some(Prompt::ReplaceMesh(r)) => {
