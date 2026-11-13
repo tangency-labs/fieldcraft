@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 pub(crate) use crate::hex::geom::closest_on_triangle;
 use crate::predicates::{Axis, Point3, Sign, orient2d_projected, orient3d, snap_to_domain};
 use crate::surface::BoundarySurface;
+use crate::tet::geometry::{BoundaryGeometry, Tessellation};
 use crate::vec3::{P, cross, dot, norm, sub};
 use crate::{Error, Result};
 
@@ -171,6 +172,10 @@ pub(crate) struct Curve {
     pub closed: bool,
     /// The patches on either side (sorted, deduplicated: one entry for a crease seam).
     pub patches: Vec<u32>,
+    /// The B-rep faces on either side of each segment `vertices[i] → vertices[i + 1]` (low,
+    /// high; the same face twice for a crease inside one face). A patch may hold several faces
+    /// that meet smoothly, so these name the curve's faces where the patches cannot.
+    pub faces: Vec<[u32; 2]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -198,6 +203,9 @@ pub(crate) struct Geometry<'a> {
     pub bounds: Aabb,
     /// Far enough to leave the boundary from any point of its box.
     far: f64,
+    /// The exact surfaces and curves of the B-rep faces, on the same triangles, when known
+    /// ([`Geometry::with_exact`]).
+    exact: Option<&'a Tessellation>,
 }
 
 impl<'a> Geometry<'a> {
@@ -360,14 +368,18 @@ impl<'a> Geometry<'a> {
             }
             let closed = verts.first() == verts.last() && verts.len() > 2;
             let mut ps: Vec<u32> = Vec::new();
+            let mut faces: Vec<[u32; 2]> = Vec::with_capacity(verts.len().saturating_sub(1));
             for w in verts.windows(2) {
-                if let Some(t) = edge_set.get(&(w[0].min(w[1]), w[0].max(w[1]))) {
+                let t = edge_set.get(&(w[0].min(w[1]), w[0].max(w[1])));
+                if let Some(t) = t {
                     ps.extend(t.iter().filter_map(|&t| tri_patch.get(t as usize).copied()));
                 }
+                let (a, b) = t.map_or((u32::MAX, u32::MAX), |t| (face_of(t[0]), face_of(t[1])));
+                faces.push([a.min(b), a.max(b)]);
             }
             ps.sort_unstable();
             ps.dedup();
-            curves.push(Curve { vertices: verts, closed, patches: ps });
+            curves.push(Curve { vertices: verts, closed, patches: ps, faces });
         };
         for &c in &corners {
             let ns = adj.get(&c).cloned().unwrap_or_default();
@@ -383,7 +395,7 @@ impl<'a> Geometry<'a> {
                 trace(k.0, k.1, &mut used, &mut curves);
             }
         }
-        Ok(Geometry { surface, tree, boxes, normals, tri_patch, patches, curves, corners, bounds, far })
+        Ok(Geometry { surface, tree, boxes, normals, tri_patch, patches, curves, corners, bounds, far, exact: None })
     }
 
     pub fn xyz(&self, v: u32) -> P {
@@ -566,6 +578,29 @@ impl<'a> Geometry<'a> {
             return if nz.windows(2).all(|w| w[0] == w[1]) { None } else { Some(false) };
         }
         Some(s[0] == s[1] && s[1] == s[2])
+    }
+
+    /// The same geometry whose boundary vertices go onto `exact`'s surfaces and curves (built on
+    /// the same boundary surface) instead of the tessellation's triangles and polylines.
+    pub fn with_exact(mut self, exact: Option<&'a Tessellation>) -> Geometry<'a> {
+        self.exact = exact;
+        self
+    }
+
+    /// The closest point to `p` on the B-rep face of triangle `t`: its exact surface, trimmed to
+    /// the face ([`Tessellation::project_trimmed`]), when known; else `near` (the closest point
+    /// of its triangles).
+    pub fn on_face(&self, t: u32, p: P, near: P) -> P {
+        let face = self.surface.tri_face().get(t as usize).copied();
+        self.exact.zip(face).and_then(|(x, f)| x.project_trimmed(f, p)).unwrap_or(near)
+    }
+
+    /// The closest point to `p` on curve `c` between the B-rep faces of its segment `segment`
+    /// (the one nearest `p`): the exact curve, when known; else `near` (the closest point of its
+    /// polyline).
+    pub fn on_curve(&self, c: u32, segment: usize, p: P, near: P) -> P {
+        let faces = self.curves.get(c as usize).and_then(|curve| curve.faces.get(segment)).copied();
+        self.exact.zip(faces).and_then(|(x, f)| x.project_curve(f, p)).unwrap_or(near)
     }
 
     /// The closest point of curve `c` to `p`: (point, segment index, parameter on it).
