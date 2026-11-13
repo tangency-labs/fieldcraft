@@ -535,6 +535,16 @@ checked against the DOI handle API and Crossref, as above.
 - J. D. Sterling, S. Chen. *Stability Analysis of Lattice Boltzmann Methods.* JCP 123(1):196–206, 1996. DOI [10.1006/jcph.1996.0016](https://doi.org/10.1006/jcph.1996.0016).
 - P. Lallemand, L.-S. Luo. *Theory of the lattice Boltzmann method: Dispersion, dissipation, isotropy, Galilean invariance, and stability.* PRE 61:6546–6562, 2000. DOI [10.1103/PhysRevE.61.6546](https://doi.org/10.1103/PhysRevE.61.6546).
 - **Use.** Linear stability (von Neumann) analysis of BGK/MRT; the source for the stable (u, τ) region and the case for MRT.
+  Lallemand & Luo (Sec. 6, Fig. 2) find BGK unstable above V ≈ 0.07 at 1/τ = 1.99 (τ ≈ 0.5025), worst for sound along
+  the flow; their stable MRT relaxes the odd moments fast (1.92).
+- **Also.** F. Wissocq, P. Sagaut, J.-F. Boussuge, *An extended spectral analysis of the lattice Boltzmann method:
+  modal interactions and stability issues*, J. Comput. Phys. 380:311–333, 2019. DOI
+  [10.1016/j.jcp.2018.12.015](https://doi.org/10.1016/j.jcp.2018.12.015). The same linearisation about a uniform mean
+  flow (App. B.2), all wavevector directions; BGK's instability arises from collisions of non-hydrodynamic with
+  acoustic/shear modes as the Mach number rises (Sec. 5), on oblique waves rather than along the flow. No TRT.
+- **Used as.** `crates/lbm/tests/trt_stability.rs` applies this analysis to D3Q19 TRT about #820's uniform stream
+  (U = 0.05, 16³ modes): with Λ = 3/16 growing modes for τ⁺ ≤ 0.502, none from 0.5025; at τ⁺ = 0.5005 stable only to
+  U = 0.01, or with Λ ≤ 1e-5. No published TRT boundary covers this case; the analysis and its numbers are ours.
 
 **C1.6 Guo, Zheng, Shi 2002, forcing.** **Verdict: build on.** PRE 65:046308, 2002. DOI [10.1103/PhysRevE.65.046308](https://doi.org/10.1103/PhysRevE.65.046308). The second-order body-force scheme every IB-LBM coupling (D2) needs.
 
@@ -563,6 +573,11 @@ checked against the DOI handle API and Crossref, as above.
 - **Method.** Two relaxation rates (symmetric/antisymmetric parts); the "magic parameter" Λ = 3/16 puts the
   bounce-back wall exactly halfway and makes the solution viscosity-independent in steady flow. BGK cost, much of
   MRT's benefit.
+- **Also.** I. Ginzburg, F. Verhaeghe, D. d'Humières, *Study of simple hydrodynamic solutions with the
+  two-relaxation-times lattice Boltzmann scheme*, Commun. Comput. Phys. 3(3):519–581, 2008. DOI
+  [10.4208/cicp.2008.v3.p519](https://doi.org/10.4208/cicp.2008.v3.p519). Eq. 2.29 gives the effective Poiseuille
+  width of halfway bounce-back, `H_eff² = H² + (16Λ − 3)/3`: the cost of any Λ ≠ 3/16, e.g. of a near-BGK Λ chosen
+  for bulk stability close to τ⁺ = ½ (#820).
 - **Complexity.** Low.
 
 **C2.3 Geier et al. 2015, cumulant LBM.** **Verdict: build on (high-Re collision, D3Q27).**
@@ -642,6 +657,12 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
   non-equilibrium part normal to the boundary.
 - **Limits.** Defined for flat, axis-aligned boundaries; corners need special treatment; unstable at high Re outlets —
   use regularised or convective/sponge outlets there.
+- **D3Q19.** M. Hecht, J. Harting, *Implementation of on-site velocity boundary conditions for D3Q19 lattice
+  Boltzmann simulations*, J. Stat. Mech. 2010, P01018. DOI
+  [10.1088/1742-5468/2010/01/P01018](https://doi.org/10.1088/1742-5468/2010/01/P01018) (erratum J. Stat. Mech.
+  2013, E02001, DOI [10.1088/1742-5468/2013/02/E02001](https://doi.org/10.1088/1742-5468/2013/02/E02001)). The
+  transverse-momentum correction that carries Zou–He's bounce-back to D3Q19; with it, the base closure of every
+  FieldCraft velocity inlet.
 
 **C3.3a Guo, Zheng & Shi 2002, non-equilibrium extrapolation.** **Verdict: build on (uniform-pressure outlets).**
 - **Citation.** Z. Guo, C. Zheng, B. Shi, *Non-equilibrium extrapolation method for velocity and pressure
@@ -651,6 +672,88 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
   non-equilibrium populations and normal velocity while prescribing boundary density and zero
   tangential velocity. Implementation is independent, from the published method; no solver code
   was used. Constant-flow sweeps and the pressure-channel controls test the closure.
+- **Also used as.** The TRT velocity-inlet correction (`crates/lbm/src/inlet.rs`, #820) takes the
+  equilibrium/non-equilibrium split from it, but extrapolates only the non-equilibrium stress trace
+  (`2 trace(inner1) − trace(inner2)`) and, through C3.3b, the high-frequency part of the density
+  residual; the five deviatoric stress components and the prescribed velocity stay Zou–He's. This
+  selective combination is our own, not the paper's closure.
+
+**C3.3b Shapiro 1970, selective smoothing filters.** **Verdict: build on (TRT inlet density residual, #820).**
+- **Citation.** R. Shapiro, *Smoothing, filtering, and boundary effects*, Reviews of Geophysics
+  8(2):359–387 (1970). DOI [10.1029/RG008i002p00359](https://doi.org/10.1029/RG008i002p00359).
+- **Also.** R. Shapiro, *Linear filtering*, Math. Comp. 29(132):1094–1097 (1975). DOI
+  [10.1090/S0025-5718-1975-0389356-X](https://doi.org/10.1090/S0025-5718-1975-0389356-X): the order-2n operator in
+  general, which removes the two-cell wave and, among such operators, damps every other wave least without a phase
+  shift.
+- **Method.** Repeated three-point smoothing combined into high-order filters whose response is one at
+  zero wavenumber and zero at the two-cell wave; the n = 2 (fourth-order) one is `[−1, 4, 10, 4, −1]/16`, with
+  response `1 − sin⁴(k/2)`.
+- **Used as.** `crates/lbm/src/inlet.rs` and the GPU `inlet_apply` (on residuals staged by `inlet_prepare`) apply `I − S₁S₂` (S along
+  each tangential axis, periodic sides wrapped, wall sides reflected) to the inlet's density
+  extrapolation residual only, so the alternating boundary mode is removed while the slowly varying
+  density, where extrapolating outright made long acoustic waves unstable, keeps Zou–He's value.
+  Never applied to the bulk flow or the imposed velocity.
+
+**C3.3c Velocity inlets tried for #820 and not adopted.** **Verdict: reference.**
+- J. Latt, B. Chopard, O. Malaspinas, M. Deville, A. Michler, *Straight velocity boundaries in the lattice Boltzmann
+  method*, Phys. Rev. E 77:056703, 2008. DOI [10.1103/PhysRevE.77.056703](https://doi.org/10.1103/PhysRevE.77.056703).
+  The regularised reconstruction from the prescribed velocity and the non-equilibrium stress.
+- Characteristic inlets: J. Izquierdo, N. Fueyo, *Characteristic nonreflecting boundary conditions for
+  open boundaries in lattice Boltzmann methods*, Phys. Rev. E 78:046707, 2008. DOI
+  [10.1103/PhysRevE.78.046707](https://doi.org/10.1103/PhysRevE.78.046707) (D2Q9 MRT; LODI amplitudes with a pressure
+  relaxation, velocity bounce-back); S. Heubes, A. Bartel, M. Ehrhardt, *Characteristic boundary conditions in the
+  lattice Boltzmann method for fluid and gas dynamics*, J. Comput. Appl. Math. 262:51–61, 2014. DOI
+  [10.1016/j.cam.2013.09.019](https://doi.org/10.1016/j.cam.2013.09.019) (D2Q9 BGK; LODI density and velocity, then
+  equilibrium or extrapolated non-equilibrium populations).
+- **Tried as.** On the #820 box at τ⁺ = 0.5005, U = 0.05, Smagorinsky 0.1: a LODI boundary density (outgoing
+  amplitude from one-sided interior differences, the velocity held, a pressure relaxation of 0–0.5 per step) with
+  velocity bounce-back, equilibrium, extrapolated or regularised populations; also the Latt et al. inlet, plain
+  equilibrium and full non-equilibrium extrapolation. With Λ = 3/16 every one went unstable; with a near-BGK Λ (bulk
+  stable) they failed or kept departures of 1e-3–1e-2 against a 1e-6 seed. None was shown near τ = ½ in its paper.
+  From τ⁺ = 0.505 to 0.52 (no turbulence model, Λ = 3/16) the LODI inlet fails at every τ⁺, with bounce-back
+  (steps 1 150–22 000) or regularised populations (300–11 500), and Latt et al.'s below 0.52 (400–1 000); the
+  comparison table is in `docs/verification.md`. The adopted inlet (C3.3e) is FieldCraft's own and completed
+  30 000 steps at each tested τ⁺ (0.505, 0.507, 0.51 and 0.52).
+
+**C3.3d Selective filters and absorbing layers in LBM, considered for #820.** **Verdict: reference.**
+- D. Ricot, S. Marié, P. Sagaut, C. Bailly, *Lattice Boltzmann method with selective viscosity filter*, J. Comput.
+  Phys. 228(12):4478–4490, 2009. DOI [10.1016/j.jcp.2009.03.030](https://doi.org/10.1016/j.jcp.2009.03.030). The LBM
+  precedent for a selective spatial filter (3- to 9-point stencils) that removes the high-wavenumber modes von
+  Neumann analysis finds unstable while leaving large scales alone; it filters the flow itself (the populations,
+  the macroscopic fields or the collision), which changes the effective viscosity at high wavenumbers everywhere.
+- H. Xu, P. Sagaut, *Analysis of the absorbing layers for the weakly-compressible lattice Boltzmann methods*,
+  J. Comput. Phys. 245:14–42, 2013. DOI [10.1016/j.jcp.2013.02.051](https://doi.org/10.1016/j.jcp.2013.02.051);
+  A. Najafi-Yazdi, L. Mongeau, *An absorbing boundary condition for the lattice Boltzmann method based on the
+  perfectly matched layer*, Comput. Fluids 68:203–218, 2012. DOI
+  [10.1016/j.compfluid.2012.07.017](https://doi.org/10.1016/j.compfluid.2012.07.017). Sponge and PML layers that
+  absorb outgoing acoustic waves over a band of cells next to the boundary.
+- **Why not used for #820.** The #820 mode is born in the inlet's own closure (its density/kinetic coupling, see
+  C3.3e), with the two-cell wavelength along the inlet plane; it is not an outgoing wave that reflects. A sponge or
+  PML damps waves crossing a layer of cells but leaves the closure that feeds the mode as it is, and it changes the
+  flow (and the domain) in that layer; Ricot et al.'s filter would act on the bulk, which #820 rules out (collision
+  and viscosity stay as set). FieldCraft takes Ricot et al.'s idea, a selective filter that removes only the
+  unstable high-wavenumber part, and applies it to the inlet's density residual alone. Neither absorbing layer was
+  implemented and measured.
+
+**C3.3e The TRT velocity inlet (#820): FieldCraft's own combination.** **Verdict: build on (own method).**
+- **Parts.** Base closure: Zou & He 1997 with Hecht & Harting 2010 (C3.3). Extrapolation: Guo, Zheng & Shi 2002's
+  equilibrium/non-equilibrium split and two-point extrapolation (C3.3a), of the non-equilibrium stress trace and
+  the density only. Filter: Shapiro's n = 2 operator (C3.3b) as `I − S₁S₂` on the density residual
+  `2ρ₁ − ρ₂ − ρ_ZH`, after Ricot et al. 2009's idea of filtering only the unstable high wavenumbers (C3.3d).
+- **What is new.** The cited inflow conditions do not filter the density of the inlet reconstruction this way; the combination,
+  and restricting it to the trace and the density residual, is ours. Each part alone, and full extrapolation, failed
+  while it was built (module docs of `crates/lbm/src/inlet.rs`).
+- **Consistency.** Each tangential filter pass is symmetric with unit row sums, so the density correction sums to
+  zero over the face. This preserves Zou–He's net mass flux when the prescribed normal velocity is uniform; for a varying profile the
+  flux correction is `Σ δρᵢ u_n,ᵢ`, which need not vanish. The equilibrium correction carries momentum `δρ u`, while
+  the trace term carries no mass or momentum, so the prescribed velocity is exact; the five deviatoric stresses
+  are untouched. Tested: `the_density_correction_adds_no_mass_over_a_face`,
+  `correction_preserves_velocity_and_deviatoric_stress` (`inlet.rs`) and
+  `a_duct_with_the_corrected_inlet_balances_its_mass_at_steady_state` (`tests/inlet_slip.rs`). Poiseuille converges
+  at second order, as with Zou–He (`docs/verification.md`).
+- **Tested range.** On the 16³ slip box at Mach 0.087, Λ = 3/16, without a turbulence model, checkerboard and
+  broadband seeds stay bounded for 30 000 steps at τ⁺ = 0.505, 0.507, 0.51 and 0.52 (`docs/verification.md`).
+  These finite-grid checks are not a general stability proof. The setup warns below 0.505 (C1.5).
 
 **C3.4 Orlanski 1976, convective outflow condition.** **Verdict: build on (convective outlets, #599).**
 - **Citation.** I. Orlanski, *A simple boundary condition for unbounded hyperbolic flows*, J. Comput. Phys.
@@ -1334,9 +1437,9 @@ lattice Boltzmann package's code was opened.
   momentum exchange also after R. Mei, D. Yu, W. Shyy, L.-S. Luo, *Force evaluation in the
   lattice Boltzmann method involving curved geometry*, PRE 65:041203, 2002 (DOI not checked).
 - Inlets and outlets: Zou & He 1997 (C3.3), with the D3Q19 transverse-momentum correction of
-  M. Hecht, J. Harting, *Implementation of on-site velocity boundary conditions for D3Q19
-  lattice Boltzmann simulations*, J. Stat. Mech. 2010, P01018 (DOI not checked); convective
-  outlets after Orlanski 1976 (C3.4).
+  Hecht & Harting 2010 (C3.3); the TRT
+  velocity-inlet correction, FieldCraft's own after Guo, Zheng & Shi 2002 and Shapiro 1970 (C3.3e);
+  convective outlets after Orlanski 1976 (C3.4).
 - Stability limits (Mach ≤ 0.3, τ⁺ ≥ 0.505, runtime speed ≤ 0.5): Sterling & Chen 1996 and
   Lallemand & Luo 2000 (C1.5) for the shrinking stable region as τ → ½.
 - Voxelisation: Shewchuk's exact `orient2d`/`orient3d` (`fieldcraft_mesh::predicates`) with a

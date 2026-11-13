@@ -110,6 +110,43 @@ the heavy test `corpus_matches_its_fixtures` (CI's heavy job) fail when a part m
 fixture or a mesh breaks an invariant; `cargo xtask corpus --bless <part>` rewrites a fixture.
 docs/meshing/corpus.md gives the bands and the rules for blessing.
 
+## TRT velocity inlet against published closures (#820)
+
+FieldCraft's TRT velocity inlet (`crates/lbm/src/inlet.rs`; literature C3.3e) against the
+published closures, each implemented from its paper behind the same inlet path, on the same three
+cases; all TRT with Λ = 3/16, no turbulence model, measured on CPU (2026-11-13). The comparison
+harness swapped the closure in place and is not committed; the committed tests cover the adopted
+inlet.
+
+- **Slip box**: the #820 16³ box, slip sides, uniform inlet 0.05 (Mach 0.087), convective pressure
+  outlet, a 1e-6 checkerboard or broadband seed; steps survived of 30 000 (the run stops or the
+  density departs by more than 0.1). Survival is checked in 50-step chunks; a solver error reports
+  the last fully completed chunk.
+- **Duct**: walled 48 × 16 × 16, uniform inlet 0.05, convective outlet, τ⁺ = 0.52, 60 000 steps
+  in 1000-step chunks (a solver error reports the last fully completed chunk);
+  over the last 10 000 the total-mass drift per step, the inlet's mass flux against `ρ_b U A`
+  (the prescribed velocity), and inlet against outlet plane.
+- **Poiseuille**: the parabolic-inlet channel of `regularized.rs`, τ⁺ = 0.6, H = 8, 16, 32 cells;
+  the largest profile error over `u_max` at mid-length (order from 16 to 32) and in the first
+  cell inside the inlet, at H = 32.
+
+| Closure | Slip box, checkerboard, τ⁺ 0.505 / 0.507 / 0.51 / 0.52 | Slip box, broadband | Duct: steps; mass drift/step; flux vs `ρ_b U A`; in vs out | Poiseuille: mid error, order; next to inlet |
+|---|---|---|---|---|
+| FieldCraft (Zou–He + trace extrapolation + Shapiro high-pass) | all 30 000 (final ρ′ ≤ 8e-9) | all 30 000 (final ρ′ ≤ 3e-8) | 60 000; 1e-20; 8e-16; 7.9e-5 | 7.7e-5, 1.99; 5.6e-6 |
+| Zou & He 1997 / Hecht & Harting 2010 (`develop`) | 2 800 / 12 200 / 30 000 / 30 000 | 400 / 450 / 600 / 5 700 | fails at 11 000 | 7.7e-5, 2.00; 6.8e-6 |
+| Guo, Zheng & Shi 2002 extrapolation | 300 / 350 / 500 / 23 950 | 300 / 350 / 500 / 27 050 | fails before 1 000 | 3.1e-4, 1.98; 2.7e-4 |
+| Latt et al. 2008 regularised | 400 / 550 / 950 / 30 000 | 450 / 550 / 1 000 / 30 000 | 60 000; 4e-20; 4e-16; 8.0e-5 | 7.7e-5, 2.00; 5.1e-5 |
+| LODI (Izquierdo & Fueyo 2008; Heubes et al. 2014), bounce-back | 1 200 / 1 750 / 6 650 / 20 400 | 1 150 / 1 700 / 6 850 / 22 000 | 60 000; 0; −3.7e-4; 7.7e-5 | 7.6e-5, 1.97; 9.2e-5 |
+| LODI, regularised populations | 300 / 400 / 550 / 11 250 | 300 / 350 / 500 / 11 500 | fails before 1 000 | 9.3e-5, 2.08; 1.5e-4 |
+
+The in-versus-out mismatch of about 8e-5 is the same for every closure that survives: it is the
+outlet plane's, not the inlet's (the inlet plane and the first interior plane agree to 1e-15). The
+LODI inlets use the outgoing amplitude from one-sided interior differences with no pressure
+relaxation; with bounce-back the boundary density is not the cell's, and the inlet's mass flux
+falls 3.7e-4 short of `ρ_b U A`. A sponge or PML layer (Xu & Sagaut 2013; Najafi-Yazdi & Mongeau 2012)
+was not built. Below τ⁺ = 0.505, reachable only with a turbulence model, none of these holds at
+this Mach number (literature C3.3c, C1.5).
+
 ## Long studies
 
 Some studies take hours and run in no CI job; the heavy job (`cargo xtask test --heavy`, 60

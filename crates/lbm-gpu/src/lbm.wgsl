@@ -79,6 +79,8 @@
 // node took, which `wall_forces` gives the node's box face.
 
 override AA_MODE: bool = true;
+// Staged TRT velocity-inlet trace and high-pass density residual.
+override INLETS: bool = false;
 // The recursive regularised collision instead of the two-relaxation-time one
 // (fieldcraft_lbm::regularized).
 override REGULARIZED: bool = false;
@@ -181,7 +183,8 @@ struct Params {
 // Per pressure cell (fieldcraft_lbm::outlet), OUTLET floats at its slot: its five unknown
 // populations after the last step (h, 0..5) and its convection speed (5), kept between steps;
 // this step's convected unknowns (6..11), the density shift (11) and whether it convects (12),
-// from `outlet_convect` for `open_boundaries`.
+// from `outlet_convect` for `open_boundaries`. With INLETS every velocity cell has a row too:
+// its staged density residual (14) and trace correction (15), from `inlet_prepare`.
 @group(0) @binding(4) var<storage, read_write> outlet: array<f32>;
 @group(0) @binding(6) var<storage, read> link_f: array<f32>;
 // Per open cell: (cell, axis, kind: 0 velocity / 1 density / 2 convective outlet, its slot in `outlet`) and (target xyz or density in x, inward sign in w).
@@ -1651,6 +1654,111 @@ fn outlet_convect(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_
     }
 }
 
+// Geometry uses three vec4 words per open cell, after the open-cell headers.
+fn inlet_word(o: u32, word: u32) -> u32 {
+    return open_u[params.open + 3u * o + word / 4u][word % 4u];
+}
+fn inlet_weight(j: u32) -> f32 {
+    if j == 2u { return 10.0 / 16.0; }
+    if j == 1u || j == 3u { return 4.0 / 16.0; }
+    return -1.0 / 16.0;
+}
+
+// Snapshot the unfiltered density residual and non-equilibrium trace correction before any
+// boundary is written. The CPU derivation is in fieldcraft_lbm::inlet. All cells walk the
+// population loops (OPEN_CELLS_WALK_TOGETHER); inactive rows use their own cell as a safe source.
+@compute @workgroup_size(256)
+fn inlet_prepare(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    if !INLETS { return; }
+    let o = cell_of(lid, wg);
+    if o >= params.open { return; }
+    let ou = open_u[o];
+    let eligible = ou.z == 0u && inlet_word(o, 0u) != 0xffffffffu;
+    let cell = ou.x;
+    let inner1 = select(cell, inlet_word(o, 0u), eligible);
+    let inner2 = select(cell, inlet_word(o, 1u), eligible);
+    let xyz = aa_coords(cell);
+    let xyz1 = aa_coords(inner1);
+    let xyz2 = aa_coords(inner2);
+    let bare = select(vec3<f32>(0.0), open_f[o].xyz - 0.5 * acc_of(cell), ou.z == 0u);
+    let sign = open_f[o].w;
+    let un = sign * bare[ou.y];
+    var tangential = 0.0;
+    var outgoing = 0.0;
+    var d1 = 0.0;
+    var d2 = 0.0;
+    var j1 = vec3<f32>(0.0);
+    var j2 = vec3<f32>(0.0);
+    var t1 = 0.0;
+    var t2 = 0.0;
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let c = vec3<f32>(c_of(q));
+        let own = streamed(q, cell, xyz);
+        let h1 = streamed(q, inner1, xyz1);
+        let h2 = streamed(q, inner2, xyz2);
+        let cn = c[ou.y] * sign;
+        if cn == 0.0 { tangential = tangential + own; }
+        else if cn < 0.0 { outgoing = outgoing + own; }
+        d1 = d1 + h1;
+        d2 = d2 + h2;
+        j1 = j1 + c * h1;
+        j2 = j2 + c * h2;
+        t1 = t1 + dot(c, c) * h1;
+        t2 = t2 + dot(c, c) * h2;
+    }
+    let drho = ((tangential + 2.0 * outgoing) + un) / (1.0 - un);
+    let rho = 1.0 + drho;
+    var trace = -drho - rho * dot(bare, bare);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let c = vec3<f32>(c_of(q));
+        var h = streamed(q, cell, xyz);
+        if is_unknown(q, ou.y, sign) {
+            h = streamed(opp(q), cell, xyz) + 6.0 * w_of(q) * rho * dot(c, bare);
+        }
+        trace = trace + dot(c, c) * h;
+    }
+    t1 = t1 - d1 - dot(j1, j1) / (1.0 + d1);
+    t2 = t2 - d2 - dot(j2, j2) / (1.0 + d2);
+    // Pressure rows belong to outlet_convect, which stages all 20 slots.
+    if ou.z == 0u {
+        let valid = eligible && 1.0 + d1 > 0.0 && 1.0 + d2 > 0.0;
+        outlet[ou.w * OUTLET + 14u] = select(0.0, 2.0 * d1 - d2 - drho, valid);
+        outlet[ou.w * OUTLET + 15u] = select(0.0, 2.0 * t1 - t2 - trace, valid);
+    }
+}
+
+// The filter reads immutable staged residuals, never a neighbouring boundary's new populations.
+fn inlet_apply(o: u32, cell: u32, xyz: vec3<i32>) {
+    if !INLETS { return; }
+    let ou = open_u[o];
+    let eligible = ou.z == 0u && inlet_word(o, 0u) != 0xffffffffu;
+    // Slots 14/15 of velocity rows are immutable through this dispatch; filter neighbours are
+    // velocity rows of the same face or the cell itself.
+    let base = ou.w * OUTLET + 14u;
+    var low = 0.0;
+    for (var b = 0u; b < 5u; b = b + 1u) {
+        let row = inlet_word(o, 7u + b);
+        var line = 0.0;
+        for (var a = 0u; a < 5u; a = a + 1u) {
+            let neighbour = open_u[inlet_word(row, 2u + a)];
+            let slot = neighbour.w * OUTLET + 14u;
+            line = line + inlet_weight(a) * outlet[slot];
+        }
+        low = low + inlet_weight(b) * line;
+    }
+    let density = outlet[base] - low;
+    let trace = outlet[base + 1u];
+    let bare = select(vec3<f32>(0.0), open_f[o].xyz - 0.5 * acc_of(cell), ou.z == 0u);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let c = vec3<f32>(c_of(q));
+        let cu = dot(c, bare);
+        let change = w_of(q) * (density * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * dot(bare, bare))
+            + 1.5 * (dot(c, c) - 1.0) * trace);
+        let h = streamed(q, cell, xyz);
+        if eligible { store_streamed(q, cell, xyz, h + change); }
+    }
+}
+
 // Zou–He velocity and pressure boundaries on the streamed populations in g (Zou & He 1997;
 // Hecht & Harting 2010 for the D3Q19 transverse correction), and the second pass of the
 // convective outlet: where the flow leaves, the convected unknowns and every population shifted
@@ -1679,6 +1787,7 @@ fn open_boundaries(@builtin(local_invocation_index) lid: u32, @builtin(workgroup
     var extrapolates = false;
     if ou.z == 1u { extrapolates = outlet[base + 19u] > 0.5; }
     zou_he(o, select(ou.z, BACKFLOW_KIND, convective), cell, axis, sign, xyz, !convects && !extrapolates);
+    inlet_apply(o, cell, xyz);
     var k = 0u;
     var drho = 0.0;
     var jn = 0.0;
@@ -1732,6 +1841,11 @@ fn zou_he(o: u32, kind: u32, cell: u32, axis: u32, sign: f32, xyz: vec3<i32>, ap
         bare = ot.xyz - a_half;
         let un = sign * bare[axis];
         rho = (1.0 + (tangential + 2.0 * outgoing)) / (1.0 - un);
+        if INLETS && inlet_word(o, 0u) != 0xffffffffu {
+            // Match inlet_prepare exactly and retain the small density deviation before adding
+            // the reference density. Different rounding here biases the staged stress trace.
+            rho = 1.0 + ((tangential + 2.0 * outgoing) + un) / (1.0 - un);
+        }
     } else {
         rho = ot.x;
         let un = ((rho - 1.0) - (tangential + 2.0 * outgoing)) / rho;

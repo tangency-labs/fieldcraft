@@ -67,6 +67,7 @@ pub mod checkpoint;
 pub mod conduction;
 pub mod flow;
 pub mod hrr;
+pub mod inlet;
 pub mod lattice;
 pub mod memory;
 pub mod mrt;
