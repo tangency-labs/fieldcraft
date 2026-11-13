@@ -16,6 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::curves::TemperatureDependent;
 use crate::pvt::Pvt;
 use crate::{Error, Model, Result, context, finite, insert_new, nonnegative, not_in_use, positive, remove_existing, replace_existing};
 
@@ -625,6 +626,9 @@ pub struct Material {
     /// Latent heat of melting and freezing (needs a specific heat).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase_change: Option<PhaseChange>,
+    /// Properties that follow the temperature ([`crate::curves`]); each table needs its constant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature_dependent: Option<TemperatureDependent>,
 }
 
 impl Material {
@@ -694,7 +698,35 @@ impl Material {
                 return Err(Error::Invalid("a phase change needs the material's specific heat".into()));
             }
         }
+        if let Some(d) = &self.temperature_dependent {
+            self.validate_tables(d)?;
+        }
         Ok(())
+    }
+
+    /// Each temperature table is well formed and has its constant: an isotropic conductivity, a
+    /// specific heat, a density, a Newtonian viscosity.
+    fn validate_tables(&self, d: &TemperatureDependent) -> Result<()> {
+        if d.is_empty() {
+            return Err(Error::Invalid("temperature-dependent properties need at least one table".into()));
+        }
+        for (what, t) in d.tables() {
+            t.validate(what)?;
+        }
+        let thermal = self.thermal.as_ref();
+        let missing = [
+            (
+                d.conductivity.is_some() && !matches!(thermal.and_then(|t| t.conductivity), Some(Directional::Isotropic(_))),
+                "a conductivity table needs an isotropic conductivity",
+            ),
+            (d.specific_heat.is_some() && thermal.and_then(|t| t.specific_heat).is_none(), "a specific heat table needs a specific heat"),
+            (d.density.is_some() && self.density.is_none(), "a density table needs a density"),
+            (d.viscosity.is_some() && self.fluid.and_then(|f| f.newtonian()).is_none(), "a viscosity table needs a Newtonian fluid"),
+        ];
+        match missing.iter().find(|(m, _)| *m) {
+            Some((_, why)) => Err(Error::Invalid(format!("{why} (the constant solvers use where they do not follow the table)"))),
+            None => Ok(()),
+        }
     }
 }
 
@@ -1040,6 +1072,53 @@ mod tests {
         assert!(serde_json::from_value::<Material>(serde_json::json!({"thermal": {"heat": 1}})).is_err());
         // Negative expansion (invar-like behaviour of some composites) is allowed.
         assert!(Thermal { expansion: Some(Directional::Isotropic(-1e-6)), ..Thermal::default() }.validate().is_ok());
+    }
+
+    #[test]
+    fn temperature_tables_need_their_constants_and_convert_with_the_model() {
+        let water = serde_json::json!({
+            "density": 998.0, "fluid": {"type": "newtonian", "viscosity": 1e-3},
+            "thermal": {"conductivity": 0.6, "specific_heat": 4180},
+            "temperature_dependent": {"viscosity": [[280, 1.4e-3], [300, 0.85e-3]], "density": [[280, 999.9], [300, 996.6]],
+                "conductivity": [[280, 0.572], [300, 0.61]], "specific_heat": [[280, 4201], [300, 4181]]}
+        });
+        let m: Material = serde_json::from_value(water.clone()).unwrap();
+        m.validate().unwrap();
+        // Written and read back, the material is unchanged, its tables included.
+        assert_eq!(serde_json::from_value::<Material>(serde_json::to_value(&m).unwrap()).unwrap(), m);
+        // Each table without its constant.
+        let mut no_rho = m.clone();
+        no_rho.temperature_dependent = Some(TemperatureDependent {
+            density: m.temperature_dependent.as_ref().and_then(|d| d.density.clone()),
+            ..TemperatureDependent::default()
+        });
+        no_rho.density = None;
+        no_rho.fluid = None;
+        let mut no_k = m.clone();
+        no_k.thermal = Some(Thermal { conductivity: Some(Directional::Orthotropic([1.0, 1.0, 2.0])), ..m.thermal.unwrap() });
+        let mut no_mu = m.clone();
+        no_mu.fluid = Some(Fluid::Cross { zero_shear_viscosity: 1.0, time_constant: 1.0, index: 0.5 });
+        let mut empty = m.clone();
+        empty.temperature_dependent = Some(TemperatureDependent::default());
+        let mut bad_table = m.clone();
+        if let Some(d) = bad_table.temperature_dependent.as_mut() {
+            d.density = Some(crate::TemperatureTable(vec![[300.0, 1.0], [280.0, 1.0]]));
+        }
+        for bad in [no_rho, no_k, no_mu, empty, bad_table] {
+            assert!(bad.validate().is_err(), "{bad:?}");
+        }
+        // Into millimetres, tonnes and seconds and back: every table value goes through its quantity.
+        let mut model = Model::default();
+        model.add_material("Water", m.clone()).unwrap();
+        let mm = crate::units::DisplaySystem::new(crate::units::Preset::MmTonneS);
+        let out = model.converted(&|q, v| mm.express(q, v).ok()).unwrap();
+        let table = out.material("Water").unwrap().temperature_dependent.as_ref().unwrap();
+        let first = table.density.as_ref().unwrap().0[0];
+        // Temperatures in degrees Celsius there, the tables' as well.
+        assert!((first[1] - 999.9e-12).abs() < 1e-20 && (first[0] - (280.0 - crate::units::CELSIUS_ZERO)).abs() < 1e-12, "{first:?}");
+        let back = out.converted(&|q, v| mm.to_si(q, v).ok()).unwrap();
+        let again = back.material("Water").unwrap().temperature_dependent.as_ref().unwrap();
+        assert!((again.viscosity.as_ref().unwrap().0[1][1] - 0.85e-3).abs() < 1e-15);
     }
 
     #[test]
