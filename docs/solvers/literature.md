@@ -563,6 +563,10 @@ checked against the DOI handle API and Crossref, as above.
 - **Method.** Two relaxation rates (symmetric/antisymmetric parts); the "magic parameter" Λ = 3/16 puts the
   bounce-back wall exactly halfway and makes the solution viscosity-independent in steady flow. BGK cost, much of
   MRT's benefit.
+- **GPU arithmetic.** The shifted populations' rest direction closes the sum of the rounded post-collision
+  opposite pairs to the incoming density deviation. This enforces TRT's conserved zeroth moment to f32 summation
+  accuracy after relaxation (Guo's force has zero mass moment); closing only the equilibria still allowed an f32
+  mass drift on NVIDIA (#906).
 - **Complexity.** Low.
 
 **C2.3 Geier et al. 2015, cumulant LBM.** **Verdict: build on (high-Re collision, D3Q27).**
