@@ -384,6 +384,13 @@ fn probe(app: &ModelApp, plot: &Plot, painter: &egui::Painter, rect: Rect, legen
 /// deformation, modes, animation, what the viewport marks, reaction sums and the probed node.
 /// Every control runs a command or a view setting.
 pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) {
+    // One form: the rows share one label column, sized to the longest label, inset from the
+    // panel's edges as a kit feature card's body is.
+    let inset = solidcraft_theme::Tokens::get().space_12 as i8;
+    egui::Frame::NONE.inner_margin(egui::Margin::symmetric(inset, 0)).show(ui, |ui| kit::scope(ui, |ui| rows(app, plot, ui, t)));
+}
+
+fn rows(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) {
     let mut run: Vec<(&'static str, Value)> = Vec::new();
     let mut export: Option<Value> = None;
     let steps: Vec<(String, bool)> = app.session.result_steps().map(|(n, c)| (n.to_string(), c)).collect();
@@ -1457,6 +1464,34 @@ mod tests {
             assert!((edge - step).abs() <= 1.0, "{row} ends at {edge}, the Step drop-down at {step}");
         }
         assert!(right("Deformed").is_some(), "the deformed shape has its own toggle");
+    }
+
+    /// The Results rows keep the inset a form card's rows keep from the panel's edges, on both
+    /// sides (the kit feature card's body margin), rather than running to them.
+    #[test]
+    fn the_results_rows_keep_the_cards_inset() {
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        app.run("file.sample", json!({"name": "cantilever"})).unwrap();
+        app.run("solve.run", json!({})).unwrap();
+        app.run("results.contour", json!({"field": "von_mises"})).unwrap();
+        let plot = app.plot().unwrap();
+        let ctx = egui::Context::default();
+        let t = Tokens::get(true);
+        let inset = solidcraft_theme::Tokens::get().space_12;
+        let mut area = Rect::NOTHING;
+        for _ in 0..2 {
+            solidcraft_ui_registry::clear_handles();
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                area = ui.allocate_ui(vec2(320.0, 2000.0), |ui| controls(&mut app, &plot, ui, &t)).response.rect;
+            });
+            out.textures_delta.clear();
+        }
+        for row in ["Step", "Contours", "Scale", "Views"] {
+            let label = solidcraft_ui_registry::rect_of(&format!("dialog:label:{row}")).unwrap_or_else(|| panic!("no {row} label"));
+            let control = solidcraft_ui_registry::rect_of(&format!("dialog:control:{row}")).unwrap_or_else(|| panic!("no {row} control"));
+            assert!(label.left() >= area.left() + inset - 0.5, "{row}'s label starts at {}, the section at {}", label.left(), area.left());
+            assert!(control.right() <= area.right() - inset + 0.5, "{row}'s control ends at {}, the section at {}", control.right(), area.right());
+        }
     }
 
     /// A3-14: the legend's values are right-aligned, so their decimal points line up.

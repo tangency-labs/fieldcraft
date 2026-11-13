@@ -277,28 +277,31 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     ui.add_space(4.0);
     kit::status_line(ui, &summary_in(&reply.command, &reply.value, Some(app.session.units())), kit::StatusTone::Dim);
     ui.add_space(4.0);
-    let units = Some(app.session.units());
-    match reply.command.as_str() {
-        "deck.read" => {
-            kit::status_line(
-                ui,
-                "Model data only. Analysis history was not imported; review unread keywords and warnings before solving.",
-                kit::StatusTone::Dim,
-            );
-            value(ui, t, egui::Id::unique("fc_deck_read"), &reply.value, 0);
+    // One form: the reply's rows share one label column, sized to its longest key.
+    kit::scope(ui, |ui| {
+        let units = Some(app.session.units());
+        match reply.command.as_str() {
+            "deck.read" => {
+                kit::status_line(
+                    ui,
+                    "Model data only. Analysis history was not imported; review unread keywords and warnings before solving.",
+                    kit::StatusTone::Dim,
+                );
+                value(ui, t, egui::Id::unique("fc_deck_read"), &reply.value, 0);
+            }
+            "model.check" => diagnostics(app, ui, &reply.value, &mut acts),
+            c if SOLVES.contains(&c) => solve_summary(ui, t, &reply.value, units),
+            "model.activity" => activity(ui, t, &reply.value),
+            "geometry.bodies" => bodies(ui, t, &reply.value, app.session.units(), &mut acts),
+            "mesh.quality" => quality(ui, t, &reply.value, &mut acts),
+            "geometry.defeature.propose" => defeature_list(ui, t, &reply.value, app.session.units(), &mut acts),
+            "geometry.features" => {
+                let hovered = feature_graph(ui, t, &reply.value, &app.features_open, &mut acts);
+                app.set_feature_hover(hovered);
+            }
+            _ => value(ui, t, egui::Id::unique("fc_reply"), &reply.value, 0),
         }
-        "model.check" => diagnostics(app, ui, &reply.value, &mut acts),
-        c if SOLVES.contains(&c) => solve_summary(ui, t, &reply.value, units),
-        "model.activity" => activity(ui, t, &reply.value),
-        "geometry.bodies" => bodies(ui, t, &reply.value, app.session.units(), &mut acts),
-        "mesh.quality" => quality(ui, t, &reply.value, &mut acts),
-        "geometry.defeature.propose" => defeature_list(ui, t, &reply.value, app.session.units(), &mut acts),
-        "geometry.features" => {
-            let hovered = feature_graph(ui, t, &reply.value, &app.features_open, &mut acts);
-            app.set_feature_hover(hovered);
-        }
-        _ => value(ui, t, egui::Id::unique("fc_reply"), &reply.value, 0),
-    }
+    });
     for a in acts {
         match a {
             Act::Close => app.reply = None,
@@ -1152,6 +1155,27 @@ mod tests {
         app.show_elements(&[worst]);
         assert_eq!(app.pick.selection.summary(), "1 element");
         assert_ne!(app.cam, before, "framed");
+    }
+
+    /// A3-5: a reply's key/value rows share one value column, sized to its longest key.
+    #[test]
+    fn reply_rows_share_one_value_column() {
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        let value = json!({"nodes": 12, "elements": 4, "boundary conditions": 2, "steps": 1});
+        app.reply = Some(Reply { command: "model.info".into(), label: "Model Info".into(), params: json!({}), value });
+        let t = Tokens::get(false);
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.allocate_ui(vec2(320.0, 2000.0), |ui| show(&mut app, ui, &t));
+            });
+            out.textures_delta.clear();
+        }
+        let left = |row: &str| solidcraft_ui_registry::rect_of(&format!("dialog:control:{row}")).map(|r| r.left());
+        let first = left("nodes").expect("the nodes row");
+        for row in ["elements", "boundary conditions", "steps"] {
+            assert_eq!(left(row), Some(first), "{row}'s value starts elsewhere");
+        }
     }
 
     #[test]
