@@ -76,6 +76,9 @@ pub enum Requirement {
     /// An initial field.
     InitialField,
     Step,
+    /// No static step that activates none of the model's boundary conditions and loads
+    /// ([`fieldcraft_model::Model::idle_steps`]).
+    ActiveStep,
     /// A solved step's result (current or stale).
     Result,
     /// Results on the display.
@@ -132,6 +135,7 @@ impl Requirement {
             Requirement::FluidDomain => !m.fluid_domains().is_empty(),
             Requirement::InitialField => !m.initial_fields().is_empty(),
             Requirement::Step => !m.steps().is_empty(),
+            Requirement::ActiveStep => m.idle_steps().next().is_none(),
             Requirement::Result => s.result_steps().next().is_some(),
             Requirement::ResultsShown => s.results_view.is_some(),
             Requirement::SavedView => !s.view.views.is_empty(),
@@ -174,6 +178,7 @@ impl Requirement {
             Requirement::FluidDomain => "a fluid domain",
             Requirement::InitialField => "an initial field",
             Requirement::Step => "a step",
+            Requirement::ActiveStep => "every static step with its boundary conditions and loads active",
             Requirement::Result => "a solved step",
             Requirement::ResultsShown => "results on the display",
             Requirement::SavedView => "a saved view",
@@ -213,6 +218,7 @@ impl Requirement {
             Requirement::FluidDomain => "model.fluid_domain.create",
             Requirement::InitialField => "model.initial_field.map",
             Requirement::Step => "model.step.create",
+            Requirement::ActiveStep => "model.step.activate",
             Requirement::Result => "solve.run",
             Requirement::ResultsShown => "results.contour",
             Requirement::SavedView => "view.save",
@@ -442,6 +448,22 @@ mod tests {
             e,
             "solve.run cannot run yet. Needs a material — Properties › Material; Needs a section — Properties › Section; Needs a step — Steps › Step"
         );
+
+        // A static step that activates none of the model's boundary conditions and loads is not
+        // ready to solve: the button says so, the check names the step and what it leaves out,
+        // and so does the solve (A4-3).
+        let mut idle = Session::default();
+        crate::cmd::solve::tests::cantilever(&mut idle);
+        idle.execute("model.step.create", &json!({"name": "Idle", "procedure": {"type": "static"}})).unwrap();
+        assert_eq!(missing(&idle, "solve.run"), [Requirement::ActiveStep]);
+        let check = idle.execute("model.check", &json!({})).unwrap().to_string();
+        assert!(check.contains("step `Idle`") && check.contains("clamp") && check.contains("push"), "{check}");
+        let e = idle.execute("solve.static", &json!({"step": "Idle"})).unwrap_err().to_string();
+        assert!(e.contains("step `Idle`") && e.contains("clamp") && e.contains("push"), "{e}");
+        // A frequency step may be free-free.
+        idle.execute("model.step.delete", &json!({"name": "Idle"})).unwrap();
+        idle.execute("model.step.create", &json!({"name": "Free", "procedure": {"type": "frequency", "modes": 4}})).unwrap();
+        assert!(missing(&idle, "solve.run").is_empty());
 
         // A defined, solved cantilever: everything a result needs is there.
         let mut solved = Session::default();
