@@ -44,6 +44,10 @@ pub enum Requirement {
     Seed,
     /// A size control.
     SizeControl,
+    /// A saved mesh plan.
+    MeshPlan,
+    /// A relaxation field kept by `mesh.node.relax`.
+    Relaxation,
     /// At least one mesh node.
     Nodes,
     /// At least one element.
@@ -69,11 +73,17 @@ pub enum Requirement {
     BoundaryCondition,
     Load,
     FluidDomain,
+    /// An initial field.
+    InitialField,
     Step,
     /// A solved step's result (current or stale).
     Result,
     /// Results on the display.
     ResultsShown,
+    /// A saved view.
+    SavedView,
+    /// A render.
+    Render,
 }
 
 impl Requirement {
@@ -95,6 +105,8 @@ impl Requirement {
             Requirement::Defeature => !m.defeatures().is_empty(),
             Requirement::Seed => !m.seeds().is_empty(),
             Requirement::SizeControl => !m.size_controls().is_empty(),
+            Requirement::MeshPlan => !m.mesh_plans().is_empty(),
+            Requirement::Relaxation => !m.relaxations().is_empty(),
             Requirement::Nodes => !m.nodes().is_empty(),
             Requirement::Mesh => has_elements,
             Requirement::Analysable => {
@@ -118,9 +130,12 @@ impl Requirement {
             Requirement::BoundaryCondition => !m.boundary_conditions().is_empty(),
             Requirement::Load => !m.loads().is_empty(),
             Requirement::FluidDomain => !m.fluid_domains().is_empty(),
+            Requirement::InitialField => !m.initial_fields().is_empty(),
             Requirement::Step => !m.steps().is_empty(),
             Requirement::Result => s.result_steps().next().is_some(),
             Requirement::ResultsShown => s.results_view.is_some(),
+            Requirement::SavedView => !s.view.views.is_empty(),
+            Requirement::Render => !s.view.renders.is_empty(),
         }
     }
 
@@ -140,6 +155,8 @@ impl Requirement {
             Requirement::Defeature => "a defeature",
             Requirement::Seed => "a seed",
             Requirement::SizeControl => "a local size",
+            Requirement::MeshPlan => "a mesh plan",
+            Requirement::Relaxation => "a relaxation field",
             Requirement::Nodes => "mesh nodes",
             Requirement::Mesh | Requirement::Analysable => "a mesh",
             Requirement::ElementMaterial | Requirement::Material => "a material",
@@ -155,9 +172,12 @@ impl Requirement {
             Requirement::BoundaryCondition => "a boundary condition",
             Requirement::Load => "a load",
             Requirement::FluidDomain => "a fluid domain",
+            Requirement::InitialField => "an initial field",
             Requirement::Step => "a step",
             Requirement::Result => "a solved step",
             Requirement::ResultsShown => "results on the display",
+            Requirement::SavedView => "a saved view",
+            Requirement::Render => "a render",
         }
     }
 
@@ -175,6 +195,8 @@ impl Requirement {
             Requirement::Defeature => "geometry.defeature",
             Requirement::Seed => "mesh.seed.edge",
             Requirement::SizeControl => "mesh.size.set",
+            Requirement::MeshPlan => "mesh.plan",
+            Requirement::Relaxation => "mesh.node.relax",
             Requirement::Nodes => "mesh.node.add",
             Requirement::Mesh | Requirement::Analysable => "mesh.tet.generate",
             Requirement::ElementMaterial | Requirement::Material => "model.material.create",
@@ -189,9 +211,12 @@ impl Requirement {
             Requirement::BoundaryCondition => "model.boundary_condition.create",
             Requirement::Load => "model.load.create",
             Requirement::FluidDomain => "model.fluid_domain.create",
+            Requirement::InitialField => "model.initial_field.map",
             Requirement::Step => "model.step.create",
             Requirement::Result => "solve.run",
             Requirement::ResultsShown => "results.contour",
+            Requirement::SavedView => "view.save",
+            Requirement::Render => "results.render.save",
         }
     }
 
@@ -236,6 +261,11 @@ impl crate::schema::Collection {
             C::FaceSplit => Requirement::FaceSplit,
             C::SizeControl => Requirement::SizeControl,
             C::Defeature => Requirement::Defeature,
+            C::InitialField => Requirement::InitialField,
+            C::MeshPlan => Requirement::MeshPlan,
+            C::Relaxation => Requirement::Relaxation,
+            C::SavedView => Requirement::SavedView,
+            C::Render => Requirement::Render,
         }
     }
 }
