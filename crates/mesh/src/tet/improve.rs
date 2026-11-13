@@ -531,7 +531,7 @@ mod tests {
         let cdt = tetrahedralize(&s, &CdtOptions::default()).unwrap();
         let (mut cx, curve_faces) = complex_from_cdt(&s, &cdt, &[], &QualityOptions::default()).unwrap();
         let (geometry, size) = (Tessellation::new(&s, Vec::new()), UniformSize(H));
-        let ctx = Context { size: &size, geometry: &geometry, curve_faces: &curve_faces };
+        let ctx = Context { size: &size, controls: None, geometry: &geometry, curve_faces: &curve_faces };
         let (points, live) = (cx.point_count(), cx.live_count());
         let mut tried = 0;
         for (t, vs) in cx.live_tets().collect::<Vec<_>>() {
