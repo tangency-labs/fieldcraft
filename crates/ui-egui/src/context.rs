@@ -8,7 +8,6 @@ use egui::RichText;
 use serde_json::{Value, json};
 
 use crate::browser::Def;
-use crate::frame::{Level, heading};
 use crate::theme::Tokens;
 use crate::{ModelApp, selection};
 use solidcraft_ui_kit as kit;
@@ -42,49 +41,56 @@ pub fn panel(app: &mut ModelApp, ui: &mut egui::Ui) {
         return;
     }
     let t = Tokens::get(app.ui.dark);
-    egui::Panel::right("fc_context")
-        .exact_size(WIDTH)
-        .resizable(false)
-        .frame(egui::Frame::NONE.fill(t.dialog_bg).inner_margin(egui::Margin::symmetric(8, 8)))
-        .show(ui, |ui| {
-            app.place("context", ui.max_rect());
-            egui::ScrollArea::vertical().id_salt("fc_context_scroll").auto_shrink([false, false]).show(ui, |ui| {
-                ui.set_width(WIDTH - 16.0);
-                if app.dialog.is_some() {
-                    form(app, ui, &t);
-                    ui.add_space(10.0);
+    let k = solidcraft_theme::Tokens::get();
+    // The kit's workspace panel along the right edge.
+    let host = kit::Container::new(ui.ctx(), kit::Surface::Panel);
+    let edge = host.edge("fc_context", kit::Edge::Right).exact_size(WIDTH).resizable(false);
+    let frame = host.edge_frame(t.dialog_bg).inner_margin(egui::Margin::same(k.space_8 as i8));
+    host.show_edge(ui, edge, frame, |ui| {
+        app.place("context", ui.max_rect());
+        // The form stays on top with its OK and Cancel in view; the cards below it scroll.
+        if app.dialog.is_some() {
+            form(app, ui, &t, ui.available_rect_before_wrap());
+            ui.add_space(k.space_10);
+        }
+        egui::ScrollArea::vertical().id_salt("fc_context_scroll").auto_shrink([false, false]).show(ui, |ui| {
+            ui.set_width(inner_width());
+            if app.refused.is_some() {
+                refused(app, ui, &t);
+                ui.add_space(k.space_10);
+            }
+            if let Some((kind, name)) = app.selected.clone() {
+                properties(app, ui, kind, &name);
+                ui.add_space(k.space_10);
+            }
+            if let Some(edge) = app.selected_seed.clone() {
+                seed_card(app, ui, edge);
+                ui.add_space(k.space_10);
+            }
+            if app.selected_mesh {
+                mesh_card(app, ui, &t);
+                ui.add_space(k.space_10);
+            }
+            if let Some(plot) = app.plot() {
+                let mut close = false;
+                kit::panel::header(ui, "results.deformed", "Results", || close = true);
+                ui.add_space(k.space_4);
+                crate::results_panel::controls(app, &plot, ui, &t);
+                if close {
+                    let _ = app.run("results.clear", json!({}));
                 }
-                if app.refused.is_some() {
-                    refused(app, ui, &t);
-                    ui.add_space(10.0);
-                }
-                if let Some((kind, name)) = app.selected.clone() {
-                    properties(app, ui, kind, &name);
-                    ui.add_space(10.0);
-                }
-                if let Some(edge) = app.selected_seed.clone() {
-                    seed_card(app, ui, edge);
-                    ui.add_space(10.0);
-                }
-                if app.selected_mesh {
-                    mesh_card(app, ui, &t);
-                    ui.add_space(10.0);
-                }
-                if let Some(plot) = app.plot() {
-                    let mut close = false;
-                    kit::panel::header(ui, "results.deformed", "Results", || close = true);
-                    ui.add_space(4.0);
-                    crate::results_panel::controls(app, &plot, ui, &t);
-                    if close {
-                        let _ = app.run("results.clear", json!({}));
-                    }
-                    ui.add_space(10.0);
-                }
-                if app.reply.is_some() {
-                    crate::reply::show(app, ui, &t);
-                }
-            });
+                ui.add_space(k.space_10);
+            }
+            if app.reply.is_some() {
+                crate::reply::show(app, ui, &t);
+            }
         });
+    });
+}
+
+/// The width inside the panel's margins.
+pub(crate) fn inner_width() -> f32 {
+    WIDTH - 2.0 * solidcraft_theme::Tokens::get().space_8
 }
 
 /// A command that cannot run yet: what it misses, each with a button that starts the command
@@ -93,7 +99,7 @@ fn refused(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     let Some(u) = app.refused.clone() else { return };
     let mut close = false;
     kit::panel::header(ui, u.command, &format!("{}: not yet", crate::command_label(u.command)), || close = true);
-    ui.add_space(4.0);
+    ui.add_space(solidcraft_theme::Tokens::get().space_4);
     ui.label(RichText::new("It needs:").color(t.text_dim));
     let mut start = None;
     for fieldcraft_engine::requirement::Missing(r) in &u.missing {
@@ -114,63 +120,22 @@ fn refused(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
 /// JSON shorter than this is shown pretty-printed in the JSON view.
 const MAX_PRETTY: usize = 100_000;
 
-/// The open command's form: typed fields drawn from its schema (or its JSON text, the Advanced
-/// view), with the command's parameter documentation; OK runs it.
+/// The open command's form, the kit's feature card on top of the panel (`column`, the room left
+/// in it): its header; typed fields drawn from its schema (or its JSON text, the Advanced view),
+/// what is missing or wrong as the kit's status lines, and the command's parameter
+/// documentation; then OK and Cancel pinned under the fields (or in the header, by the kit's
+/// Dialog buttons preference). OK runs it; while a job runs (this form's mesher, a solve) OK
+/// waits for it and the card shows it as its compute status.
 /// A command that applies to part of the model (a set, a boundary condition, a load, a section, a
 /// coupling) has a Target row that takes the viewport's selection.
-fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
+fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, column: egui::Rect) {
     let selected = (!app.pick.selection.is_empty()).then(|| app.pick.selection.summary());
-    // While a job runs (this form's mesher, a solve) OK waits for it.
     let running = app.busy().map(str::to_string);
     let relax_note = app.relax_note().or_else(|| app.node_move_note());
     let fluid_note = app.fluid_note();
     let units = app.session.units().clone();
-    let session = &app.session;
-    // The set Use selection will make on OK is offered with the others.
-    let pending = app.dialog.as_ref().and_then(|d| d.pending_set.as_ref()).and_then(|s| s.get("name")).and_then(Value::as_str).map(str::to_string);
-    let mut use_selection = false;
-    let Some(d) = app.dialog.as_mut() else { return };
-    let Some(spec) = fieldcraft_engine::find_command(d.command) else {
-        app.dialog = None;
-        return;
-    };
-    // The form's widgets are its own, keyed by this opening: the keyboard focus and typed text of
-    // the form it replaces (egui drops focus from a widget no longer drawn) never land here.
-    let form_id = egui::Id::unique(("fc_form", spec.id, d.opening));
-    let (mut run, mut cancel) = (false, false);
-    kit::panel::header(ui, spec.id, spec.label, || cancel = true);
-    ui.add_space(4.0);
-    ui.label(RichText::new(spec.id).small().color(t.text_dim));
-    let params = serde_json::from_str::<Value>(&d.text).unwrap_or(Value::Null);
-    if let Some(target) = selection::target(spec.id, &params) {
-        heading(ui, t, Level::Section, |ui| {
-            ui.label(RichText::new("Target").size(12.0));
-        });
-        ui.horizontal(|ui| {
-            let tip = match target {
-                selection::Target::Members => "The selection becomes the set's members (geometry by name, the mesh by label)",
-                selection::Target::Set | selection::Target::TargetSet => {
-                    "Names a set of the selection here: an existing set with the same members, or a new one made on OK (model.set.create)"
-                }
-                selection::Target::Edges => "The selected design edges (Select: Edges) become the edges seeded",
-                selection::Target::Position => "Puts the point at what is selected: a vertex or node, the centre of a hole (its faces or rim), or the centroid of faces and edges",
-                selection::Target::DatumPoint => "Puts the point on what is selected: a vertex, an edge's midpoint, a face's centre, or the centre of a hole or of several items",
-                selection::Target::Bodies => "The selected bodies (Select: Bodies), or the bodies of the selected faces, become the cells",
-                selection::Target::ExtrudeFaces => "Pick the source face and use it, then pick the target surface and use it",
-                selection::Target::Faces => "The selected design faces (Shift-click to pick, Select: Faces) become the form's faces, in place of a sphere",
-            };
-            let button = match target {
-                selection::Target::ExtrudeFaces if selection::extrude_key(&params) == "source" => "Use as source",
-                selection::Target::ExtrudeFaces => "Use as target surface",
-                _ => "Use selection",
-            };
-            use_selection = kit::button(ui, button, kit::Button::Enabled(selected.is_some())).backing_on_hover_text(tip).clicked();
-            match &selected {
-                Some(text) => ui.add(egui::Label::new(RichText::new(text).color(t.pick_selected)).wrap()),
-                None => ui.add(egui::Label::new(RichText::new("Pick in the viewport, or choose below").color(t.text_dim)).wrap()),
-            };
-        });
-    }
+    // Escape closes an open menu or the command search, not the form under it.
+    let escape_elsewhere = app.ui.menu.is_some() || app.ui.palette;
     // The nodes, elements and element faces picked in the viewport, for Use selection.
     let mut picked = crate::form::Picked::default();
     for item in app.pick.selection.items() {
@@ -181,117 +146,166 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
             _ => {}
         }
     }
-    let mut advanced = d.advanced;
-    heading(ui, t, Level::Section, |ui| {
-        ui.label(RichText::new("Parameters").size(12.0));
-        if spec.form.is_some() {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.toggle_value(&mut advanced, RichText::new("{ } JSON").small()).backing_on_hover_text("Advanced: edit the parameters as JSON");
-            });
-        }
-    });
-    let mut invalid = 0;
-    let mut create = None;
-    let mut hover_body = None;
+    let session = &app.session;
+    // The set Use selection will make on OK is offered with the others.
+    let pending = app.dialog.as_ref().and_then(|d| d.pending_set.as_ref()).and_then(|s| s.get("name")).and_then(Value::as_str).map(str::to_string);
+    let Some(d) = app.dialog.as_mut() else { return };
+    let Some(spec) = fieldcraft_engine::find_command(d.command) else {
+        app.dialog = None;
+        return;
+    };
+    // The form's widgets are its own, keyed by this opening: the keyboard focus and typed text of
+    // the form it replaces (egui drops focus from a widget no longer drawn) never land here.
+    let form_id = egui::Id::unique(("fc_form", spec.id, d.opening));
+    let params = serde_json::from_str::<Value>(&d.text).unwrap_or(Value::Null);
     // What is missing or wrong, by the fields' labels: OK waits for it (in either view).
     let problems = match (spec.form, params.as_object()) {
         (Some(fields), Some(obj)) => crate::form::messages(fields, obj),
         _ => Vec::new(),
     };
     let missing = problems.iter().map(|(_, m)| m.as_str()).collect::<Vec<_>>().join("\n");
-    // The typed fields edit the JSON text's object; text that is not an object stays in the
-    // JSON view until it is.
-    let object = params.as_object().cloned();
-    if advanced != d.advanced && !advanced && object.is_none() {
-        d.error = Some("fix the JSON before going back to the fields".into());
-        advanced = true;
-    }
-    // Pretty-printed once, when the JSON view opens.
-    if advanced && !d.advanced && params.is_object() && d.text.len() < MAX_PRETTY {
-        d.text = serde_json::to_string_pretty(&params).unwrap_or_else(|_| d.text.clone());
-    }
-    d.advanced = advanced;
-    match (spec.form, object) {
-        (Some(fields), Some(mut obj)) if !d.advanced => {
-            let refused = d.refused.as_ref().map(|(k, p)| (k.as_str(), p.as_str()));
-            let cx = crate::form::Context {
-                units: &units,
-                names: &|c| {
-                    let mut names = session.names(c);
-                    if c == fieldcraft_engine::schema::Collection::Set
-                        && let Some(p) = &pending
-                        && !names.contains(p)
-                    {
-                        names.push(p.clone());
-                    }
-                    names
-                },
-                salt: form_id,
-                touched: &d.touched,
-                attempted: d.attempted,
-                refused,
-                problems: &problems,
-                picked: picked.clone(),
-            };
-            let out = crate::form::show(ui, t, &cx, fields, &mut obj);
-            invalid = out.invalid;
-            create = out.create;
-            hover_body = out.hover_body;
-            if out.changed {
-                d.text = Value::Object(obj).to_string();
-                d.error = None;
-                d.refused = None;
-            }
-            d.touched.extend(out.touched);
-        }
-        _ => {
-            kit::text_area(ui, "Parameters", form_id.with("json"), &mut d.text, 6, usize::MAX);
-        }
-    }
-    if let Some(e) = &d.error {
-        ui.label(RichText::new(e).color(t.error));
-    } else if d.attempted && !missing.is_empty() {
-        ui.label(RichText::new(&missing).color(t.error));
-    }
-    if let Some(note) = &relax_note {
-        ui.label(RichText::new(note).small().color(t.text));
-    }
-    if let Some((note, problem)) = &fluid_note {
-        ui.label(RichText::new(note).small().color(t.text));
-        if let Some(problem) = problem {
-            ui.label(RichText::new(problem).small().color(t.error));
-        }
-    }
-    kit::section(ui, "fc_form_takes", "What it takes", false, |ui| {
-        ui.label(RichText::new(spec.params).small().color(t.text_dim));
-    });
-    ui.add_space(4.0);
-    let ready = invalid == 0 && missing.is_empty() && running.is_none();
-    let not_ready = || match &running {
-        Some(job) => format!("{job} is running: wait for it or cancel it"),
-        None if invalid > 0 => format!("{missing}\nA field holds something that is not a value").trim().to_string(),
-        None => missing.clone(),
+    let (mut invalid, mut create, mut hover_body, mut use_selection) = (0, None, None, false);
+    let card = kit::Panel::new(spec.label, form_id.with("card"), column.right_top(), column, kit::frame::Side::Right, egui::Frame::NONE);
+    let heading = kit::FeatureOptions {
+        icon: spec.id,
+        title: spec.label,
+        drag_key: "",
+        moved: egui::Vec2::ZERO,
+        docked: column.right_top(),
+        apply_label: None,
     };
-    let mut attempted = false;
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            cancel |= kit::button(ui, "Cancel", kit::Button::Normal).clicked();
-            let ok = ui.add_enabled_ui(ready, |ui| kit::primary_button(ui, "OK")).inner;
-            // A click on the greyed OK shows every problem, beside its field.
-            attempted = !ready && running.is_none() && ok.contains_pointer() && ui.input(|i| i.pointer.primary_clicked());
-            run = ok
-                .on_disabled_hover_ui(|ui| {
-                    ui.label(not_ready());
-                })
-                .clicked();
+    let (closed, action) = card.feature(ui, heading, false, missing.is_empty(), |ui| {
+        kit::text(ui, spec.id, kit::Text::Note("form:command"));
+        if let Some(target) = selection::target(spec.id, &params) {
+            kit::section_heading(ui, "Target");
+            ui.horizontal(|ui| {
+                let tip = match target {
+                    selection::Target::Members => "The selection becomes the set's members (geometry by name, the mesh by label)",
+                    selection::Target::Set | selection::Target::TargetSet => {
+                        "Names a set of the selection here: an existing set with the same members, or a new one made on OK (model.set.create)"
+                    }
+                    selection::Target::Edges => "The selected design edges (Select: Edges) become the edges seeded",
+                    selection::Target::Position => {
+                        "Puts the point at what is selected: a vertex or node, the centre of a hole (its faces or rim), or the centroid of faces and edges"
+                    }
+                    selection::Target::DatumPoint => {
+                        "Puts the point on what is selected: a vertex, an edge's midpoint, a face's centre, or the centre of a hole or of several items"
+                    }
+                    selection::Target::Bodies => "The selected bodies (Select: Bodies), or the bodies of the selected faces, become the cells",
+                    selection::Target::ExtrudeFaces => "Pick the source face and use it, then pick the target surface and use it",
+                    selection::Target::Faces => {
+                        "The selected design faces (Shift-click to pick, Select: Faces) become the form's faces, in place of a sphere"
+                    }
+                };
+                let button = match target {
+                    selection::Target::ExtrudeFaces if selection::extrude_key(&params) == "source" => "Use as source",
+                    selection::Target::ExtrudeFaces => "Use as target surface",
+                    _ => "Use selection",
+                };
+                use_selection = kit::button(ui, button, kit::Button::Enabled(selected.is_some())).backing_on_hover_text(tip).clicked();
+                match &selected {
+                    Some(text) => ui.add(egui::Label::new(RichText::new(text).color(t.pick_selected)).wrap()),
+                    None => ui.add(egui::Label::new(RichText::new("Pick in the viewport, or choose below").color(t.text_dim)).wrap()),
+                };
+            });
+        }
+        kit::section_heading(ui, "Parameters");
+        let mut advanced = d.advanced;
+        if spec.form.is_some() {
+            kit::checkbox(ui, "Edit as JSON", &mut advanced).backing_on_hover_text("Advanced: edit the parameters as JSON");
+        }
+        // The typed fields edit the JSON text's object; text that is not an object stays in the
+        // JSON view until it is.
+        let object = params.as_object().cloned();
+        if advanced != d.advanced && !advanced && object.is_none() {
+            d.error = Some("fix the JSON before going back to the fields".into());
+            advanced = true;
+        }
+        // Pretty-printed once, when the JSON view opens.
+        if advanced && !d.advanced && params.is_object() && d.text.len() < MAX_PRETTY {
+            d.text = serde_json::to_string_pretty(&params).unwrap_or_else(|_| d.text.clone());
+        }
+        d.advanced = advanced;
+        match (spec.form, object) {
+            (Some(fields), Some(mut obj)) if !d.advanced => {
+                let refused = d.refused.as_ref().map(|(k, p)| (k.as_str(), p.as_str()));
+                let cx = crate::form::Context {
+                    units: &units,
+                    names: &|c| {
+                        let mut names = session.names(c);
+                        if c == fieldcraft_engine::schema::Collection::Set
+                            && let Some(p) = &pending
+                            && !names.contains(p)
+                        {
+                            names.push(p.clone());
+                        }
+                        names
+                    },
+                    salt: form_id,
+                    touched: &d.touched,
+                    attempted: d.attempted,
+                    refused,
+                    problems: &problems,
+                    picked: picked.clone(),
+                };
+                let out = crate::form::show(ui, t, &cx, fields, &mut obj);
+                invalid = out.invalid;
+                create = out.create;
+                hover_body = out.hover_body;
+                if out.changed {
+                    d.text = Value::Object(obj).to_string();
+                    d.error = None;
+                    d.refused = None;
+                }
+                d.touched.extend(out.touched);
+            }
+            _ => {
+                kit::text_area(ui, "Parameters", form_id.with("json"), &mut d.text, 6, usize::MAX);
+            }
+        }
+        if let Some(e) = &d.error {
+            kit::status_line(ui, e, kit::StatusTone::Error);
+        } else if d.attempted && !missing.is_empty() {
+            kit::status_line(ui, &missing, kit::StatusTone::Error);
+        }
+        if let Some(note) = &relax_note {
+            kit::status_line(ui, note, kit::StatusTone::Dim);
+        }
+        if let Some((note, problem)) = &fluid_note {
+            kit::status_line(ui, note, kit::StatusTone::Dim);
+            if let Some(problem) = problem {
+                kit::status_line(ui, problem, kit::StatusTone::Error);
+            }
+        }
+        kit::section(ui, "fc_form_takes", "What it takes", false, |ui| {
+            kit::text(ui, spec.params, kit::Text::Note("form:takes"));
         });
+        // Read after the fields are drawn: a field holding something that is not a value, or
+        // a running job, keeps OK greyed (the kit's `applying`).
+        kit::ComputeStatus {
+            text: running.as_ref().map(|job| format!("{job} is running")),
+            busy: running.is_some(),
+            applying: running.is_some() || invalid > 0,
+        }
     });
+    let ready = invalid == 0 && missing.is_empty() && running.is_none();
+    // The greyed OK says why it waits; a click on it shows every problem, beside its field.
+    let mut attempted = false;
+    if !ready && let Some(ok) = solidcraft_ui_registry::rect_of("dialog:ok") {
+        let not_ready = match &running {
+            Some(job) => format!("{job} is running: wait for it or cancel it"),
+            None if invalid > 0 => format!("{missing}\nA field holds something that is not a value").trim().to_string(),
+            None => missing.clone(),
+        };
+        let waits = ui.interact(ok, form_id.with("ok_waits"), egui::Sense::click());
+        attempted = running.is_none() && waits.clicked();
+        waits.backing_on_hover_text(not_ready);
+    }
     if attempted && let Some(d) = app.dialog.as_mut() {
         d.attempted = true;
     }
-    if ui.input(|i| i.key_pressed(egui::Key::Escape)) && app.ui.menu.is_none() && !app.ui.palette {
-        cancel = true;
-    }
+    let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+    let cancel = closed || (action == kit::Action::Cancel && !(escape && escape_elsewhere));
     // A body's row under the pointer is highlighted in the viewport, as a hover there is.
     match hover_body.and_then(|b| fieldcraft_model::GeometryRef::body(b).ok()) {
         Some(g) => {
@@ -308,7 +322,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
         app.close_dialog();
     } else if let Some((collection, path)) = create {
         app.create_from_form(collection, path);
-    } else if run {
+    } else if action == kit::Action::Ok && ready {
         app.submit_dialog();
     } else if use_selection
         && let Err(e) = app.use_selection_in_dialog()
@@ -338,9 +352,9 @@ fn properties(app: &mut ModelApp, ui: &mut egui::Ui, kind: Def, name: &str) {
     let Some(rows) = property_rows(app, kind, name) else { return };
     let mut deselect = false;
     kit::panel::header(ui, kind.icon(), &format!("{}: {name}", kind.label()), || deselect = true);
-    ui.add_space(4.0);
+    ui.add_space(solidcraft_theme::Tokens::get().space_4);
     property_grid(ui, "fc_properties", &rows);
-    ui.add_space(6.0);
+    ui.add_space(solidcraft_theme::Tokens::get().space_6);
     let (mut edit, mut delete) = (false, false);
     let editing = kind.edit_command(&app.session.model, name);
     ui.horizontal(|ui| {
@@ -365,9 +379,9 @@ fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, edge: fieldcraft_model::Geom
     let rows = crate::describe::seed_rows(seed, app.session.units());
     let mut deselect = false;
     kit::panel::header(ui, "mesh.seed.edge", "Seed", || deselect = true);
-    ui.add_space(4.0);
+    ui.add_space(solidcraft_theme::Tokens::get().space_4);
     property_grid(ui, "fc_seed_properties", &rows);
-    ui.add_space(6.0);
+    ui.add_space(solidcraft_theme::Tokens::get().space_6);
     let (mut edit, mut delete) = (false, false);
     ui.horizontal(|ui| {
         edit = kit::button(ui, "Edit…", kit::Button::Normal).backing_on_hover_text(crate::menu::seed_command(&edge)).clicked();
@@ -386,6 +400,7 @@ fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, edge: fieldcraft_model::Geom
 /// The mesh: its size, then each command that made it with its parameters (in its form's
 /// words), with Edit… opening that command's form filled in (#343).
 fn mesh_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
+    let k = solidcraft_theme::Tokens::get();
     let key = (app.session.revision(), app.session.units().label());
     let made = match &app.mesh_made {
         Some((k, made)) if *k == key => made.clone(),
@@ -406,20 +421,20 @@ fn mesh_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     };
     let mut deselect = false;
     kit::panel::header(ui, "mesh.tet.generate", "Mesh", || deselect = true);
-    ui.add_space(4.0);
+    ui.add_space(k.space_4);
     let (nodes, elements) = (app.session.model.nodes().len(), app.session.model.elements().len());
     let size = [("Nodes".to_string(), crate::describe::quantity(nodes as f64)), ("Elements".to_string(), crate::describe::quantity(elements as f64))];
     property_grid(ui, "fc_mesh_size", &size);
     let mut edit = None;
     if made.is_empty() && elements > 0 {
-        ui.add_space(4.0);
-        ui.label(RichText::new("Not made by a mesher in this model (imported or built by hand)").size(11.5).color(t.text_dim));
+        ui.add_space(k.space_4);
+        ui.label(RichText::new("Not made by a mesher in this model (imported or built by hand)").size(k.font_caption).color(t.text_dim));
     }
     for (i, (command, params, rows)) in made.iter().enumerate() {
-        ui.add_space(8.0);
+        ui.add_space(k.space_8);
         ui.horizontal(|ui| {
             ui.label(RichText::new(crate::command_label(command)).strong());
-            ui.label(RichText::new(command.as_str()).size(11.0).color(t.text_dim));
+            ui.label(RichText::new(command.as_str()).size(k.font_small).color(t.text_dim));
         });
         property_grid(ui, &format!("fc_mesh_made_{i}"), rows);
         if kit::button(ui, "Edit…", kit::Button::Normal).backing_on_hover_text(format!("{command}: its form with these parameters")).clicked() {
@@ -465,6 +480,50 @@ pub(crate) fn value_text(v: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One frame of a 1280 × 800 window with `events`.
+    fn frame(app: &mut ModelApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))),
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+        out.textures_delta.clear();
+    }
+
+    /// The command form is the kit's feature card: its header, its OK and Cancel in the footer
+    /// pinned under the fields, inside the context panel. A click on the greyed OK shows what is
+    /// missing as the kit's status line; Cancel closes the form.
+    #[test]
+    fn the_form_is_the_kits_feature_card() {
+        let ctx = egui::Context::default();
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        app.start("model.material.create").unwrap();
+        frame(&mut app, &ctx, vec![]);
+        frame(&mut app, &ctx, vec![]);
+        let panel = app.layout.get("context").copied().expect("the context panel is drawn");
+        let footer = solidcraft_ui_registry::rect_of("dialog:footer").expect("the kit's footer");
+        let ok = solidcraft_ui_registry::rect_of("dialog:ok").expect("the kit's OK");
+        let cancel = solidcraft_ui_registry::rect_of("dialog:cancel").expect("the kit's Cancel");
+        assert!(panel.contains_rect(footer) && footer.contains_rect(ok) && footer.contains_rect(cancel), "{panel:?} {footer:?} {ok:?}");
+        assert_eq!(solidcraft_ui_registry::count_of("dialog:ok:enabled"), Some(0.0), "nothing named yet: OK waits");
+        assert!(solidcraft_ui_registry::rects("dialog:status:").is_empty(), "problems wait for an edit or a try");
+        let click = |at: egui::Pos2, app: &mut ModelApp| {
+            let button =
+                |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            frame(app, &ctx, vec![egui::Event::PointerMoved(at)]);
+            frame(app, &ctx, vec![button(true)]);
+            frame(app, &ctx, vec![button(false)]);
+            frame(app, &ctx, vec![]);
+        };
+        click(ok.center(), &mut app);
+        assert!(app.dialog.as_ref().is_some_and(|d| d.attempted), "the click on the greyed OK was a try");
+        assert!(!solidcraft_ui_registry::rects("dialog:status:").is_empty(), "what is missing, as the kit's status line");
+        let cancel = solidcraft_ui_registry::rect_of("dialog:cancel").expect("the kit's Cancel");
+        click(cancel.center(), &mut app);
+        assert!(app.dialog.is_none(), "Cancel closes the form");
+    }
 
     #[test]
     fn long_values_are_shortened() {
