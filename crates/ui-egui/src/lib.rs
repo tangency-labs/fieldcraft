@@ -838,7 +838,8 @@ impl ModelApp {
             self.dialog = None;
             return Ok(());
         }
-        if spec.params.trim() == "{}" {
+        // No fields in the schema: nothing to fill in, so it runs (its doc may still explain it).
+        if spec.form.is_some_and(<[_]>::is_empty) {
             self.dialog = None;
             self.run(spec.id, json!({})).map(|_| ())
         } else {
@@ -3081,6 +3082,19 @@ mod tests {
         assert!(app.dialog.is_none());
         assert!(app.session.model.node(7).is_some());
         assert!(app.start("no.such").is_err());
+    }
+
+    /// A command whose schema has no fields runs on click, whatever its parameter doc says: an
+    /// empty form that needs OK is a dead step.
+    #[test]
+    fn a_command_with_no_fields_runs_on_click() {
+        let mut app = ModelApp::new(Session::default());
+        for id in ["geometry.bodies", "view.list", "mesh.seed.list", "mesh.size.list"] {
+            let spec = fieldcraft_engine::find_command(id).unwrap();
+            assert!(spec.form.is_some_and(<[_]>::is_empty) && spec.params.trim() != "{}", "{id}");
+            app.start(id).unwrap();
+            assert!(app.dialog.is_none(), "{id} opened a form");
+        }
     }
 
     /// A parameter the command refuses is named by its field's label in the form and the status
