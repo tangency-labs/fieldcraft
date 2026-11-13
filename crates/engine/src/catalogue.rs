@@ -424,7 +424,7 @@ pub static CATALOGUE: &[Capability] = &[
         Mesh,
         "Structured Hex",
         "A hex-meshing plan from the features that built a body (sweeps, blocks, O-grids, layers, imprints, copies); saved, editable, applied with the structured meshers",
-        &["mesh.plan.apply"],
+        &["mesh.plan.apply", "mesh.plan.delete"],
     ),
     ready_more(
         "mesh.block",
@@ -460,7 +460,7 @@ pub static CATALOGUE: &[Capability] = &[
         Mesh,
         "Improve",
         "Relax the nodes inside a sphere to fix spikes and slivers; surface nodes slide on the geometry; kept as a field to apply again after a remesh",
-        &["mesh.node.relax.apply"],
+        &["mesh.node.relax.apply", "mesh.node.relax.delete"],
     ),
     ready(
         "mesh.node.move",
@@ -685,7 +685,7 @@ pub static CATALOGUE: &[Capability] = &[
         Interactions,
         "Contact",
         "A fixed rigid plane a set's nodes cannot pass, with friction, in an explicit dynamics step",
-        &["interaction.rigid_wall.delete"],
+        &["interaction.rigid_wall.edit", "interaction.rigid_wall.delete"],
     ),
     soon("interaction.bolt", "Bolt Load", Interactions, "Connectors", "M7", "Bolt pretension"),
     ready_more(

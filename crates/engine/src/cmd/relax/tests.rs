@@ -212,6 +212,22 @@ fn hostile_parameters_never_panic() {
     assert!(s.execute("mesh.node.relax.apply", &json!({})).is_err());
 }
 
+/// A kept field is deleted by name, in one undo step, and the nodes stay; a name the model does
+/// not have, or a hostile one, is refused and changes nothing.
+#[test]
+fn a_kept_field_is_deleted_by_name() {
+    let mut s = Session::default();
+    s.model.set_relaxation("Relax1", Relaxation { bodies: Vec::new(), cells: Vec::new(), reapply: true }).unwrap();
+    for bad in [json!({}), json!({"name": "Relax2"}), json!({"name": null}), json!({"name": "x".repeat(100_000)}), json!("Relax1")] {
+        assert!(s.execute("mesh.node.relax.delete", &bad).is_err(), "{bad}");
+        assert_eq!(s.model.relaxations().len(), 1, "{bad}");
+    }
+    assert_eq!(s.execute("mesh.node.relax.delete", &json!({"name": "Relax1"})).unwrap(), Value::Null);
+    assert!(s.model.relaxations().is_empty());
+    s.undo().unwrap();
+    assert!(s.model.relaxation("Relax1").is_some());
+}
+
 /// A 20 mm box with an R2 fillet along its edge at x = z = 20 (axis x = z = 18, along y), tet
 /// meshed; its fillet faces' persistent names.
 fn filleted_box() -> (crate::tests::TempDir, Session, Vec<String>) {

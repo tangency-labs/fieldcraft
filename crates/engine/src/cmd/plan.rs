@@ -202,6 +202,19 @@ pub const APPLY: CommandSpec = CommandSpec {
     run: apply,
 };
 
+pub const DELETE: CommandSpec = CommandSpec {
+    id: "mesh.plan.delete",
+    label: "Delete Mesh Plan",
+    params: r#"{"name": "Plan-Base"} — removes a saved mesh plan; the partitions and the mesh it made stay (geometry.partition.delete, mesh.clear)"#,
+    form: Some(super::forms::MESH_PLAN_DELETE),
+    kind: CommandKind::Model,
+    requires: &[Requirement::MeshPlan],
+    run: |s: &mut Session, p: &Value| {
+        s.model.remove_mesh_plan(super::name(p)?)?;
+        Ok(Value::Null)
+    },
+};
+
 type V3 = [f64; 3];
 
 fn dot(a: V3, b: V3) -> f64 {
@@ -2156,6 +2169,23 @@ mod tests {
 
     fn open(commands: Value) -> (crate::tests::TempDir, Session) {
         open_script(&json!({"commands": commands}).to_string())
+    }
+
+    /// A saved plan is deleted by name, in one undo step; a name it does not have, or a hostile
+    /// one, is refused and changes nothing.
+    #[test]
+    fn a_saved_plan_is_deleted_by_name() {
+        let mut s = Session::default();
+        let plan = json!({"body": "Base", "size": 2.0, "layers": 2, "mesher": "sweep"});
+        s.model.set_mesh_plan("Plan-Base", serde_json::from_value(plan).unwrap()).unwrap();
+        for bad in [json!({}), json!({"name": "Plan-Other"}), json!({"name": 3}), json!({"name": "x".repeat(100_000)}), json!([1])] {
+            assert!(s.execute("mesh.plan.delete", &bad).is_err(), "{bad}");
+            assert_eq!(s.model.mesh_plans().len(), 1, "{bad}");
+        }
+        assert_eq!(s.execute("mesh.plan.delete", &json!({"name": "Plan-Base"})).unwrap(), Value::Null);
+        assert!(s.model.mesh_plans().is_empty());
+        s.undo().unwrap();
+        assert!(s.model.mesh_plan("Plan-Base").is_some());
     }
 
     fn templates(plan: &Value) -> Vec<(String, String)> {

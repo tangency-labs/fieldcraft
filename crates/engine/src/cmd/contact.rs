@@ -60,6 +60,16 @@ pub const RIGID_WALL_DELETE: CommandSpec = CommandSpec {
     run: rigid_wall_delete,
 };
 
+pub const RIGID_WALL_EDIT: CommandSpec = CommandSpec {
+    id: "interaction.rigid_wall.edit",
+    label: "Edit Rigid Wall",
+    params: r#"{"step": "Impact" (default: the model's only explicit dynamics step), "index": 0 (the wall's place in the step's `rigid_walls`, from 0), "set"?: "front", "point"?: [x, y, z], "normal"?: [nx, ny, nz], "friction"?: {"static": 0.3, "kinetic": 0.2, "decay": 10} | null (frictionless)} — changes a rigid wall of an explicit dynamics step: the parameters given replace the wall's, the rest stay (see interaction.rigid_wall)"#,
+    form: Some(super::forms::RIGID_WALL_EDIT),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Step],
+    run: rigid_wall_edit,
+};
+
 /// The explicit dynamics step `step` names, or the model's only one when it names none.
 fn explicit_step(m: &Model, p: &Value) -> Result<Step> {
     let explicit = |s: &&Step| matches!(s.procedure, Procedure::ExplicitDynamic(_));
@@ -120,6 +130,36 @@ fn rigid_wall_delete(s: &mut Session, p: &Value) -> Result<Value> {
     e.rigid_walls.remove(index);
     s.model.replace_step(step)?;
     Ok(Value::Null)
+}
+
+fn rigid_wall_edit(s: &mut Session, p: &Value) -> Result<Value> {
+    let mut step = explicit_step(&s.model, p)?;
+    let index: usize = super::req(p, "index")?;
+    let Procedure::ExplicitDynamic(e) = &mut step.procedure else { return Err(EngineError::Params("not an explicit dynamics step".into())) };
+    let count = e.rigid_walls.len();
+    let wall = e
+        .rigid_walls
+        .get_mut(index)
+        .ok_or_else(|| EngineError::param("index", ProblemKind::Invalid(format!("step `{}` has {count} rigid walls", step.name))))?;
+    if p.get("set").is_some() {
+        let set = text(p, "set")?;
+        if s.model.set(set).is_none() {
+            return Err(EngineError::Params(format!("no set `{set}`")));
+        }
+        wall.set = set.to_string();
+    }
+    if let Some(point) = opt(p, "point")? {
+        wall.point = point;
+    }
+    if let Some(normal) = opt(p, "normal")? {
+        wall.normal = normal;
+    }
+    if let Some(friction) = opt::<Option<Friction>>(p, "friction")? {
+        wall.friction = friction.unwrap_or(Friction::NONE);
+    }
+    let name = step.name.clone();
+    s.model.replace_step(step)?;
+    Ok(json!({"step": name, "index": index}))
 }
 
 pub const PAIR: CommandSpec = CommandSpec {
@@ -434,6 +474,51 @@ mod tests {
         assert!(walls(&s).is_empty());
         s.execute("model.step.create", &json!({"name": "Hit2", "procedure": {"type": "explicit_dynamic", "end_time": 1e-4}})).unwrap();
         assert!(s.execute("interaction.rigid_wall", &wall).is_err(), "two explicit steps: name one");
+    }
+
+    /// A rigid wall is edited in place: the parameters given replace the wall's, the rest stay;
+    /// hostile parameters are refused and change nothing; one undo step brings the wall back.
+    #[test]
+    fn a_rigid_wall_is_edited_in_place() {
+        let mut s = Session::default();
+        super::super::define::tests::defined_bar(&mut s);
+        s.execute("model.step.create", &json!({"name": "Hit", "procedure": {"type": "explicit_dynamic", "end_time": 1e-4}})).unwrap();
+        s.execute("interaction.rigid_wall", &json!({"set": "end", "point": [3, 0, 0], "normal": [-1, 0, 0], "friction": {"static": 0.2}})).unwrap();
+        let walls = |s: &Session| match &s.model.step("Hit").unwrap().procedure {
+            Procedure::ExplicitDynamic(e) => e.rigid_walls.clone(),
+            _ => panic!(),
+        };
+        let before = walls(&s);
+        let r = s.execute("interaction.rigid_wall.edit", &json!({"index": 0, "point": [2, 0, 0]})).unwrap();
+        assert_eq!(r, json!({"step": "Hit", "index": 0}));
+        let after = walls(&s);
+        // The point is in the display system, as interaction.rigid_wall takes it: 2/3 of the first.
+        assert!((after[0].point[0] - before[0].point[0] * 2.0 / 3.0).abs() <= 1e-12 * before[0].point[0].abs(), "{:?}", after[0].point);
+        assert_eq!((&after[0].set, after[0].normal, &after[0].friction), (&before[0].set, before[0].normal, &before[0].friction));
+        s.execute("interaction.rigid_wall.edit", &json!({"step": "Hit", "index": 0, "normal": [1, 0, 0], "friction": null})).unwrap();
+        assert_eq!((walls(&s)[0].normal, &walls(&s)[0].friction), ([1.0, 0.0, 0.0], &Friction::NONE));
+        let edited = walls(&s);
+        for bad in [
+            json!({}),
+            json!({"index": 1}),
+            json!({"index": -1}),
+            json!({"index": 1e300}),
+            json!({"index": "0"}),
+            json!({"index": 0, "step": "Bend"}),
+            json!({"index": 0, "step": "Nope"}),
+            json!({"index": 0, "set": "nope"}),
+            json!({"index": 0, "set": 3}),
+            json!({"index": 0, "normal": [0, 0, 0]}),
+            json!({"index": 0, "point": [f64::MAX, 0, 0, 1]}),
+            json!({"index": 0, "point": "here"}),
+            json!({"index": 0, "friction": {"static": -1}}),
+            json!({"index": 0, "friction": "high"}),
+        ] {
+            assert!(s.execute("interaction.rigid_wall.edit", &bad).is_err(), "{bad}");
+            assert_eq!(walls(&s), edited, "{bad} changed the wall");
+        }
+        s.undo().unwrap();
+        assert_eq!(walls(&s)[0].normal, before[0].normal);
     }
 
     /// Two unit cubes of 2×2×2 hex8 each, the second resting on the first (separate nodes), and

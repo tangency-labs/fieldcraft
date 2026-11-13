@@ -57,6 +57,19 @@ pub const APPLY: CommandSpec = CommandSpec {
     run: apply,
 };
 
+pub const DELETE: CommandSpec = CommandSpec {
+    id: "mesh.node.relax.delete",
+    label: "Delete Relaxation",
+    params: r#"{"name": "Relax1"} — removes a relaxation field kept by mesh.node.relax (it is no longer applied after a remesh); the nodes it moved stay where they are"#,
+    form: Some(super::forms::NODE_RELAX_DELETE),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Relaxation],
+    run: |s: &mut Session, p: &Value| {
+        s.model.remove_relaxation(super::name(p)?)?;
+        Ok(Value::Null)
+    },
+};
+
 /// The commands after which `reapply` fields are applied again.
 const REMESH: &[&str] = &[
     "mesh.tet.generate",
