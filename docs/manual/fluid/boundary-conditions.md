@@ -139,7 +139,8 @@ At τ = 0.5005 each either went unstable or left disturbances far above the 1e-6
 
 The 16³, U=0.05, τ=0.505 checkerboard reproduction that failed at step 2838 completes
 30,000 steps with density departure about 8e-9. Broadband disturbances and τ=0.507 and
-0.518 are also checked. **Below τ = 0.505 the TRT velocity inlet is not stable**, and the
+0.518 are also checked. **No stable inlet result was obtained in the tested cases below
+τ = 0.505 at this Mach number**, and the
 setup warns about it (only a turbulence model allows τ below 0.505):
 
 - The bulk is itself the first limit. Linearised about the uniform stream at U = 0.05

@@ -114,3 +114,39 @@ fn a_trt_velocity_inlet_below_the_floor_is_warned_about() {
     assert!(!warned(setup(0.5005, Collision::Trt, false)));
     assert!(!warned(setup(0.5005, Collision::Hrr, true)));
 }
+
+/// Mass balance of the corrected inlet in a walled duct at steady state: the total mass stays put
+/// and the mass entering through the inlet plane crosses every interior plane. The density
+/// correction is high-passed along the face, so it adds no net mass
+/// (`the_density_correction_adds_no_mass_over_a_face` in `inlet.rs`): the inflow is Zou–He's.
+#[test]
+fn a_duct_with_the_corrected_inlet_balances_its_mass_at_steady_state() {
+    use common::*;
+    use fieldcraft_model::{FaceCondition, Outflow, Profile};
+    // About 1.3 viscous times H²/ν to settle, then a window to measure over.
+    let (n, u, tau, settle, window) = ([24, 8, 8], 0.05, 0.52, 12_000, 2_000);
+    let mut d = domain([0.0; 3], n.map(|n| n as f64), 1.0);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [u, 0.0, 0.0], profile: Profile::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+    d.initial_velocity = [u, 0.0, 0.0];
+    let (_, mut flow) = prepare(&model(1.0, (tau - 0.5) / 3.0, d, collide(1e5, 1.0, None, Collision::Trt)), &[]);
+    let grid = *flow.grid();
+    let measure = |flow: &mut fieldcraft_lbm::Flow| {
+        let f = flow.fields().unwrap();
+        let flux = |x: usize| -> f64 {
+            (0..n[1]).flat_map(|y| (0..n[2]).map(move |z| grid.index([x, y, z]))).map(|c| f.density[c] * f.velocity[c][0]).sum()
+        };
+        let inflow = flux(0);
+        let imbalance = (1..n[0] - 1).map(|x| ((flux(x) - inflow) / inflow).abs()).fold(0.0, f64::max);
+        (f.density.iter().sum::<f64>(), inflow, imbalance)
+    };
+    flow.advance(settle).unwrap();
+    let (m0, ..) = measure(&mut flow);
+    flow.advance(window).unwrap();
+    let (m1, inflow, imbalance) = measure(&mut flow);
+    // Measured 7e-20 per step and 5e-14 (round-off).
+    let drift = (m1 - m0).abs() / m0 / window as f64;
+    println!("#820 duct: mass drift {drift:.2e} per step, inflow {inflow:.6}, largest plane imbalance {imbalance:.2e}");
+    assert!(drift < 1e-15, "{drift}");
+    assert!(imbalance < 1e-12, "{imbalance}");
+}
