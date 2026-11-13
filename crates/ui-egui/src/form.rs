@@ -870,23 +870,21 @@ impl Form<'_> {
         changed.then_some(if next.is_empty() { Value::Null } else { Value::Array(next) })
     }
 
-    /// Any of `options`: a checkbox each; none ticked leaves the key out.
+    /// Any of `options`: the kit's checkbox grid, two columns where the labels fit; none ticked
+    /// leaves the key out.
     fn multi(&mut self, ui: &mut Ui, value: Option<&Value>, options: &[(&str, &str)]) -> Option<Value> {
+        /// Columns of the grid (fewer when a label would be cut).
+        const COLUMNS: usize = 2;
         let chosen: Vec<Value> = value.and_then(Value::as_array).cloned().unwrap_or_default();
-        let mut out = None;
-        ui.horizontal_wrapped(|ui| {
-            for (o, label) in options {
-                let v = schema::multi_value(o);
-                let mut on = chosen.contains(&v);
-                if kit::checkbox(ui, label, &mut on).changed() {
-                    // In the options' order.
-                    let next: Vec<Value> =
-                        options.iter().map(|(x, _)| schema::multi_value(x)).filter(|x| if *x == v { on } else { chosen.contains(x) }).collect();
-                    out = Some(if next.is_empty() { Value::Null } else { Value::Array(next) });
-                }
-            }
-        });
-        out
+        let before: Vec<bool> = options.iter().map(|(o, _)| chosen.contains(&schema::multi_value(o))).collect();
+        let mut on = before.clone();
+        let mut items: Vec<(&str, &mut bool)> = options.iter().map(|(_, label)| *label).zip(on.iter_mut()).collect();
+        ui.vertical(|ui| kit::checkbox_grid(ui, &mut items, COLUMNS));
+        // In the options' order.
+        (on != before).then(|| {
+            let next: Vec<Value> = options.iter().zip(&on).filter(|(_, t)| **t).map(|((o, _), _)| schema::multi_value(o)).collect();
+            if next.is_empty() { Value::Null } else { Value::Array(next) }
+        })
     }
 
     /// A number, or Auto: the checkbox, then the number when it is off.
@@ -1427,6 +1425,58 @@ mod tests {
             let r = right(path).unwrap_or_else(|| panic!("{path} is drawn"));
             assert!((r - name).abs() < 0.5, "{path} ends at {r}, the name at {name}");
         }
+    }
+
+    /// `id`'s form drawn once at the context panel's width from `params`, with the kit's
+    /// registry holding what it drew.
+    fn drawn_in_panel(id: &str, params: Value) -> Vec<egui::Shape> {
+        let form = fieldcraft_engine::find_command(id).and_then(|c| c.form).unwrap();
+        let ctx = egui::Context::default();
+        let mut params = params.as_object().cloned().unwrap_or_default();
+        let names = |_: Collection| Vec::new();
+        let touched = BTreeSet::new();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            solidcraft_ui_registry::clear_handles();
+            let cx = Context {
+                units: &mm(),
+                names: &names,
+                salt: Id::unique("t"),
+                touched: &touched,
+                attempted: false,
+                refused: None,
+                problems: &[],
+                picked: Picked::default(),
+            };
+            ui.vertical(|ui| {
+                ui.set_max_width(crate::context::inner_width());
+                show(ui, &Tokens::get(false), &cx, form, &mut params);
+            });
+        });
+        out.textures_delta.clear();
+        out.shapes.into_iter().map(|c| c.shape).collect()
+    }
+
+    /// A multi-choice's options are the kit's checkbox grid: aligned columns and rows, never a
+    /// line of whatever fits (A3-7).
+    #[test]
+    fn multi_choices_are_a_checkbox_grid() {
+        drawn_in_panel("model.step.create", json!({"name": "Load", "procedure": {"type": "static"}}));
+        let boxes = solidcraft_ui_registry::rects("dialog:checkbox:");
+        let labels = ["Displacement", "Reaction force", "Stress", "Strain", "Temperature", "Heat flux"];
+        let rects: Vec<egui::Rect> =
+            labels.iter().filter_map(|l| boxes.iter().find(|(n, _)| n == &format!("dialog:checkbox:{l}")).map(|(_, r)| *r)).collect();
+        assert_eq!(rects.len(), labels.len(), "{boxes:?}");
+        let distinct = |v: Vec<f32>| {
+            v.iter().fold(Vec::<f32>::new(), |mut d, x| {
+                if !d.iter().any(|y| (y - x).abs() < 0.5) {
+                    d.push(*x);
+                }
+                d
+            })
+        };
+        let columns = distinct(rects.iter().map(|r| r.left()).collect()).len();
+        let rows = distinct(rects.iter().map(|r| r.top()).collect()).len();
+        assert!(columns <= 2 && rows == labels.len().div_ceil(columns), "{columns} columns, {rows} rows: {rects:?}");
     }
 
     fn mm() -> DisplaySystem {
