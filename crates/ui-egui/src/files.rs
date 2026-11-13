@@ -23,6 +23,7 @@ use std::task::{Context, Poll, Waker};
 use fieldcraft_model::progress::Progress;
 
 use fieldcraft_engine::Session;
+use fieldcraft_engine::catalogue::Workspace;
 use serde_json::{Value, json};
 use solidcraft_ui_kit as kit;
 
@@ -1081,6 +1082,11 @@ impl ModelApp {
         let old = std::mem::replace(&mut self.session, session);
         off_thread("fieldcraft drop".into(), move || drop(old));
         self.model_changed();
+        // A model without results has nothing for the Results workspace (every tool there would
+        // be greyed): it comes up where its work is, the geometry and mesh or the definitions.
+        if self.ui.workspace == Workspace::Results && self.session.result_steps().next().is_none() {
+            self.ui.select_workspace(if self.session.model.elements().is_empty() { Workspace::Prepare } else { Workspace::Model });
+        }
         self.prebuilt = Some(*o.prebuilt);
         if let Some(p) = &o.recent {
             self.recent.add(p);
@@ -2339,6 +2345,24 @@ pub(crate) mod tests {
         app.run("model.set.create", serde_json::json!({"name": "plate", "geometry": [{"body": "Body1"}]})).unwrap();
         opened(&mut app);
         assert!(app.prompt.is_none() && app.session.model.set("plate").is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A model opened without results leaves the Results workspace, where every tool would be
+    /// greyed: a design opened as a new model comes up in Prepare (A4-15).
+    #[test]
+    fn a_model_without_results_does_not_open_in_the_results_workspace() {
+        let dir = temp("workspace");
+        let path = dir.join("plate.solidcraft").to_string_lossy().to_string();
+        std::fs::write(&path, fieldcraft_geometry::sample::plate_design(&fieldcraft_geometry::sample::Plate::default()).unwrap()).unwrap();
+        let mut app = ModelApp::new(Session::default());
+        app.open_sample("cantilever");
+        app.wait_loaded();
+        app.ui.select_workspace(Workspace::Results);
+        app.start_job("geometry.open", serde_json::json!({"path": path, "model": "new"})).unwrap();
+        app.wait_loaded();
+        assert!(app.session.design.is_some() && app.session.model.elements().is_empty());
+        assert_eq!(app.ui.workspace, Workspace::Prepare);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
