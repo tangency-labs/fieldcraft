@@ -5,7 +5,8 @@ less the cells inside obstacle bodies, and the force the fluid exerts on every w
 internal and external flows at low Mach number: channels and ducts, flow past parts, cavities,
 electronics cooling with heat, fans and vents. The method is the lattice Boltzmann equation on
 the D3Q19 velocity set with a two-relaxation-time, recursive regularised or multiple-relaxation-time
-collision, Guo forcing, halfway bounce-back walls, Zou–He velocity inlets and extrapolated pressure faces.
+collision, Guo forcing, halfway bounce-back walls (or interpolated bounce-back at obstacles), Zou–He
+velocity inlets and extrapolated pressure faces.
 
 | | |
 |---|---|
@@ -13,7 +14,7 @@ collision, Guo forcing, halfway bounce-back walls, Zou–He velocity inlets and 
 | **Step procedure** | `"fluid"` |
 | **Solver** | `crates/lbm` (CPU, f64, the reference); `crates/lbm-gpu` (wgpu, f32) |
 | **Method** | D3Q19 lattice Boltzmann (Qian, d'Humières & Lallemand 1992; Krüger et al. 2017) |
-| **Verified by** | `crates/lbm/tests/verification.rs`, `mrt.rs`, `regularized.rs`, `hrr.rs`, `outlets.rs`, `steady.rs`, `thermal.rs`; `crates/lbm-gpu/tests/verification.rs`; oracle cases `de-vahl-davis-ra1e3` … `ra1e6`, `conjugate-cavity-centred-body` |
+| **Verified by** | `crates/lbm/tests/verification.rs`, `mrt.rs`, `regularized.rs`, `hrr.rs`, `outlets.rs`, `steady.rs`, `thermal.rs`, `interpolated.rs`, `interpolated_couette.rs`; `crates/lbm-gpu/tests/verification.rs`; oracle cases `de-vahl-davis-ra1e3` … `ra1e6`, `conjugate-cavity-centred-body` |
 
 ## Synopsis
 
@@ -69,6 +70,7 @@ Numbers are in the model's display units, here SI (set by `model.units`), or car
 | `sigma` | above 0, at most 1 | 0.99 | The hybrid collision's σ (`hrr` only; [Collision operators](collision.md)). |
 | `magic` | above 0, at most 1 | 3/16 | The two-relaxation-time parameter Λ. Warned about with any other collision. |
 | `turbulence` | `{"type": "smagorinsky", …}`, `{"type": "vreman", …}` | none | Smagorinsky's or Vreman's subgrid eddy viscosity, Van Driest damping (Smagorinsky's) and the wall model ([Turbulence](turbulence.md), [Large-eddy simulation](les.md)). |
+| `walls` | `"halfway"`, `"interpolated"` | `"halfway"` | Where obstacle walls lie: halfway between cells (a staircase), or where the surface crosses each link (Bouzidi et al. 2001; [Boundary conditions](boundary-conditions.md)). |
 | `steady` | `{…}` | none | Stop once the flow stops changing ([Steady state and averaging](steady-state-and-averaging.md)). |
 
 ### The solve (`solve.fluid`)
@@ -370,6 +372,7 @@ Analytic cases in `crates/lbm/tests/verification.rs` (two relaxation times, Λ =
 | Taylor–Green vortex, 16/32/64 cells, τ = 0.8 | Amplitude e^(−2νt) (theory) | 1.6e-2, 4.0e-3, 9.9e-4: order 2.0; mass to 10⁻¹³ | finest < 2 × 10⁻³, order > 1.8 | `taylor_green_vortex_decays_at_the_viscous_rate_to_second_order_and_conserves_mass` |
 | Poiseuille pipe, staircase wall, 4/8/16 cells per radius | Hagen–Poiseuille; wall force = driving force | L2 error < 5 % at 16 cells; force balance to 10⁻⁶ | | `pipe_poiseuille_on_a_staircase_wall_converges` (heavy) |
 | Stokes drag of a simple cubic array of spheres, R = 3 and 6 cells | Hasimoto (1959) with Sangani & Acrivos (1982) (theory) | Within 5 % at R = 6, closer than at R = 3; mass to round-off | 5 % | `stokes_drag_of_a_sphere_array_matches_hasimoto` (heavy) |
+| The pipe, a channel with walls off the cell faces, annular Couette and the sphere array with interpolated walls | The same closed forms | Second order in place of first; sphere at R = 3: −1.6 % in place of +11.7 % | | `crates/lbm/tests/interpolated.rs`, `interpolated_couette.rs` ([Boundary conditions](boundary-conditions.md)) |
 | Parabolic inlet, pressure outlet, 16 cells, τ = 0.6 | Poiseuille profile and gradient −12 μŪ/H² | Profile 3.0e-4, gradient +0.07 % | 5 × 10⁻³, 1 % | `channel_with_a_parabolic_inlet_and_a_pressure_outlet_develops_poiseuille_flow` (heavy) |
 | Pressure-driven channel, two pressure faces | Parabola; each end at its pressure | | 3 % | `pressure_driven_poiseuille_holds_its_end_pressures` |
 | Stability limits | Refusals with clear errors | | | `stability_limits_are_enforced_with_clear_errors` |
@@ -387,8 +390,9 @@ operators](collision.md)).
 
 ## Limitations
 
-- One uniform grid: no local refinement. Walls are staircase (halfway bounce-back at cell
-  faces); curved walls are first order in position.
+- One uniform grid: no local refinement. With halfway walls (the default) obstacle walls are
+  staircase and curved walls are first order in position; `walls: "interpolated"` makes them
+  second order but is not mass conservative ([Boundary conditions](boundary-conditions.md)).
 - Weakly compressible: the pressure is tied to the density, and the error grows as Ma².
 - Newtonian fluids only.
 - Obstacles do not move; a moving-wall condition gives a face a tangential velocity, the body stays

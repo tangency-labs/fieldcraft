@@ -635,6 +635,27 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
   surface — robust predicates (fieldcraft-mesh) give the inside/outside decision; q itself is a constructed value.
 - **Limits.** Not mass conservative; small q (< ~0.01) can destabilise: treat as q = 0 or use the Mei variant.
 - **Also.** R. Mei, L.-S. Luo, W. Shyy, JCP 155(2):307–330, 1999, DOI [10.1006/jcph.1999.6334](https://doi.org/10.1006/jcph.1999.6334) — the alternative curved-boundary scheme. **Reference.**
+- **Built (#732).** `walls: "interpolated"` on the fluid step (default `"halfway"`), CPU and GPU: the linear
+  interpolation at every link into an obstacle (`crates/lbm/src/flow.rs`, `bouzidi`), with Ladd's
+  moving-wall term added as P. Lallemand, L.-S. Luo, JCP 184(2):406–421, 2003, DOI
+  [10.1016/S0021-9991(02)00022-0](https://doi.org/10.1016/S0021-9991(02)00022-0), write it, and the
+  momentum exchange in the wall's frame (Y. Wen, Z. Zhou, C. Shu, H. Ho, J. Fan, JCP 266:161–170,
+  2014, DOI [10.1016/j.jcp.2014.02.018](https://doi.org/10.1016/j.jcp.2014.02.018)). q is the
+  nearest crossing of the link with the obstacle's triangles by exact `orient3d` tests, or with the
+  face's exact curved surface where it has one (`crates/lbm/src/voxel.rs`, `link_fraction`), held
+  at 0.01 or above. A link with q < ½ and no second fluid cell behind it, or with no crossing, keeps
+  halfway bounce-back and is counted in a warning. Box faces, the temperature lattice and
+  conducting interfaces stay halfway (#631). Refused with a wall model and a free surface. The
+  quadratic variant is not built.
+- **Measured** (`crates/lbm/tests/interpolated.rs`, `interpolated_couette.rs`; TRT, Λ = 3/16, τ = 1):
+  round pipe 4–16 cells per radius, L2 fitted order halfway 1.01, interpolated 1.65 (4.9e-3 against
+  2.0e-4 at 32 cells); plane channel with its walls 0–0.8 of a cell off the cell faces, worst error
+  order 0.95 against 1.99; annular Couette with a sliding rod, 6–48 cells per radius, order 1.16
+  against 1.92 and the rod's drag within 0.11 %; #798's periodic sphere array at R = 3 cells,
+  Hasimoto's K +11.66 % halfway against −1.64 % interpolated. The linear scheme's wall moves with τ
+  (I. Ginzburg, D. d'Humières, Phys. Rev. E 68:066614, 2003, DOI
+  [10.1103/PhysRevE.68.066614](https://doi.org/10.1103/PhysRevE.68.066614)): the same sphere reads
+  +0.72 % at τ = 0.6 and −9.65 % at τ = 3, while halfway TRT walls do not move with τ.
 
 **C3.3 Zou & He 1997, pressure and velocity BCs.** **Verdict: build on (inlet/outlet).**
 - **Citation.** Phys. Fluids 9(6):1591–1598, 1997. DOI [10.1063/1.869307](https://doi.org/10.1063/1.869307).
