@@ -1,6 +1,5 @@
-//! The one place windows, menus and panel headings are made, so every prompt and panel shares the
-//! same frames: the UI kit's windows, confirmations and menus (`solidcraft_ui_kit`), and the
-//! heading bands of the context panel.
+//! The one place windows and menus are made, so every prompt and menu shares the same frames:
+//! the UI kit's windows, confirmations and menus (`solidcraft_ui_kit`).
 
 use egui::Ui;
 use solidcraft_ui_kit as kit;
@@ -33,36 +32,6 @@ pub fn window<'a>(id: egui::Id, icon: &'a str, title: &'a str, width: Width) -> 
 /// Where a window or confirmation `id` was drawn last frame.
 pub fn drawn(ctx: &egui::Context, id: egui::Id) -> Option<egui::Rect> {
     ctx.memory(|m| m.area_rect(id))
-}
-
-/// Heading levels inside a panel: its title, and the sections below it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Level {
-    /// The panel's title row (`Tokens::heading_bg`).
-    Title,
-    /// A section heading (`Tokens::subheading_bg`).
-    Section,
-}
-
-/// Horizontal inner margin of a heading band, on each side.
-pub const HEADING_MARGIN: f32 = 4.0;
-
-/// A heading row drawn on a band as wide as the panel; `add` lays out the row left to right.
-pub fn heading<R>(ui: &mut Ui, t: &crate::theme::Tokens, level: Level, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let fill = match level {
-        Level::Title => t.heading_bg,
-        Level::Section => t.subheading_bg,
-    };
-    let inner = (ui.available_width() - 2.0 * HEADING_MARGIN).max(0.0);
-    egui::Frame::new()
-        .fill(fill)
-        .corner_radius(3)
-        .inner_margin(egui::Margin::symmetric(HEADING_MARGIN as i8, 2))
-        .show(ui, |ui| {
-            ui.set_width(inner);
-            ui.horizontal(add).inner
-        })
-        .inner
 }
 
 /// A menu below `anchor`, open while [`crate::UiState::menu`] is `key` (so `ui.set {menu}` and
