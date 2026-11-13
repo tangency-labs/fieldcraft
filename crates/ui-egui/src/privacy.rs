@@ -139,6 +139,9 @@ impl ModelApp {
     }
 }
 
+/// The Settings window's icon: the gear, as on the title bar's Settings button.
+const SETTINGS_ICON: &str = "settings";
+
 /// The consent question and Help › Settings, when open.
 pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
     match app.prompt {
@@ -173,7 +176,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
             let (mut sharing, mut automation) = (app.prefs.usage_sharing == Some(true), app.prefs.usage_automation);
             let (mut link, mut updates, mut unskip, mut check) = (false, None, false, false);
             let mut units = None;
-            let (closed, action) = crate::frame::window(egui::Id::unique("fc_settings"), "ui.style", "Settings", crate::frame::Width::Normal)
+            let (closed, action) = crate::frame::window(egui::Id::unique("fc_settings"), SETTINGS_ICON, "Settings", crate::frame::Width::Normal)
                 .actions("", "Close", None)
                 .show(ctx, true, |ui| {
                     kit::section_heading(ui, "Units");
@@ -280,6 +283,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("prefs.json")
+    }
+
+    /// The Settings window shows the gear the title bar's Settings button shows, not the
+    /// style cube.
+    #[test]
+    fn settings_shows_the_gear() {
+        let icon = crate::icons::SET.resolve(SETTINGS_ICON);
+        assert!(!icon.placeholder, "{SETTINGS_ICON} has no artwork");
+        assert_eq!(icon.master, "settings");
     }
 
     /// The first run asks once; nothing is recorded before the answer or after a no, and the
