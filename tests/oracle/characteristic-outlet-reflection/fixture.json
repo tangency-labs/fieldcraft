@@ -1,0 +1,37 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "control_uniform": {
+      "band": 1e-9,
+      "value": 0.9928347040589325
+    },
+    "departure_s025": {
+      "band": 0.004,
+      "value": 0.0022845684593658182
+    },
+    "departure_s1": {
+      "band": 0.004,
+      "value": 0.0022805333071932504
+    },
+    "rate_s025": {
+      "band": 1.0053774567377708e-9,
+      "value": 1.0053774567377707
+    },
+    "rate_s1": {
+      "band": 1.0004794131076312e-9,
+      "value": 1.000479413107631
+    },
+    "windowed_01": {
+      "band": 5.000007821000001e-6,
+      "value": 0.005285380968592014
+    },
+    "windowed_02": {
+      "band": 5.000007462854258e-6,
+      "value": 0.007462854257197655
+    },
+    "windowed_04": {
+      "band": 5.000042622788765e-6,
+      "value": 0.042622788764408163
+    }
+  }
+}

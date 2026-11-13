@@ -1,0 +1,112 @@
+{
+ "title": "The characteristic pressure outlet's reflection of a plane pulse: the one-pole (Selle) response in time",
+ "kind": "theory",
+ "source": "L. Selle, F. Nicoud, T. Poinsot, 'Actual impedance of nonreflecting boundary conditions: implications for computation of resonators', AIAA J. 42(5):958–964, 2004 (the relaxed outlet's R(ω) = −1/(1 − 2iω/K), so |R| = K/√(K² + 4ω²): a one-pole low-pass of rate K/2 applied to a fully reflected wave); T. J. Poinsot, S. K. Lele, 'Boundary conditions for direct simulations of compressible viscous flows', J. Comput. Phys. 101:104–129, 1992 (the boundary treatment); D. H. Rudy, J. C. Strikwerda, 'A nonreflecting outflow boundary condition for subsonic Navier–Stokes calculations', J. Comput. Phys. 36:55–70, 1980 (σ ≈ 0.25)",
+ "slow": true,
+ "quantities": [
+  {
+   "id": "departure_s1",
+   "quantity": "σ 1.0: the largest departure of the characteristic outlet's reflection from the one-pole response (rate K/2) to the uniform outlet's, over the incident peak, up to step 7268",
+   "measure": {
+    "from": "s1",
+    "pointer": "/largest_departure"
+   },
+   "value": 0.0,
+   "tolerance": {
+    "absolute": 0.004
+   },
+   "reason": "the one-pole response leaves out the outlet closure's own direct reflection, measured at 2.28·10⁻³ of the incident peak and the same at σ 0.25, 0.5 and 1.0 (so not from the relaxation); the tolerance is 1.75 times that, so a doubling of it fails"
+  },
+  {
+   "id": "rate_s1",
+   "quantity": "σ 1.0: the decay rate fitted to the reflection's tail, over K/2",
+   "measure": {
+    "from": "s1",
+    "pointer": "/fitted_rate"
+   },
+   "value": 1.0,
+   "tolerance": {
+    "relative": 0.005
+   },
+   "reason": "the record holds 0.54 e-folds of the tail (to step 7268, before the inlet's reflection returns), and the closure's direct reflection sits on it; measured +0.05 %; the tolerance is ten times that"
+  },
+  {
+   "id": "departure_s025",
+   "quantity": "σ 0.25 (the default): the largest departure of the characteristic outlet's reflection from the one-pole response (rate K/2) to the uniform outlet's, over the incident peak, up to step 7268",
+   "measure": {
+    "from": "s025",
+    "pointer": "/largest_departure"
+   },
+   "value": 0.0,
+   "tolerance": {
+    "absolute": 0.004
+   },
+   "reason": "the one-pole response leaves out the outlet closure's own direct reflection, measured at 2.28·10⁻³ of the incident peak and the same at σ 0.25, 0.5 and 1.0 (so not from the relaxation); the tolerance is 1.75 times that, so a doubling of it fails"
+  },
+  {
+   "id": "rate_s025",
+   "quantity": "σ 0.25: the decay rate fitted to the reflection's tail, over K/2",
+   "measure": {
+    "from": "s025",
+    "pointer": "/fitted_rate"
+   },
+   "value": 1.0,
+   "tolerance": {
+    "relative": 0.02
+   },
+   "reason": "the record holds only 0.13 e-folds of the tail (time constant 2/K = 28,000 steps), so the fit is looser than at σ 1.0; measured +0.54 %; the tolerance is about four times that"
+  },
+  {
+   "id": "control_uniform",
+   "quantity": "the control: the uniform outlet's reflected over incident peak (a pressure-release end, |R| = 1)",
+   "measure": {
+    "from": "s025",
+    "pointer": "/uniform_peak_ratio"
+   },
+   "value": 1.0,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "the pulse also spreads by viscosity (τ 0.51) between its two passes of the probe, and the closure's direct reflection is part of it; measured 0.9928"
+  },
+  {
+   "id": "windowed_01",
+   "quantity": "σ 0.25: windowed spectral ratio at ω 0.01 rad/step, includes the truncated relaxation tail (reflected over incident pulse, rectangular windows of ±346 steps); not the outlet's |R| at ω 0.01",
+   "measure": {
+    "from": "s025",
+    "pointer": "/windowed/0/ratio"
+   },
+   "value": 0.007821,
+   "tolerance": {
+    "absolute": 0.005
+   },
+   "reason": "the reference is the same window applied to the one-pole response to the uniform outlet's reflection (this runner's number, not |R|); the measurement adds the closure's direct reflection, which the one-pole response leaves out: measured less reference is −0.0025, +0.0041 and +0.0019 at ω 0.01, 0.02 and 0.04, and the tolerance 0.005 covers the largest. The fixture freezes this runner's value"
+  },
+  {
+   "id": "windowed_02",
+   "quantity": "σ 0.25: windowed spectral ratio at ω 0.02 rad/step, includes the truncated relaxation tail (reflected over incident pulse, rectangular windows of ±346 steps); not the outlet's |R| at ω 0.02",
+   "measure": {
+    "from": "s025",
+    "pointer": "/windowed/1/ratio"
+   },
+   "value": 0.003402,
+   "tolerance": {
+    "absolute": 0.005
+   },
+   "reason": "the reference is the same window applied to the one-pole response to the uniform outlet's reflection (this runner's number, not |R|); the measurement adds the closure's direct reflection, which the one-pole response leaves out: measured less reference is −0.0025, +0.0041 and +0.0019 at ω 0.01, 0.02 and 0.04, and the tolerance 0.005 covers the largest. The fixture freezes this runner's value"
+  },
+  {
+   "id": "windowed_04",
+   "quantity": "σ 0.25: windowed spectral ratio at ω 0.04 rad/step, includes the truncated relaxation tail (reflected over incident pulse, rectangular windows of ±346 steps); not the outlet's |R| at ω 0.04",
+   "measure": {
+    "from": "s025",
+    "pointer": "/windowed/2/ratio"
+   },
+   "value": 0.04067,
+   "tolerance": {
+    "absolute": 0.005
+   },
+   "reason": "the reference is the same window applied to the one-pole response to the uniform outlet's reflection (this runner's number, not |R|); the measurement adds the closure's direct reflection, which the one-pole response leaves out: measured less reference is −0.0025, +0.0041 and +0.0019 at ω 0.01, 0.02 and 0.04, and the tolerance 0.005 covers the largest. The fixture freezes this runner's value"
+  }
+ ]
+}
