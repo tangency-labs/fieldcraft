@@ -1622,7 +1622,7 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
         }));
     }
     crate::frame::menu_separator(ui);
-    if row(ui, "deck.read", "Read Abaqus Deck…", None) {
+    if row(ui, "deck.read", "Read Deck…", None) {
         act = Some(Box::new(|app| {
             let _ = app.start("deck.read");
         }));
@@ -1630,6 +1630,8 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
     if row(ui, "file.script", "Run Script…", None) {
         act = Some(Box::new(|app| app.run_script_dialog()));
     }
+    // Each group behind a rule, as the others.
+    crate::frame::menu_separator(ui);
     crate::frame::menu_heading(ui, "Write Deck");
     for c in fieldcraft_engine::catalogue::CATALOGUE.iter().filter(|c| c.panel == "Decks" && c.id != "deck.read") {
         let format = c.preset().get("format").and_then(Value::as_str).map(str::to_string);

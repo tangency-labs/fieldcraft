@@ -3728,6 +3728,21 @@ mod tests {
         }
     }
 
+    /// The View menu's Show rows are menu rows as its Style rows are, so their text starts at
+    /// one inset (A3-16).
+    #[test]
+    fn the_view_menu_rows_share_one_inset() {
+        let mut app = ModelApp::new(Session::default());
+        let ctx = egui::Context::default();
+        app.run("file.sample", json!({"name": "cantilever"})).unwrap();
+        for _ in 0..3 {
+            app.ui.menu = Some("view".into());
+            draw(&mut app, &ctx, 1280.0, 800.0);
+        }
+        let (style, show) = (region(&app, "view_menu:style"), region(&app, "view_menu:show"));
+        assert!((style.left() - show.left()).abs() < 0.5 && (style.width() - show.width()).abs() < 0.5, "style {style:?}, show {show:?}");
+    }
+
     /// The selection bar's "Select" sits on the middle of its drop-down, not on its top (A3-11).
     #[test]
     fn the_selection_bar_label_is_centred_on_its_drop_down() {
