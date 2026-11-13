@@ -43,6 +43,8 @@ pub struct Context<'a> {
     pub problems: &'a [(String, String)],
     /// The nodes and the elements picked in the viewport, for a label list's Use selection.
     pub picked: Picked,
+    /// The view's selection, for a topology name's Pick ([`crate::selection::topology_name`]).
+    pub selection: Option<&'a crate::selection::Selection>,
 }
 
 /// The mesh labels picked in the viewport.
@@ -142,6 +144,8 @@ fn unit_gutter(ui: &Ui, fields: &[Field], units: &DisplaySystem, depth: usize) -
             Kind::Variants { variants, .. } => variants.iter().fold(0.0, |w, v| unit_gutter(ui, v.fields, units, depth + 1).max(w)),
             Kind::Group(inner) | Kind::Rows { fields: inner, .. } | Kind::NameOr { fields: inner, .. } => unit_gutter(ui, inner, units, depth + 1),
             Kind::Either(options) => unit_gutter(ui, options, units, depth + 1),
+            Kind::List { item, .. } => unit_gutter(ui, std::slice::from_ref(item), units, depth + 1),
+            Kind::NameOrValue { name, value } => unit_gutter(ui, &[*name, *value], units, depth + 1),
             _ => fields::unit_width(ui, f.unit_label(units).as_deref()),
         };
         widest.max(inner)
@@ -168,6 +172,13 @@ fn each_label(fields: &[Field], units: &DisplaySystem, depth: usize, out: &mut d
                 }
             }
             Kind::Group(inner) | Kind::Rows { fields: inner, .. } => each_label(inner, units, depth + 1, out),
+            // Each element's row is the item's own.
+            Kind::List { item, .. } => each_label(std::slice::from_ref(item), units, depth + 1, out),
+            // The choice's row, then the chosen side's.
+            Kind::NameOrValue { name, value } => {
+                out(f.label, f.required, help);
+                each_label(&[*name, *value], units, depth + 1, out);
+            }
             _ => out(f.label, f.required, help),
         }
     }
@@ -257,6 +268,9 @@ impl Form<'_> {
         match f.kind {
             Kind::Group(_) | Kind::Variants { .. } | Kind::Rows { .. } => self.section(ui, f, obj, &path, depth),
             Kind::NameOr { name, object, fields } => self.name_or(ui, f, name, object, fields, obj, &path, depth),
+            Kind::List { item, max } => self.list(ui, f, item, max, obj, &path, depth),
+            Kind::NameOrValue { name, value } => self.name_or_value(ui, f, name, value, obj, &path),
+            Kind::Topology { entity, body_key } => self.topology(ui, f, entity, body_key, obj, &path),
             _ => {
                 let value = obj.get(f.key).cloned();
                 let style = self.style;
@@ -699,6 +713,142 @@ impl Form<'_> {
                 };
                 self.touch(path);
             }
+        }
+    }
+
+    /// A [`Kind::List`]: its label, then a row per element (its number and a remove button, then
+    /// the item's own widget), then Add while it holds fewer than `max`.
+    #[allow(clippy::too_many_arguments)]
+    fn list(&mut self, ui: &mut Ui, f: &Field, item: &Field, max: usize, obj: &mut Map<String, Value>, path: &str, depth: usize) {
+        let mut list = match obj.get(f.key) {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(a)) if a.len() <= MAX_ROWS => a.clone(),
+            Some(_) => {
+                fields::row(ui, &self.style, f.label, f.required, &f.help_text(self.cx.units), |ui| self.json_only(ui));
+                return;
+            }
+        };
+        let help = f.help_text(self.cx.units);
+        let heading = ui.label(RichText::new(f.label).font(crate::theme::label_font(ui.ctx(), solidcraft_theme::Tokens::get().font_label)));
+        if !help.is_empty() {
+            heading.backing_on_hover_text(help);
+        }
+        // The item's key is unused: each element is drawn as the item at `path/i`.
+        let element = Field { key: "", ..*item };
+        let (mut changed, mut remove) = (false, None);
+        ui.horizontal(|ui| {
+            ui.add_space(INDENT);
+            ui.vertical(|ui| {
+                for (i, v) in list.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("{}", i + 1)).color(self.style.dim));
+                        if kit::button(ui, "×", kit::Button::Small).backing_on_hover_text("Remove").clicked() {
+                            remove = Some(i);
+                        }
+                    });
+                    let mut slot = Map::from_iter([(String::new(), v.clone())]);
+                    let before = self.out.changed;
+                    self.out.changed = false;
+                    self.field(ui, &element, &mut slot, &format!("{path}/{i}"), depth + 1);
+                    if self.out.changed {
+                        *v = slot.remove("").unwrap_or(Value::Null);
+                        changed = true;
+                    }
+                    self.out.changed |= before;
+                }
+                if list.len() < max.min(MAX_ROWS) && kit::button(ui, "+ Add", kit::Button::Small).clicked() {
+                    let start = schema::prefill(&[Field { key: "v", required: true, ..*item }], &json!({}));
+                    list.push(start.get("v").cloned().unwrap_or(Value::Null));
+                    changed = true;
+                }
+            });
+        });
+        if let Some(i) = remove {
+            list.remove(i);
+            changed = true;
+        }
+        if changed {
+            if list.is_empty() {
+                obj.remove(f.key);
+            } else {
+                obj.insert(f.key.into(), Value::Array(list));
+            }
+            self.touch(path);
+        }
+    }
+
+    /// A [`Kind::NameOrValue`]: a choice between the name and the value, then the chosen one's
+    /// widget. A bare string is the name, anything else the value; an empty field keeps the side
+    /// last chosen.
+    fn name_or_value(&mut self, ui: &mut Ui, f: &Field, name: &Field, value: &Field, obj: &mut Map<String, Value>, path: &str) {
+        let id = self.id(path);
+        let current = obj.get(f.key).filter(|v| !v.is_null()).cloned();
+        let on_value = match &current {
+            Some(Value::String(_)) => false,
+            Some(_) => true,
+            None => ui.data(|d| d.get_temp::<bool>(id.with("value"))).unwrap_or(false),
+        };
+        let style = self.style;
+        let help = f.help_text(self.cx.units);
+        let labels = [name.label, value.label];
+        let selected = if on_value { value.label } else { name.label };
+        if let Some(i) =
+            fields::row(ui, &style, f.label, f.required, &help, |ui| fields::combo(ui, id.with("side"), selected, &labels, fill(ui, &style)))
+            && (i == 1) != on_value
+        {
+            ui.data_mut(|d| d.insert_temp(id.with("value"), i == 1));
+            obj.remove(f.key);
+            self.touch(path);
+            return;
+        }
+        let side = if on_value { value } else { name };
+        let help = side.help_text(self.cx.units);
+        let new = fields::row(ui, &style, side.label, false, &help, |ui| self.scalar(ui, side, current.as_ref(), path));
+        if let Some(new) = new {
+            match new {
+                Value::Null => obj.remove(f.key),
+                v => obj.insert(f.key.into(), v),
+            };
+            self.touch(path);
+        }
+    }
+
+    /// A [`Kind::Topology`] name: its text, and Pick, which takes the one selected face, edge or
+    /// vertex ([`crate::selection::topology_name`]) of the body `body_key` names, or with its
+    /// body when that is empty.
+    fn topology(&mut self, ui: &mut Ui, f: &Field, entity: schema::Side3, body_key: &str, obj: &mut Map<String, Value>, path: &str) {
+        let id = self.id(path);
+        let body = obj.get(body_key).and_then(Value::as_str).filter(|b| !b.is_empty()).map(str::to_string);
+        let found = self.cx.selection.and_then(|s| crate::selection::topology_name(s, entity.label(), body.as_deref()));
+        let mut text = obj.get(f.key).and_then(Value::as_str).unwrap_or_default().to_string();
+        let style = self.style;
+        let help = f.help_text(self.cx.units);
+        let tip = format!("The one {} selected in the view", entity.label());
+        let (typed, pick) = fields::row(ui, &style, f.label, f.required, &help, |ui| {
+            let font = egui::TextStyle::Button.resolve(ui.style());
+            let button = crate::elide::width(ui, "Pick", &font) + 2.0 * ui.spacing().button_padding.x + ui.spacing().item_spacing.x;
+            let typed = fields::text(ui, id, &mut text, f.hint, (fill(ui, &style) - button).max(FIELD_MIN));
+            let pick = kit::button(ui, "Pick", kit::Button::Enabled(found.is_some()))
+                .backing_on_hover_text(&tip)
+                .backing_on_disabled_hover_text(&tip)
+                .clicked();
+            (typed, pick)
+        });
+        if pick && let Some((b, n)) = found {
+            obj.insert(f.key.into(), json!(n));
+            if body.is_none() {
+                obj.insert(body_key.into(), json!(b));
+                let parent = path.rsplit_once('/').map_or("", |(p, _)| p);
+                self.touch(&join(parent, body_key));
+            }
+            self.touch(path);
+        } else if typed {
+            if text.is_empty() {
+                obj.remove(f.key);
+            } else {
+                obj.insert(f.key.into(), json!(text));
+            }
+            self.touch(path);
         }
     }
 
@@ -1171,6 +1321,7 @@ mod tests {
                         refused: None,
                         problems: &messages(form, &params),
                         picked: Picked::default(),
+                        selection: None,
                     };
                     ui.vertical(|ui| {
                         ui.set_max_width(width);
@@ -1216,6 +1367,7 @@ mod tests {
                         refused: None,
                         problems: &[],
                         picked: Picked::default(),
+                        selection: None,
                     };
                     ui.vertical(|ui| {
                         ui.set_max_width(width);
@@ -1322,6 +1474,7 @@ mod tests {
                     refused,
                     problems: &messages(form, &params),
                     picked: Picked::default(),
+                    selection: None,
                 };
                 show(ui, &Tokens::get(false), &cx, form, &mut params);
             });
@@ -1361,6 +1514,7 @@ mod tests {
                 refused: None,
                 problems: &[],
                 picked: Picked { nodes: vec![4, 5], ..Picked::default() },
+                selection: None,
             };
             show(ui, &Tokens::get(false), &cx, form, &mut params);
         });
@@ -1413,6 +1567,7 @@ mod tests {
                     refused: None,
                     problems: &[],
                     picked: Picked::default(),
+                    selection: None,
                 };
                 ui.vertical(|ui| {
                     ui.set_max_width(crate::context::inner_width());
@@ -1447,6 +1602,7 @@ mod tests {
                 refused: None,
                 problems: &[],
                 picked: Picked::default(),
+                selection: None,
             };
             ui.vertical(|ui| {
                 ui.set_max_width(crate::context::inner_width());
@@ -1512,6 +1668,124 @@ mod tests {
                 .collect();
             assert!(cut.is_empty(), "{id}: {cut:?}");
         }
+    }
+
+    const WALL: Field = schema::text("wall", "Wall");
+    const WALLS: &[Field] = &[schema::list("walls", "Walls", &WALL, 4)];
+    const ALL: Field = schema::choice("frames", "All frames", &[("all", "All")]);
+    const RANGE: Field = schema::tuple_from("range", "Range", &["From", "To"], 2, true, 0.0);
+    const FRAMES: &[Field] = &[schema::name_or_value("frames", "Frames", &ALL, &RANGE)];
+    const FACE: &[Field] = &[schema::text("body", "Body"), schema::topology("face", "Face", schema::Side3::Face, "body")];
+
+    /// `fields` drawn from `params` frame after frame at the context panel's width; `click` is
+    /// the text of a button to press (pressed on the second frame, released on the third).
+    /// Returns the parameters after, whether they changed and the texts of the last frame.
+    fn edit(
+        fields: &'static [Field],
+        params: Value,
+        selection: Option<&crate::selection::Selection>,
+        click: Option<&str>,
+    ) -> (Value, bool, Vec<String>) {
+        let ctx = egui::Context::default();
+        let mut params = params.as_object().cloned().unwrap_or_default();
+        let names = |_: Collection| Vec::new();
+        let touched = BTreeSet::new();
+        let (mut changed, mut texts, mut at) = (false, Vec::new(), None);
+        for frame in 0..4 {
+            let events = match (frame, at) {
+                (1, Some(p)) => vec![
+                    egui::Event::PointerMoved(p),
+                    egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() },
+                ],
+                (2, Some(p)) => {
+                    vec![egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }]
+                }
+                _ => Vec::new(),
+            };
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(raw, |ui| {
+                let cx = Context {
+                    units: &mm(),
+                    names: &names,
+                    salt: Id::unique("t"),
+                    touched: &touched,
+                    attempted: false,
+                    refused: None,
+                    problems: &[],
+                    picked: Picked::default(),
+                    selection,
+                };
+                ui.vertical(|ui| {
+                    ui.set_max_width(crate::context::inner_width());
+                    changed |= show(ui, &Tokens::get(false), &cx, fields, &mut params).changed;
+                });
+            });
+            out.textures_delta.clear();
+            texts = out
+                .shapes
+                .iter()
+                .filter_map(|c| {
+                    if let egui::Shape::Text(t) = &c.shape {
+                        Some((t.galley.text().to_string(), t.galley.rect.translate(t.pos.to_vec2())))
+                    } else {
+                        None
+                    }
+                })
+                .map(|(t, r)| {
+                    if frame == 0 && click == Some(t.as_str()) && at.is_none() {
+                        at = Some(r.center());
+                    }
+                    t
+                })
+                .collect();
+        }
+        if let Some(c) = click {
+            assert!(at.is_some(), "no `{c}` to click in {texts:?}");
+        }
+        (Value::Object(params), changed, texts)
+    }
+
+    /// A list is a row per element with the item's own widget and a remove button, then Add;
+    /// never its JSON (asks/P1-2).
+    #[test]
+    fn a_list_is_rows_of_its_items() {
+        let (_, changed, texts) = edit(WALLS, json!({"walls": ["x_min", "F2:top"]}), None, None);
+        assert!(!changed);
+        assert!(texts.iter().any(|t| t == "x_min") && texts.iter().any(|t| t == "F2:top"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "+ Add") && !texts.iter().any(|t| t.contains('[')), "{texts:?}");
+        let (after, changed, _) = edit(WALLS, json!({"walls": ["x_min", "F2:top"]}), None, Some("×"));
+        assert!(changed && after["walls"] == json!(["F2:top"]), "{after}");
+        let (after, _, _) = edit(WALLS, json!({}), None, Some("+ Add"));
+        assert_eq!(after["walls"].as_array().map(Vec::len), Some(1), "{after}");
+    }
+
+    /// A name-or-value is a choice between the two, then the chosen one's widget (asks/P1-2).
+    #[test]
+    fn a_name_or_value_shows_the_chosen_side() {
+        let (_, _, texts) = edit(FRAMES, json!({"frames": "all"}), None, None);
+        assert!(texts.iter().any(|t| t == "All") && !texts.iter().any(|t| t.contains('"')), "{texts:?}");
+        let (_, _, texts) = edit(FRAMES, json!({"frames": [0, 5]}), None, None);
+        assert!(["From", "To", "0", "5", "Range"].iter().all(|w| texts.iter().any(|t| t == w)), "{texts:?}");
+        assert!(!texts.iter().any(|t| t.contains('[')), "{texts:?}");
+    }
+
+    /// A topology name has Pick, which takes the one selected entity of its kind (and its body
+    /// when the form names none); with none selected it fills nothing (asks/P1-2).
+    #[test]
+    fn a_topology_name_is_picked_from_the_selection() {
+        use crate::selection::{Item, Mode, Selection};
+        let mut sel = Selection::default();
+        sel.apply([Item::Geometry(fieldcraft_model::GeometryRef::face("Plate", "F3").unwrap())], Mode::Replace);
+        let (after, changed, _) = edit(FACE, json!({}), Some(&sel), Some("Pick"));
+        assert!(changed && after["face"] == "F3" && after["body"] == "Plate", "{after}");
+        let (after, changed, _) = edit(FACE, json!({"body": "Post"}), Some(&sel), Some("Pick"));
+        assert!(!changed && after.get("face").is_none(), "a face of another body: {after}");
+        let (after, changed, _) = edit(FACE, json!({}), None, Some("Pick"));
+        assert!(!changed && after.get("face").is_none(), "{after}");
     }
 
     fn mm() -> DisplaySystem {
