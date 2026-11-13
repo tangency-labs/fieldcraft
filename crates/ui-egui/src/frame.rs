@@ -156,22 +156,36 @@ pub fn menu_separator(ui: &mut Ui) {
 
 #[cfg(test)]
 mod tests {
-    /// Windows and popups are made by the kit only, so none can skip its frames.
+    /// Windows, popups and outer hosts are made by the kit only, so none can skip its frames:
+    /// no raw egui window, modal or popup (the kit's popup is wrapped here, in frame.rs), and
+    /// no raw egui panel, central panel or area anywhere in the app's code: every outer host is
+    /// a `kit::Container` with a semantic `Surface` (SolidCraft docs/ui-container-audit.md).
     #[test]
-    fn windows_come_from_the_kit() {
+    fn windows_and_hosts_come_from_the_kit() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let windows = [concat!("egui::Window", "::new("), concat!("Popup", "::new("), concat!("egui::Modal", "::new(")];
+        let hosts = [
+            concat!("egui::Panel", "::"),
+            concat!("egui::Central", "Panel"),
+            concat!("egui::Area", "::new"),
+            concat!("egui::Side", "Panel"),
+            concat!("egui::TopBottom", "Panel"),
+        ];
         let mut bad = Vec::new();
         for e in std::fs::read_dir(&dir).unwrap() {
             let p = e.unwrap().path();
-            if p.extension().is_some_and(|x| x == "rs") {
-                let text = std::fs::read_to_string(&p).unwrap();
-                for raw in [concat!("egui::Window", "::new("), concat!("Popup", "::new("), concat!("egui::Modal", "::new(")] {
-                    if text.contains(raw) && !(raw.starts_with("Popup") && p.file_name().is_some_and(|n| n == "frame.rs")) {
-                        bad.push(format!("{}: {raw}", p.display()));
-                    }
-                }
+            if p.extension().is_none_or(|x| x != "rs") {
+                continue;
             }
+            let text = std::fs::read_to_string(&p).unwrap();
+            // The app's code, not the tests that name what they look for.
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            let here = p.file_name().is_some_and(|n| n == "frame.rs");
+            for raw in windows.iter().filter(|raw| code.contains(*raw) && !(raw.starts_with("Popup") && here)) {
+                bad.push(format!("{}: {raw}", p.display()));
+            }
+            bad.extend(hosts.iter().filter(|raw| code.contains(*raw)).map(|raw| format!("{}: {raw}", p.display())));
         }
-        assert!(bad.is_empty(), "use crate::frame (the kit's windows and menus) instead of {bad:?}");
+        assert!(bad.is_empty(), "use crate::frame (the kit's windows and menus) or a kit::Container instead of {bad:?}");
     }
 }
