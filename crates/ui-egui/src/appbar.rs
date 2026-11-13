@@ -317,8 +317,8 @@ fn samples_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
 
 /// Help: the samples (ready to solve), how to navigate, keys, updates, crash reports and the version.
 fn help_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
-    samples_menu(app, ui);
-    crate::frame::menu_separator(ui);
+    // The samples are Home's (and File › Samples…): listed here too, they pushed Report a Bug,
+    // Crash Reports, Settings and the version below a laptop window's edge.
     crate::frame::menu_heading(ui, "Navigation");
     let note = |ui: &mut egui::Ui, text: &str| {
         ui.horizontal(|ui| {
@@ -347,6 +347,8 @@ fn help_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
     let settings = row(ui, "help.settings", "Settings…", "Privacy and updates");
     crate::frame::menu_separator(ui);
     note(ui, &format!("FieldCraft {}", crate::VERSION));
+    // Everything the menu drew, down to the version (control channel, tests).
+    app.place("menu:help", ui.min_rect());
     if report {
         app.report_bug(None);
     } else if crashes {
@@ -441,5 +443,22 @@ mod tests {
         let solve = m.get("app_bar:solve").copied().unwrap_or_else(|| panic!("Solve not drawn"));
         let k = solidcraft_theme::Tokens::get();
         assert!((solve.height() - k.control_height).abs() < 0.5, "{solve:?}");
+    }
+
+    /// The Help menu fits a laptop window (1280 × 800): every row, down to the version, can be
+    /// reached.
+    #[test]
+    fn the_help_menu_fits_the_window() {
+        let mut app = ModelApp::new(Session::default());
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0));
+        for _ in 0..3 {
+            app.ui.menu = Some("help".into());
+            let raw = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app_bar(&mut app, ui));
+            out.textures_delta.clear();
+        }
+        let menu = app.layout.get("menu:help").copied().unwrap_or_else(|| panic!("Help menu not drawn"));
+        assert!(menu.bottom() <= screen.bottom(), "{menu:?}");
     }
 }
