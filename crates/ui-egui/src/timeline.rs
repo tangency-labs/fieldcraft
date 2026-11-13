@@ -556,7 +556,7 @@ mod tests {
         assert!((card.bottom() - (view.bottom() - gap)).abs() < 0.5, "{card:?} {view:?}");
         let content = crate::viewport::beside_card(&app, view);
         assert!(content.bottom() <= card.top() - gap + 0.5, "{content:?}");
-        assert!(crate::viewport::nav_bar_rect(content).bottom() < card.top(), "the navigation bar sits above History");
+        assert!(crate::navigation::bar_rect(content).bottom() < card.top(), "the navigation bar sits above History");
         // The card's area is the card, frame after frame: the view above it keeps the pointer.
         let card_layer = egui::LayerId::new(egui::Order::Background, egui::Id::unique("fc_timeline_card"));
         assert_eq!(ctx.layer_id_at(card.center()), Some(card_layer));
