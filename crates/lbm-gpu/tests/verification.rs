@@ -27,8 +27,8 @@ use fieldcraft_lbm::statistics::Blocks;
 use fieldcraft_lbm::{Flow, Setup};
 use fieldcraft_lbm_gpu::{GpuFlow, Options, Streaming};
 use fieldcraft_model::{
-    BoxFace, Collision, Directional, FaceCondition, Fluid, FluidDomain, FluidThermal, HrrSigma, Material, Model, Outflow, Procedure, Profile, Step,
-    Thermal, ThermalCondition, Turbulence,
+    BoxFace, Collision, Directional, FaceCondition, Fluid, FluidDomain, FluidThermal, GeometryRef, HrrSigma, Material, Model, Outflow, Procedure,
+    Profile, Step, SurfaceBoundary, SurfaceCondition, Thermal, ThermalCondition, Turbulence, WallTreatment,
 };
 
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
@@ -236,47 +236,124 @@ fn taylor_green_decays_like_the_cpu_and_conserves_mass() {
     }
 }
 
+/// A sphere of radius 6 in a periodic box of 24 cells driven along x for 300 steps, its skin
+/// bouncing back as `walls` says. With `moving` its skin is a moving wall and its centre is
+/// 0.3 cells off the box's mirror plane normal to y: centred, the links' fractions are mirror
+/// images, the mass the interpolation gains and loses on the two halves cancels, and so does the
+/// Galilean invariant exchange's wall-velocity term.
+fn sphere_flow(collision: Collision, walls: WallTreatment, moving: Option<[f64; 3]>) -> (Setup, Flow) {
+    let l = 24usize;
+    let side = l as f64;
+    let mut d = domain([0.0; 3], [side; 3], 1.0);
+    for f in BoxFace::ALL {
+        *d.faces.get_mut(f) = PERIODIC;
+    }
+    d.acceleration = [1e-5, 0.0, 0.0];
+    d.obstacles = vec!["Ball".into()];
+    if let Some(velocity) = moving {
+        d.surfaces = vec![SurfaceBoundary { face: GeometryRef::face("Ball", "skin").unwrap(), condition: SurfaceCondition::MovingWall { velocity } }];
+    }
+    let shift = if moving.is_some() { 0.3 } else { 0.0 };
+    let ball = obstacle("Ball", sphere([side / 2.0, side / 2.0 + shift, side / 2.0], 6.0, 3), &["skin"]);
+    let m = model(
+        1.0,
+        1.0 / 6.0,
+        d,
+        Procedure::Fluid {
+            domain: "Flow".into(),
+            end_time: None,
+            steps: Some(300),
+            time_step: Some(1.0),
+            frames: 1,
+            magic: None,
+            sigma: None,
+            collision: Some(collision),
+            turbulence: None,
+            steady: None,
+            walls,
+        },
+    );
+    prepare(&m, std::slice::from_ref(&ball))
+}
+
+/// The sphere's skin force on the CPU and on the GPU, and their largest difference over the CPU's
+/// largest component.
+fn skin_forces(cpu: &mut Flow, gpu: &mut GpuFlow) -> ([f64; 3], [f64; 3], f64) {
+    let (fc, fg) = (Backend::forces(cpu).unwrap(), gpu.forces().unwrap());
+    let skin = cpu.groups().iter().position(|g| g.name == "skin").unwrap();
+    let scale = fc[skin].iter().map(|v| v.abs()).fold(0.0, f64::max);
+    let dforce = (0..3).map(|a| (fc[skin][a] - fg[skin][a]).abs()).fold(0.0, f64::max) / scale;
+    (fc[skin], fg[skin], dforce)
+}
+
 #[test]
 fn flow_past_a_sphere_matches_the_cpu_fields_and_forces() {
     // Both collisions and both layouts (the default layout depends on the device, see `Streaming`).
     for (collision, streaming) in cases() {
-        let l = 24usize;
-        let side = l as f64;
-        let mut d = domain([0.0; 3], [side; 3], 1.0);
-        for f in BoxFace::ALL {
-            *d.faces.get_mut(f) = PERIODIC;
-        }
-        d.acceleration = [1e-5, 0.0, 0.0];
-        d.obstacles = vec!["Ball".into()];
-        let ball = obstacle("Ball", sphere([side / 2.0; 3], 6.0, 3), &["skin"]);
-        let m = model(
-            1.0,
-            1.0 / 6.0,
-            d,
-            Procedure::Fluid {
-                domain: "Flow".into(),
-                end_time: None,
-                steps: Some(300),
-                time_step: Some(1.0),
-                frames: 1,
-                magic: None,
-                sigma: None,
-                collision: Some(collision),
-                turbulence: None,
-                steady: None,
-                walls: Default::default(),
-            },
-        );
-        let (setup, flow) = prepare(&m, std::slice::from_ref(&ball));
+        let (setup, flow) = sphere_flow(collision, WallTreatment::Halfway, None);
         let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
-        let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
-        let skin = cpu.groups().iter().position(|g| g.name == "skin").unwrap();
-        let scale = fc[skin].iter().map(|v| v.abs()).fold(0.0, f64::max);
-        let dforce = (0..3).map(|a| (fc[skin][a] - fg[skin][a]).abs()).fold(0.0, f64::max) / scale;
-        println!("{collision:?} Sphere: CPU/GPU velocity {du:.2e}, density {drho:.2e}; drag CPU {:?} GPU {:?} ({dforce:.2e})", fc[skin], fg[skin]);
+        let (fc, fg, dforce) = skin_forces(&mut cpu, &mut gpu);
+        println!("{collision:?} Sphere: CPU/GPU velocity {du:.2e}, density {drho:.2e}; drag CPU {fc:?} GPU {fg:?} ({dforce:.2e})");
         assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
         assert!(dforce < 5e-5, "{dforce}");
+    }
+}
+
+/// The sphere with interpolated walls (Bouzidi et al.'s linear rule, both of its cases), at rest
+/// and with its skin a moving wall (the moving-wall term and the Galilean invariant exchange):
+/// the GPU's fields and skin force against the CPU's within the crate's tolerances, every
+/// collision and layout. The exchange's wall-velocity term is u_w times the mass the wall's links
+/// gain, itself of order u_w, so the wall moves at 0.05 (lattice units): at 2e-3 the term is far
+/// below the force tolerance, at 0.05 leaving it out moves the force by up to 1.3e-4.
+#[test]
+fn interpolated_walls_match_the_cpu_fields_and_forces() {
+    for moving in [None, Some([0.0, 0.05, 0.0])] {
+        for (collision, streaming) in cases() {
+            let (setup, flow) = sphere_flow(collision, WallTreatment::Interpolated, moving);
+            let links = flow.wall_links().unwrap();
+            assert!(links.interpolated > 0 && links.halfway() == 0, "{links:?}");
+            // Both of the rule's cases, q < ½ and q ≥ ½.
+            let fractions = flow.interpolations();
+            assert!(fractions.iter().any(|i| i.q < 0.5) && fractions.iter().any(|i| i.q > 0.5));
+            let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+            assert_eq!(Backend::wall_links(&*gpu), Some(links));
+            let (du, drho) = field_difference(&mut cpu, &mut gpu);
+            let (fc, fg, dforce) = skin_forces(&mut cpu, &mut gpu);
+            println!(
+                "{collision:?} interpolated sphere (moving {moving:?}): CPU/GPU velocity {du:.2e}, density {drho:.2e}; force CPU {fc:?} GPU {fg:?} ({dforce:.2e})"
+            );
+            assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
+            assert!(dforce < 5e-5, "{dforce}");
+        }
+    }
+}
+
+/// Halfway walls, the default, stay halfway on the GPU: no link interpolates, and the sphere's
+/// GPU drag is the CPU's halfway drag within the tolerance, which interpolated walls move by
+/// far more than it (so the check tells the two apart).
+#[test]
+fn halfway_walls_stay_halfway_on_the_gpu() {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let (setup, flow) = sphere_flow(Collision::Trt, WallTreatment::default(), None);
+        assert_eq!(flow.wall_links(), None);
+        assert!(flow.interpolations().is_empty());
+        let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+        assert_eq!(Backend::wall_links(&*gpu), None);
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let (fc, fg, dforce) = skin_forces(&mut cpu, &mut gpu);
+        let (isetup, mut interpolated) = sphere_flow(Collision::Trt, WallTreatment::Interpolated, None);
+        interpolated.advance(isetup.steps).unwrap();
+        let fi = Backend::forces(&mut interpolated).unwrap();
+        let skin = interpolated.groups().iter().position(|g| g.name == "skin").unwrap();
+        let apart = (fi[skin][0] - fc[0]).abs() / fc[0].abs();
+        println!(
+            "halfway sphere ({streaming:?}): CPU/GPU velocity {du:.2e}, density {drho:.2e}; drag CPU {fc:?} GPU {fg:?} ({dforce:.2e}); interpolated drag {:.3e} apart",
+            apart
+        );
+        assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
+        assert!(dforce < 5e-5, "{dforce}");
+        assert!(apart > 100.0 * 5e-5, "{apart}");
     }
 }
 
