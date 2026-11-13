@@ -155,7 +155,8 @@ fn write(s: &mut Session, p: &Value) -> Result<Value> {
     let density = s.model.materials().get(&domain.material).and_then(|m| m.density);
     let marker = json!({"step": step_name, "solver": case.solver, "density": density,
         "ambient": options.gas.map(|g| g.ambient), "temperature": options.gas.map(|g| g.temperature),
-        "gamma": options.gas.map(|g| g.gamma()), "gas_constant": options.gas.map(|g| fieldcraft_decks::openfoam::GAS_CONSTANT / g.molar_mass)});
+        "gamma": options.gas.map(|g| g.gamma()), "gas_constant": options.gas.map(|g| fieldcraft_decks::openfoam::GAS_CONSTANT / g.molar_mass),
+        "specific_heat": options.gas.map(|g| g.specific_heat)});
 
     let root = Path::new(&dir);
     let mut bytes = 0;
@@ -187,6 +188,8 @@ struct Marker {
     temperature: Option<f64>,
     gamma: Option<f64>,
     gas_constant: Option<f64>,
+    #[serde(default)]
+    specific_heat: Option<f64>,
 }
 
 fn field(path: &Path) -> Result<FieldValues> {
@@ -358,6 +361,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
                 frame.pressure.push(0.0);
                 if compressible {
                     frame.temperature.push(0.0);
+                    frame.density.push(0.0);
                 }
                 continue;
             };
@@ -367,12 +371,15 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
             max_speed = max_speed.max(speed);
             frame.velocity.push(v.map(|c| c as f32));
             if let Some(t) = tf.as_ref().and_then(|t| t.scalar(id)) {
+                // The ideal gas: ρ = p / (R T).
+                let rho = if t > 0.0 && pv > 0.0 { pv / (gas_constant * t) } else { 0.0 };
                 frame.pressure.push((pv - ambient) as f32);
                 frame.temperature.push((t - reference) as f32);
+                frame.density.push(rho as f32);
                 if t > 0.0 {
                     max_mach = max_mach.max(speed / (gamma * gas_constant * t).sqrt());
-                    mass += pv / (gas_constant * t) * volume;
                 }
+                mass += rho * volume;
             } else {
                 frame.pressure.push((pv * density) as f32);
                 mass += density * volume;
@@ -410,8 +417,16 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let history_times = frames.iter().map(|f| f.time).collect();
     let n_frames = frames.len();
+    // Mass flows: the reference density (incompressible) or each cell's (compressible, its
+    // frames' density); heat needs the specific heat.
+    let port_properties = if compressible {
+        let rho0 = ambient / (gas_constant * reference);
+        (rho0.is_finite() && rho0 > 0.0).then_some(fieldcraft_lbm::PortProperties { density: rho0, specific_heat: marker.specific_heat })
+    } else {
+        marker.density.filter(|d| d.is_finite() && *d > 0.0).map(|density| fieldcraft_lbm::PortProperties { density, specific_heat: None })
+    };
     let result = FluidResult {
-        port_properties: None,
+        port_properties,
         step: step_name.clone(),
         grid,
         solid,
@@ -520,6 +535,33 @@ mod tests {
         assert!(low.to_string().contains("1000") || low.to_string().contains("1e3") || low.to_string().contains("1000.0"), "{low}");
         assert!(high.to_string().contains("1000"), "frame 0 at 0.5 m/s × 2 = 1 m/s = 1000 mm/s: {high}");
         assert_eq!(s.journal.len(), journal, "reading results does not change the model");
+
+        // Compressible: each cell's density from the ideal gas, ρ = p / (R T), carried by the
+        // frames; probes show it and the ports' mass flow uses it, not the material's.
+        let gas = dir.join("gas");
+        let out = s.execute("deck.openfoam", &json!({"path": gas.to_str().unwrap(), "cell_factor": 1, "compressible": true})).unwrap();
+        assert_eq!(out["solver"], "rhoCentralFoam");
+        std::fs::write(gas.join("0/C"), vectors(&centres)).unwrap();
+        std::fs::create_dir_all(gas.join("0.5")).unwrap();
+        let u: Vec<String> = (0..8).map(|_| "(2 0 0)".to_string()).collect();
+        std::fs::write(gas.join("0.5/U"), vectors(&u)).unwrap();
+        std::fs::write(gas.join("0.5/p"), "internalField uniform 2e5;\n").unwrap();
+        std::fs::write(gas.join("0.5/T"), "internalField uniform 300;\n").unwrap();
+        s.execute("results.openfoam", &json!({"path": gas.to_str().unwrap(), "spacing": 5})).unwrap();
+        let rho = 2e5 / (fieldcraft_decks::openfoam::GAS_CONSTANT / fieldcraft_decks::openfoam::Gas::AIR.molar_mass * 300.0);
+        let display = s.units().clone();
+        use fieldcraft_model::units::Quantity as Q;
+        let probe = probe_at(&mut s, min[0] + 0.9 * (max[0] - min[0]), 0);
+        let shown = probe["points"][0]["density"].as_f64().unwrap();
+        let expected = display.express(Q::Density, rho).unwrap();
+        assert!((shown / expected - 1.0).abs() < 1e-5, "{probe}");
+        let report = s.execute("results.fluid.measure", &json!({})).unwrap();
+        let row = |q: &str| {
+            report["rows"].as_array().unwrap().iter().find(|r| r["face"] == "x_max" && r["quantity"] == q).unwrap()["value"].as_f64().unwrap()
+        };
+        let si = |q, v| display.to_si(q, v).unwrap();
+        let ratio = si(Q::MassFlow, row("outflow_mass_flow")) / si(Q::VolumeFlow, row("outflow_volume_flow"));
+        assert!((ratio / rho - 1.0).abs() < 1e-5, "mass flow at ρ = {rho}, not the water's: {ratio}");
 
         // What OpenFOAM cannot be given yet is named, and nothing is written.
         s.execute(

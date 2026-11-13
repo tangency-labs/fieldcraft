@@ -76,6 +76,12 @@ slices, probes, lines and measurements of fluid results then show OpenFOAM's flo
 - velocity
 - gauge pressure: above the ambient (compressible), or the kinematic pressure times the density
 - temperature (compressible)
+- density (compressible): each cell's, from the ideal gas ρ = p / (R T); probes show it
+
+Compressible results weigh each port cell by its own density: the inlet/outlet mass flows,
+mixed temperatures and sensible heat of `results.fluid.measure` and the results panel are
+`Σ ρ |u · n| Δx²`, not the material's reference density (which the lattice's nearly
+incompressible flows use).
 
 The reply gives the peak speed and, compressible, the peak Mach number. The cell centres come
 from `0/C`, which `Allrun` writes; fields must be ASCII, as the case is written.

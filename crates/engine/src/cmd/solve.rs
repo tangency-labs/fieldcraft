@@ -1246,6 +1246,10 @@ fn probe_fluid(model: &fieldcraft_model::Model, r: &FluidResult, p: &Value) -> R
                 if let (Some(t), Some(obj)) = (temperature, v.as_object_mut()) {
                     obj.insert("temperature".into(), json!(t));
                 }
+                let density = r.frames.get(frame).and_then(|f| f.density.get(cell));
+                if let (Some(rho), Some(obj)) = (density, v.as_object_mut()) {
+                    obj.insert("density".into(), json!(rho));
+                }
                 v
             }
             None => json!({"point": pt, "cell": null}),
@@ -1467,6 +1471,7 @@ fn probe_quantity(r: &StepResult, display: &fieldcraft_model::DisplaySystem, key
             }
         }
         "temperature" => Q::Temperature,
+        "density" => Q::Density,
         "heat_flux" => Q::HeatFlux,
         "velocity" => Q::Velocity,
         "extent" | "depth" => Q::Length,

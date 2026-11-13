@@ -413,6 +413,7 @@ fn check_fluid(f: &FluidResult) -> std::result::Result<(), String> {
                 ("a frame's pressure", frame.pressure.len(), false),
                 ("a frame's temperature", frame.temperature.len(), true),
                 ("a frame's fill level", frame.fill.len(), true),
+                ("a frame's density", frame.density.len(), true),
             ],
         )?;
     }
