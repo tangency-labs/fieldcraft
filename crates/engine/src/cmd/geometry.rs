@@ -599,6 +599,27 @@ pub(crate) mod tests {
         r["findings"].as_array().unwrap().iter().map(|f| f["kind"].as_str().unwrap()).collect()
     }
 
+    /// A design opened as a new model over a sample is untitled, not the sample; undo brings the
+    /// sample back with its name (A4-15).
+    #[test]
+    fn a_new_model_over_a_sample_is_untitled_until_undone() {
+        let bytes = fieldcraft_geometry::script_design(
+            &json!({"commands": [{"command": "solid.box", "params": {"length": 40, "width": 20, "height": 10, "body_name": "Base"}}]}).to_string(),
+        )
+        .unwrap();
+        let (_dir, path) = crate::tests::design_file(&bytes);
+        let mut s = Session::default();
+        s.execute("file.sample", &json!({"name": "cantilever"})).unwrap();
+        let sample = s.sample;
+        assert!(sample.is_some());
+        s.execute("geometry.open", &json!({"path": path, "model": "new"})).unwrap();
+        assert_eq!(s.sample, None);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.sample, sample);
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.sample, None);
+    }
+
     /// A model that refers to no body is related to a design only when it has nothing to lose or
     /// its previous design shares a body with it: a sample's untagged mesh is of another part.
     #[test]
