@@ -131,7 +131,8 @@ pub fn context_menu<R>(response: &egui::Response, add: impl FnOnce(&mut Ui) -> R
 
 /// A menu's width.
 pub const MENU_W: f32 = kit::LIST_W;
-/// A wide menu's width.
+/// A wide menu's width: Help, whose rows carry notes and cards. FieldCraft's own size; the kit
+/// has list menus only ([`kit::LIST_W`]).
 pub const WIDE_MENU_W: f32 = 360.0;
 
 /// A menu row: its label, and its shortcut (or a note) at the right; dimmed and inert when
