@@ -3085,7 +3085,8 @@ mod tests {
         assert!(app.start("no.such").is_err());
     }
 
-    /// The window's outer hosts (title bar, ribbon, History, status bar, command search, viewport)
+    /// The window's outer hosts (title bar, ribbon, History, status bar, command search, viewport,
+    /// loading notice)
     /// are the kit's `Container`s with a semantic `Surface`, never raw egui panels or areas
     /// (SolidCraft docs/ui-container-audit.md).
     #[test]
@@ -3093,7 +3094,7 @@ mod tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let raw = ["egui::Panel::", "egui::CentralPanel", "egui::Area::new", "egui::TopBottomPanel", "egui::SidePanel"];
         let mut bad = Vec::new();
-        for file in ["appbar.rs", "toolbar.rs", "timeline.rs", "palette.rs", "lib.rs", "viewport.rs"] {
+        for file in ["appbar.rs", "toolbar.rs", "timeline.rs", "palette.rs", "lib.rs", "viewport.rs", "files.rs"] {
             let text = std::fs::read_to_string(dir.join(file)).unwrap();
             let code = text.split("#[cfg(test)]").next().unwrap_or_default();
             bad.extend(raw.iter().filter(|r| code.contains(*r)).map(|r| format!("{file}: {r}")));
