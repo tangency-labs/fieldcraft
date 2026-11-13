@@ -139,7 +139,7 @@ jobs:
         include:
           - os: blacksmith-8vcpu-ubuntu-2404
             cache: oracle
-          - os: macos-14
+          - os: macos-15
             cache: oracle-macos
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -160,7 +160,7 @@ jobs:
     # Signing, notarization and analytics secrets live in the `release` environment, which only
     # `main` may use; a dry run on another branch asks for no environment and builds unsigned.
     environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 120
     outputs:
       signing: ${{ steps.package.outputs.signing }}
