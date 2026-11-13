@@ -247,7 +247,7 @@ enum Attempt {
 pub fn octree_hex_mesh(surface: &BoundarySurface, field: &dyn SizeField, options: &OctreeOptions) -> Result<OctreeHexMesh> {
     check_options(options)?;
     let g = Geometry::new(surface, options.sharp_angle, options.blade_angle)?;
-    let thickness = triangle_thickness(&g);
+    let thickness = triangle_thickness(&g, field);
     let ctx = plan(&g, field, options, &thickness)?;
     let mut hints: Vec<P> = Vec::new();
     let mut retries: Vec<Message> = Vec::new();
@@ -512,14 +512,36 @@ fn choose_frame(g: &Geometry) -> [[f64; 3]; 3] {
 /// this one by at most [`WALL_OPENING`] (`∞` when the ray first leaves through another face). A
 /// ray that starts near a convex edge leaves through the face beyond the edge after a distance
 /// that only measures how near the edge it started; the faces of a wall face each other.
-fn triangle_thickness(g: &Geometry) -> Vec<f64> {
+///
+/// Across a wedge (the far face meets this one along a curve, sharper than [`WALL_OPENING`])
+/// the part is `2 d tan(θ/2)` thick at a distance `d` from the wedge's edge, as thin as one likes
+/// near it: measured at every triangle centre, the thinnest wall, and the grid it asks for, would
+/// be set by how near the tessellation's triangles come to the edge, not by the part. The cells
+/// within the local size `field` of the edge are the edge's own, its curve captured by the map
+/// (Gao, Shen, Panozzo 2019, §3.3), so a wedge is measured no nearer its edge than that.
+fn triangle_thickness(g: &Geometry, field: &dyn SizeField) -> Vec<f64> {
     let far = 2.0 * norm(sub(g.bounds.hi, g.bounds.lo)) + 1.0;
     let opposed = -libm::cos(WALL_OPENING.to_radians());
+    let mut between: BTreeMap<(u32, u32), Vec<u32>> = BTreeMap::new();
+    for (c, curve) in g.curves.iter().enumerate() {
+        if let [a, b] = curve.patches.as_slice() {
+            between.entry((*a, *b)).or_default().push(c as u32);
+        }
+    }
     (0..g.surface.triangles().len() as u32)
         .map(|t| {
             let n = g.normals.get(t as usize).copied().unwrap_or([0.0; 3]);
-            match g.ray(g.triangle_centre(t), n.map(|x| -x), far, t) {
-                Some((hit, s)) if g.normals.get(hit as usize).is_some_and(|&m| dot(m, n) <= opposed) => s,
+            let centre = g.triangle_centre(t);
+            match g.ray(centre, n.map(|x| -x), far, t) {
+                Some((hit, s)) if g.normals.get(hit as usize).is_some_and(|&m| dot(m, n) <= opposed) => {
+                    let (a, b) = (g.tri_patch.get(t as usize).copied(), g.tri_patch.get(hit as usize).copied());
+                    let edges = a.zip(b).and_then(|(a, b)| between.get(&(a.min(b), a.max(b))));
+                    let near_edge = edges.is_some_and(|cs| {
+                        let h = field.size(centre);
+                        cs.iter().any(|&c| g.nearest_on_curve(c, centre).is_some_and(|(q, _, _)| geom::dist2(q, centre) < h * h))
+                    });
+                    if near_edge { f64::INFINITY } else { s }
+                }
                 _ => f64::INFINITY,
             }
         })
