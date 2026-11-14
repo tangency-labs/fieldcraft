@@ -31,7 +31,7 @@ pub const WRITE: CommandSpec = CommandSpec {
 pub const READ: CommandSpec = CommandSpec {
     id: "results.openfoam",
     label: "Read OpenFOAM Results",
-    params: r#"{"path": "case_dir", "spacing"?: 0.4, "max_cells"?: 20000000} — reads the results of a case `deck.openfoam` wrote and OpenFOAM ran (reconstructed, ASCII) as the fluid results of its step: every written time a frame, sampled at the centres of a lattice over the step's domain box (its spacing, or `spacing` in the input units) from the nearest OpenFOAM cell; the obstacles' cells are solid. Velocity, gauge pressure (compressible: above the ambient; incompressible: the kinematic pressure times the density) and, compressible, temperature. The reply states the frames, cells, peak speed and (compressible) peak Mach number. Replaces the step's results; the model is unchanged"#,
+    params: r#"{"path": "case_dir", "spacing"?: 0.4, "max_cells"?: 20000000, "every"?: 1, "from"?: 0, "to"?: 1} — reads the results of a case `deck.openfoam` wrote and OpenFOAM ran (ASCII; reconstructed, or else straight from its processor directories) as the fluid results of its step: the written times from `from` to `to` (input units, inclusive), every `every`-th of them and always the last, each a frame, sampled at the centres of a lattice over the step's domain box (its spacing, or `spacing` in the input units) from the nearest OpenFOAM cell; the obstacles' cells are solid. Velocity, gauge pressure (compressible: above the ambient; incompressible: the kinematic pressure times the density) and, compressible, temperature. The reply states the frames, cells, peak speed and (compressible) peak Mach number. Replaces the step's results; the model is unchanged"#,
     form: None,
     kind: CommandKind::Session,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -265,6 +265,61 @@ fn nearest_cells(grid: &Grid, solid: &[bool], centres: &[[f64; 3]]) -> Result<Ve
     Ok(out)
 }
 
+/// Where a case's results are: the case itself (reconstructed) or its processor directories in
+/// rank order (decomposed), each with its own `0/C` and time directories.
+fn parts(root: &Path) -> Result<(Vec<PathBuf>, bool)> {
+    if !times(root).is_empty() {
+        return Ok((vec![root.to_path_buf()], false));
+    }
+    let mut ranks: Vec<(usize, PathBuf)> = fieldcraft_io::fs::list_dirs(root)
+        .into_iter()
+        .filter_map(|d| Some((d.file_name()?.to_str()?.strip_prefix("processor")?.parse().ok()?, d)))
+        .collect();
+    if ranks.is_empty() {
+        return Err(EngineError::invalid("path", "the case has no written times yet: run it (sh Allrun)"));
+    }
+    ranks.sort_by_key(|r| r.0);
+    if ranks.iter().enumerate().any(|(i, r)| r.0 != i) {
+        return Err(EngineError::invalid("path", "the processor directories are not numbered 0 to N − 1"));
+    }
+    Ok((ranks.into_iter().map(|r| r.1).collect(), true))
+}
+
+/// A field over every part, joined in part order; `sizes` are the parts' cell counts.
+fn joined(parts: &[PathBuf], sizes: &[usize], rel: &Path, vector: bool) -> Result<(Vec<f64>, Vec<[f64; 3]>)> {
+    let (mut scalars, mut vectors) = (Vec::new(), Vec::new());
+    for (part, &n) in parts.iter().zip(sizes) {
+        let path = part.join(rel);
+        let f = field(&path)?;
+        if f.count().is_some_and(|c| c != n) {
+            return Err(EngineError::invalid("path", format!("{}: a field of another mesh than 0/C", path.display())));
+        }
+        let missing = || EngineError::invalid("path", format!("{}: not a {} field", path.display(), if vector { "vector" } else { "scalar" }));
+        for i in 0..n {
+            if vector {
+                vectors.push(f.vector(i).ok_or_else(missing)?);
+            } else {
+                scalars.push(f.scalar(i).ok_or_else(missing)?);
+            }
+        }
+    }
+    Ok((scalars, vectors))
+}
+
+/// The times read: those in `[from, to]`, every `every`-th of them and always the last.
+fn select(written: &[(f64, PathBuf)], every: usize, from: f64, to: f64) -> Vec<usize> {
+    // Time directory names are rounded: compare with a relative tolerance.
+    let tol = |t: f64| 1e-9 * t.abs().max(f64::MIN_POSITIVE);
+    let inside: Vec<usize> = (0..written.len()).filter(|&i| written[i].0 >= from - tol(from) && written[i].0 <= to + tol(to)).collect();
+    let mut out: Vec<usize> = inside.iter().copied().step_by(every.max(1)).collect();
+    if let Some(&last) = inside.last()
+        && out.last() != Some(&last)
+    {
+        out.push(last);
+    }
+    out
+}
+
 fn read(s: &mut Session, p: &Value) -> Result<Value> {
     let dir = super::file_param(s, p, "path", Access::Read)?;
     let root = PathBuf::from(&dir);
@@ -274,12 +329,26 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     let marker: Marker = serde_json::from_slice(&marker_bytes).map_err(|e| EngineError::invalid("path", format!("{MARKER}: {e}")))?;
     let (step_name, domain) = fluid_step(s, Some(&marker.step))?;
     let step_name = step_name.to_string();
-    if !fieldcraft_io::fs::list_dirs(&root).iter().all(|d| !d.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("processor")))
-        && times(&root).is_empty()
-    {
-        return Err(EngineError::invalid("path", "the case is decomposed and not reconstructed: run reconstructPar in it first"));
-    }
     let compressible = marker.solver == "rhoCentralFoam";
+    let every: usize = opt(p, "every")?.unwrap_or(1);
+    if every == 0 {
+        return Err(EngineError::invalid("every", "must be 1 or more"));
+    }
+    let from = opt::<f64>(p, "from")?.map(|v| si(s, "from", Quantity::Time, v)).transpose()?.unwrap_or(f64::NEG_INFINITY);
+    let to = opt::<f64>(p, "to")?.map(|v| si(s, "to", Quantity::Time, v)).transpose()?.unwrap_or(f64::INFINITY);
+    if from.is_nan() || to.is_nan() || from > to {
+        return Err(EngineError::invalid("from", "must not be after `to`"));
+    }
+    let (parts, decomposed) = parts(&root)?;
+    let written = times(parts.first().map_or(&root, |p| p.as_path()));
+    if written.is_empty() {
+        return Err(EngineError::invalid("path", "the case has no written times yet: run it (sh Allrun)"));
+    }
+    let chosen = select(&written, every, from, to);
+    if chosen.is_empty() {
+        let (a, b) = (written.first().map_or(0.0, |w| w.0), written.last().map_or(0.0, |w| w.0));
+        return Err(EngineError::invalid("from", format!("no written time between `from` and `to`: the case has {a:e} to {b:e} s")));
+    }
 
     // The lattice over the domain box.
     let spacing = match opt::<f64>(p, "spacing")? {
@@ -306,33 +375,46 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         ));
     }
     let grid = Grid { origin: domain.min, spacing, cells };
+    // Velocity and pressure; compressible also temperature and density.
+    let frame_bytes = grid.len() as u64 * if compressible { 24 } else { 16 };
+    if frame_bytes.saturating_mul(chosen.len() as u64) > MAX_FRAME_BYTES {
+        return Err(EngineError::invalid(
+            "spacing",
+            format!(
+                "{} frames of {} cells take more than {} GB: coarsen it, or read fewer frames (every, from, to)",
+                chosen.len(),
+                grid.len(),
+                MAX_FRAME_BYTES >> 30
+            ),
+        ));
+    }
     let mut solid = vec![false; grid.len()];
     for o in super::solve::obstacles(s, domain)? {
         fieldcraft_lbm::voxel::voxelise(&o.surface, &grid, &mut solid)?;
     }
 
-    // The OpenFOAM cells' centres and the nearest one to each lattice cell.
-    let centres = match field(&root.join("0/C"))? {
-        FieldValues::Vectors(v) => v,
-        _ => {
-            return Err(EngineError::invalid(
-                "path",
-                "0/C holds no cell centres (Allrun writes them with `postProcess -func writeCellCentres -time 0`)",
-            ));
+    // The OpenFOAM cells' centres (every part's, in part order) and the nearest one to each
+    // lattice cell.
+    let mut centres = Vec::new();
+    let mut sizes = Vec::with_capacity(parts.len());
+    for part in &parts {
+        match field(&part.join("0/C"))? {
+            FieldValues::Vectors(v) => {
+                sizes.push(v.len());
+                centres.extend(v);
+            }
+            _ => {
+                return Err(EngineError::invalid(
+                    "path",
+                    format!(
+                        "{} holds no cell centres (Allrun writes them with `postProcess -func writeCellCentres -time 0`, before decomposePar)",
+                        part.join("0/C").display()
+                    ),
+                ));
+            }
         }
-    };
+    }
     let nearest = nearest_cells(&grid, &solid, &centres)?;
-    let written = times(&root);
-    if written.is_empty() {
-        return Err(EngineError::invalid("path", "the case has no written times yet: run it (sh Allrun)"));
-    }
-    let frame_bytes = grid.len() as u64 * if compressible { 20 } else { 16 };
-    if frame_bytes.saturating_mul(written.len() as u64) > MAX_FRAME_BYTES {
-        return Err(EngineError::invalid(
-            "spacing",
-            format!("{} frames of {} cells take more than {} GB: coarsen it", written.len(), grid.len(), MAX_FRAME_BYTES >> 30),
-        ));
-    }
 
     let reference = marker.temperature.unwrap_or(293.15);
     let ambient = marker.ambient.unwrap_or(0.0);
@@ -340,17 +422,14 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     let gas_constant = marker.gas_constant.unwrap_or(287.0);
     let gamma = marker.gamma.unwrap_or(1.4);
     let volume = spacing.powi(3);
-    let mut frames = Vec::with_capacity(written.len());
+    let mut frames = Vec::with_capacity(chosen.len());
     let (mut max_speed, mut max_mach) = (0.0f64, 0.0f64);
-    for (k, (time, path)) in written.iter().enumerate() {
-        let u = field(&path.join("U"))?;
-        let pf = field(&path.join("p"))?;
-        let tf = if compressible { Some(field(&path.join("T"))?) } else { None };
-        for f in [Some(&u), Some(&pf), tf.as_ref()].into_iter().flatten() {
-            if f.count().is_some_and(|n| n != centres.len()) {
-                return Err(EngineError::invalid("path", format!("{}: a field of another mesh than 0/C", path.display())));
-            }
-        }
+    for &k in &chosen {
+        let Some((time, path)) = written.get(k) else { continue };
+        let name = path.file_name().map(PathBuf::from).unwrap_or_default();
+        let (_, u) = joined(&parts, &sizes, &name.join("U"), true)?;
+        let (pf, _) = joined(&parts, &sizes, &name.join("p"), false)?;
+        let tf = if compressible { Some(joined(&parts, &sizes, &name.join("T"), false)?.0) } else { None };
         let mut frame = Frame { time: *time, step: k as u64, ..Frame::default() };
         frame.velocity = Vec::with_capacity(grid.len());
         frame.pressure = Vec::with_capacity(grid.len());
@@ -365,12 +444,12 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
                 }
                 continue;
             };
-            let v = u.vector(id).unwrap_or([0.0; 3]);
-            let pv = pf.scalar(id).unwrap_or(0.0);
+            let v = u.get(id).copied().unwrap_or([0.0; 3]);
+            let pv = pf.get(id).copied().unwrap_or(0.0);
             let speed = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
             max_speed = max_speed.max(speed);
             frame.velocity.push(v.map(|c| c as f32));
-            if let Some(t) = tf.as_ref().and_then(|t| t.scalar(id)) {
+            if let Some(t) = tf.as_ref().and_then(|t| t.get(id).copied()) {
                 // The ideal gas: ρ = p / (R T).
                 let rho = if t > 0.0 && pv > 0.0 { pv / (gas_constant * t) } else { 0.0 };
                 frame.pressure.push((pv - ambient) as f32);
@@ -391,7 +470,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
 
     let fluid_cells = nearest.iter().filter(|c| c.is_some()).count();
     let open = |f: BoxFace| matches!(domain.faces.get(f), FaceCondition::Velocity { .. } | FaceCondition::Pressure { .. });
-    let end_time = written.last().map_or(0.0, |w| w.0);
+    let end_time = frames.last().map_or(0.0, |f| f.time);
     let stats = FluidStats {
         validity: None,
         cells: grid.len(),
@@ -445,8 +524,10 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         surface: None,
     };
     s.store_result(StepResult::Fluid(Box::new(result)));
-    let mut reply = json!({"step": step_name, "path": dir, "solver": marker.solver, "frames": n_frames, "end_time": end_time,
-        "cells": cells, "spacing": spacing, "fluid_cells": fluid_cells, "openfoam_cells": centres.len(), "max_speed": max_speed});
+    let source = if decomposed { format!("decomposed ({} processors)", parts.len()) } else { "reconstructed".to_string() };
+    let mut reply = json!({"step": step_name, "path": dir, "solver": marker.solver, "source": source, "frames": n_frames,
+        "written_times": written.len(), "end_time": end_time, "cells": cells, "spacing": spacing, "fluid_cells": fluid_cells,
+        "openfoam_cells": centres.len(), "max_speed": max_speed});
     if compressible {
         reply["max_mach"] = json!(max_mach);
     }
@@ -535,6 +616,67 @@ mod tests {
         assert!(low.to_string().contains("1000") || low.to_string().contains("1e3") || low.to_string().contains("1000.0"), "{low}");
         assert!(high.to_string().contains("1000"), "frame 0 at 0.5 m/s × 2 = 1 m/s = 1000 mm/s: {high}");
         assert_eq!(s.journal.len(), journal, "reading results does not change the model");
+
+        // Fewer frames: a time range and every n-th of it, always with its last.
+        std::fs::create_dir_all(case.join("0.75")).unwrap();
+        let u: Vec<String> = (0..8).map(|_| "(3 0 0)".to_string()).collect();
+        std::fs::write(case.join("0.75/U"), vectors(&u)).unwrap();
+        std::fs::write(case.join("0.75/p"), "internalField uniform 2;\n").unwrap();
+        let read_with = |s: &mut Session, path: &Path, extra: Value| {
+            let mut params = json!({"path": path.to_str().unwrap(), "spacing": 5});
+            if let (Some(o), Some(e)) = (params.as_object_mut(), extra.as_object()) {
+                o.extend(e.clone());
+            }
+            s.execute("results.openfoam", &params)
+        };
+        let r = read_with(&mut s, &case, json!({})).unwrap();
+        assert_eq!((r["frames"].clone(), r["written_times"].clone(), r["source"].clone()), (json!(3), json!(3), json!("reconstructed")));
+        let r = read_with(&mut s, &case, json!({"every": 2})).unwrap();
+        assert_eq!((r["frames"].clone(), r["end_time"].clone()), (json!(2), json!(0.75)), "0.25 and 0.75: {r}");
+        let r = read_with(&mut s, &case, json!({"every": 2, "to": 0.5})).unwrap();
+        assert_eq!((r["frames"].clone(), r["end_time"].clone()), (json!(2), json!(0.5)), "0.25 and the last, 0.5: {r}");
+        let r = read_with(&mut s, &case, json!({"from": 0.5})).unwrap();
+        assert_eq!((r["frames"].clone(), r["max_speed"].clone()), (json!(2), json!(3.0)), "{r}");
+        let e = read_with(&mut s, &case, json!({"from": 0.6, "to": 0.7})).unwrap_err().to_string();
+        assert!(e.contains("no written time"), "{e}");
+        assert!(read_with(&mut s, &case, json!({"every": 0})).is_err());
+        assert!(read_with(&mut s, &case, json!({"from": 0.7, "to": 0.6})).is_err());
+
+        // Not reconstructed: read straight from the processor directories, each with its own
+        // part of 0/C and the fields, in rank order; the same flow as the reconstructed case.
+        let reconstructed = read_with(&mut s, &case, json!({})).unwrap();
+        let probe_points = |s: &mut Session| {
+            let pts: Vec<[f64; 3]> =
+                (1..8).map(|k| [0.1, 0.5, 0.9].map(|f| f * k as f64 / 8.0)).map(|q| [0, 1, 2].map(|a| min[a] + q[a] * (max[a] - min[a]))).collect();
+            s.execute("solve.probe", &json!({"step": "Flow", "points": pts, "frame": 1})).unwrap()["points"].clone()
+        };
+        let expected = probe_points(&mut s);
+        let split = dir.join("split");
+        std::fs::create_dir_all(&split).unwrap();
+        std::fs::copy(case.join(MARKER), split.join(MARKER)).unwrap();
+        // Rank 0 holds the odd centres, rank 1 the even ones: not the reconstructed order.
+        let ranks: [Vec<usize>; 2] = [vec![1, 3, 5, 7], vec![0, 2, 4, 6]];
+        for (rank, ids) in ranks.iter().enumerate() {
+            let part = split.join(format!("processor{rank}"));
+            std::fs::create_dir_all(part.join("0")).unwrap();
+            let own = |all: &[String]| ids.iter().map(|&i| all[i].clone()).collect::<Vec<_>>();
+            std::fs::write(part.join("0/C"), vectors(&own(&centres))).unwrap();
+            for t in ["0.25", "0.5", "0.75"] {
+                std::fs::create_dir_all(part.join(t)).unwrap();
+                let all = std::fs::read_to_string(case.join(t).join("U")).unwrap();
+                let items: Vec<String> = all.split('(').skip(2).map(|v| format!("({}", v.split(')').next().unwrap()) + ")").collect();
+                std::fs::write(part.join(t).join("U"), vectors(&own(&items))).unwrap();
+                std::fs::write(part.join(t).join("p"), "internalField uniform 2;\n").unwrap();
+            }
+        }
+        let r = read_with(&mut s, &split, json!({})).unwrap();
+        assert_eq!(r["source"], "decomposed (2 processors)", "{r}");
+        assert_eq!((r["frames"].clone(), r["openfoam_cells"].clone()), (reconstructed["frames"].clone(), json!(8)));
+        assert_eq!(probe_points(&mut s), expected, "the processors give the reconstructed flow");
+        // A rank's field that does not match its own centres is refused.
+        std::fs::write(split.join("processor1/0.5/U"), vectors(&["(1 0 0)".to_string(), "(1 0 0)".to_string()])).unwrap();
+        let e = read_with(&mut s, &split, json!({})).unwrap_err().to_string();
+        assert!(e.contains("another mesh"), "{e}");
 
         // Compressible: each cell's density from the ideal gas, ρ = p / (R T), carried by the
         // frames; probes show it and the ports' mass flow uses it, not the material's.

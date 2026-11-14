@@ -86,6 +86,24 @@ incompressible flows use).
 The reply gives the peak speed and, compressible, the peak Mach number. The cell centres come
 from `0/C`, which `Allrun` writes; fields must be ASCII, as the case is written.
 
+A case that was not reconstructed (no time directories beside `system`, only `processor0` …
+`processorN`) is read from its processor directories directly: each rank's `0/C` (decomposed
+with the rest of `0`, as `Allrun` writes the centres before `decomposePar`) and fields, joined in
+rank order. `reconstructPar` is then not needed.
+
+Every frame is a lattice over the whole domain, so a long run at a fine `spacing` takes a lot of
+memory and file. Read fewer frames:
+- `from`, `to`: the written times in this range (input units, inclusive)
+- `every`: every n-th of them, always with the last
+
+```json
+{"command": "results.openfoam", "params": {"path": "blast_case", "spacing": 0.2,
+  "from": 5e-5, "every": 5}}
+```
+
+The reply states the frames read, the times the case has (`written_times`) and where they came
+from (`source`: reconstructed, or decomposed with its processor count).
+
 ## Not written yet
 
 The command fails and names what it cannot write yet:
