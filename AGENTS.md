@@ -42,30 +42,47 @@ People trust FieldCraft with their models; a crash loses their work. **This outr
   `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]`.
 
 ## Non-negotiables
+These match the Tangency Labs [FieldCraft maintainer guide](https://github.com/tangency-labs/governance/blob/main/maintainers/fieldcraft.md),
+section 1, which is where they change.
+
 - **Independent.** Behaviour is designed from public documentation, published papers, general
   CAE conventions and user feedback. Never copy another product's code, icons, artwork, help
   text, element or material libraries, templates or examples.
-- **No commercial CAE products.** Agents must not drive, script, automate or extract data from
-  commercial CAE or meshing products (Abaqus, MSC/NX/Simcenter Nastran, LS-DYNA, LS-PrePost,
-  HyperMesh, ANSA, Femap, Patran, ANSYS, …): no test data, measurements, decks, results or ids
-  produced with them. Deck formats come from the vendors' publicly available reference manuals;
-  we write our own descriptions and our own examples, never copy manual text or example decks.
-- **Verification and validation (docs/verification.md).** Every solver capability is checked
-  three ways, each case in `tests/oracle/` tagged with its source: **theory** (closed-form
-  solutions, patch tests, mesh invariants), **experiment** (measurements published in papers and
-  reports) and **published benchmarks** (reference results published by benchmark bodies and by
-  solver vendors' benchmark and verification manuals, e.g. NAFEMS, Abaqus). Owner decision
-  2026-10-13: published vendor results may be used as reference values, cited per case. We never
-  run a commercial product, never copy its input files, text or figures: each case is our own
-  model built from the published description, and only the published numbers are used. Once our
-  result matches its reference within the stated tolerance, it is frozen as a **fixture**
-  (`fixture.json`), so any later change that moves it fails CI (fidelity never drifts silently).
-- **Algorithms come from papers.** Meshing and solver methods are implemented from published
-  papers and theses, cited in the module docs and in `docs/meshing/literature.md`.
+- **No code from other apps.** No code from another CAE, meshing or simulation app or solver is
+  copied, adapted or ported, whatever its licence.
 - **Never read, copy or link GPL/LGPL/AGPL code**: TetGen, CGAL, Gmsh, Netgen, CalculiX,
   Code_Aster, OpenRadioss, Elmer, deal.II, FreeFEM, Salome, OpenFOAM — don't even read their
-  sources. Permissively licensed code (MIT, BSD, Apache-2.0, MPL-2.0) may be read for reference;
-  anything adapted is noted in ATTRIBUTION.md with its licence.
+  sources. Other permissively licensed code (MIT, BSD, Apache-2.0, MPL-2.0) may be read for
+  reference; anything adapted is noted in ATTRIBUTION.md with its licence.
+- **Theory comes from public papers and textbooks.** Every method, element formulation,
+  integration scheme, stabilisation and material law is implemented from publicly available
+  papers, theses or textbooks, cited in the module docs and, for meshing, in
+  `docs/meshing/literature.md`.
+- **No reverse engineering, no brute force.** Constants, damping factors, penalty and hourglass
+  coefficients, contact stiffness, default tolerances, time-step safety factors and every other
+  parameter come from theory or a cited source. Never fit them to another solver's output,
+  sweep values until results agree, or infer how another product behaves from what it outputs.
+  A constant whose origin is "it matches X" is refused.
+- **Results are compared to standards, not to other solvers (docs/verification.md).** Every
+  solver capability is checked against **theory** (closed-form solutions, patch tests,
+  convergence rates, mesh invariants), **experiment** (measurements published in papers and
+  reports) and **standard benchmarks** (NAFEMS and other published standard problems, such as
+  MacNeal–Harder). Each case in `tests/oracle/` is our own model built from the published
+  description, tagged with its source. A vendor manual may be cited as where a standard problem
+  and its target are reproduced; the reference value is the standard's, never a vendor's own
+  result. Once our result matches its reference within the stated tolerance, it is frozen as a
+  **fixture** (`fixture.json`), so any later change that moves it fails CI (fidelity never
+  drifts silently).
+- **No commercial CAE products.** Agents must not drive, script, automate or extract data from
+  commercial CAE or meshing products (Abaqus, MSC/NX/Simcenter Nastran, LS-DYNA, LS-PrePost,
+  HyperMesh, ANSA, Femap, Patran, ANSYS, …). We never run one, and never copy its input files,
+  decks, manual text, figures, examples or ids. Deck formats come from the vendors' publicly
+  available reference manuals; we write our own descriptions and our own examples.
+- **Comparisons from licensed users are welcome.** A contributor who holds a paid commercial
+  licence may share their own results for the same test in an issue or a PR discussion (the
+  solver and version, their model, their results). They are a cross-check and a lead: a large
+  disagreement is a reason to look for a defect against the standard. They are never the
+  acceptance reference, never a tuning target, and never committed as expected values.
 - **Dependencies are permissively licensed**, with one recorded exception: SolidCraft's UI kit,
   theme and look (`solidcraft-ui-kit`, `solidcraft-theme`, `solidcraft-look`) are under the
   SolidCraft Brand and Interface Licence and are used only under the written permission recorded in
