@@ -7,15 +7,15 @@ frozen so it cannot drift.
 |---|---|---|
 | Theory | The code solves the equations right | Closed-form solutions (beams, plates, Lamé, Kirsch, waves, shocks, Poiseuille…), patch tests, convergence rates, mesh invariants |
 | Experiment | The model predicts reality | Measurements published in papers and reports (Taylor bar, cavity and cylinder flows, FSI experiments…) |
-| Standard benchmarks | The code agrees with the published targets of standard problems | NAFEMS benchmarks, MacNeal–Harder and other published standard problems and reference solutions. A vendor manual may be cited as where a standard problem and its target are reproduced; the target is the standard's, never a vendor's own result |
+| Standard benchmarks | The code agrees with the published targets of standard problems | NAFEMS benchmarks, MacNeal–Harder and other published standard problems and reference solutions. Values openly published in benchmark reports and guides (ESRD, vendors' benchmark guides) may be cited; we never run the product that made them |
 
 Rules:
 - Each case is **our own model** of the problem, built from the published description (geometry,
   material, loads, boundary conditions). We never run a commercial product and never copy its
   input files, manual text or figures; only the published numbers are used, with a citation.
-- Results are compared to standards, never to other solvers. Results a contributor shares from
-  their own commercial licence are a cross-check in the discussion, never a reference value
-  (AGENTS.md).
+- Closed-source or non-permissively licensed software is never used to verify a result,
+  brute-force a value or decide behaviour. Results a contributor shares from their own
+  commercial licence are a cross-check in the discussion, never a reference value (AGENTS.md).
 - Each case lives in `tests/oracle/<case>/`:
   - `recipe.json` — the model as FieldCraft commands (or a SolidCraft recipe for geometry);
   - `expected.json` — the reference values with `kind` (theory | experiment | benchmark),
