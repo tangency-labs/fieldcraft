@@ -261,9 +261,17 @@ module docs; ADR 0001 records why the linear algebra is our own.
    `Resolved::nodal_loads`, forces and moments on coupled reference points, pressure as
    consistent face loads (shell faces too), gravity and body forces through the element shape
    functions (consistent forces and moments on shells and beams).
-2. **Assembly** on the node graph (one dense block per node pair: 3 × 3 for solids, 2 × 2 in 2D
-   models, up to 6 × 6 at shell and beam nodes; elements in label order, so sums are
-   reproducible bit for bit).
+2. **Contributions and assembly** (`contribution`, `operator`). Linear structural stiffness
+   and consistent/lumped mass share an ordered contribution stream for solids, 2D elements,
+   trusses, beams, shells, springs, point masses and rotary inertia. Each contribution exposes
+   its identity and full-space DOF support without evaluating a numerical kernel, compact local
+   matrices, and a separate local action. CSR assembly retains node-block scatter and bounded
+   parallel batches in the existing summation order. `StructuralOperator` applies the same
+   contributions without a global matrix or element cache; reusable gather/scatter scratch is
+   element-bounded. Springs and point masses act directly; other families currently evaluate
+   one local matrix at a time, not quadrature-only partial assembly.
+   `LinearOperator` overwrites its output and checks vector dimensions. CSR operators span the
+   complete DOF layout, including empty rows for coupling-only reference points.
 3. **Ordering and elimination** (`constraints`). Nested dissection of the nodes by coordinate
    bisection. Couplings become linear constraint rows: kinematic = rigid link of each coupled
    translation to the point's translation and rotation; distributing = the point follows the
@@ -274,6 +282,14 @@ module docs; ADR 0001 records why the linear algebra is our own.
    symmetric positive definite (no penalty, no multipliers). Free mesh equations follow the
    node order, reference point equations come last. Without couplings T is a selection and the
    numbers are those of plain elimination, bit for bit.
+   The same reduction accepts any `LinearOperator` for prescribed-motion RHS and reactions.
+   Its reduced product applies T_fᵀ A T_f with caller-owned full-space scratch, while symbolic
+   consumers can inspect each DOF's transformed equation support. Operator application excludes
+   prescribed motion; the RHS includes it. Assembly, factor storage, ordering, preconditioning
+   and task scheduling remain backend policies. The solve commands still use assembled CSR and
+   the existing direct factors: no multifrontal or iterative solve backend is selected here.
+   Nonlinear/contact tangent and heat contribution dispatch remain separate; heat uses the
+   shared operator-based RHS interface.
 4. **Static solution.** Supernodal left-looking sparse Cholesky on the postordered elimination
    tree (the factor size is computed and capped before any value; subtrees and dense row tiles on
    threads with a fixed operation order, so the factor is the same on any thread count), reactions T_pᵀ (K u − f) (at nodes and at prescribed reference points, forces and

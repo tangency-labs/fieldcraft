@@ -151,24 +151,6 @@ impl Discrete {
         Ok(())
     }
 
-    /// Add the point masses and rotary inertia.
-    pub fn add_mass(&self, m: &mut Csr) -> Result<()> {
-        for p in &self.masses {
-            for (d, v) in &p.translations {
-                add_entry(m, *d, *d, *v)?;
-            }
-            for (a, da) in p.rotations.iter().enumerate() {
-                for (b, db) in p.rotations.iter().enumerate() {
-                    let v = p.inertia[a][b];
-                    if v != 0.0 {
-                        add_entry(m, *da, *db, v)?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// The sum of the forces springs to the ground exert on the model, along X, Y and Z (the
     /// loads they carry to the ground, besides the boundary conditions' reactions).
     pub fn ground_force(&self, u: &[f64], mesh: &Mesh) -> [f64; 3] {

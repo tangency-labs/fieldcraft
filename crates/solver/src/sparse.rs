@@ -134,10 +134,10 @@ impl NodeGraph {
         self.adjacency.iter().enumerate().map(|(a, row)| layout.range(a).len() * row.iter().map(|b| layout.range(*b).len()).sum::<usize>()).sum()
     }
 
-    /// A zero matrix over the degrees of freedom of the graph's layout slots (the mesh nodes
-    /// `0..nodes`, and reference points when the graph has rows for them) on this pattern.
+    /// A zero matrix over the complete layout. Slots absent from the graph (coupling-only
+    /// reference points) have empty rows, but remain part of the full-space operator.
     pub fn zero_matrix(&self, layout: &DofLayout) -> Csr {
-        let n = self.adjacency.len().checked_sub(1).map_or(0, |last| layout.range(last).end);
+        let n = layout.dofs();
         let mut ptr = Vec::with_capacity(n + 1);
         ptr.push(0);
         let mut idx = Vec::with_capacity(self.entries(layout));
@@ -149,6 +149,7 @@ impl NodeGraph {
                 ptr.push(idx.len());
             }
         }
+        ptr.resize(n + 1, idx.len());
         let val = vec![0.0; idx.len()];
         Csr { n, ptr, idx, val }
     }
@@ -252,6 +253,21 @@ pub fn add_entry(k: &mut Csr, i: usize, j: usize, v: f64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coupling_only_points_have_zero_action_in_the_full_space() {
+        use crate::operator::LinearOperator;
+        let mut builder = DofLayout::builder();
+        builder.node(1, DofSet::TRANSLATIONS).point(100, DofSet::STRUCTURAL);
+        let layout = builder.build();
+        let graph = NodeGraph::new(1, std::iter::once([0]));
+        let mut matrix = graph.zero_matrix(&layout);
+        add_diagonal(&mut matrix, &layout, &[0], DofSet::TRANSLATIONS, &[2.0]).unwrap();
+        let mut product = vec![99.0; layout.dofs()];
+        matrix.apply(&[3.0; 9], &mut product).unwrap();
+        assert_eq!(product, [6.0, 6.0, 6.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(matrix.ptr.len(), layout.dofs() + 1);
+    }
 
     #[test]
     fn assemble_mirror_multiply() {

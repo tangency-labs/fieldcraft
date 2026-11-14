@@ -6,7 +6,8 @@
 //!    ([`fieldcraft_fem`] kernels); the step's boundary conditions give the prescribed degrees of
 //!    freedom, its loads the load vector (forces and tractions as the model distributes them,
 //!    consistent pressure loads, gravity and body forces).
-//! 2. **Assembly** ([`sparse`]) on the node graph, elements in label order.
+//! 2. **Contributions** ([`contribution`]): common symbolic support, local matrices and actions
+//!    for sparse assembly ([`sparse`]) and streamed products ([`operator`]), in fixed order.
 //! 3. **Ordering** ([`ordering`]): nested dissection of the nodes; the free degrees of freedom
 //!    are numbered in that order and the prescribed ones eliminated (u_p moved to the right-hand
 //!    side), with no penalty numbers.
@@ -32,11 +33,13 @@ pub mod buckle;
 pub mod cholesky;
 pub mod constraints;
 pub mod contact;
+pub mod contribution;
 pub mod discrete;
 pub mod eigen;
 pub mod heat;
 pub mod ldlt;
 pub mod nonlinear;
+pub mod operator;
 pub mod ordering;
 pub mod sparse;
 pub mod system;

@@ -525,7 +525,7 @@ fn run(model: &Model, resolved: &Resolved, step: &Step, limits: &Limits) -> Resu
     let solve_once = |m: &Csr, rhs: &[f64]| -> Result<(Vec<f64>, usize)> {
         let [reduced] = eqs.reduce([m])?;
         let chol = factor(&reduced, limits, &mesh, &eqs)?;
-        let mut q = eqs.rhs(rhs, m);
+        let mut q = eqs.rhs(rhs, m)?;
         chol.solve(&mut q)?;
         Ok((expand(&q)?, chol.entries()))
     };
@@ -564,7 +564,7 @@ fn run(model: &Model, resolved: &Resolved, step: &Step, limits: &Limits) -> Resu
                 }
                 let next = match &linear {
                     Some(chol) => {
-                        let mut q = eqs.rhs(&rhs, &a);
+                        let mut q = eqs.rhs(&rhs, &a)?;
                         chol.solve(&mut q)?;
                         expand(&q)?
                     }
@@ -587,7 +587,7 @@ fn run(model: &Model, resolved: &Resolved, step: &Step, limits: &Limits) -> Resu
         None if radiation.is_empty() => {
             let [reduced] = eqs.reduce([&k])?;
             let chol = factor(&reduced, limits, &mesh, &eqs)?;
-            let mut q = eqs.rhs(&f, &k);
+            let mut q = eqs.rhs(&f, &k)?;
             chol.solve(&mut q)?;
             (vec![0.0], vec![expand(&q)?], vec![0.0; n], vec![0.0; n], chol.entries())
         }

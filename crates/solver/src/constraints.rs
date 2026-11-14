@@ -55,6 +55,7 @@ use fieldcraft_fem::dense::inverse3;
 use fieldcraft_fem::{DofKind, DofLayout, DofSet};
 use fieldcraft_model::{BoundaryCondition, CouplingKind, Model, Resolved, Step};
 
+use crate::operator::LinearOperator;
 use crate::sparse::Csr;
 use crate::system::Mesh;
 use crate::{Error, Result};
@@ -780,43 +781,101 @@ impl Reduction {
         }))
     }
 
-    /// The reduced right-hand side T_fᵀ (f − K T_p u_p); `k` is over the mesh's degrees of freedom.
-    pub fn rhs(&self, f: &[f64], k: &Csr) -> Vec<f64> {
-        let mut ku = Vec::new();
-        if self.prescribed_motion.iter().any(|v| *v != 0.0) {
-            ku = vec![0.0; k.n];
-            k.mul(self.prescribed_motion.get(..k.n).unwrap_or_default(), &mut ku);
+    /// The reduced right-hand side T_fᵀ (f − K T_p u_p).
+    pub fn rhs(&self, f: &[f64], k: &(impl LinearOperator + ?Sized)) -> Result<Vec<f64>> {
+        self.check_operator(k)?;
+        if f.len() != self.prescribed_motion.len() {
+            return Err(Error::Invalid("load vector dimension does not match reduction".into()));
         }
-        let mut rhs = vec![0.0; self.neq()];
-        for (dof, fv) in f.iter().enumerate() {
-            let g = fv - ku.get(dof).copied().unwrap_or(0.0);
-            for (e, c) in self.free.row(dof) {
-                if let Some(r) = rhs.get_mut(e) {
-                    *r += c * g;
-                }
-            }
+        if !self.prescribed_motion.iter().any(|v| *v != 0.0) {
+            return Ok(self.restrict(f));
         }
-        rhs
+        let mut residual = vec![0.0; f.len()];
+        k.apply(&self.prescribed_motion, &mut residual)?;
+        for (r, force) in residual.iter_mut().zip(f) {
+            *r = force - *r;
+        }
+        Ok(self.restrict(&residual))
+    }
+
+    fn check_operator(&self, operator: &(impl LinearOperator + ?Sized)) -> Result<()> {
+        if operator.dimension() != self.prescribed_motion.len() {
+            return Err(Error::Invalid("operator dimension does not match reduction".into()));
+        }
+        Ok(())
+    }
+
+    /// Symbolic transformed support of a full-space degree of freedom: (free equation,
+    /// coefficient). An absent or prescribed-only degree of freedom has empty support.
+    pub fn transformed_support(&self, dof: usize) -> impl Iterator<Item = (usize, f64)> + '_ {
+        (dof < self.prescribed_motion.len()).then_some(dof).into_iter().flat_map(|d| self.free.row(d))
+    }
+
+    /// Apply T_fᵀ A T_f without allocating. `expanded` and `product` are reusable full-space
+    /// scratch vectors; prescribed motion is deliberately excluded from this linear map.
+    pub fn apply(
+        &self,
+        operator: &(impl LinearOperator + ?Sized),
+        x: &[f64],
+        y: &mut [f64],
+        expanded: &mut [f64],
+        product: &mut [f64],
+    ) -> Result<()> {
+        self.check_operator(operator)?;
+        if x.len() != self.neq() || y.len() != self.neq() || expanded.len() != operator.dimension() || product.len() != operator.dimension() {
+            return Err(Error::Invalid("reduced operator vector or workspace dimensions do not match".into()));
+        }
+        self.expand_into(x, false, expanded)?;
+        operator.apply(expanded, product)?;
+        self.restrict_into(product, y)
     }
 
     /// Every degree of freedom from the free equations' values `q` (and the prescribed values
     /// when `with_values`).
     pub fn expand(&self, q: &[f64], with_values: bool) -> Vec<f64> {
-        (0..self.prescribed_motion.len())
-            .map(|d| {
-                let free: f64 = self.free.row(d).map(|(e, c)| c * q.get(e).copied().unwrap_or(0.0)).sum();
-                match self.prescribed_motion.get(d) {
-                    Some(base) if with_values && !self.fixed.is_empty_row(d) => base + free,
-                    _ => free,
-                }
-            })
-            .collect()
+        let mut out = vec![0.0; self.prescribed_motion.len()];
+        self.expand_values(q, with_values, &mut out);
+        out
+    }
+
+    /// Allocation-free expansion with exact dimension validation.
+    pub fn expand_into(&self, q: &[f64], with_values: bool, out: &mut [f64]) -> Result<()> {
+        if q.len() != self.neq() || out.len() != self.prescribed_motion.len() {
+            return Err(Error::Invalid("expansion vector dimensions do not match reduction".into()));
+        }
+        self.expand_values(q, with_values, out);
+        Ok(())
+    }
+
+    fn expand_values(&self, q: &[f64], with_values: bool, out: &mut [f64]) {
+        for (d, value) in out.iter_mut().enumerate() {
+            let free: f64 = self.free.row(d).map(|(e, c)| c * q.get(e).copied().unwrap_or(0.0)).sum();
+            *value = match self.prescribed_motion.get(d) {
+                Some(base) if with_values && !self.fixed.is_empty_row(d) => base + free,
+                _ => free,
+            };
+        }
     }
 
     /// T_fᵀ r: a vector over every degree of freedom (a residual) restricted to the free
     /// equations.
     pub fn restrict(&self, r: &[f64]) -> Vec<f64> {
         let mut out = vec![0.0; self.neq()];
+        self.restrict_values(r, &mut out);
+        out
+    }
+
+    /// Allocation-free restriction with exact dimension validation.
+    pub fn restrict_into(&self, r: &[f64], out: &mut [f64]) -> Result<()> {
+        if r.len() != self.prescribed_motion.len() || out.len() != self.neq() {
+            return Err(Error::Invalid("restriction vector dimensions do not match reduction".into()));
+        }
+        self.restrict_values(r, out);
+        Ok(())
+    }
+
+    fn restrict_values(&self, r: &[f64], out: &mut [f64]) {
+        out.fill(0.0);
         for (dof, v) in r.iter().enumerate() {
             for (e, c) in self.free.row(dof) {
                 if let Some(x) = out.get_mut(e) {
@@ -824,7 +883,6 @@ impl Reduction {
                 }
             }
         }
-        out
     }
 
     /// Every degree of freedom from the free equations' values `q` with the prescribed values
@@ -873,20 +931,17 @@ impl Reduction {
     /// The reactions at the prescribed degrees of freedom, T_pᵀ (K u − f), and at those an
     /// inclined symmetry plane supports ([`Reduction::reactions_of`]), over every degree of
     /// freedom (zero elsewhere).
-    pub fn reactions(&self, k: &Csr, u: &[f64], f: &[f64]) -> Vec<f64> {
-        let residual: Vec<f64> = f
-            .iter()
-            .enumerate()
-            .map(|(dof, fv)| {
-                if self.fixed.is_empty_row(dof) && !self.supports.get(dof).copied().unwrap_or(false) {
-                    return 0.0;
-                }
-                let (cols, vals) = k.row(dof);
-                let ku: f64 = cols.iter().zip(vals).map(|(j, v)| v * u.get(*j).copied().unwrap_or(0.0)).sum();
-                ku - fv
-            })
-            .collect();
-        self.reactions_of(&residual)
+    pub fn reactions(&self, k: &(impl LinearOperator + ?Sized), u: &[f64], f: &[f64]) -> Result<Vec<f64>> {
+        self.check_operator(k)?;
+        if u.len() != k.dimension() || f.len() != k.dimension() {
+            return Err(Error::Invalid("reaction vector dimensions do not match reduction".into()));
+        }
+        let mut residual = vec![0.0; k.dimension()];
+        k.apply(u, &mut residual)?;
+        for (r, force) in residual.iter_mut().zip(f) {
+            *r -= force;
+        }
+        Ok(self.reactions_of(&residual))
     }
 }
 
@@ -944,5 +999,90 @@ mod tests {
             assert!(!budget.exceeded(entries));
             assert!(budget.exceeded(entries + 1));
         }
+    }
+
+    struct DenseOperator {
+        n: usize,
+        values: Vec<f64>,
+    }
+
+    impl LinearOperator for DenseOperator {
+        fn dimension(&self) -> usize {
+            self.n
+        }
+
+        fn apply(&self, x: &[f64], y: &mut [f64]) -> Result<()> {
+            if x.len() != self.n || y.len() != self.n {
+                return Err(Error::Invalid("dense test operator dimensions".into()));
+            }
+            for (row, value) in self.values.chunks(self.n).zip(y) {
+                *value = row.iter().zip(x).map(|(a, b)| a * b).sum();
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn generic_operator_preserves_multipoint_and_prescribed_motion() {
+        let red = reduce(&[tie(vec![(0, 1.0), (1, -0.5), (2, -0.5)], 0)], &[1], 2.0).unwrap();
+        let n = 6;
+        let values: Vec<f64> = (0..n).flat_map(|i| (0..n).map(move |j| if i == j { 8.0 } else { 0.25 })).collect();
+        let dense = DenseOperator { n, values: values.clone() };
+        let csr = Csr { n, ptr: (0..=n).map(|i| i * n).collect(), idx: (0..n).flat_map(|_| 0..n).collect(), val: values };
+        let [reduced] = red.reduce([&csr]).unwrap();
+        let q: Vec<f64> = (0..red.neq()).map(|i| i as f64 + 0.5).collect();
+        let mut expected = vec![0.0; red.neq()];
+        reduced.apply(&q, &mut expected).unwrap();
+        let mut actual = vec![99.0; red.neq()];
+        let mut expanded = vec![99.0; n];
+        let mut product = vec![99.0; n];
+        red.apply(&dense, &q, &mut actual, &mut expanded, &mut product).unwrap();
+        assert_eq!(actual, expected);
+        let f = vec![3.0; n];
+        let base = red.expand(&vec![0.0; red.neq()], true);
+        let mut residual = vec![0.0; n];
+        dense.apply(&base, &mut residual).unwrap();
+        for (r, force) in residual.iter_mut().zip(&f) {
+            *r = force - *r;
+        }
+        assert_eq!(red.rhs(&f, &dense).unwrap(), red.restrict(&residual));
+        assert_eq!(red.rhs(&f, &dense).unwrap(), red.rhs(&f, &csr).unwrap());
+        let u = red.expand(&q, true);
+        dense.apply(&u, &mut residual).unwrap();
+        for (r, force) in residual.iter_mut().zip(&f) {
+            *r -= force;
+        }
+        assert_eq!(red.reactions(&dense, &u, &f).unwrap(), red.reactions_of(&residual));
+        assert_eq!(red.reactions(&dense, &u, &f).unwrap(), red.reactions(&csr, &u, &f).unwrap());
+        assert_eq!(red.transformed_support(0).collect::<Vec<_>>(), red.transformed_support(2).map(|(e, c)| (e, 0.5 * c)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn operator_dimensions_are_checked() {
+        let red = reduce(&[], &[1], 2.0).unwrap();
+        let operator = DenseOperator { n: 6, values: vec![0.0; 36] };
+        let wrong = DenseOperator { n: 5, values: vec![0.0; 25] };
+        let q = vec![0.0; red.neq()];
+        let mut out = q.clone();
+        let mut expanded = vec![0.0; 6];
+        let mut product = vec![0.0; 6];
+        assert!(red.rhs(&[0.0; 5], &operator).is_err());
+        assert!(red.rhs(&[0.0; 6], &wrong).is_err());
+        assert!(red.reactions(&operator, &[0.0; 5], &[0.0; 6]).is_err());
+        assert!(red.reactions(&operator, &[0.0; 6], &[0.0; 5]).is_err());
+        assert!(red.reactions(&wrong, &[0.0; 5], &[0.0; 5]).is_err());
+        assert!(red.apply(&operator, &q[..q.len() - 1], &mut out, &mut expanded, &mut product).is_err());
+        assert!(red.apply(&operator, &q, &mut out[..1], &mut expanded, &mut product).is_err());
+        assert!(red.apply(&operator, &q, &mut out, &mut expanded[..5], &mut product).is_err());
+        assert!(red.apply(&operator, &q, &mut out, &mut expanded, &mut product[..5]).is_err());
+        assert!(red.apply(&wrong, &q, &mut out, &mut expanded, &mut product).is_err());
+        assert!(red.expand_into(&q[..1], false, &mut expanded).is_err());
+        assert!(red.restrict_into(&expanded[..5], &mut out).is_err());
+        let csr = Csr { n: 1, ptr: vec![0, 1], idx: vec![0], val: vec![2.0] };
+        assert!(csr.apply(&[], &mut [0.0]).is_err());
+        assert!(csr.apply(&[1.0], &mut []).is_err());
+        let mut y = [99.0];
+        csr.apply(&[3.0], &mut y).unwrap();
+        assert_eq!(y, [6.0]);
     }
 }

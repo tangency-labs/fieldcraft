@@ -16,10 +16,10 @@ use crate::constraints::{Budget, Reduction, coupling_rows, symmetry_rows};
 use crate::eigen::{Operator, Wanted, lanczos};
 use crate::ldlt::{Kind, Symmetric};
 use crate::ordering::fill_reducing_order;
-use crate::sparse::{Csr, NodeGraph, add_block, add_diagonal, add_scalar};
+use crate::sparse::{Csr, NodeGraph};
 use crate::system::{
     InitialState, Mesh, Structural, StructuralKernel, add_thermal_loads, inelastic_warnings, loads, prescribed, structural_body_forces,
-    temperature_loads, translation_block,
+    temperature_loads,
 };
 use crate::{Error, Limits, Result};
 
@@ -186,85 +186,9 @@ pub(crate) const GRAIN: usize = 16;
 
 /// Assemble the stiffness (and the mass when `mass` is set) on the mesh's node graph.
 pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -> Result<Assembled> {
-    let layout = &mesh.layout;
-    let mut k = graph.zero_matrix(layout);
-    let mut m = mass.map(|_| graph.zero_matrix(layout));
-    // Element matrices are computed in parallel, a round at a time, and added in label order
-    // (the sums are those of a sequential loop).
-    for round in parallel::blocks(mesh.elements.len(), ROUND) {
-        let elements = mesh.elements.get(round).unwrap_or_default();
-        let matrices = parallel::map_grained(elements.len(), GRAIN, |i| -> Result<_> {
-            let Some(e) = elements.get(i) else { return Err(Error::Internal("element index".into())) };
-            let kernel = e.kernel()?;
-            let at = |err| Error::element(e.label, err);
-            let stiffness = kernel.stiffness(&e.d).map_err(at)?.data;
-            let element_mass = match mass {
-                None => None,
-                Some(kind) => {
-                    let rho = e.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", e.label)))?;
-                    Some(match kind {
-                        MassKind::Consistent => kernel.mass(rho).map_err(at)?.data,
-                        MassKind::Lumped => kernel.lumped_mass(rho).map_err(at)?,
-                    })
-                }
-            };
-            Ok((kernel.dofs().node, stiffness, element_mass))
-        });
-        for (e, computed) in elements.iter().zip(matrices) {
-            let (kinds, stiffness, element_mass) = computed?;
-            add_block(&mut k, layout, &e.nodes, kinds, &stiffness)?;
-            if let (Some(mm), Some(kind), Some(data)) = (m.as_mut(), mass, element_mass) {
-                match kind {
-                    MassKind::Consistent => add_scalar(mm, layout, &e.nodes, kinds, &data)?,
-                    MassKind::Lumped => add_diagonal(mm, layout, &e.nodes, kinds, &data)?,
-                }
-            }
-        }
-    }
-    let kinds = mesh.translation_kinds();
-    for t in &mesh.trusses {
-        let truss = t.truss()?;
-        let at = |err| Error::element(t.label, err);
-        let stiffness = translation_block(&truss.stiffness(t.young, t.area).map_err(at)?.data, t.nodes.len(), kinds);
-        add_block(&mut k, layout, &t.nodes, kinds, &stiffness)?;
-        if let (Some(mm), Some(kind)) = (m.as_mut(), mass) {
-            let rho = t.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", t.label)))?;
-            match kind {
-                MassKind::Consistent => add_scalar(mm, layout, &t.nodes, kinds, &truss.mass(rho, t.area).map_err(at)?.data)?,
-                MassKind::Lumped => add_diagonal(mm, layout, &t.nodes, kinds, &truss.lumped_mass(rho, t.area).map_err(at)?)?,
-            }
-        }
-    }
-    // Beams and shells as the solids: their matrices in parallel, a round at a time, added in
-    // order, so the sums and the first error are those of a sequential loop.
-    for round in parallel::blocks(mesh.structural.len(), ROUND) {
-        let elements = mesh.structural.get(round).unwrap_or_default();
-        let matrices = parallel::map_grained(elements.len(), GRAIN, |i| -> Result<_> {
-            let Some(s) = elements.get(i) else { return Err(Error::Internal("element index".into())) };
-            let kernel = s.kernel()?;
-            let at = |err| Error::element(s.label, err);
-            let stiffness = kernel.stiffness().map_err(at)?.data;
-            let element_mass = match (m.is_some(), mass) {
-                (true, Some(kind)) => {
-                    let rho = s.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", s.label)))?;
-                    Some(kernel.mass(rho, kind).map_err(at)?.data)
-                }
-                _ => None,
-            };
-            Ok((stiffness, element_mass))
-        });
-        for (s, computed) in elements.iter().zip(matrices) {
-            let (stiffness, element_mass) = computed?;
-            add_block(&mut k, layout, &s.nodes, Structural::KINDS, &stiffness)?;
-            if let (Some(mm), Some(data)) = (m.as_mut(), element_mass) {
-                add_block(mm, layout, &s.nodes, Structural::KINDS, &data)?;
-            }
-        }
-    }
-    mesh.discrete.add_stiffness(&mut k)?;
-    if let Some(mm) = m.as_mut() {
-        mesh.discrete.add_mass(mm)?;
-    }
+    let mut k = graph.zero_matrix(&mesh.layout);
+    let mut m = mass.map(|_| graph.zero_matrix(&mesh.layout));
+    crate::contribution::assemble_into(mesh, &mut k, m.as_mut().zip(mass))?;
     Ok(Assembled { k, m })
 }
 
@@ -437,14 +361,14 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     let [kff] = red.reduce([&k])?;
     let chol = factor_raw(&kff, limits).map_err(|e| factor_error(e, mesh, &red))?;
     drop(kff);
-    let mut q = red.rhs(&f, &k);
+    let mut q = red.rhs(&f, &k)?;
     chol.solve(&mut q)?;
     let u = red.expand(&q, true);
     if u.iter().any(|x| !x.is_finite()) {
         return Err(Error::Singular("the solution is not finite; the model is ill-conditioned".into()));
     }
     let (displacement, rotation, point_motion) = split(&u, mesh);
-    let reactions = red.reactions(&k, &u, &f);
+    let reactions = red.reactions(&k, &u, &f)?;
     let (reaction, reaction_moment, point_reaction) = split(&reactions, mesh);
     let (mut applied_total, mut reaction_total) = ([0.0; 3], [0.0; 3]);
     for (dof, (fv, rv)) in f.iter().zip(&reactions).enumerate() {
