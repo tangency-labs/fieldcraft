@@ -7,7 +7,9 @@
 //! A fluid step is first shown with velocity magnitude on a slice through the middle of the
 //! domain, normal to the horizontal axis across the flow (the slice holds the flow and the
 //! vertical: Z is up), on the obstacles, and with streamlines seeded on the inlet face upstream
-//! of the obstacles.
+//! of the obstacles. Along an axis with a symmetry face (slip: the cut of a half or quarter
+//! model), the slice is on that plane instead (its first cell layer), where the axis of the
+//! symmetric part lies.
 
 use std::sync::{Arc, Mutex, Weak};
 
@@ -67,8 +69,8 @@ impl Axis {
     }
 }
 
-/// A slice through the domain: normal to `axis` at `position` along it (`None`: the domain's
-/// middle).
+/// A slice through the domain: normal to `axis` at `position` along it (`None`: the symmetry
+/// plane along `axis`, else the domain's middle; [`slice_position`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SliceView {
     pub axis: Axis,
@@ -104,8 +106,8 @@ pub struct FlowView {
 }
 
 impl FlowView {
-    /// A fluid result's first look: a slice through the middle across the flow, the surfaces
-    /// coloured, streamlines from the inlet.
+    /// A fluid result's first look: a slice across the flow (through the middle, or on the
+    /// symmetry plane), the surfaces coloured, streamlines from the inlet.
     pub fn for_result(r: &FluidResult) -> FlowView {
         let along = r.frames.last().map_or(Axis::X, |f| direction(r, f).0);
         // The slice holds the flow and the vertical (Z is up); for a flow along y, it is normal to x.
@@ -212,12 +214,23 @@ pub fn cell_centre(r: &FluidResult, k: usize) -> [f64; 3] {
     [c.x, c.y, c.z]
 }
 
-/// Where a slice lies: its position, or the middle of the domain, held inside it.
+/// Where a slice lies: its position, held inside the domain; without one, the symmetry plane
+/// along its axis (the first cell layer on a slip face, its low one when both are), else the
+/// middle of the domain.
 pub fn slice_position(r: &FluidResult, s: &SliceView) -> f64 {
     let g = grid(r);
     let a = s.axis.index();
     let (lo, hi) = (g.start(a), g.end(a));
-    s.position.filter(|p| p.is_finite()).unwrap_or(0.5 * (lo + hi)).clamp(lo.min(hi), hi.max(lo))
+    let symmetric = |max: bool| fieldcraft_model::BoxFace::ALL.iter().zip(r.symmetry_faces).any(|(f, sym)| sym && f.axis() == a && f.is_max() == max);
+    let half = 0.5 * r.grid.spacing;
+    let auto = if symmetric(false) {
+        lo + half
+    } else if symmetric(true) {
+        hi - half
+    } else {
+        0.5 * (lo + hi)
+    };
+    s.position.filter(|p| p.is_finite()).unwrap_or(auto).clamp(lo.min(hi), hi.max(lo))
 }
 
 /// The seeds streamlines start from: the given ones, or `count` on the inlet face (where the
@@ -626,6 +639,7 @@ pub(crate) mod tests {
             grid,
             solid,
             open_faces: [false; 6],
+            symmetry_faces: [false; 6],
             frames: vec![at_rest, last],
             history_times: Vec::new(),
             forces: Vec::new(),
@@ -938,6 +952,17 @@ pub(crate) mod tests {
         assert_eq!(slice_position(&r, v.slice.as_ref().unwrap()), 2.0);
         assert_eq!(slice_position(&r, &SliceView { axis: Axis::Z, position: Some(99.0) }), 4.0);
         assert_eq!(slice_position(&r, &SliceView { axis: Axis::Z, position: Some(f64::NAN) }), 2.0);
+        // A quarter model (slip on y_min and z_min, the cut through the axis): the automatic
+        // slice is on the symmetry plane, the first cell layer; on y_max when that is the cut.
+        let mut quarter = channel();
+        quarter.symmetry_faces = fieldcraft_model::BoxFace::ALL.map(|f| matches!(f.name(), "y_min" | "z_min"));
+        let first = FlowView::for_result(&quarter);
+        assert_eq!(slice_position(&quarter, first.slice.as_ref().unwrap()), 0.5);
+        assert_eq!(slice_position(&quarter, &SliceView { axis: Axis::Z, position: None }), 0.5);
+        assert_eq!(slice_position(&quarter, &SliceView { axis: Axis::X, position: None }), 5.0, "no symmetry along x: the middle");
+        assert_eq!(slice_position(&quarter, &SliceView { axis: Axis::Y, position: Some(3.0) }), 3.0, "a given position stays");
+        quarter.symmetry_faces = fieldcraft_model::BoxFace::ALL.map(|f| f.name() == "y_max");
+        assert_eq!(slice_position(&quarter, &SliceView { axis: Axis::Y, position: None }), 3.5);
         // A flow along -y is sliced normal to x and seeded on the y_max face.
         let mut r = channel();
         for v in &mut r.frames[1].velocity {

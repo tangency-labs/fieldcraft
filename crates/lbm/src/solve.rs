@@ -227,6 +227,10 @@ pub struct FluidResult {
     pub solid: Vec<bool>,
     /// Per box face (in [`fieldcraft_model::BoxFace::ALL`] order): an inlet or outlet.
     pub open_faces: [bool; 6],
+    /// Per box face (same order): a symmetry plane (slip), such as the cut faces of a half or
+    /// quarter model.
+    #[serde(default)]
+    pub symmetry_faces: [bool; 6],
     /// The initial field and `frames` more, evenly spaced to the end.
     pub frames: Vec<Frame>,
     pub history_times: Vec<f64>,
@@ -721,6 +725,7 @@ fn run_checkpointed(
     let open_faces = fieldcraft_model::BoxFace::ALL.map(|f| {
         matches!(setup.domain.faces.get(f), fieldcraft_model::FaceCondition::Velocity { .. } | fieldcraft_model::FaceCondition::Pressure { .. })
     });
+    let symmetry_faces = fieldcraft_model::BoxFace::ALL.map(|f| matches!(setup.domain.faces.get(f), fieldcraft_model::FaceCondition::Slip {}));
     let solids = setup
         .thermal
         .iter()
@@ -750,6 +755,7 @@ fn run_checkpointed(
         grid: setup.grid,
         solid,
         open_faces,
+        symmetry_faces,
         frames: out_frames,
         history_times,
         forces,

@@ -510,6 +510,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         grid,
         solid,
         open_faces: BoxFace::ALL.map(open),
+        symmetry_faces: BoxFace::ALL.map(|f| matches!(domain.faces.get(f), FaceCondition::Slip {})),
         frames,
         history_times,
         forces: Vec::new(),
