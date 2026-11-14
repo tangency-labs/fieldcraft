@@ -131,7 +131,7 @@ With Nix (`flake.nix`, Linux and macOS):
 nix run github:tangency-labs/fieldcraft                         # the desktop app (package fieldcraft)
 nix run github:tangency-labs/fieldcraft#fieldcraft-cli -- mcp   # the CLI (package fieldcraft-cli)
 nix develop          # runtime libraries for `cargo run` (window, GPU, file dialogs); your own toolchain
-nix develop .#rust   # the same with nixpkgs' Rust, building into target/nix
+nix develop .#rust   # the same with rust-toolchain.toml's Rust (rust-overlay), building into target/nix
 ```
 
 On Linux the GPU drivers come from the system: `hardware.graphics.enable` on NixOS, nixGL elsewhere.

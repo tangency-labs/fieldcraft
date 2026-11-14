@@ -2,12 +2,18 @@
   description = "FieldCraft — native app development shell and package for Linux and macOS";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  # Official Rust builds (bundled LLVM) at the repo's pinned version.
+  inputs.rust-overlay = {
+    url = "github:oxalica/rust-overlay";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 
   # Adapted from SolidCraft's flake.nix (MIT OR Apache-2.0; see ATTRIBUTION.md).
   outputs =
     {
       self,
       nixpkgs,
+      rust-overlay,
     }:
     let
       systems = [
@@ -15,7 +21,38 @@
         "aarch64-linux"
         "aarch64-darwin"
       ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+      forAllSystems =
+        f:
+        nixpkgs.lib.genAttrs systems (
+          system:
+          f (
+            import nixpkgs {
+              inherit system;
+              overlays = [ rust-overlay.overlays.default ];
+            }
+          )
+        );
+
+      # The Rust of rust-toolchain.toml (channel, components, targets), as rustup and CI use it;
+      # plus rust-src and rust-analyzer for editors. Not nixpkgs' rustc: its 1.99.0 (system
+      # LLVM 21.1.8) segfaults in the SLP vectorizer on fieldcraft-solver.
+      rustToolchain = (nixpkgs.lib.importTOML ./rust-toolchain.toml).toolchain;
+      rustVersion = rustToolchain.channel;
+      toolchain =
+        pkgs:
+        pkgs.rust-bin.stable.${rustVersion}.default.override {
+          extensions = rustToolchain.components or [ ] ++ [
+            "rust-src"
+            "rust-analyzer"
+          ];
+          targets = rustToolchain.targets or [ ];
+        };
+      rustPlatform =
+        pkgs:
+        pkgs.makeRustPlatform {
+          cargo = toolchain pkgs;
+          rustc = toolchain pkgs;
+        };
 
       cargoToml = nixpkgs.lib.importTOML ./Cargo.toml;
       appId = "io.github.tangencylabs.fieldcraft";
@@ -108,14 +145,7 @@
         # (gitignored), so switching toolchains does not thrash the cache.
         rust = pkgs.mkShell {
           name = "fieldcraft-rust";
-          packages = with pkgs; [
-            cargo
-            rustc
-            rustfmt
-            clippy
-            rust-analyzer
-          ];
-          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+          packages = [ (toolchain pkgs) ];
           LD_LIBRARY_PATH = libraryPath pkgs;
           CARGO_TARGET_DIR = "target/nix";
           shellHook = ''
@@ -139,9 +169,9 @@
         # The desktop app (out) and the CLI (cli), one build.
         fieldcraft =
           assert pkgs.lib.assertMsg
-            (pkgs.lib.versionAtLeast pkgs.rustc.version cargoToml.workspace.package.rust-version)
-            "FieldCraft requires the Rust version in Cargo.toml (${cargoToml.workspace.package.rust-version}); update the pinned nixpkgs input.";
-          pkgs.rustPlatform.buildRustPackage {
+            (pkgs.lib.versionAtLeast rustVersion cargoToml.workspace.package.rust-version)
+            "FieldCraft requires the Rust version in Cargo.toml (${cargoToml.workspace.package.rust-version}); update rustVersion.";
+          (rustPlatform pkgs).buildRustPackage {
             pname = "fieldcraft";
             version = cargoToml.workspace.package.version;
             src = self;
@@ -159,10 +189,19 @@
             # SolidCraft crates embed files from their repo root (`../../assets`, LICENSE-*,
             # NOTICE, THIRD-PARTY-LICENSES.txt); a vendored crate dir has none of them. Vendored
             # crates sit in $NIX_BUILD_TOP/cargo-vendor-dir/<crate>, so `../..` is $NIX_BUILD_TOP.
+            # craft-plugin-wasm's build script reads its sibling's `../craft-plugin/wit`; the vendored
+            # sibling is `craft-plugin-<version>`, so the wit dir goes where the script looks (a dir
+            # without Cargo.toml, which cargo's vendor source skips).
             preBuild = ''
               for f in assets LICENSE-MIT LICENSE-APACHE NOTICE THIRD-PARTY-LICENSES.txt; do
                 ln -s ${solidcraftSrc}/$f "$NIX_BUILD_TOP/$f"
               done
+              vendor="$NIX_BUILD_TOP/cargo-vendor-dir"
+              if [ -d ${solidcraftSrc}/crates/craft-plugin/wit ]; then
+                chmod u+w "$vendor"
+                mkdir -p "$vendor/craft-plugin"
+                ln -s ${solidcraftSrc}/crates/craft-plugin/wit "$vendor/craft-plugin/wit"
+              fi
             '';
 
             cargoBuildFlags = cargoPackages;
