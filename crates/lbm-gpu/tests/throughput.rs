@@ -8,10 +8,52 @@
 mod common;
 
 use common::*;
-use fieldcraft_gpu::select::Policy;
+use fieldcraft_gpu::select::{Policy, gpu_required};
 use fieldcraft_lbm::backend::Backend;
 use fieldcraft_lbm_gpu::{GpuFlow, Options, Streaming};
 use fieldcraft_model::{BoxFace, FaceCondition};
+
+/// A required device or a failed setup must never turn a benchmark into a passing no-op.
+fn admit_gpu<T>(result: fieldcraft_lbm::Result<T>, required: bool) -> fieldcraft_lbm::Result<Option<T>> {
+    match result {
+        Ok(gpu) => Ok(Some(gpu)),
+        Err(fieldcraft_lbm::Error::Backend(message)) if !required && message.contains("no GPU device") => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn benchmark_gpu(flow: &fieldcraft_lbm::Flow, options: Options) -> Option<GpuFlow> {
+    let policy = Policy::from_env().expect("FIELDCRAFT_GPU names a policy");
+    let gpu = admit_gpu(GpuFlow::with_options(flow, policy, options), gpu_required()).expect("GPU throughput setup failed");
+    if gpu.is_none() {
+        println!("skipping: no GPU device");
+    }
+    gpu
+}
+
+#[test]
+fn gpu_setup_skips_only_a_missing_optional_device() {
+    let missing = fieldcraft_lbm::Error::Backend("FIELDCRAFT_GPU=cpu: no GPU device".into());
+    assert!(admit_gpu::<()>(Err(missing.clone()), false).unwrap().is_none());
+    assert_eq!(admit_gpu::<()>(Err(missing.clone()), true), Err(missing));
+    for required in [false, true] {
+        assert_eq!(admit_gpu(Ok(17), required).unwrap(), Some(17));
+    }
+}
+
+#[test]
+fn gpu_setup_preserves_unexpected_errors() {
+    for error in [
+        fieldcraft_lbm::Error::Backend("shader compilation failed".into()),
+        fieldcraft_lbm::Error::Backend("the device did not answer".into()),
+        fieldcraft_lbm::Error::Limit("not enough memory".into()),
+        fieldcraft_lbm::Error::Invalid("invalid setup".into()),
+    ] {
+        for required in [false, true] {
+            assert_eq!(admit_gpu::<()>(Err(error.clone()), required), Err(error.clone()));
+        }
+    }
+}
 
 /// Real-device cost of zone momentum forcing and of the optional diagnostic readback. Fan
 /// feedback itself stays on the device; only this explicit zones() call reads its sample.
@@ -46,11 +88,7 @@ fn zone_throughput_and_diagnostic_cost() {
         }
         let m = model(1.0, 0.1, d, step(232.0, 1.0, None));
         let (_, flow) = prepare(&m, &[]);
-        let policy = Policy::from_env().expect("FIELDCRAFT_GPU names a policy");
-        let Ok(mut device) = GpuFlow::with_options(&flow, policy, Options { streaming: Streaming::InPlace, profile: false }) else {
-            println!("skipping {kind}: no GPU or not enough memory");
-            return;
-        };
+        let Some(mut device) = benchmark_gpu(&flow, Options { streaming: Streaming::InPlace, profile: false }) else { return };
         device.advance(32).unwrap();
         let start = std::time::Instant::now();
         device.advance(200).unwrap();
@@ -108,16 +146,12 @@ fn cell_updates_per_second() {
             },
         );
         let (_, flow) = prepare(&m, &obstacles);
-        let policy = Policy::from_env().expect("FIELDCRAFT_GPU names a policy");
         let profile = std::env::var("FIELDCRAFT_LBM_GPU_PROFILE").is_ok_and(|v| v == "1");
-        let Ok(auto) = GpuFlow::new(&flow, policy) else {
-            println!("skipping {name}, {l}³ ({collision:?}): no GPU or not enough memory");
-            continue;
-        };
+        let Some(auto) = benchmark_gpu(&flow, Options::default()) else { continue };
         let picked = auto.streams_in_place();
         drop(auto);
         for (streaming, in_place) in [(Streaming::InPlace, true), (Streaming::TwoBuffers, false)] {
-            let mut gpu = GpuFlow::with_options(&flow, policy, Options { streaming, profile }).unwrap();
+            let Some(mut gpu) = benchmark_gpu(&flow, Options { streaming, profile }) else { continue };
             // One warm-up chunk, then the timed run: the chunk's steps are one submission.
             gpu.advance(1).unwrap();
             let start = std::time::Instant::now();
@@ -189,11 +223,7 @@ fn conjugate_cell_updates_per_second() {
     let cells = cpu.grid().len();
     let conducting: usize = Backend::conducting(&cpu).iter().map(Vec::len).sum();
     let before = peak_resident();
-    let policy = Policy::from_env().expect("FIELDCRAFT_GPU names a policy");
-    let Ok(mut gpu) = GpuFlow::new(&cpu, policy) else {
-        println!("skipping the conjugate case: no GPU or not enough memory");
-        return;
-    };
+    let Some(mut gpu) = benchmark_gpu(&cpu, Options::default()) else { return };
     let after = peak_resident();
     gpu.advance(1).unwrap();
     let start = std::time::Instant::now();
@@ -246,13 +276,9 @@ fn fixed_cost_per_solve() {
     };
     let m = cht_model([1.0, 0.02, 0.03], (2.0, [2.0; 3], 1.0), d, procedure);
     let (_, flow) = prepare(&m, &obstacles);
-    let policy = Policy::from_env().expect("FIELDCRAFT_GPU names a policy");
     for solve in 1..=3 {
         let start = std::time::Instant::now();
-        let Ok(mut gpu) = GpuFlow::new(&flow, policy) else {
-            println!("skipping: no GPU");
-            return;
-        };
+        let Some(mut gpu) = benchmark_gpu(&flow, Options::default()) else { return };
         gpu.advance(1).unwrap();
         let _ = gpu.heat().unwrap();
         println!(
@@ -304,10 +330,7 @@ fn smagorinsky_cost() {
                     model(1.0, 1.0 / 6.0, d, p)
                 };
                 let (_, flow) = prepare(&m, &[]);
-                let Ok(mut gpu) = GpuFlow::new(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy")) else {
-                    println!("skipping: no GPU");
-                    return;
-                };
+                let Some(mut gpu) = benchmark_gpu(&flow, Options::default()) else { return };
                 gpu.advance(1).unwrap();
                 // The best of three runs: a laptop's clocks wander.
                 let mut rate: f64 = 0.0;
@@ -385,12 +408,8 @@ fn les_cost() {
                 let [x, y, z] = grid.centre(cell);
                 (1.0, [0.05 * (k * y).sin() * (k * z).cos(), 0.05 * (k * z).sin() * (k * x).cos(), 0.05 * (k * x).sin() * (k * y).cos()])
             });
-            let policy = Policy::from_env().expect("FIELDCRAFT_GPU names a policy");
             for (streaming, label) in [(Streaming::InPlace, "in place"), (Streaming::TwoBuffers, "two buffers")] {
-                let Ok(mut gpu) = GpuFlow::with_options(&flow, policy, Options { streaming, profile: false }) else {
-                    println!("skipping: no GPU");
-                    return;
-                };
+                let Some(mut gpu) = benchmark_gpu(&flow, Options { streaming, profile: false }) else { return };
                 gpu.advance(1).unwrap();
                 let start = std::time::Instant::now();
                 gpu.advance(steps).unwrap();

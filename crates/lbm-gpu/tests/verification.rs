@@ -632,6 +632,7 @@ fn a_second_solve_reuses_the_compiled_kernels() {
 /// poll returns, which failed as "the readback did not complete" (#800).
 #[test]
 fn concurrent_solves_on_the_shared_device_read_back() {
+    const SOLVES: usize = 4;
     let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.0625);
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
@@ -641,7 +642,7 @@ fn concurrent_solves_on_the_shared_device_read_back() {
     // The other tests wait: these solves share the device only with each other.
     let _turn = turn();
     let solves: Vec<Option<std::result::Result<(), String>>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..4)
+        let handles: Vec<_> = (0..SOLVES)
             .map(|_| {
                 scope.spawn(|| {
                     let mut g = match GpuFlow::with_options(&flow, policy, Options { streaming: Streaming::InPlace, profile: false }) {
@@ -651,15 +652,22 @@ fn concurrent_solves_on_the_shared_device_read_back() {
                     };
                     Some((0..40).try_for_each(|_| {
                         g.advance(2).map_err(|e| e.to_string())?;
-                        g.mass().map(|_| ()).map_err(|e| e.to_string())
+                        let mass = g.mass().map_err(|e| e.to_string())?;
+                        if mass.is_finite() && mass > 0.0 { Ok(()) } else { Err(format!("invalid mass read back: {mass}")) }
                     }))
                 })
             })
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
+    let mut completed = 0;
     for solve in solves.into_iter().flatten() {
         solve.unwrap();
+        completed += 1;
+    }
+    assert!(completed == SOLVES || (completed == 0 && !gpu_required()), "{completed} of {SOLVES} concurrent solves completed");
+    if completed == 0 {
+        println!("skipping: no GPU device for the concurrent readback test");
     }
 }
 
