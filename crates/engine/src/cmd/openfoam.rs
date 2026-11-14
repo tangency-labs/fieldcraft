@@ -10,7 +10,6 @@ use fieldcraft_decks::openfoam::{CaseOptions, FieldValues, Gas, ObstacleSurface,
 use fieldcraft_io::roots::Access;
 use fieldcraft_lbm::solve::{FluidResult, FluidStats, Frame};
 use fieldcraft_lbm::voxel::Grid;
-use fieldcraft_model::units::Quantity;
 use fieldcraft_model::{BoxFace, FaceCondition, FluidDomain};
 use serde_json::{Value, json};
 
@@ -22,7 +21,7 @@ pub const WRITE: CommandSpec = CommandSpec {
     id: "deck.openfoam",
     label: "Write OpenFOAM Case",
     params: r#"{"path": "case_dir", "step"?: "Flow", "cell_factor"?: 2, "processes"?: 1, "max_courant"?: 0.8, "refine_boxes"?: [{"min": [x,y,z], "max": [x,y,z], "spacing"?: 0.1}], "location"?: [x,y,z], "initial_pressure"?: [{"min": [x,y,z], "max": [x,y,z], "pressure": 29.9}], "compressible"?: true | {"ambient"?: 0.101325, "temperature"?: 20, "molar_mass"?: 0.0289647, "specific_heat"?: 1004.5, "prandtl"?: 0.71}} — writes a fluid step (the only one when `step` is left out) as an OpenFOAM case directory: blockMesh background of spacing × cell_factor (1, 2, 4, 8), snappyHexMesh around the obstacles (one patch per named face, refined back to the spacing; `refine_boxes` to theirs, rounded to the background over a power of two), ASCII fields, decomposeParDict for `processes` ranks and an Allrun script (mesh, cell centres, solve, reconstruct). Incompressible by default: pimpleFoam with Smagorinsky LES, an adaptive time step (max_courant, 0.8; compressible 0.2). `compressible`: rhoCentralFoam, a laminar ideal gas (air by default): pressure faces above 0 are total-pressure inlets at `ambient` + their gauge pressure and the total `temperature`, the others non-reflecting outlets at `ambient`; walls adiabatic; `specific_heat` from the material's thermal data when left out, else air's; molar mass in kg/mol. Lengths, pressures and temperatures in the input units. `location` is a point in the fluid (found when left out). `initial_pressure` (compressible): boxes that start at that gauge pressure (setFields), such as the bore behind a high-pressure inlet, which would otherwise start as a shock at the inlet face. Fails naming what OpenFOAM cannot be given yet (heat, porous zones, fans, baffles, free surface, periodic faces, parabolic inlets, non-Newtonian fluids). Writes SI; nothing of the model changes; `results.openfoam` reads the results back"#,
-    form: None,
+    form: Some(super::forms::DECK_OPENFOAM),
     kind: CommandKind::Session,
     requires: &[Requirement::FluidDomain, Requirement::Step],
     run: write,
@@ -32,7 +31,7 @@ pub const READ: CommandSpec = CommandSpec {
     id: "results.openfoam",
     label: "Read OpenFOAM Results",
     params: r#"{"path": "case_dir", "spacing"?: 0.4, "max_cells"?: 20000000, "every"?: 1, "from"?: 0, "to"?: 1} — reads the results of a case `deck.openfoam` wrote and OpenFOAM ran (ASCII; reconstructed, or else straight from its processor directories) as the fluid results of its step: the written times from `from` to `to` (input units, inclusive), every `every`-th of them and always the last, each a frame, sampled at the centres of a lattice over the step's domain box (its spacing, or `spacing` in the input units) from the nearest OpenFOAM cell; the obstacles' cells are solid. Velocity, gauge pressure (compressible: above the ambient; incompressible: the kinematic pressure times the density) and, compressible, temperature. The reply states the frames, cells, peak speed and (compressible) peak Mach number. Replaces the step's results; the model is unchanged"#,
-    form: None,
+    form: Some(super::forms::RESULTS_OPENFOAM),
     kind: CommandKind::Session,
     requires: &[Requirement::FluidDomain, Requirement::Step],
     run: read,
@@ -71,10 +70,6 @@ struct GasParam {
     prandtl: Option<f64>,
 }
 
-fn si(s: &Session, key: &str, q: Quantity, v: f64) -> Result<f64> {
-    s.input_units().to_si(q, v).map_err(|e| EngineError::invalid(key, e.to_string()))
-}
-
 /// The step `deck.openfoam` / `results.openfoam` act on: named, or the only fluid step.
 fn fluid_step<'s>(s: &'s Session, name: Option<&str>) -> Result<(&'s str, &'s FluidDomain)> {
     let (step, domain) = fieldcraft_lbm::fluid_step(&s.model, name)?;
@@ -84,13 +79,6 @@ fn fluid_step<'s>(s: &'s Session, name: Option<&str>) -> Result<(&'s str, &'s Fl
 fn write(s: &mut Session, p: &Value) -> Result<Value> {
     let dir = super::file_param(s, p, "path", Access::Write)?;
     let step: Option<String> = opt(p, "step")?;
-    let length = |key: &str, v: [f64; 3]| -> Result<[f64; 3]> {
-        let mut out = [0.0; 3];
-        for (o, x) in out.iter_mut().zip(v) {
-            *o = si(s, key, Quantity::Length, x)?;
-        }
-        Ok(out)
-    };
     let defaults = CaseOptions::default();
     let mut options = CaseOptions {
         cell_factor: opt(p, "cell_factor")?.unwrap_or(defaults.cell_factor),
@@ -99,18 +87,13 @@ fn write(s: &mut Session, p: &Value) -> Result<Value> {
         ..defaults
     };
     for b in opt::<Vec<BoxParam>>(p, "refine_boxes")?.unwrap_or_default() {
-        let spacing = b.spacing.map(|h| si(s, "refine_boxes", Quantity::Length, h)).transpose()?;
-        options.refine_boxes.push(RefineBox { min: length("refine_boxes", b.min)?, max: length("refine_boxes", b.max)?, spacing });
+        options.refine_boxes.push(RefineBox { min: b.min, max: b.max, spacing: b.spacing });
     }
     for b in opt::<Vec<PressureParam>>(p, "initial_pressure")?.unwrap_or_default() {
-        options.initial_pressure.push(PressureBox {
-            min: length("initial_pressure", b.min)?,
-            max: length("initial_pressure", b.max)?,
-            pressure: si(s, "initial_pressure", Quantity::Pressure, b.pressure)?,
-        });
+        options.initial_pressure.push(PressureBox { min: b.min, max: b.max, pressure: b.pressure });
     }
     if let Some(l) = opt::<[f64; 3]>(p, "location")? {
-        options.location = Some(length("location", l)?);
+        options.location = Some(l);
     }
     let (step_name, domain) = fluid_step(s, step.as_deref())?;
     let gas = match p.get("compressible") {
@@ -122,15 +105,10 @@ fn write(s: &mut Session, p: &Value) -> Result<Value> {
         let air = Gas::AIR;
         let material_cp = s.model.materials().get(&domain.material).and_then(|m| m.thermal.as_ref()).and_then(|t| t.specific_heat);
         options.gas = Some(Gas {
-            ambient: g.ambient.map(|v| si(s, "compressible.ambient", Quantity::Pressure, v)).transpose()?.unwrap_or(air.ambient),
-            temperature: g.temperature.map(|v| si(s, "compressible.temperature", Quantity::Temperature, v)).transpose()?.unwrap_or(air.temperature),
+            ambient: g.ambient.unwrap_or(air.ambient),
+            temperature: g.temperature.unwrap_or(air.temperature),
             molar_mass: g.molar_mass.unwrap_or(air.molar_mass),
-            specific_heat: g
-                .specific_heat
-                .map(|v| si(s, "compressible.specific_heat", Quantity::SpecificHeat, v))
-                .transpose()?
-                .or(material_cp)
-                .unwrap_or(air.specific_heat),
+            specific_heat: g.specific_heat.or(material_cp).unwrap_or(air.specific_heat),
             prandtl: g.prandtl.unwrap_or(air.prandtl),
         });
         // The central scheme through strong expansions wants a smaller Courant number.
@@ -334,8 +312,8 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     if every == 0 {
         return Err(EngineError::invalid("every", "must be 1 or more"));
     }
-    let from = opt::<f64>(p, "from")?.map(|v| si(s, "from", Quantity::Time, v)).transpose()?.unwrap_or(f64::NEG_INFINITY);
-    let to = opt::<f64>(p, "to")?.map(|v| si(s, "to", Quantity::Time, v)).transpose()?.unwrap_or(f64::INFINITY);
+    let from = opt::<f64>(p, "from")?.unwrap_or(f64::NEG_INFINITY);
+    let to = opt::<f64>(p, "to")?.unwrap_or(f64::INFINITY);
     if from.is_nan() || to.is_nan() || from > to {
         return Err(EngineError::invalid("from", "must not be after `to`"));
     }
@@ -352,7 +330,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
 
     // The lattice over the domain box.
     let spacing = match opt::<f64>(p, "spacing")? {
-        Some(h) => si(s, "spacing", Quantity::Length, h)?,
+        Some(h) => h,
         None => domain.spacing,
     };
     if !(spacing.is_finite() && spacing > 0.0) {

@@ -2570,6 +2570,60 @@ pub const DECK_READ: &[Field] = &[
     .hint("current display preset"),
 ];
 
+pub const DECK_OPENFOAM: &[Field] = &[
+    path("path", "Case directory", true).help("Where to write the OpenFOAM case; OpenFOAM runs it as its own program (sh Allrun).").req(),
+    STEP,
+    int("cell_factor", "Cell factor", 1, 8)
+        .help("Background cells of spacing × this (1, 2, 4, 8); snappyHexMesh refines back to the spacing.")
+        .hint("2"),
+    int("processes", "Processes", 1, 4096).help("The ranks decomposeParDict and Allrun use.").hint("1"),
+    positive("max_courant", "Max Courant", D::None).help("The adaptive time step's Courant limit.").hint("0.8; compressible 0.2"),
+    rows(
+        "refine_boxes",
+        "Refine boxes",
+        &[
+            xyz("min", "Min", D::Length).help("A corner of the box.").req(),
+            xyz("max", "Max", D::Length).help("The opposite corner.").req(),
+            positive("spacing", "Spacing", D::Length).help("The cell size in the box.").hint("the domain's"),
+        ],
+    )
+    .help("Boxes refined to their own spacing (rounded to the background over a power of two)."),
+    xyz("location", "Location", D::Length).help("A point in the fluid, the side snappyHexMesh keeps; found when empty.").hint("found"),
+    rows(
+        "initial_pressure",
+        "Initial pressure",
+        &[
+            xyz("min", "Min", D::Length).help("A corner of the box.").req(),
+            xyz("max", "Max", D::Length).help("The opposite corner.").req(),
+            num("pressure", "Pressure", D::Stress).help("The gauge pressure the box starts at.").req(),
+        ],
+    )
+    .help("Compressible: boxes of the fluid that start at their own gauge pressure (setFields)."),
+    group(
+        "compressible",
+        "Compressible",
+        &[
+            positive("ambient", "Ambient", D::Stress).help("The absolute ambient pressure; pressure faces are gauge above it.").hint("1 atm"),
+            num("temperature", "Temperature", D::Temperature).help("The total temperature at inlets, and the initial temperature.").hint("20 degC"),
+            positive("molar_mass", "Molar mass", D::None).help("kg/mol.").hint("0.0289647 (air)"),
+            positive("specific_heat", "Specific heat", D::SpecificHeat)
+                .help("cp; the material's thermal data when empty, else air's.")
+                .hint("the material's, else air's"),
+            positive("prandtl", "Prandtl", D::None).help("The Prandtl number, for the conductivity from the viscosity.").hint("0.71 (air)"),
+        ],
+    )
+    .help("rhoCentralFoam with an ideal gas (air when every value is empty); incompressible pimpleFoam when off."),
+];
+
+pub const RESULTS_OPENFOAM: &[Field] = &[
+    path("path", "Case directory", false).help("A case deck.openfoam wrote and OpenFOAM ran: reconstructed, or its processor directories.").req(),
+    positive("spacing", "Spacing", D::Length).help("The lattice the results are sampled on.").hint("the domain's"),
+    int("max_cells", "Max cells", 1, fieldcraft_lbm::Limits::MAX_ADDRESSABLE_CELLS as i64).help("Cap on the lattice cells.").hint("20000000"),
+    int("every", "Every", 1, 1_000_000).help("Every n-th written time, always with the last.").hint("1"),
+    num("from", "From", D::Time).help("The first written time read (inclusive).").hint("the first"),
+    num("to", "To", D::Time).help("The last written time read (inclusive).").hint("the last"),
+];
+
 pub const EXPORT_STL: &[Field] = &[
     path("path", "File", true).help("Where to write the STL file.").req(),
     reference("set", "Set", C::Set).help("Write only this set's element faces; the whole outer surface when empty.").hint("the outer surface"),
