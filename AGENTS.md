@@ -68,9 +68,11 @@ section 1, which is where they change.
   convergence rates, mesh invariants), **experiment** (measurements published in papers and
   reports) and **standard benchmarks** (NAFEMS and other published standard problems, such as
   MacNeal–Harder). Each case in `tests/oracle/` is our own model built from the published
-  description, tagged with its source. A vendor manual may be cited as where a standard problem
-  and its target are reproduced; the reference value is the standard's, never a vendor's own
-  result. Once our result matches its reference within the stated tolerance, it is frozen as a
+  description, tagged with its source. Values openly published in benchmark reports and guides
+  (NAFEMS, ESRD, vendors' benchmark guides) may be cited as references; we never run the
+  product that made them. Closed-source or non-permissively licensed software is never used to
+  verify a result, brute-force a value or decide how FieldCraft behaves ("solver X does it this
+  way" is not a reason). Once our result matches its reference within the stated tolerance, it is frozen as a
   **fixture** (`fixture.json`), so any later change that moves it fails CI (fidelity never
   drifts silently).
 - **No commercial CAE products.** Agents must not drive, script, automate or extract data from
