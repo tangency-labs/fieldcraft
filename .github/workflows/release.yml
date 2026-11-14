@@ -161,7 +161,9 @@ jobs:
     # `main` may use; a dry run on another branch asks for no environment and builds unsigned.
     environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}
     runs-on: macos-15
-    timeout-minutes: 120
+    # Both architectures in one release build with thin LTO: about 40 min with a warm cache, over
+    # two hours cold (0.8.0, after the runner and Rust moved and the cache key with them).
+    timeout-minutes: 180
     outputs:
       signing: ${{ steps.package.outputs.signing }}
     env:
