@@ -14,7 +14,9 @@
    "tolerance": {
     "relative": 0.0025
    },
-   "reason": "the tessellation inscribes the cylinder within the chordal tolerance s = 0.05: the polygon section loses between 0 and 2s/R = 0.5% of the area; the reference is the middle of that band"
+   "reason": "the tessellation inscribes the cylinder within the chordal tolerance s = 0.05: the polygon section loses between 0 and 2s/R = 0.5% of the area; the reference is the middle of that band",
+   "fixture": false,
+   "fixture_reason": "the volume depends on the surface mesh from solidcore_tess::mesh, which is not bit-identical across platforms (macOS aarch64 6258.668, Linux x86-64 6258.805; tangency-labs/solidcraft#16417). The tet mesher gives the same mesh for the same surface on every platform, so the quantity can be frozen again once the surface mesh is reproducible; until then the reference tolerance gates it"
   },
   {
    "id": "invalid",
