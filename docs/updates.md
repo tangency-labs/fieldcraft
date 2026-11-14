@@ -54,8 +54,8 @@ behind is removed at the next start.
 
 | Installed as | Asset | Swap |
 |---|---|---|
-| `FieldCraft.app` (macOS) | `fieldcraft-<v>-macos-universal.dmg` | the bundle is replaced, then opened |
-| `fieldcraft-cli` (macOS) | `fieldcraft-cli-<v>-macos-universal.zip` | the binary is replaced |
+| `FieldCraft.app` (macOS, Apple silicon) | `fieldcraft-<v>-macos-aarch64.dmg` | the bundle is replaced, then opened |
+| `fieldcraft-cli` (macOS, Apple silicon) | `fieldcraft-cli-<v>-macos-aarch64.zip` | the binary is replaced |
 | A Windows folder | `fieldcraft-<v>-windows-x64.zip` | each file is replaced (a running `.exe` is renamed away, never overwritten); the app restarts |
 | An AppImage | `fieldcraft-<v>-linux-x86_64.AppImage` | the file is replaced and started |
 | A tar.gz folder | `fieldcraft-<v>-linux-x86_64.tar.gz` | the folder is replaced; when its parent is not writable the app says so and links the download |

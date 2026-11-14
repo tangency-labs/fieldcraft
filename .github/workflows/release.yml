@@ -10,7 +10,7 @@
 # here by `cargo xtask licences` (it is not committed). A person verifies the draft and publishes
 # it; this workflow never publishes, and pushes to develop or tags never start it.
 #
-#   macOS universal (arm64 + x86_64)   .dmg with FieldCraft.app, the CLI as a .zip   packaging/macos
+#   macOS aarch64 (Apple silicon)      .dmg with FieldCraft.app, the CLI as a .zip   packaging/macos
 #   Linux x86_64 (glibc 2.35+)         .tar.gz, .AppImage, .deb and .rpm              packaging/linux
 #   Linux x86_64 Flatpak               .flatpak (built from source, freedesktop 26.08) packaging/linux/flatpak
 #                                      (a workflow artifact only, not yet in the release: see the job)
@@ -155,15 +155,14 @@ jobs:
         run: git diff --exit-code docs/oracle.md
 
   macos:
-    name: macOS universal
+    name: macOS aarch64
     needs: version
     # Signing, notarization and analytics secrets live in the `release` environment, which only
     # `main` may use; a dry run on another branch asks for no environment and builds unsigned.
     environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}
     runs-on: macos-15
-    # Both architectures in one release build with thin LTO: about 40 min with a warm cache, over
-    # two hours cold (0.8.0, after the runner and Rust moved and the cache key with them).
-    timeout-minutes: 180
+    # A cold release build with thin LTO takes about an hour; a warm one far less.
+    timeout-minutes: 120
     outputs:
       signing: ${{ steps.package.outputs.signing }}
     env:
@@ -172,10 +171,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@1.99.1  # the version in rust-toolchain.toml
         with:
-          targets: aarch64-apple-darwin, x86_64-apple-darwin
+          targets: aarch64-apple-darwin
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: release-macos-universal
+          key: release-macos-aarch64
+          # A late failure (notarization) keeps the compiled crates, so its rerun starts warm.
+          cache-on-failure: true
           # Release runs are rare: only release-branch runs keep a cache, so dry runs don't evict CI's.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Generate THIRD-PARTY-LICENSES.txt (fails when a crate's licence can't be resolved)
@@ -194,7 +195,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: packaging/macos/package.sh --arch universal
+        run: packaging/macos/package.sh --arch aarch64
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-macos
@@ -401,7 +402,7 @@ jobs:
         run: cargo xtask licences && cp THIRD-PARTY-LICENSES.txt artifacts/
       - name: Check the set and write the checksums
         run: |
-          for f in "fieldcraft-$VERSION-macos-universal.dmg" "fieldcraft-cli-$VERSION-macos-universal.zip" \
+          for f in "fieldcraft-$VERSION-macos-aarch64.dmg" "fieldcraft-cli-$VERSION-macos-aarch64.zip" \
             "fieldcraft-$VERSION-linux-x86_64.tar.gz" "fieldcraft-$VERSION-linux-x86_64.AppImage" \
             "fieldcraft_${VERSION}_amd64.deb" "fieldcraft-$VERSION.x86_64.rpm" \
             "fieldcraft-$VERSION-windows-x64.zip" THIRD-PARTY-LICENSES.txt; do

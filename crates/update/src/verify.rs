@@ -85,7 +85,7 @@ pub(crate) mod tests {
     fn checksum_lists_parse() {
         let a = "a".repeat(64);
         let sums =
-            parse_sums(&format!("{a}  fieldcraft-0.5.9-macos-universal.dmg\n{}  *fieldcraft-0.5.9-windows-x64.zip\n\n", "B".repeat(64))).unwrap();
+            parse_sums(&format!("{a}  fieldcraft-0.5.9-macos-aarch64.dmg\n{}  *fieldcraft-0.5.9-windows-x64.zip\n\n", "B".repeat(64))).unwrap();
         assert_eq!(sums.len(), 2);
         assert_eq!(sums["fieldcraft-0.5.9-windows-x64.zip"], "b".repeat(64));
         for bad in
