@@ -4,8 +4,8 @@
 //!
 //! | Install | Asset | Swap |
 //! |---|---|---|
-//! | macOS `FieldCraft.app` | `fieldcraft-V-macos-universal.dmg` | the bundle, then `open -n` it |
-//! | macOS `fieldcraft-cli` | `fieldcraft-cli-V-macos-universal.zip` | the binary |
+//! | macOS `FieldCraft.app` (Apple silicon) | `fieldcraft-V-macos-aarch64.dmg` | the bundle, then `open -n` it |
+//! | macOS `fieldcraft-cli` (Apple silicon) | `fieldcraft-cli-V-macos-aarch64.zip` | the binary |
 //! | Windows folder | `fieldcraft-V-windows-x64.zip` | each file (a running `.exe` can be renamed, not overwritten) |
 //! | Linux AppImage | `fieldcraft-V-linux-x86_64.AppImage` | the file |
 //! | Linux tar.gz folder | `fieldcraft-V-linux-x86_64.tar.gz` | the folder |
@@ -127,14 +127,15 @@ fn is_build_dir(dir: &Path) -> bool {
 }
 
 impl Install {
-    /// The release asset that updates this install to `v` (release builds are macOS universal,
+    /// The release asset that updates this install to `v` (release builds are macOS aarch64,
     /// Linux x86_64 and Windows x64; `arch` is `std::env::consts::ARCH`). `None` when it cannot
     /// update itself.
     pub fn asset_name(&self, v: &Version, arch: &str) -> Option<String> {
         let x64 = arch == "x86_64";
+        let arm64 = arch == "aarch64";
         Some(match self {
-            Install::MacApp { .. } => format!("fieldcraft-{v}-macos-universal.dmg"),
-            Install::MacCli { .. } => format!("fieldcraft-cli-{v}-macos-universal.zip"),
+            Install::MacApp { .. } if arm64 => format!("fieldcraft-{v}-macos-aarch64.dmg"),
+            Install::MacCli { .. } if arm64 => format!("fieldcraft-cli-{v}-macos-aarch64.zip"),
             // 64-bit Arm Windows runs the x64 build.
             Install::Windows { .. } => format!("fieldcraft-{v}-windows-x64.zip"),
             Install::AppImage { .. } if x64 => format!("fieldcraft-{v}-linux-x86_64.AppImage"),
@@ -319,8 +320,11 @@ mod tests {
     fn each_install_picks_its_release_asset() {
         let v = Version::parse("0.5.9").unwrap();
         let cases = [
-            (Install::MacApp { bundle: "/A/FieldCraft.app".into() }, "aarch64", Some("fieldcraft-0.5.9-macos-universal.dmg")),
-            (Install::MacCli { exe: "/b/fieldcraft-cli".into() }, "x86_64", Some("fieldcraft-cli-0.5.9-macos-universal.zip")),
+            (Install::MacApp { bundle: "/A/FieldCraft.app".into() }, "aarch64", Some("fieldcraft-0.5.9-macos-aarch64.dmg")),
+            (Install::MacCli { exe: "/b/fieldcraft-cli".into() }, "aarch64", Some("fieldcraft-cli-0.5.9-macos-aarch64.zip")),
+            // Intel Macs have no release build since 0.8.0.
+            (Install::MacApp { bundle: "/A/FieldCraft.app".into() }, "x86_64", None),
+            (Install::MacCli { exe: "/b/fieldcraft-cli".into() }, "x86_64", None),
             (Install::Windows { dir: "C:/F".into() }, "x86_64", Some("fieldcraft-0.5.9-windows-x64.zip")),
             (Install::Windows { dir: "C:/F".into() }, "aarch64", Some("fieldcraft-0.5.9-windows-x64.zip")),
             (Install::AppImage { file: "/a.AppImage".into() }, "x86_64", Some("fieldcraft-0.5.9-linux-x86_64.AppImage")),
@@ -336,8 +340,8 @@ mod tests {
         // The names release.yml checks for (its "Check the set" step).
         let workflow = include_str!("../../../.github/workflows/release.yml");
         for name in [
-            "fieldcraft-$VERSION-macos-universal.dmg",
-            "fieldcraft-cli-$VERSION-macos-universal.zip",
+            "fieldcraft-$VERSION-macos-aarch64.dmg",
+            "fieldcraft-cli-$VERSION-macos-aarch64.zip",
             "fieldcraft-$VERSION-linux-x86_64.tar.gz",
             "fieldcraft-$VERSION-linux-x86_64.AppImage",
             "fieldcraft_${VERSION}_amd64.deb",
