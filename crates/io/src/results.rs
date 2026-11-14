@@ -5,7 +5,7 @@
 //! Little-endian:
 //!
 //! ```text
-//! "MCRSLT05"                     magic, 8 bytes (the results encoding's version is 05)
+//! "MCRSLT06"                     magic, 8 bytes (the results encoding's version is 06)
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
@@ -19,8 +19,9 @@
 //! reactions, nodal stresses and contact states); a frequency or
 //! buckling step's modes; a heat transfer step's temperature frames, fluxes and heat flows; an
 //! explicit step's field frames, histories, energies, contacts and erosion; a fluid step's grid
-//! (origin, spacing, cells), cell fields per frame (velocity, pressure, temperature), wall
-//! forces, heat and zone histories, statistics and steady-state monitors.
+//! (origin, spacing, cells), symmetry faces, cell fields per frame (velocity, pressure,
+//! temperature, compressible density), wall forces, heat and zone histories, statistics and
+//! steady-state monitors.
 //!
 //! The payload follows the field and variant order of the solvers' result types, so the
 //! encoding's version changes with any change to them ([`MAGIC`]). A file whose results are of
@@ -39,8 +40,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{Error, Geometry, MAX_FILE_BYTES, Result, codec, invalid};
 
-/// The magic bytes the part starts with (the `05` is the results encoding's version).
-pub const MAGIC: &[u8; 8] = b"MCRSLT05";
+/// The magic bytes the part starts with (the `06` is the results encoding's version).
+pub const MAGIC: &[u8; 8] = b"MCRSLT06";
 
 /// The part's name.
 pub const PART: &str = "results.bin";
