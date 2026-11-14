@@ -155,9 +155,8 @@ section 1, which is where they change.
      the gate on it, the heavy job included when the change reaches the solvers (step 5). Once
      it is green, merge it with a rebase merge, which keeps `develop`
      linear and every commit bisectable. `develop` and `main` are protected (CODEOWNERS review, linear history,
-     rebase merges only); the core team merges as the maintainer with
-     `gh pr merge <N> -R tangency-labs/fieldcraft --rebase --admin --delete-branch`, run as its own command. Outside
-     contributors' pull requests wait for the maintainer's review (CONTRIBUTING.md). Never squash.
+     rebase merges only). Agents never merge: every pull request waits for the maintainer's
+     review and merge (CONTRIBUTING.md). Never squash.
      Then remove your worktree and delete your local branch.
   5. Never run the full gate locally: no `cargo xtask ci`, no `cargo clippy --workspace`, no
      `cargo xtask wasm` or `oracle` unless step 2 calls for it. GitHub CI runs it, on every
