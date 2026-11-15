@@ -261,7 +261,6 @@ fn one_line(s: &str) -> String {
 
 /// What a click in the panel asks for, done after drawing.
 enum Act {
-    Close,
     Select(Def, String),
     Start(&'static str),
     Tab(Tab),
@@ -293,7 +292,6 @@ enum Act {
 pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     let Some(reply) = app.reply.clone() else { return };
     let mut acts = Vec::new();
-    kit::panel::header(ui, &reply.command, &reply.label, || acts.push(Act::Close));
     // One form: the kit's buttons and rows, the rows sharing one label column sized to the
     // longest key.
     kit::scope(ui, |ui| {
@@ -332,8 +330,8 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     });
     for a in acts {
         match a {
-            Act::Close => app.reply = None,
-            Act::Select(kind, name) => app.selected = Some((kind, name)),
+            // A row's Show selects what it names and the report stays open with its other rows.
+            Act::Select(kind, name) => crate::context::mark_selected(app, Some((kind, name))),
             Act::Start(id) => {
                 let _ = app.start(id);
             }

@@ -12,7 +12,7 @@
 //! - the browser on the left ([`browser`]): the model's geometry, mesh and definitions;
 //! - the viewport ([`viewport`]) with its navigation bar, orientation gizmo and selection bar
 //!   (picking faces, edges, vertices, bodies, nodes and elements: [`selection`]);
-//! - the context panel on the right ([`context`]), only while there is context: the open command
+//! - the context cards on the right ([`context`]), only while there is context: the open command
 //!   form, the results controls, the selected definition's properties;
 //! - the command line and status ([`palette`]), and the journal timeline at the bottom
 //!   ([`timeline`]). Every command is also one search away (S or Cmd/Ctrl+K).
@@ -804,6 +804,7 @@ impl ModelApp {
                     line.push_str(" (details in the panel)");
                     // Kept with their units: a live reply runs again in whatever units are shown then.
                     let params = self.session.params_with_units(id, &params);
+                    crate::context::opened(self, crate::context::Opened::Reply);
                     self.reply = Some(reply::Reply { command: id.to_string(), label: label.to_string(), params, value: v.clone() });
                 }
                 self.set_status(line, false)
@@ -950,6 +951,7 @@ impl ModelApp {
             self.forms_opened = self.forms_opened.wrapping_add(1);
             // An earlier "not yet" card concerns another command: the new form replaces it.
             self.refused = None;
+            crate::context::opened(self, crate::context::Opened::Form);
             self.dialog = Some(ParamsDialog {
                 command: spec.id,
                 text: params.to_string(),
@@ -983,6 +985,7 @@ impl ModelApp {
             many => format!("{label} cannot run yet: {} things missing (listed in the panel)", many.len()),
         };
         self.set_status(text, true);
+        crate::context::opened(self, crate::context::Opened::Form);
         self.refused = Some(u);
     }
 
@@ -1923,13 +1926,13 @@ impl ModelApp {
         self.session.model.seed(on)
     }
 
-    /// Select (or with `None` deselect) a definition in the browser, as a click on its row does.
+    /// Select (or with `None` deselect) a definition in the browser, as a click on its row does:
+    /// its properties take the first place on the right.
     pub fn select_definition(&mut self, selected: Option<(browser::Def, String)>) {
         if selected.is_some() {
-            self.selected_seed = None;
-            self.selected_mesh = false;
+            crate::context::opened(self, crate::context::Opened::Selection);
         }
-        self.selected = selected;
+        crate::context::mark_selected(self, selected);
     }
 
     /// Select what `mesh.check.duplicates` reported: the coincident nodes, the repeated elements
@@ -1953,6 +1956,7 @@ impl ModelApp {
 
     /// Select the Mesh node in the browser: how the current mesh was made, on the right.
     pub fn select_mesh(&mut self) {
+        crate::context::opened(self, crate::context::Opened::Selection);
         self.selected = None;
         self.selected_seed = None;
         self.selected_mesh = true;
@@ -1984,6 +1988,7 @@ impl ModelApp {
     /// Select the seed on `edge` (an edge or face) in the browser: its properties on the right,
     /// its edge or face picked in the viewport.
     pub fn select_seed(&mut self, edge: fieldcraft_model::GeometryRef) {
+        crate::context::opened(self, crate::context::Opened::Selection);
         self.selected = None;
         self.selected_mesh = false;
         self.select([selection::Item::Geometry(edge.clone())], selection::Mode::Replace);
@@ -2471,22 +2476,18 @@ impl ModelApp {
     }
 
     /// The shell as SolidCraft's (`shell`; SolidCraft `lib.rs`, the floating layout of its
-    /// workspace UI): the viewport fills the window below the application bar, left of the context
-    /// panel, and the ribbon, History and browser cards are drawn over it as kit `Container`
-    /// cards, each recording where in [`ModelApp::shell`]. The context panel docks at the right
-    /// below the top cards.
+    /// workspace UI): the viewport fills the window below the application bar, and the ribbon,
+    /// History, browser and context cards are drawn over it as kit cards, each recording where in
+    /// [`ModelApp::shell`]. The context cards float at the right, clear of the top cards and
+    /// History ([`context::panel`]).
     fn shell(&mut self, ui: &mut egui::Ui) {
         self.shell.clear(self.ui.history_dock);
         // The workspace and ribbon cards first, over the whole width below the application bar.
         toolbar::toolbar(self, ui);
         let rest = ui.available_rect_before_wrap();
-        let below = self.shell.panel_space(rest);
-        let mut side = ui.new_child(egui::UiBuilder::new().id_salt("fc_shell_side").max_rect(below));
-        context::panel(self, &mut side);
-        let right = side.available_rect_before_wrap().right();
-        let view = egui::Rect::from_min_max(rest.min, egui::pos2(right.max(rest.left()), rest.bottom()));
-        // The cards over the view: History along its bottom, then the browser above it.
-        let mut over = ui.new_child(egui::UiBuilder::new().id_salt("fc_shell_cards").max_rect(view));
+        // The cards over the view: History at its dock first, then the browser on the left and
+        // the context cards on the right, clear of the top cards and History.
+        let mut over = ui.new_child(egui::UiBuilder::new().id_salt("fc_shell_cards").max_rect(rest));
         if self.ui.show_timeline {
             timeline::timeline(self, &mut over);
         }
@@ -2495,6 +2496,7 @@ impl ModelApp {
         if self.ui.show_tree {
             browser::browser(self, &mut over);
         }
+        context::panel(self, &mut over);
         // The view last on the window's own layer: the cards are areas above it, which keep the
         // pointer over them, and its framing keeps clear of them (`viewport::overlays`).
         let mut viewport = ui.new_child(egui::UiBuilder::new().id_salt("fc_shell_view").max_rect(view));
@@ -4209,7 +4211,7 @@ mod tests {
     }
 
     /// The family layout: title bar, ribbon, browser left, viewport and the History card at the
-    /// bottom; the context panel on the right only while there is context.
+    /// bottom; the context cards over the viewport's right only while there is context.
     #[test]
     fn the_window_is_laid_out_like_the_other_crafts() {
         let mut app = ModelApp::new(Session::default());
@@ -4248,12 +4250,12 @@ mod tests {
             assert!(r.is_positive(), "{chrome}");
         }
         assert!(view.contains_rect(region(&app, "nav_bar")) && view.contains_rect(region(&app, "axis_view")));
-        // A form brings the context panel; the viewport makes room.
+        // A form brings its card, floating over the viewport's right; the viewport keeps the width.
         app.start("model.material.create").unwrap();
         frame(&mut app);
-        let context = region(&app, "context");
-        assert!(context.right() > 1390.0 && context.width() > 280.0, "{context:?}");
-        assert!(region(&app, "viewport").right() <= context.left() + 1.0);
+        let context = region(&app, "context:form");
+        assert!(context.right() > 1380.0 && context.width() > 280.0 && view.contains_rect(context), "{context:?}");
+        assert!((region(&app, "viewport").right() - 1400.0).abs() < 1.0);
         // The search and a drop-down are drawn when their state says so.
         app.dialog = None;
         app.ui.palette = true;

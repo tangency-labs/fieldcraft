@@ -628,7 +628,7 @@ mod tests {
     /// Every hover text the window draws says what its widget does in words: none names a
     /// command id (owner's rule: no command ids as UI text). Read from drawn frames (each
     /// widget's hover text is its accessibility description), across the browser, its item
-    /// menu, the results panel with reactions, a probed node, the XY plot and
+    /// menu, the results panel with reactions, a probed node, saved views, the XY plot and
     /// streamlines, and the Help menu, so a new hover that names an id fails here.
     #[test]
     fn no_drawn_hover_names_a_command_id() {
@@ -655,7 +655,11 @@ mod tests {
         hovers.extend(hovers_drawn(
             &mut app,
             &ctx,
-            &[("browser", "Loads & BCs", egui::PointerButton::Primary), ("browser", "Clamp", egui::PointerButton::Secondary)],
+            &[
+                ("context", "Views", egui::PointerButton::Primary),
+                ("browser", "Loads & BCs", egui::PointerButton::Primary),
+                ("browser", "Clamp", egui::PointerButton::Secondary),
+            ],
         ));
         // An XY plot of an explicit step.
         let ctx = egui::Context::default();
@@ -695,6 +699,7 @@ mod tests {
         for reached in [
             "Write the reaction sums to a CSV file",
             "Write the node's results to a CSV file",
+            "Show this view",
             "Ask GitHub Releases whether a newer FieldCraft is published",
             "Rename this boundary condition: every definition that refers to it follows",
             "Write the series to a CSV file",

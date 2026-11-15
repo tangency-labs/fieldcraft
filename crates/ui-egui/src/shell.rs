@@ -31,6 +31,8 @@ pub struct State {
     pub history_dock: HistoryDock,
     /// The browser card, while it is shown.
     pub browser: Option<Rect>,
+    /// The cards on the right ([`crate::context::panel`]), while shown.
+    pub right: Vec<Rect>,
 }
 
 impl State {
@@ -42,7 +44,7 @@ impl State {
 
     /// Every card over the viewport this frame: the viewport's overlays and framing keep clear.
     pub fn covered(&self) -> impl Iterator<Item = Rect> + '_ {
-        self.cards.iter().copied().chain(self.history).chain(self.browser)
+        self.cards.iter().copied().chain(self.history).chain(self.browser).chain(self.right.iter().copied())
     }
 
     /// The part of `available` the browser card may use: below the top cards, and above History

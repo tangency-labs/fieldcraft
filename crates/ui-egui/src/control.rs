@@ -331,7 +331,7 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
             let kind = p.get("kind").cloned().and_then(|k| serde_json::from_value::<crate::browser::Def>(k).ok());
             match (kind, s("name")) {
                 (Some(kind), Some(name)) if crate::browser::definition(&app.session.model, kind, name).is_some() => {
-                    app.selected = Some((kind, name.to_string()));
+                    app.select_definition(Some((kind, name.to_string())));
                     ok(Value::Null)
                 }
                 (Some(_), Some(name)) => err(format!("no such definition `{name}`")),
