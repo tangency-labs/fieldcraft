@@ -119,7 +119,7 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
     let data = app_bar::AppBar {
         mark: &mark,
         name: "FieldCraft",
-        home: chrome("home", "home", "Samples: models ready to solve"),
+        home: chrome("home", "home", "Start: new, open, recent files and samples"),
         file: "File",
         file_open: app.ui.menu.as_deref() == Some("file"),
         actions: vec![
@@ -152,7 +152,7 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
     }
     for action in &out.actions {
         match action {
-            BarAction::Home => app.toggle_menu("home"),
+            BarAction::Home => app.open_start(),
             BarAction::File { .. } => {
                 app.ui.palette = false;
                 app.toggle_menu("file");
@@ -204,10 +204,8 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
         out.controls_left - 8.0
     };
     document_tab(app, ui, r, out.tabs_start, tabs_end);
-    let home_at = solidcraft_ui_registry::rect_of("app_bar:home").unwrap_or(out.file);
     let help_at = solidcraft_ui_registry::rect_of("app_bar:help").unwrap_or(r);
     crate::frame::menu(app, ui, "file", out.file, crate::files::file_menu);
-    crate::frame::wide_menu(app, ui, "home", home_at, samples_menu);
     crate::frame::wide_menu(app, ui, "help", help_at, help_menu);
     if let Some(pill) = app.layout.get("app_bar:update").copied() {
         crate::frame::menu(app, ui, "update", pill, crate::updates::offer_menu);
@@ -314,7 +312,7 @@ fn document_tab(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32
     let mut strip = app_bar::TabStrip {
         tabs: vec![app_bar::DocTab { name: &name, list_name: &name, dirty, place: &place }],
         selected: 0,
-        shown_selected: Some(0),
+        shown_selected: (!app.start_shown()).then_some(0),
         title_bar: true,
         double_click_renames: false,
         rename: None,
@@ -339,6 +337,7 @@ fn document_tab(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32
             app_bar::TabAction::Close(_) | app_bar::TabAction::New => app.new_model(),
             app_bar::TabAction::Menu { id, .. } if id == "close" => app.new_model(),
             app_bar::TabAction::Maximize => window_chrome::toggle_maximize(ui.ctx()),
+            app_bar::TabAction::Select(_) => app.close_start(),
             _ => {}
         }
     }
@@ -362,18 +361,6 @@ const TAB_HANDLES: app_bar::TabHandles<'static> = app_bar::TabHandles {
 /// The shortcut text with this platform's command key.
 pub fn shortcut(key: &str) -> String {
     format!("{}+{key}", if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" })
-}
-
-/// Home: the samples, ready to solve.
-fn samples_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
-    let t = Tokens::get(app.ui.dark);
-    crate::frame::menu_heading(ui, "Samples");
-    let mut open = None;
-    crate::samples::rows(ui, &t, &mut open);
-    if let Some(n) = open {
-        app.ui.menu = None;
-        app.open_sample(n);
-    }
 }
 
 /// Help: the samples (ready to solve), how to navigate, keys, updates, crash reports and the version.

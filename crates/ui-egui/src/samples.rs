@@ -1,4 +1,4 @@
-//! The samples as the kit's sample cards (the Start card, File › Samples) and as rows (Help › Samples):
+//! The samples as the kit's sample cards (the start page, File › Samples) and as rows (Help › Samples):
 //! every sample of `fieldcraft_engine::sample::SAMPLES`, the flagship ones first, each with its
 //! thumbnail where one exists. Thumbnails are the gallery captures (docs/media/examples) cropped
 //! and scaled to 320 px, embedded at build time so they work on the web too.
@@ -62,8 +62,11 @@ fn decode(bytes: &[u8]) -> Option<egui::ColorImage> {
     }
 }
 
+/// The kit icon a sample's card shows while it has no thumbnail.
+pub(crate) const ICON: &str = "ui.views";
+
 /// The thumbnail of sample `name`, uploaded once; `None` when it has none.
-fn thumbnail(ctx: &egui::Context, name: &'static str) -> Option<TextureHandle> {
+pub(crate) fn thumbnail(ctx: &egui::Context, name: &'static str) -> Option<TextureHandle> {
     let key = egui::Id::unique(("fc_sample_thumbnail", name));
     if let Some(cached) = ctx.data(|d| d.get_temp::<Option<TextureHandle>>(key)) {
         return cached;
@@ -102,7 +105,7 @@ fn cards(ui: &mut egui::Ui, open: &mut Option<&'static str>) {
         .map(|(s, texture)| kit::SampleCard {
             title: s.label,
             description: s.about,
-            icon: kit::Icon::Kit("ui.views"),
+            icon: kit::Icon::Kit(ICON),
             thumbnail: texture.as_ref().map(|t| (t.id(), t.size_vec2())),
         })
         .collect();
