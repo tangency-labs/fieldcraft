@@ -2040,8 +2040,9 @@ pub(crate) mod tests {
     /// The browser is a card at the top left of the viewport, a gap from the ribbon and the
     /// window's edge, as wide as remembered. It fills its column down to a gap above History
     /// (owner, 2026-11-15, B1-2), whatever its row count, so nodes appearing as the setup is
-    /// reached never change its size; rows beyond it scroll inside. The viewport is drawn under
-    /// it and shows beside it.
+    /// reached never change its size; rows beyond it scroll inside. With History docked at the
+    /// top, the column runs from a gap below History to a gap above the viewport's bottom. The
+    /// viewport is drawn under it and shows beside it.
     #[test]
     fn the_card_fills_its_column_above_history() {
         let gap = kit::SHELL_GAP;
@@ -2065,6 +2066,15 @@ pub(crate) mod tests {
         assert_eq!(card_at(&mut app), empty, "after opening a design");
         mesh_plate(&mut app);
         assert_eq!(card_at(&mut app), empty, "after meshing");
+        // History docked at the top: the column runs from below it to the viewport's bottom.
+        app.ui.history_dock = crate::shell::HistoryDock::Top;
+        let top = card_at(&mut app);
+        let (history, view) = (app.shell.history.unwrap(), region(&app, "viewport"));
+        assert!((top.top() - (history.bottom() + gap)).abs() < 1.0, "{top:?} {history:?}");
+        assert!((top.bottom() - (view.bottom() - gap)).abs() < 1.0, "{top:?} {view:?}");
+        let mut empty_app = ModelApp::new(Session::default());
+        empty_app.ui.history_dock = crate::shell::HistoryDock::Top;
+        assert_eq!(card_at(&mut empty_app), top, "the same column on an empty model");
         // More rows than fit a short window: the card stops a gap above History.
         let size = vec2(1400.0, 560.0);
         let mut app = every_kind();
