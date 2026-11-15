@@ -60,15 +60,16 @@ fn cached_items(app: &mut ModelApp) -> (std::sync::Arc<Vec<Item>>, usize) {
     }
 }
 
-/// The journal and the undone commands as runs of the same command.
+/// The journal and the undone commands as runs of the same command. A run spans the marker when
+/// the model stands inside it (the strip draws the marker between its commands), so rolling
+/// never regroups the journal: an open run stays open, its commands where they were.
 pub fn items(app: &ModelApp) -> (Vec<Item>, usize) {
     let done = app.session.journal.len();
     let all = app.session.journal.iter().chain(app.session.redo_entries());
     let mut out: Vec<Item> = Vec::new();
     for (i, (command, params)) in all.enumerate() {
-        // A run never crosses the current position.
         match out.last_mut() {
-            Some(last) if last.command == *command && last.end == i && i != done => {
+            Some(last) if last.command == *command && last.end == i => {
                 last.end = i + 1;
                 last.params.push(params.clone());
             }
@@ -439,10 +440,10 @@ mod tests {
         app.roll_to(2);
         assert_eq!(app.session.journal.len(), 2);
         assert!(app.session.model.node(3).is_none());
-        // The undone commands follow the marker, split from the done ones.
+        // The marker stands inside the run of nodes, which stays one item.
         let (list, done) = items(&app);
         assert_eq!(done, 2);
-        assert_eq!(list.iter().map(|i| (i.start, i.end)).collect::<Vec<_>>(), [(0, 2), (2, 3), (3, 4)]);
+        assert_eq!(list.iter().map(|i| (i.start, i.end)).collect::<Vec<_>>(), [(0, 3), (3, 4)]);
         app.roll_to(4);
         assert!(app.session.model.materials().contains_key("Steel"));
         app.roll_to(100);
@@ -531,6 +532,66 @@ mod tests {
         click(&mut app, chip);
         assert!(app.timeline_open.is_empty());
         assert_eq!(app.session.journal.len(), 3, "opening a run rolls nothing back");
+    }
+
+    /// Draws `app` in a window of `size` with these input events, as a frame of the app does.
+    fn frame(ctx: &egui::Context, app: &mut ModelApp, size: egui::Vec2, events: Vec<egui::Event>) {
+        let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)), events, ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+        out.textures_delta.clear();
+    }
+
+    fn press(at: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() }
+    }
+
+    /// A click as a hand makes it: move there, press, release, one frame each.
+    fn click_at(ctx: &egui::Context, app: &mut ModelApp, size: egui::Vec2, at: egui::Pos2) {
+        frame(ctx, app, size, vec![egui::Event::PointerMoved(at)]);
+        frame(ctx, app, size, vec![press(at, true)]);
+        frame(ctx, app, size, vec![press(at, false)]);
+        frame(ctx, app, size, Vec::new());
+    }
+
+    /// Four reference points, one run of one command: rolling to any of its commands from the
+    /// open run leaves the run open, so each next command is still where the hand reaches for
+    /// it. (Shown in the app on 2026-11-15, shots H1-03/H1-04: the run split at the marker into
+    /// a new, folded run, so every click after the first found nothing.)
+    #[test]
+    fn rolling_within_an_open_run_keeps_each_command_clickable() {
+        let mut app = ModelApp::new(Session::default());
+        for k in 0..4 {
+            app.run("model.reference_point.create", json!({"name": format!("RP{k}"), "xyz": [0, 0, k]})).unwrap();
+        }
+        let ctx = egui::Context::default();
+        let size = vec2(1400.0, 900.0);
+        for _ in 0..3 {
+            frame(&ctx, &mut app, size, Vec::new());
+        }
+        let run = solidcraft_ui_registry::handle_at("timeline:run:0").expect("the run's chip");
+        click_at(&ctx, &mut app, size, run);
+        assert_eq!(app.timeline_open, BTreeSet::from([0]));
+        for k in [0, 3, 1, 2, 0, 3] {
+            let name = format!("timeline:step:Add reference point RP{k}");
+            let Some(at) = solidcraft_ui_registry::handle_at(&name) else { panic!("{name} is shown after rolling to {}", app.session.journal.len()) };
+            click_at(&ctx, &mut app, size, at);
+            assert_eq!(app.session.journal.len(), k + 1, "a click on RP{k} rolls the model to just after it");
+            assert_eq!(app.timeline_open, BTreeSet::from([0]), "the run stays open");
+        }
+    }
+
+    /// The marker inside a run marks it apart from its done and undone commands, but the run
+    /// stays one item: rolling never regroups the journal.
+    #[test]
+    fn a_run_stays_one_item_across_the_marker() {
+        let mut app = ModelApp::new(Session::default());
+        for l in 1..=3 {
+            app.run("mesh.node.add", json!({"label": l, "xyz": [l, 0, 0]})).unwrap();
+        }
+        app.roll_to(1);
+        let (list, done) = items(&app);
+        assert_eq!(done, 1);
+        assert_eq!(list.iter().map(|i| (i.start, i.end)).collect::<Vec<_>>(), [(0, 3)]);
     }
 
     /// History is an inset card over the viewport, a shell gap from the window's edges, as
