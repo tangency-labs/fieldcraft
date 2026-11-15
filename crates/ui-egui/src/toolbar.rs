@@ -501,6 +501,12 @@ fn menu_row(ui: &mut egui::Ui, row: &Row, width: f32, style: &ribbon::MenuStyle)
     resp
 }
 
+/// The kit's width for a drop-down of `rows`: each row's label, its note where SolidCraft shows
+/// the shortcut, and its icon; no row is checkable.
+fn menu_width(ui: &egui::Ui, rows: &[Row]) -> f32 {
+    ribbon::menu_width(ui, rows.iter().map(|r| (r.label, r.note.as_str(), r.icon, false)))
+}
+
 /// A panel's drop-down, as SolidCraft's: its [`rows`] at the kit's menu width, Up and Down through
 /// the enabled ones, scrolling when the window is too short. A click (or Enter) starts the row's
 /// command and closes it.
@@ -508,7 +514,7 @@ pub fn dropdown(app: &mut ModelApp, ui: &mut egui::Ui, entries: &'static [Capabi
     let rows = rows(app, entries);
     let style = menu_style(ui.ctx());
     ui.spacing_mut().item_spacing.y = 0.0;
-    let width = ribbon::menu_width(ui, rows.iter().map(|r| (r.label, r.note.as_str())));
+    let width = menu_width(ui, &rows);
     ui.set_width(width);
     let enabled: Vec<&str> = rows.iter().filter(|r| r.enabled).map(|r| r.id).collect();
     ribbon::list_keys(ui, &enabled, &style);
@@ -636,7 +642,7 @@ mod tests {
         let entries = catalogue::panels(Tab::Mesh).find(|p| p.first().is_some_and(|c| c.panel == "Tet")).unwrap_or_default();
         let rows = rows(&app, entries);
         let mut width = 0.0;
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| width = ribbon::menu_width(ui, rows.iter().map(|r| (r.label, r.note.as_str()))));
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| width = menu_width(ui, &rows));
         let margin = kit::Menu::frame().total_margin().sum().x;
         assert!((menu.width() - width - margin).abs() < 1.0, "menu {} wide, rows {width} + {margin}", menu.width());
         for c in entries.iter() {
