@@ -38,6 +38,7 @@ theory with shear 0.177 mm).
 - **Windows:** unzip and run `fieldcraft.exe`.
 - **Linux:** the `.AppImage` (allow it to run as a program), or the `.tar.gz`.
 - **Browser:** [try it at tangency-labs.github.io/fieldcraft/app](https://tangency-labs.github.io/fieldcraft/app/), no install.
+- **Nightly:** the [nightly pre-releases](https://github.com/tangency-labs/fieldcraft/releases?q=nightly&expanded=true) build `develop` each night it has moved and passed CI ([docs/updates.md](docs/updates.md#nightly-builds)).
 - **Command line:** `fieldcraft-cli` ships in every package; AI agents connect to it over MCP
   ([docs/mcp.md](docs/mcp.md)).
 

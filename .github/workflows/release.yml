@@ -8,7 +8,8 @@
 # version is [workspace.package] version in Cargo.toml; a suffix (0.2.0-rc.1) makes a
 # pre-release. Every package, and the release itself, carries THIRD-PARTY-LICENSES.txt, generated
 # here by `cargo xtask licences` (it is not committed). A person verifies the draft and publishes
-# it; this workflow never publishes, and pushes to develop or tags never start it.
+# it; this workflow never publishes a release (only the nightly pre-releases below), and pushes
+# to develop or tags never build one.
 #
 #   macOS aarch64 (Apple silicon)      .dmg with FieldCraft.app, the CLI as a .zip   packaging/macos
 #   Linux x86_64 (glibc 2.35+)         .tar.gz, .AppImage, .deb and .rpm              packaging/linux
@@ -26,6 +27,27 @@
 # signs SHA256SUMS.txt or touches a GitHub Release, needs every verify and packaging job, so a
 # failing verify means no draft and no signature.
 #
+# Nightly (docs/releasing.md, "Nightly builds"; after SolidCraft's nightly mode): CI's scheduled
+# nightly run on `develop` (ci.yml, 03:23 UTC) starts this workflow when it completes (the
+# `workflow_run` trigger). packaging/nightly.sh builds that run's commit, and skips the night when
+# the run failed (a red develop), when it is the weekly macOS-oracle run, or when the commit is the
+# newest nightly's. That run already passed the full gate, the heavy tests and the oracle, so a
+# nightly reuses its result: the verify jobs do not run again. The same packaging jobs build
+# version `<MAJOR.MINOR.PATCH>-nightly.<YYYYMMDD>.<run>.<attempt>` of that commit, and the
+# `release` job signs SHA256SUMS.txt as for a release and PUBLISHES the pre-release
+# "FieldCraft v<version> (nightly)" (never Latest), then deletes all but the newest
+# NIGHTLY_KEEP nightlies. Every other completed CI run on develop (each merge's) starts a run too,
+# whose version job is skipped, so it builds nothing.
+#
+# Signing secrets (docs/releasing.md, "Where the secrets live") live in the `release` environment.
+# The version job's `environment` output, the one place that decides, names it for a run on
+# `main` and for a nightly, and for nothing else (a dry run on any branch builds unsigned). A
+# nightly may use it because a `workflow_run` run always executes the workflow file of the
+# default branch, `develop`, which changes only through reviewed pull requests, and a scheduled CI
+# run exists only on that branch of this repository (a fork's pull request starts a CI run whose
+# event is `pull_request`, whatever its branch is called). The `release` environment therefore
+# allows `main` and `develop` as deployment branches; on `develop` only this condition names it.
+#
 # Dry run: `gh workflow run release.yml --ref <branch>` verifies and builds everything and uploads the
 # `release-assets` artifact without creating a release. `-f draft=true` on `main` retries
 # the draft.
@@ -34,6 +56,11 @@ name: Release
 on:
   push:
     branches: [main]
+  # A nightly, when CI's nightly run on develop completes; its result is what a nightly reuses.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [develop]
   workflow_dispatch:
     inputs:
       draft:
@@ -44,8 +71,10 @@ on:
 permissions:
   contents: read
 
+# Nightlies queue apart from the runs every other CI run on develop starts (skipped at once), so
+# those never replace a nightly that is waiting its turn.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.ref }}-${{ github.event_name }}-${{ github.event.workflow_run.event }}
   # Never cancel a run mid-notarization or mid-upload; a newer push waits its turn.
   cancel-in-progress: false
 
@@ -54,25 +83,63 @@ env:
   # difference would stop the verify jobs restoring develop's caches. (rust-cache already sets
   # CARGO_INCREMENTAL=0 for every job.)
   CARGO_TERM_COLOR: always
+  # The nightlies kept (docs/releasing.md, "Nightly builds"): a week of them.
+  NIGHTLY_KEEP: 7
 
 jobs:
   # The version and verify jobs run on Blacksmith (it sponsors the CI minutes); the jobs that sign
   # or publish keep their GitHub runners. Fallback: change the `blacksmith-*` labels back to
   # `ubuntu-24.04` (the verify-oracle matrix too).
   version:
+    # A `workflow_run` run is a nightly only when CI's run was the scheduled one.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'schedule'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
+      # The environment of every job that reads a secret (see the header): `release` on `main` and
+      # for a nightly (a `workflow_run` of CI's scheduled run, which runs develop's reviewed
+      # workflow file), none otherwise.
+      environment: >-
+        ${{ (github.ref == 'refs/heads/main' ||
+        (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'schedule'))
+        && 'release' || '' }}
+      build: ${{ steps.nightly.outputs.build }}
+      sha: ${{ steps.nightly.outputs.sha }}
+      gate: ${{ steps.nightly.outputs.gate }}
+      nightly: ${{ steps.v.outputs.nightly }}
       version: ${{ steps.v.outputs.version }}
       prerelease: ${{ steps.v.outputs.prerelease }}
       draft: ${{ steps.v.outputs.draft }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: nightly
+        name: Choose the commit (a nightly builds the commit of the CI nightly run that started it, or skips)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GATE_RUN_ID: ${{ github.event.workflow_run.id }}
+          GATE_SHA: ${{ github.event.workflow_run.head_sha }}
+          GATE_URL: ${{ github.event.workflow_run.html_url }}
+          GATE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: packaging/nightly.sh decide
+      # The commit built, whose Cargo.toml has the version (a nightly's may be older than develop's
+      # head). The nightly tooling stays this run's own (the checkout above).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.nightly.outputs.build == 'true'
+        with:
+          ref: ${{ steps.nightly.outputs.sha }}
+          path: build
       - id: v
+        if: steps.nightly.outputs.build == 'true'
         name: Resolve the version
         env:
           REQUEST_DRAFT: ${{ github.event_name == 'push' || inputs.draft }}
+          SHA: ${{ steps.nightly.outputs.sha }}
         run: |
-          . packaging/env.sh
+          . build/packaging/env.sh
+          nightly=false
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            nightly=true
+            VERSION="$(packaging/nightly.sh version "$VERSION")"
+          fi
           if ! printf '%s' "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
             echo "::error::Cargo.toml must contain a version like 1.2.3 or 1.2.3-rc.1, not '$VERSION'"
             exit 1
@@ -82,14 +149,16 @@ jobs:
             exit 1
           fi
           case "$VERSION" in *-*) pre=true ;; *) pre=false ;; esac
-          { echo "version=$VERSION"; echo "prerelease=$pre"; echo "draft=$REQUEST_DRAFT"; } >>"$GITHUB_OUTPUT"
-          echo "### FieldCraft v$VERSION (\`${GITHUB_SHA::9}\`)" >>"$GITHUB_STEP_SUMMARY"
+          { echo "version=$VERSION"; echo "prerelease=$pre"; echo "draft=$REQUEST_DRAFT"; echo "nightly=$nightly"; } >>"$GITHUB_OUTPUT"
+          echo "### FieldCraft v$VERSION (\`${SHA::9}\`)" >>"$GITHUB_STEP_SUMMARY"
 
   # The full gate, the heavy tests and the oracle on Linux and macOS: the `release` job needs them,
   # so a release never drafts or signs a commit that fails any of them. Each restores the cache of
   # its ci.yml counterpart on develop (same shared-key), so it starts warm.
   verify-ci:
     name: Verify (cargo xtask ci)
+    # A nightly reuses CI's nightly run of the same commit (packaging/nightly.sh).
+    if: github.event_name != 'workflow_run'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
@@ -115,6 +184,8 @@ jobs:
 
   verify-heavy:
     name: Verify (cargo xtask test --heavy)
+    # A nightly reuses CI's nightly run of the same commit (packaging/nightly.sh).
+    if: github.event_name != 'workflow_run'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
@@ -133,6 +204,8 @@ jobs:
 
   verify-oracle:
     name: Verify (cargo xtask oracle, ${{ matrix.os }})
+    # A nightly reuses CI's nightly run of the same commit (packaging/nightly.sh).
+    if: github.event_name != 'workflow_run'
     strategy:
       fail-fast: false
       matrix:
@@ -157,9 +230,9 @@ jobs:
   macos:
     name: macOS aarch64
     needs: version
-    # Signing, notarization and analytics secrets live in the `release` environment, which only
-    # `main` may use; a dry run on another branch asks for no environment and builds unsigned.
-    environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}
+    if: needs.version.outputs.build == 'true'
+    # The secrets' environment: `release` on main and for a nightly only (the version job).
+    environment: ${{ needs.version.outputs.environment }}
     runs-on: macos-15
     # A cold release build with thin LTO takes about an hour; a warm one far less.
     timeout-minutes: 120
@@ -169,6 +242,8 @@ jobs:
       FIELDCRAFT_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
       - uses: dtolnay/rust-toolchain@1.99.1  # the version in rust-toolchain.toml
         with:
           targets: aarch64-apple-darwin
@@ -177,8 +252,9 @@ jobs:
           key: release-macos-aarch64
           # A late failure (notarization) keeps the compiled crates, so its rerun starts warm.
           cache-on-failure: true
-          # Release runs are rare: only release-branch runs keep a cache, so dry runs don't evict CI's.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Only release and nightly runs keep a cache, so dry runs don't evict CI's. A nightly's
+          # (saved on develop, the default branch) is one every branch may restore, main's too.
+          save-if: ${{ github.ref == 'refs/heads/main' || needs.version.outputs.nightly == 'true' }}
       - name: Generate THIRD-PARTY-LICENSES.txt (fails when a crate's licence can't be resolved)
         run: cargo xtask licences
       - name: Import the signing certificate (skipped without APPLE_CERTIFICATE)
@@ -209,10 +285,10 @@ jobs:
   linux:
     name: Linux x86_64
     needs: version
+    if: needs.version.outputs.build == 'true'
     # The oldest GitHub-hosted image, so the binaries need only glibc >= 2.35.
-    # Signing, notarization and analytics secrets live in the `release` environment, which only
-    # `main` may use; a dry run on another branch asks for no environment and builds unsigned.
-    environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}
+    # The secrets' environment: `release` on main and for a nightly only (the version job).
+    environment: ${{ needs.version.outputs.environment }}
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     env:
@@ -222,6 +298,8 @@ jobs:
       CARGO_GENERATE_RPM_VERSION: 0.21.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
       - name: Install packaging tools
         run: |
           sudo apt-get update
@@ -230,8 +308,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release-linux-x86_64
-          # Release runs are rare: only release-branch runs keep a cache, so dry runs don't evict CI's.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Only release and nightly runs keep a cache, so dry runs don't evict CI's. A nightly's
+          # (saved on develop, the default branch) is one every branch may restore, main's too.
+          save-if: ${{ github.ref == 'refs/heads/main' || needs.version.outputs.nightly == 'true' }}
       - name: Generate THIRD-PARTY-LICENSES.txt (fails when a crate's licence can't be resolved)
         run: cargo xtask licences
       - name: Install cargo-deb and cargo-generate-rpm
@@ -302,9 +381,9 @@ jobs:
   flatpak:
     name: Flatpak x86_64
     needs: version
-    # Signing, notarization and analytics secrets live in the `release` environment, which only
-    # `main` may use; a dry run on another branch asks for no environment and builds unsigned.
-    environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}
+    if: needs.version.outputs.build == 'true'
+    # The secrets' environment: `release` on main and for a nightly only (the version job).
+    environment: ${{ needs.version.outputs.environment }}
     # 24.04 for a newer flatpak-builder than 22.04 ships. The Rust build runs inside
     # flatpak-builder on the freedesktop SDK, so it has its own glibc and needs no old image.
     runs-on: ubuntu-24.04
@@ -313,13 +392,16 @@ jobs:
       FIELDCRAFT_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
       # The host's cargo vendors the crates and generates the licences; the build uses the SDK's.
       - uses: dtolnay/rust-toolchain@1.99.1  # the version in rust-toolchain.toml
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release-flatpak
-          # Release runs are rare: only release-branch runs keep a cache, so dry runs don't evict CI's.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Only release and nightly runs keep a cache, so dry runs don't evict CI's. A nightly's
+          # (saved on develop, the default branch) is one every branch may restore, main's too.
+          save-if: ${{ github.ref == 'refs/heads/main' || needs.version.outputs.nightly == 'true' }}
       - name: Install flatpak-builder
         run: |
           sudo apt-get update
@@ -342,23 +424,26 @@ jobs:
   windows:
     name: Windows x64
     needs: version
-    # Signing, notarization and analytics secrets live in the `release` environment, which only
-    # `main` may use; a dry run on another branch asks for no environment and builds unsigned.
-    environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}
+    if: needs.version.outputs.build == 'true'
+    # The secrets' environment: `release` on main and for a nightly only (the version job).
+    environment: ${{ needs.version.outputs.environment }}
     runs-on: windows-latest
     timeout-minutes: 90
     env:
       FIELDCRAFT_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
       - uses: dtolnay/rust-toolchain@1.99.1  # the version in rust-toolchain.toml
         with:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release-windows-x64
-          # Release runs are rare: only release-branch runs keep a cache, so dry runs don't evict CI's.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Only release and nightly runs keep a cache, so dry runs don't evict CI's. A nightly's
+          # (saved on develop, the default branch) is one every branch may restore, main's too.
+          save-if: ${{ github.ref == 'refs/heads/main' || needs.version.outputs.nightly == 'true' }}
       - name: Generate THIRD-PARTY-LICENSES.txt (fails when a crate's licence can't be resolved)
         run: cargo xtask licences
       - name: Build and package (zip)
@@ -374,12 +459,17 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Draft release (or dry-run artifacts)
-    # The only job that publishes anything: it waits for every verify and packaging job.
+    name: Draft release, nightly or dry-run artifacts
+    # The only job that publishes anything: it waits for every verify and packaging job, but a
+    # nightly, whose verify jobs reuse CI's nightly run and are skipped (packaging/nightly.sh).
     needs: [version, verify-ci, verify-heavy, verify-oracle, macos, linux, windows]
-    # Signing, notarization and analytics secrets live in the `release` environment, which only
-    # `main` may use; a dry run on another branch asks for no environment and builds unsigned.
-    environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}
+    if: >-
+      !cancelled() && needs.version.outputs.build == 'true' &&
+      needs.macos.result == 'success' && needs.linux.result == 'success' && needs.windows.result == 'success' &&
+      (needs.version.outputs.nightly == 'true' ||
+        (needs.verify-ci.result == 'success' && needs.verify-heavy.result == 'success' && needs.verify-oracle.result == 'success'))
+    # The secrets' environment: `release` on main and for a nightly only (the version job).
+    environment: ${{ needs.version.outputs.environment }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -387,10 +477,20 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
       MACOS_SIGNING: ${{ needs.macos.outputs.signing }}
+      SHA: ${{ needs.version.outputs.sha }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+      # The nightly tooling of this run's own commit (the commit built may be older).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.version.outputs.nightly == 'true'
+        with:
+          path: nightly-tools
+          sparse-checkout: packaging/nightly.sh
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-*
@@ -434,6 +534,8 @@ jobs:
       - name: Write the notes
         env:
           SIGNED: ${{ steps.sign.outputs.signed }}
+          NIGHTLY: ${{ needs.version.outputs.nightly }}
+          GATE: ${{ needs.version.outputs.gate }}
         run: |
           # The macOS paragraph says how the app was signed (packaging/macos/package.sh).
           case "$MACOS_SIGNING" in
@@ -447,11 +549,15 @@ jobs:
           else
             updates="This release's \`SHA256SUMS.txt\` is **not signed**: FieldCraft's in-app updates can't verify it and won't install it; download it from this page instead."
           fi
+          # A nightly says what it is first (docs/releasing.md, "Nightly builds").
+          if [ "$NIGHTLY" = true ]; then
+            printf '%s\n\n' "**Nightly build** of \`develop\` at \`${SHA::9}\`, which passed [CI's nightly run]($GATE) (the full gate, the heavy tests and the oracle). Nightlies are for trying what is coming; the newest $NIGHTLY_KEEP are kept. FieldCraft installed from a nightly is offered newer nightlies and newer releases; one installed from a release is never offered a nightly." >notes.md
+          fi
           awk -v v="$VERSION" -v m="$macos" -v u="$updates" '{ gsub(/\{version\}/, v); gsub(/\{macos_signing\}/, m); gsub(/\{update_signing\}/, u); print }' \
-            .github/release-notes.md >notes.md
+            .github/release-notes.md >>notes.md
           cat notes.md >>"$GITHUB_STEP_SUMMARY"
       - name: Upload the dry-run artifacts
-        if: needs.version.outputs.draft != 'true'
+        if: needs.version.outputs.draft != 'true' && needs.version.outputs.nightly != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets
@@ -487,3 +593,23 @@ jobs:
               --notes-file ../notes.md --generate-notes --prerelease="$PRERELEASE" -- *
           fi
           echo "Draft release **$title** at \`${GITHUB_SHA::9}\`: $(gh release view "$tag" --json url --jq .url)" >>"$GITHUB_STEP_SUMMARY"
+      - name: Publish the nightly pre-release
+        if: needs.version.outputs.nightly == 'true'
+        working-directory: artifacts
+        run: |
+          tag="v$VERSION"
+          # The generated notes start at the newest published release, nightlies included; left
+          # to GitHub they start at the Latest release and grow with every nightly.
+          start=()
+          prev="$(gh release list --exclude-drafts --limit 30 --json tagName,publishedAt --jq 'sort_by(.publishedAt) | last | .tagName // empty')"
+          if [ -n "$prev" ]; then start=(--notes-start-tag "$prev"); fi
+          # Every file is uploaded to a draft first, so the published release is never partial;
+          # the version is new every run, so a published tag is never replaced.
+          gh release create "$tag" --draft --prerelease --latest=false \
+            --title "FieldCraft v$VERSION (nightly)" --target "$SHA" \
+            --notes-file ../notes.md --generate-notes "${start[@]}" -- *
+          gh release edit "$tag" --draft=false --prerelease --latest=false
+          echo "### Published nightly $tag (\`${SHA::9}\`): $(gh release view "$tag" --json url --jq .url)" >>"$GITHUB_STEP_SUMMARY"
+      - name: Keep the newest nightlies
+        if: needs.version.outputs.nightly == 'true'
+        run: nightly-tools/packaging/nightly.sh prune "$NIGHTLY_KEEP"
