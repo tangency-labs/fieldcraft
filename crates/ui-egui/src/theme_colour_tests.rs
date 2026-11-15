@@ -33,6 +33,9 @@ fn luminance(c: Color32) -> f64 {
     0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
+/// WCAG 2's enhanced contrast for text (success criterion 1.4.6, level AAA).
+const WCAG_AAA: f64 = 7.0;
+
 /// WCAG 2.x contrast ratio, 1 to 21.
 fn contrast(a: Color32, b: Color32) -> f64 {
     let (la, lb) = (luminance(a), luminance(b));
@@ -227,7 +230,10 @@ fn the_kit_has_no_other_accent() {
             k.figure_accent,
             k.file_primary_ink,
             k.file_primary_border,
+            k.file_rail,
             k.file_rail_hover,
+            k.chip,
+            k.agent_busy,
             k.sketch_accent,
             k.surface_accent,
             k.mesh_accent,
@@ -269,5 +275,132 @@ fn the_document_tab_stands_out_on_the_title_bar() {
         assert!(ratio >= 1.35, "{name}: the active tab on the bar is {ratio:.2}:1");
         let ratio = contrast(k.app_bar_text, k.app_bar_tab_active);
         assert!(ratio >= 4.5, "{name}: the tab's name on it is {ratio:.2}:1");
+    }
+}
+
+/// OKLab chroma (Ottosson 2020): 0 for a grey.
+fn oklab_chroma(c: Color32) -> f64 {
+    let [r, g, b] = linear_rgb(c);
+    let l = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b).cbrt();
+    let m = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b).cbrt();
+    let s = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b).cbrt();
+    let a = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+    let b = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+    a.hypot(b)
+}
+
+/// Half a named hue's sector: the hue circle read as six named hues (red, yellow, green, cyan,
+/// blue, magenta) gives each 60°, so a colour within 30° of SolidCraft's accent hue reads as its
+/// blue.
+const BLUE_HALF_SECTOR: f64 = 30.0;
+
+/// Kit colours that stay SolidCraft's however blue they are: its mark on the application bar,
+/// which neither FieldCraft nor the kit draws.
+const NOT_AN_ACCENT: [&str; 1] = ["logo"];
+
+/// Every colour slot of the kit's tokens, by the kit's own inventory of them (the theme-file
+/// keys, which the kit keeps complete at build time), with its colours.
+fn kit_slots(mut t: solidcraft_theme::Tokens) -> Vec<(&'static str, Vec<Color32>)> {
+    solidcraft_ui_kit::theme_files::keys()
+        .into_iter()
+        .map(|key| (key, solidcraft_ui_kit::theme_files::slot(&mut t, key).map(|s| s.to_vec()).unwrap_or_default()))
+        .collect()
+}
+
+/// The kit slots SolidCraft draws in its own 3D view (`Tokens::with_viewport` takes exactly
+/// those from the view's tokens): FieldCraft draws its view with its own colours.
+fn view_slots(base: solidcraft_theme::Tokens) -> Vec<&'static str> {
+    let mut other = base;
+    for key in solidcraft_ui_kit::theme_files::keys() {
+        for c in solidcraft_ui_kit::theme_files::slot(&mut other, key).into_iter().flatten() {
+            // Every channel complemented: never equal to the colour it replaces.
+            *c = Color32::from_rgba_premultiplied(255 - c.r(), 255 - c.g(), 255 - c.b(), 255 - c.a());
+        }
+    }
+    let swapped = kit_slots(base.with_viewport(other));
+    kit_slots(base).into_iter().zip(swapped).filter(|((_, a), (_, b))| a != b).map(|((key, _), _)| key).collect()
+}
+
+/// No kit slot keeps SolidCraft's blue: every slot SolidCraft gives a colour of its accent's hue
+/// (more chromatic than its greys) takes another colour from [`super::kit`]. The slots are walked
+/// from the kit's inventory, so a slot added to the kit, or one missed, fails here.
+#[test]
+fn the_kit_keeps_no_solidcraft_blue() {
+    for (name, dark) in [("light", false), ("dark", true)] {
+        let sc = if dark { solidcraft_theme::Tokens::dark() } else { solidcraft_theme::Tokens::light() };
+        // SolidCraft's greys (grounds, rules, dim text) lean blue; its accents are more chromatic.
+        let greys = [
+            sc.app_bar,
+            sc.toolbar,
+            sc.panel,
+            sc.panel_header,
+            sc.border,
+            sc.text,
+            sc.text_dim,
+            sc.field,
+            sc.dialog_bg,
+            sc.dialog_body,
+            sc.dialog_label,
+            sc.form_dim,
+            sc.file_dim,
+            sc.nav_dim,
+            sc.nav_press,
+        ];
+        let grey_chroma = greys.into_iter().map(oklab_chroma).fold(0.0, f64::max);
+        let blue_hue = oklab_hue(sc.accent);
+        let is_blue = |c: Color32| {
+            let off = (oklab_hue(c) - blue_hue).rem_euclid(360.0);
+            oklab_chroma(c) > grey_chroma && off.min(360.0 - off) <= BLUE_HALF_SECTOR
+        };
+        let view = view_slots(sc);
+        let kept: Vec<_> = kit_slots(sc)
+            .into_iter()
+            .zip(kit_slots(super::kit(dark)))
+            .filter(|((key, _), _)| !view.contains(key) && !NOT_AN_ACCENT.contains(key))
+            .flat_map(|((key, ours), (_, theirs))| ours.into_iter().zip(theirs).map(move |(s, f)| (key, s, f)))
+            .filter(|&(_, s, f)| is_blue(s) && s == f)
+            .map(|(key, s, _)| format!("{key} {s:?}"))
+            .collect();
+        assert!(kept.is_empty(), "{name}: SolidCraft's blue kept in {kept:?}");
+    }
+}
+
+/// The start page's rail: its text reads on it at WCAG AAA (what [`super::RAIL_DEPTH`] is chosen
+/// for) and on a hovered or selected row at AA, and such a row stands out from the rail at least
+/// as much as it does in SolidCraft's.
+#[test]
+fn the_start_rail_reads_and_its_rows_stand_out() {
+    for (name, dark) in [("light", false), ("dark", true)] {
+        let sc = if dark { solidcraft_theme::Tokens::dark() } else { solidcraft_theme::Tokens::light() };
+        let k = super::kit(dark);
+        let rail = contrast(k.file_rail_ink, k.file_rail);
+        assert!(rail >= WCAG_AAA, "{name}: rail text on the rail is {rail:.2}:1");
+        let row = contrast(k.file_rail_ink, k.file_rail_hover);
+        assert!(row >= 4.5, "{name}: rail text on a hovered row is {row:.2}:1");
+        let row = |t: &solidcraft_theme::Tokens| de2000(lab(linear_rgb(t.file_rail)), lab(linear_rgb(t.file_rail_hover)));
+        assert!(row(&k) >= row(&sc), "{name}: a row on the rail is ΔE00 {:.1}, SolidCraft's {:.1}", row(&k), row(&sc));
+    }
+}
+
+/// The agent's states on the title bar (busy, ready, stopped) stay apart for colour-blind users:
+/// busy against ready and against stopped (the kit draws stopped in `error`) clears the status
+/// floor under each dichromacy (Machado et al. 2009) in both themes. Its arc differs from their
+/// dot too, but shape alone is not enough.
+#[test]
+fn the_agent_states_stay_apart_for_colour_blind_users() {
+    for (name, dark) in [("light", false), ("dark", true)] {
+        let k = super::kit(dark);
+        for (state, c) in [("ready", k.agent_ok), ("stopped", k.error)] {
+            for vision in [Vision::Protan, Vision::Deutan, Vision::Tritan] {
+                let d = de2000(lab(simulate(k.agent_busy, vision)), lab(simulate(c, vision)));
+                assert!(d >= STATUS_FLOOR, "{name}: busy vs {state} under {vision:?} is ΔE00 {d:.1}");
+            }
+        }
+        // The mark is read on the title bar, at rest and under the pointer: the kit draws it on
+        // the bar with its translucent hover fill laid over (`app_bar.blend(fill)`).
+        for bar in [k.app_bar, k.app_bar.blend(k.app_bar_hover_button), k.app_bar.blend(k.app_bar_hover_strong)] {
+            let ratio = contrast(k.agent_busy, bar);
+            assert!(ratio >= 4.5, "{name}: busy on {bar:?} is {ratio:.2}:1");
+        }
     }
 }
