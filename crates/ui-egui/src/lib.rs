@@ -127,8 +127,10 @@ pub struct UiState {
     /// The browser rows' eye beside the fold arrow instead of at the row's end (Settings ›
     /// Interface; remembered per user).
     pub browser_eye_left: bool,
-    /// The journal timeline (bottom).
+    /// The journal timeline (History).
     pub show_timeline: bool,
+    /// Where History docks, top or bottom (its grip moves it; remembered per user).
+    pub history_dock: shell::HistoryDock,
     /// The status bar along the window's bottom edge (Settings › Interface; off by default,
     /// remembered per user).
     pub status_bar: bool,
@@ -166,6 +168,7 @@ impl Default for UiState {
             browser_float: false,
             browser_eye_left: false,
             show_timeline: true,
+            history_dock: shell::HistoryDock::default(),
             status_bar: false,
             nav_preset: navigation::DEFAULT_PRESET.into(),
             reverse_zoom: false,
@@ -692,6 +695,7 @@ impl ModelApp {
         self.ui.browser_float = self.prefs.browser_float;
         self.ui.browser_eye_left = self.prefs.browser_eye_left;
         self.ui.status_bar = self.prefs.status_bar;
+        self.ui.history_dock = self.prefs.history_dock;
         self.services = services;
         self
     }
@@ -2472,7 +2476,7 @@ impl ModelApp {
     /// cards, each recording where in [`ModelApp::shell`]. The context panel docks at the right
     /// below the top cards.
     fn shell(&mut self, ui: &mut egui::Ui) {
-        self.shell.clear();
+        self.shell.clear(self.ui.history_dock);
         // The workspace and ribbon cards first, over the whole width below the application bar.
         toolbar::toolbar(self, ui);
         let rest = ui.available_rect_before_wrap();
@@ -2531,6 +2535,7 @@ impl ModelApp {
             || u.browser_float != p.browser_float
             || u.browser_eye_left != p.browser_eye_left
             || u.status_bar != p.status_bar
+            || u.history_dock != p.history_dock
         {
             self.prefs.nav_preset = self.ui.nav_preset.clone();
             self.prefs.reverse_zoom = self.ui.reverse_zoom;
@@ -2539,6 +2544,7 @@ impl ModelApp {
             self.prefs.browser_float = self.ui.browser_float;
             self.prefs.browser_eye_left = self.ui.browser_eye_left;
             self.prefs.status_bar = self.ui.status_bar;
+            self.prefs.history_dock = self.ui.history_dock;
             self.prefs.save(self.services.prefs.as_ref());
         }
     }

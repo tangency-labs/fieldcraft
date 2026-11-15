@@ -8,22 +8,36 @@ use egui::{Rect, pos2};
 use solidcraft_theme::Tokens;
 use solidcraft_ui_kit as kit;
 
+/// The History card's docks: along the bottom of the viewport (the default) or under the top
+/// cards. The kit's grip drags the bar to the other dock (`history_bar::header`); there is no
+/// free place between them, as in SolidCraft.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HistoryDock {
+    Top,
+    #[default]
+    Bottom,
+}
+
 /// Where the cards over the viewport were drawn this frame. Window state, never saved.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct State {
     /// The cards along the top (the workspace switcher and the ribbon), when they float over the
     /// viewport.
     pub cards: Vec<Rect>,
-    /// The History card along the bottom, when it floats over the viewport.
+    /// The History card, when it floats over the viewport.
     pub history: Option<Rect>,
+    /// The dock History stands at ([`UiState::history_dock`](crate::UiState::history_dock)).
+    pub history_dock: HistoryDock,
     /// The browser card, while it is shown.
     pub browser: Option<Rect>,
 }
 
 impl State {
-    /// Forget last frame's cards; each draws itself again and records where.
-    pub fn clear(&mut self) {
-        *self = State::default();
+    /// Forget last frame's cards; each draws itself again and records where. History stays at
+    /// `dock`.
+    pub fn clear(&mut self, dock: HistoryDock) {
+        *self = State { history_dock: dock, ..State::default() };
     }
 
     /// Every card over the viewport this frame: the viewport's overlays and framing keep clear.
@@ -31,13 +45,17 @@ impl State {
         self.cards.iter().copied().chain(self.history).chain(self.browser)
     }
 
-    /// The part of `available` the browser card may use: below the top cards, above History.
+    /// The part of `available` the browser card may use: below the top cards, and above History
+    /// at the bottom or below it at the top.
     pub fn panel_space(&self, mut available: Rect) -> Rect {
         for card in &self.cards {
             available.min.y = kit::within(card.bottom(), available.top(), available.bottom());
         }
         if let Some(history) = self.history.filter(|h| h.intersects(available)) {
-            available.max.y = kit::within(history.top(), available.top(), available.bottom());
+            match self.history_dock {
+                HistoryDock::Bottom => available.max.y = kit::within(history.top(), available.top(), available.bottom()),
+                HistoryDock::Top => available.min.y = kit::within(history.bottom(), available.top(), available.bottom()),
+            }
         }
         available
     }
@@ -95,5 +113,16 @@ mod tests {
         // A card squeezed past the window gives an empty space, never a panic.
         s.cards = vec![Rect::from_min_size(pos2(0.0, 2000.0), vec2(10.0, 10.0))];
         assert_eq!(s.panel_space(full).height(), 0.0);
+    }
+
+    #[test]
+    fn with_history_at_the_top_the_panel_space_is_below_it() {
+        let full = Rect::from_min_size(pos2(0.0, 40.0), vec2(1400.0, 860.0));
+        let mut s = State::default();
+        s.clear(HistoryDock::Top);
+        s.cards = vec![Rect::from_min_size(pos2(104.0, 47.0), vec2(1289.0, 110.0))];
+        s.history = Some(Rect::from_min_max(pos2(7.0, 164.0), pos2(1393.0, 204.0)));
+        let space = s.panel_space(full);
+        assert_eq!((space.top(), space.bottom()), (204.0, 900.0));
     }
 }

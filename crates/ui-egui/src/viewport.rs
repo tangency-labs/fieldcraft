@@ -137,9 +137,10 @@ fn status_toast(app: &mut ModelApp, ui: &egui::Ui, content: Rect) {
 }
 
 /// The part of the viewport `rect` clear of the cards over it, a shell gap from each: below the
-/// top cards, right of the browser card and above the History card, as SolidCraft's
-/// `shell::content`. The overlays (the legend, the selection bar, the compass, the navigation bar
-/// and the sampled-symbols note) keep to it; all of `rect` without cards.
+/// top cards, right of the browser card and clear of History (above it at the bottom dock, below
+/// it at the top), as SolidCraft's `shell::content`. The overlays (the legend, the selection bar,
+/// the compass, the navigation bar and the sampled-symbols note) keep to it; all of `rect` without
+/// cards.
 pub(crate) fn beside_card(app: &ModelApp, rect: Rect) -> Rect {
     let gap = kit::SHELL_GAP;
     let mut content = rect;
@@ -150,7 +151,10 @@ pub(crate) fn beside_card(app: &ModelApp, rect: Rect) -> Rect {
         content.min.x = kit::within(card.right() + gap, content.left(), content.right());
     }
     if let Some(history) = app.shell.history.filter(|h| h.intersects(rect)) {
-        content.max.y = kit::within(history.top() - gap, content.top(), content.bottom());
+        match app.shell.history_dock {
+            crate::shell::HistoryDock::Bottom => content.max.y = kit::within(history.top() - gap, content.top(), content.bottom()),
+            crate::shell::HistoryDock::Top => content.min.y = kit::within(history.bottom() + gap, content.top(), content.bottom()),
+        }
     }
     content
 }
@@ -781,6 +785,24 @@ mod tests {
         assert_eq!(cpu_size(800, 600, 0), (800, 600));
         let (w, h) = cpu_size(100_000, 3, 2048);
         assert!(w <= 2048 && h >= 1);
+    }
+
+    /// With History docked at the top, the view's overlays go below it (and below the top
+    /// cards); docked at the bottom, above it.
+    #[test]
+    fn the_content_keeps_clear_of_history_at_either_dock() {
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        let view = egui::Rect::from_min_max(egui::pos2(0.0, 40.0), egui::pos2(1400.0, 900.0));
+        let gap = solidcraft_ui_kit::SHELL_GAP;
+        app.shell.clear(crate::shell::HistoryDock::Top);
+        app.shell.cards = vec![egui::Rect::from_min_max(egui::pos2(7.0, 47.0), egui::pos2(1393.0, 157.0))];
+        app.shell.history = Some(egui::Rect::from_min_max(egui::pos2(7.0, 164.0), egui::pos2(1393.0, 204.0)));
+        let top = super::beside_card(&app, view);
+        assert_eq!((top.top(), top.bottom()), (204.0 + gap, 900.0));
+        app.shell.history_dock = crate::shell::HistoryDock::Bottom;
+        app.shell.history = Some(egui::Rect::from_min_max(egui::pos2(7.0, 853.0), egui::pos2(1393.0, 893.0)));
+        let bottom = super::beside_card(&app, view);
+        assert_eq!((bottom.top(), bottom.bottom()), (157.0 + gap, 853.0 - gap));
     }
 
     /// The sampled-symbols note stops short of the navigation bar (#206).
