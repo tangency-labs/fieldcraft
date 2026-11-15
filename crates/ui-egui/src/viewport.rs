@@ -95,9 +95,6 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
         let r = Rect::from_two_pos(a, b);
         painter.rect(r, 0.0, t.pick_selected.gamma_multiply(0.12), Stroke::new(1.0, t.pick_selected), egui::StrokeKind::Inside);
     }
-    if empty {
-        start_screen(app, ui, content);
-    }
     crate::results_panel::show(app, ui, rect, &t);
     crate::path_panel::overlay(app, &painter, rect, &t);
     axis_view(app, ui, content);
@@ -141,8 +138,8 @@ fn status_toast(app: &mut ModelApp, ui: &egui::Ui, content: Rect) {
 
 /// The part of the viewport `rect` clear of the cards over it, a shell gap from each: below the
 /// top cards, right of the browser card and above the History card, as SolidCraft's
-/// `shell::content`. The overlays (the legend, the Start card, the selection bar, the compass, the
-/// navigation bar and the sampled-symbols note) keep to it; all of `rect` without cards.
+/// `shell::content`. The overlays (the legend, the selection bar, the compass, the navigation bar
+/// and the sampled-symbols note) keep to it; all of `rect` without cards.
 pub(crate) fn beside_card(app: &ModelApp, rect: Rect) -> Rect {
     let gap = kit::SHELL_GAP;
     let mut content = rect;
@@ -172,52 +169,6 @@ fn overlays(app: &mut ModelApp, ui: &egui::Ui, rect: Rect, content: Rect, t: &To
     }
     out.extend(selection_bar_rect(ui.ctx()));
     out
-}
-
-/// The Start card's largest size; a smaller viewport shrinks it and its samples scroll.
-const START_W: f32 = 820.0;
-const START_H: f32 = 620.0;
-/// The margins the view cube and the navigation bar keep.
-const START_RIGHT: f32 = 130.0;
-const START_BOTTOM: f32 = 56.0;
-
-/// The empty viewport: open a file or a sample (the samples are ready to solve).
-fn start_screen(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
-    let mut open = None;
-    let mut pick = false;
-    let k = solidcraft_theme::Tokens::get();
-    // Clear of the view compass (top right) and the navigation bar (bottom centre).
-    let free = Rect::from_min_max(rect.min + vec2(12.0, 12.0), rect.max - vec2(START_RIGHT, START_BOTTOM));
-    let area = Rect::from_center_size(free.center(), vec2(START_W.min(free.width()), START_H.min(free.height())));
-    app.place("start_card", area);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::top_down(egui::Align::Min)));
-    let card = egui::Frame::NONE
-        .fill(k.dialog_body)
-        .stroke(k.container_border(k.dialog_border))
-        .corner_radius(k.radius_xl)
-        .inner_margin(egui::Margin::same(k.space_16 as i8));
-    // The card scrolls as a whole when the view is short, as the kit's start page does.
-    card.show(&mut child, |ui| {
-        egui::ScrollArea::vertical().id_salt("fc_start_card").auto_shrink([false, true]).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            kit::FileView::title(ui, "Start");
-            ui.add_space(k.space_6);
-            kit::FileView::subtitle(ui, "Open a model, a SolidCraft design or a tagged mesh, or drop one here.");
-            ui.add_space(k.space_12);
-            kit::FileView::section(ui, "Open", k.space_10, |ui| {
-                kit::FileView::grid(ui, "fc_start_actions", kit::FileView::tile_min_width(), 1, |ui, _, width| {
-                    pick = kit::FileView::action_tile(ui, "start:open", width, "open", "Open…", "A model, a design or a mesh", true).clicked();
-                });
-            });
-            ui.add_space(k.space_12);
-            kit::FileView::section(ui, "Samples", k.space_10, |ui| crate::samples::grid(ui, None, &mut open));
-        })
-    });
-    if pick {
-        app.open_dialog(None);
-    } else if let Some(n) = open {
-        app.open_sample(n);
-    }
 }
 
 /// A click at `at` in the viewport `rect` with the modifier keys' `mode`.

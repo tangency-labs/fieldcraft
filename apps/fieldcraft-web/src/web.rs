@@ -104,6 +104,7 @@ pub fn start() {
                     if let Some(name) = crate::sample_in_query(&query()) {
                         app.open_sample(&name);
                     }
+                    app.launch_start();
                     if recoverable > 0 {
                         app.set_status(format!("{recoverable} autosaved model(s) can be recovered: File › Recover…"), false);
                     }

@@ -380,6 +380,7 @@ fn main() -> eframe::Result {
             for f in &args.files {
                 app.open_path(f);
             }
+            app.launch_start();
             let autosaver = autosave::default_dir().and_then(|dir| {
                 let listed = app.session.execute("file.recovery.list", &serde_json::json!({"dir": dir}));
                 let recoverable = listed.ok().and_then(|v| v.as_array().map(Vec::len)).unwrap_or(0);
