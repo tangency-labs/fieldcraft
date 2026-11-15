@@ -137,10 +137,10 @@ fn status_toast(app: &mut ModelApp, ui: &egui::Ui, content: Rect) {
 }
 
 /// The part of the viewport `rect` clear of the cards over it, a shell gap from each: below the
-/// top cards, right of the browser card and clear of History (above it at the bottom dock, below
-/// it at the top), as SolidCraft's `shell::content`. The overlays (the legend, the selection bar,
-/// the compass, the navigation bar and the sampled-symbols note) keep to it; all of `rect` without
-/// cards.
+/// top cards, between the browser card and the right cards, and clear of History (above it at
+/// the bottom dock, below it at the top), as SolidCraft's `shell::content`. The overlays (the
+/// legend, the selection bar, the compass, the navigation bar and the sampled-symbols note) keep
+/// to it; all of `rect` without cards.
 pub(crate) fn beside_card(app: &ModelApp, rect: Rect) -> Rect {
     let gap = kit::SHELL_GAP;
     let mut content = rect;
@@ -149,6 +149,10 @@ pub(crate) fn beside_card(app: &ModelApp, rect: Rect) -> Rect {
     }
     if let Some(card) = app.shell.browser.filter(|c| c.intersects(rect)) {
         content.min.x = kit::within(card.right() + gap, content.left(), content.right());
+    }
+    // The cards on the right (the form, properties, Results…), as the browser on the left.
+    if let Some(left) = app.shell.right.iter().filter(|c| c.intersects(rect)).map(|c| c.left()).reduce(f32::min) {
+        content.max.x = kit::within(left - gap, content.left(), content.right());
     }
     if let Some(history) = app.shell.history.filter(|h| h.intersects(rect)) {
         match app.shell.history_dock {

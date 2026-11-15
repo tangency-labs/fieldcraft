@@ -381,14 +381,13 @@ fn probe(app: &ModelApp, plot: &Plot, painter: &egui::Painter, rect: Rect, legen
     label_beside(painter, at, p.lines.join("\n"), rect, legend, placed, t);
 }
 
-/// The results controls (the context panel's Results section): step, contour field,
+/// The results controls (the Results card): step, contour field,
 /// deformation, modes, animation, what the viewport marks, reaction sums and the probed node.
 /// Every control runs a command or a view setting.
 pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) {
-    // One form: the rows share one label column, sized to the longest label, inset from the
-    // panel's edges as a kit feature card's body is.
-    let inset = solidcraft_theme::Tokens::get().space_12 as i8;
-    egui::Frame::NONE.inner_margin(egui::Margin::symmetric(inset, 0)).show(ui, |ui| kit::scope(ui, |ui| rows(app, plot, ui, t)));
+    // One form: the rows share one label column, sized to the longest label; the card's body
+    // insets them as every card's.
+    kit::scope(ui, |ui| rows(app, plot, ui, t));
 }
 
 fn rows(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) {
@@ -1473,10 +1472,11 @@ mod tests {
         assert!(right("Deformed").is_some(), "the deformed shape has its own toggle");
     }
 
-    /// The Results rows keep the inset a form card's rows keep from the panel's edges, on both
-    /// sides (the kit feature card's body margin), rather than running to them.
+    /// The Results rows fill the body the card gives them, on both sides: the card's body margin
+    /// insets them as it does every card's rows (`context::tests::the_right_side_is_floating_cards`
+    /// checks they line up with the form's).
     #[test]
-    fn the_results_rows_keep_the_cards_inset() {
+    fn the_results_rows_fill_the_cards_body() {
         let mut app = ModelApp::new(fieldcraft_engine::Session::default());
         app.run("file.sample", json!({"name": "cantilever"})).unwrap();
         app.run("solve.run", json!({})).unwrap();
@@ -1484,7 +1484,6 @@ mod tests {
         let plot = app.plot().unwrap();
         let ctx = egui::Context::default();
         let t = Tokens::get(true);
-        let inset = solidcraft_theme::Tokens::get().space_12;
         let mut area = Rect::NOTHING;
         for _ in 0..2 {
             solidcraft_ui_registry::clear_handles();
@@ -1496,8 +1495,8 @@ mod tests {
         for row in ["Step", "Contours", "Scale", "Views"] {
             let label = solidcraft_ui_registry::rect_of(&format!("dialog:label:{row}")).unwrap_or_else(|| panic!("no {row} label"));
             let control = solidcraft_ui_registry::rect_of(&format!("dialog:control:{row}")).unwrap_or_else(|| panic!("no {row} control"));
-            assert!(label.left() >= area.left() + inset - 0.5, "{row}'s label starts at {}, the section at {}", label.left(), area.left());
-            assert!(control.right() <= area.right() - inset + 0.5, "{row}'s control ends at {}, the section at {}", control.right(), area.right());
+            assert!((label.left() - area.left()).abs() < 0.5, "{row}'s label starts at {}, the section at {}", label.left(), area.left());
+            assert!(control.right() <= area.right() + 0.5, "{row}'s control ends at {}, the section at {}", control.right(), area.right());
         }
     }
 

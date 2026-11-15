@@ -1167,6 +1167,7 @@ impl ModelApp {
         if o.command == "deck.read" {
             self.imported_document = Some(self.session.opened());
             done = format!("Read Abaqus Deck: {} unread keywords (details in the panel)", o.reply["unknown_count"]);
+            crate::context::opened(self, crate::context::Opened::Reply);
             self.reply = Some(crate::reply::Reply {
                 command: o.command.into(),
                 label: crate::command_label(o.command).into(),
