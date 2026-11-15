@@ -325,6 +325,15 @@ pub struct Prefs {
     pub browser_eye_left: bool,
     /// The status bar shown.
     pub status_bar: bool,
+    /// Where History docks.
+    #[serde(deserialize_with = "known_or_default")]
+    pub history_dock: crate::shell::HistoryDock,
+}
+
+/// A preference as saved, or its default when this version cannot read it (a value a newer
+/// FieldCraft saved): the other preferences keep theirs.
+fn known_or_default<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned + Default>(d: D) -> Result<T, D::Error> {
+    Ok(serde_json::from_value(<Value as serde::Deserialize>::deserialize(d)?).unwrap_or_default())
 }
 
 impl Default for Prefs {
@@ -344,6 +353,7 @@ impl Default for Prefs {
             browser_float: false,
             browser_eye_left: false,
             status_bar: false,
+            history_dock: crate::shell::HistoryDock::default(),
         }
     }
 }
@@ -2040,6 +2050,23 @@ pub(crate) mod tests {
         assert_eq!((&again.prefs().units, again.session.units()), (&si, &si));
         std::fs::write(&file, b"{nope").unwrap();
         assert_eq!(Prefs::load(Some(&store)), Prefs::default());
+    }
+
+    /// A History dock this version does not know (one a newer FieldCraft saved) reads as the
+    /// default dock, and every other preference is kept (review of pr/ux-right-cards 8da16a22:
+    /// it reset them all).
+    #[test]
+    fn an_unknown_history_dock_keeps_the_other_preferences() {
+        let dir = temp("prefs-dock");
+        let file = dir.join("prefs.json");
+        let store = PrefsStore::file(file.clone());
+        std::fs::write(&file, br#"{"nav_preset": "solidworks", "reverse_zoom": true, "history_dock": "left"}"#).unwrap();
+        let kept = Prefs { nav_preset: "solidworks".into(), reverse_zoom: true, ..Prefs::default() };
+        assert_eq!(Prefs::load(Some(&store)), kept);
+        std::fs::write(&file, br#"{"reverse_zoom": true, "history_dock": "top"}"#).unwrap();
+        let prefs = Prefs::load(Some(&store));
+        assert_eq!((prefs.reverse_zoom, prefs.history_dock), (true, crate::shell::HistoryDock::Top), "a known dock is read");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Save With Geometry Embedded saves through the picker with `geometry: "embed"`, the file then

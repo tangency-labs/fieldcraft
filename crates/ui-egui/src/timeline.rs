@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use solidcraft_ui_kit::{self as kit, BackingTooltipExt as _, history_bar};
 
 use crate::ModelApp;
+use crate::shell::HistoryDock;
 use crate::theme::Tokens;
 
 /// The timeline's height.
@@ -301,23 +302,32 @@ fn icon(item: &Item) -> &'static str {
     fieldcraft_engine::catalogue::entry_of(&item.command).map_or("ui.views", |c| c.id)
 }
 
-/// The History bar (bottom), as SolidCraft's: in the floating layout a kit Panel card along the
-/// bottom of the viewport, over it (`Container::floating_card(..).bottom_strip_rect`), recorded in
-/// `app.shell.history`; in the compact layout a strip docked along the window's bottom edge.
+/// The History bar, as SolidCraft's: in the floating layout a kit Panel card over the viewport
+/// at its dock, along the bottom (`Container::floating_card(..).bottom_strip_rect`) or a shell gap
+/// under the top cards (`app.ui.history_dock`, saved in the preferences), recorded in
+/// `app.shell.history`; in the compact layout a strip docked along the window's bottom edge. The
+/// floating card's grip and title drag it to the other dock ([`follow_grip`]).
 pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
     let host = kit::Container::new(ui.ctx(), kit::Surface::Panel);
     let (roll, toggle) = if host.floating() {
-        let rect = floating_rect(ui.available_rect_before_wrap());
+        let available = ui.available_rect_before_wrap();
+        let bottom = floating_rect(available);
         // A window too short for the card leaves History out rather than drawing into a
         // negative-size rectangle.
-        if !rect.is_finite() || rect.width() < 1.0 || rect.height() < HEIGHT - 1.0 {
+        if !bottom.is_finite() || bottom.width() < 1.0 || bottom.height() < HEIGHT - 1.0 {
             return;
         }
+        let top = top_dock(bottom, &app.shell.cards, available);
+        let rect = match app.ui.history_dock {
+            HistoryDock::Top => top,
+            HistoryDock::Bottom => bottom,
+        };
         app.shell.history = Some(rect);
         app.place("timeline", rect);
         let frame = host.frame(ui.ctx(), t.timeline, kit::frame::Side::Left);
-        host.area(egui::Id::unique("fc_timeline_card"))
+        let (roll, toggle, dock) = host
+            .area(egui::Id::unique("fc_timeline_card"))
             .fixed_pos(rect.min)
             .show(ui.ctx(), |ui| {
                 // The card takes its size in the area (and keeps the pointer off the view under it).
@@ -325,16 +335,22 @@ pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
                 kit::Container::paint_panel_frame(ui.painter(), frame, card);
                 let mut child = ui.new_child(egui::UiBuilder::new().id_salt("fc_timeline").max_rect(card));
                 child.set_clip_rect(card);
-                contents(app, &mut child, &t, true)
+                let (roll, toggle, grip) = contents(app, &mut child, &t, true);
+                (roll, toggle, follow_grip(ui, &grip, rect, top, bottom))
             })
-            .inner
+            .inner;
+        if let Some(dock) = dock {
+            app.ui.history_dock = dock;
+        }
+        (roll, toggle)
     } else {
         let panel = host.edge("fc_timeline", kit::Edge::Bottom).exact_size(HEIGHT).show_separator_line(false);
         let shown = host.show_edge(ui, panel, host.edge_frame(t.timeline), |ui| {
             let r = ui.max_rect();
             app.place("timeline", r);
             ui.painter().line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, t.border));
-            contents(app, ui, &t, false)
+            let (roll, toggle, _) = contents(app, ui, &t, false);
+            (roll, toggle)
         });
         shown.inner
     };
@@ -354,11 +370,42 @@ pub(crate) fn floating_rect(available: Rect) -> Rect {
     kit::Container::floating_card(kit::Surface::Panel).bottom_strip_rect(available, HEIGHT)
 }
 
+/// The top dock: the card at the `bottom` dock moved up to a shell gap under the top `cards` (the
+/// top of `available` without any), never below the bottom dock in a short window.
+fn top_dock(bottom: Rect, cards: &[Rect], available: Rect) -> Rect {
+    let under_cards = cards.iter().fold(available.top(), |top, card| top.max(card.bottom())) + kit::SHELL_GAP;
+    Rect::from_min_size(pos2(bottom.left(), under_cards.min(bottom.top())), bottom.size())
+}
+
+/// The grip's drag between the docks `top` and `bottom` of the card drawn `at` one of them: while
+/// dragged, the card's graphics follow the pointer up and down between the docks (egui's
+/// drag-and-drop preview, `transform_layer_shapes`: nothing is remembered); released, the dock
+/// nearer the pointer is returned. Called once the card is drawn.
+fn follow_grip(ui: &egui::Ui, grip: &egui::Response, at: Rect, top: Rect, bottom: Rect) -> Option<HistoryDock> {
+    if !(grip.dragged() || grip.drag_stopped()) {
+        if grip.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        return None;
+    }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    // The grip sits on the card's middle line, so the pointer's height is the card's middle.
+    let y = ui.input(|i| i.pointer.latest_pos()).map_or(at.center().y, |p| p.y);
+    if grip.drag_stopped() {
+        let nearer_top = (y - top.center().y).abs() < (y - bottom.center().y).abs();
+        return Some(if nearer_top { HistoryDock::Top } else { HistoryDock::Bottom });
+    }
+    let dy = kit::within(y - at.center().y, top.top() - at.top(), bottom.top() - at.top());
+    ui.ctx().transform_layer_shapes(ui.layer_id(), egui::emath::TSTransform::from_translation(vec2(0.0, dy)));
+    None
+}
+
 /// The kit's header (grip, title and the History controls) and strip (a chip per command or run,
 /// the marker after the current state) in `ui`'s rect. Returns where to roll the model and the
-/// run to open or fold. Its controls, a click on a command and a dragged marker undo or redo
-/// through [`ModelApp::roll_to`]; the journal cannot be reordered.
-fn contents(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, floating: bool) -> (Option<usize>, Option<usize>) {
+/// run to open or fold, and the grip's response (the grip and the title). Its controls, a click on a
+/// command and a dragged marker undo or redo through [`ModelApp::roll_to`]; the journal cannot be
+/// reordered.
+fn contents(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, floating: bool) -> (Option<usize>, Option<usize>, egui::Response) {
     let mut roll: Option<usize> = None;
     let mut toggle: Option<usize> = None;
     let r = ui.max_rect();
@@ -414,7 +461,7 @@ fn contents(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, floating: bool) -
             _ => roll,
         };
     }
-    (roll, toggle)
+    (roll, toggle, head.grip)
 }
 
 #[cfg(test)]
@@ -592,6 +639,67 @@ mod tests {
         let (list, done) = items(&app);
         assert_eq!(done, 1);
         assert_eq!(list.iter().map(|i| (i.start, i.end)).collect::<Vec<_>>(), [(0, 3)]);
+    }
+
+    /// Drags the grip by `dy` points, a frame per step, and releases it.
+    fn drag_grip(ctx: &egui::Context, app: &mut ModelApp, size: egui::Vec2, dy: f32) {
+        let grip = solidcraft_ui_registry::handle_at(HANDLES.grip).expect("the grip");
+        let to = grip + vec2(0.0, dy);
+        frame(ctx, app, size, vec![egui::Event::PointerMoved(grip)]);
+        frame(ctx, app, size, vec![press(grip, true)]);
+        for k in 1..=10 {
+            frame(ctx, app, size, vec![egui::Event::PointerMoved(grip + (to - grip) * (k as f32 / 10.0))]);
+        }
+        frame(ctx, app, size, vec![press(to, false)]);
+        frame(ctx, app, size, Vec::new());
+    }
+
+    /// The grip drags History to the other dock, as the kit's grip is meant to ("drags the bar
+    /// to another dock"): dropped nearer the top it docks under the top cards, nearer the bottom
+    /// it stays along the bottom. The dock is the app's (`UiState::history_dock`, saved in the
+    /// preferences), so a new egui context, as `ui.capture` runs, draws it there too.
+    #[test]
+    fn the_grip_docks_history_at_the_top_or_the_bottom() {
+        let mut app = ModelApp::new(Session::default());
+        app.run("mesh.node.add", json!({"label": 1, "xyz": [0, 0, 0]})).unwrap();
+        let ctx = egui::Context::default();
+        let size = vec2(1400.0, 900.0);
+        for _ in 0..3 {
+            frame(&ctx, &mut app, size, Vec::new());
+        }
+        let bottom = app.shell.history.expect("the History card");
+        assert_eq!(app.ui.history_dock, HistoryDock::Bottom);
+        // Dropped nearer the bottom: it stays there.
+        drag_grip(&ctx, &mut app, size, -250.0);
+        assert_eq!((app.ui.history_dock, app.shell.history), (HistoryDock::Bottom, Some(bottom)));
+        // Dropped nearer the top: it docks a shell gap under the top cards, as wide as before.
+        drag_grip(&ctx, &mut app, size, -650.0);
+        assert_eq!(app.ui.history_dock, HistoryDock::Top);
+        let top = app.shell.history.expect("the History card");
+        let below = app.shell.cards.iter().map(|c| c.bottom()).fold(f32::NEG_INFINITY, f32::max) + kit::SHELL_GAP;
+        assert!((top.top() - below).abs() < 0.5, "under the top cards: {top:?} {:?}", app.shell.cards);
+        assert_eq!((top.left(), top.size()), (bottom.left(), bottom.size()));
+        assert_eq!(app.session.journal.len(), 1, "moving the card rolls nothing");
+        // A new context (ui.capture's) draws it at the top as well.
+        let fresh = egui::Context::default();
+        for _ in 0..3 {
+            frame(&fresh, &mut app, size, Vec::new());
+        }
+        assert_eq!(app.shell.history, Some(top));
+        // A shorter window keeps it at the top, inside the view.
+        let small = vec2(900.0, 500.0);
+        for _ in 0..3 {
+            frame(&ctx, &mut app, small, Vec::new());
+        }
+        let card = app.shell.history.expect("the History card");
+        let view = app.layout.get("viewport").copied().unwrap_or(Rect::NOTHING);
+        assert!(view.shrink(kit::SHELL_GAP - 0.5).contains_rect(card), "{view:?} {card:?}");
+        // And back down to the bottom.
+        for _ in 0..3 {
+            frame(&ctx, &mut app, size, Vec::new());
+        }
+        drag_grip(&ctx, &mut app, size, 650.0);
+        assert_eq!((app.ui.history_dock, app.shell.history), (HistoryDock::Bottom, Some(bottom)));
     }
 
     /// History is an inset card over the viewport, a shell gap from the window's edges, as
