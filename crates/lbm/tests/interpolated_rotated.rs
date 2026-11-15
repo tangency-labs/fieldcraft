@@ -5,6 +5,8 @@
 //! against the exact one and the drift of the mean density per 10 000 steps; walls that conserve
 //! mass hold the density, walls that do not make it drift.
 //!
+//! `ROTATED_RECORD=1` prints every case's numbers without asserting, to record new ones.
+//!
 //! The expected numbers below are what the code gives today, recorded as "known": the misses of
 //! the linear rule stay visible as numbers, and a change that moves them says so here. The channel
 //! of 8 cells across (τ = 0.65, lattice viscosity 0.05) is the coarse grid; a heavy test adds 16.
@@ -28,6 +30,8 @@ struct Run {
     flow_rate: f64,
     /// Drift of the mean density over the fluid cells per 10 000 steps (lattice density 1).
     drift: f64,
+    /// Wall links on which no crossing with the surface was found (kept halfway).
+    no_crossing: u64,
 }
 
 /// The channel `cells` cells across, turned `a:b`, its walls moved `phase` cells, run [`STEPS`]
@@ -81,7 +85,7 @@ fn rotated_channel((a, b): (usize, usize), cells: usize, phase: f64, walls: Wall
     let along: f64 = fluid.iter().map(|&c| flow.moments(c).map_or(0.0, |(_, u)| u[0] * dir[0] + u[1] * dir[1])).sum();
     let along_cells = ((nx * nx + ny * ny) as f64).sqrt();
     let flow_rate = along / along_cells / nz as f64 / (MEAN_SPEED * width) - 1.0;
-    Run { flow_rate: 100.0 * flow_rate, drift }
+    Run { flow_rate: 100.0 * flow_rate, drift, no_crossing: flow.wall_links().map_or(0, |w| w.no_crossing) }
 }
 
 /// One expected case: the angle, the grid, the wall offset in cells, the flow-rate error in
@@ -98,21 +102,21 @@ const fn case(angle: (usize, usize), cells: usize, phase: f64, flow_rate: f64, d
     Case { angle, cells, phase, flow_rate, drift }
 }
 
-/// Known: the linear rule on the turned channel. Flow rates miss by up to 2.2 % on 8 cells and the
-/// mean density drifts by up to 3.3e-2 per 10 000 steps.
+/// Known: the linear rule on the turned channel. Flow rates miss by up to 1.6 % on 8 cells and the
+/// mean density drifts by up to 2.7e-2 per 10 000 steps.
 const LINEAR: [Case; 12] = [
-    case((2, 1), 8, 0.0, -0.6799, -3.297e-2),
-    case((2, 1), 8, 0.33, -1.0669, 1.252e-3),
-    case((2, 1), 8, 0.67, -1.3132, 7.518e-3),
-    case((1, 1), 8, 0.0, -2.2069, -7.201e-3),
-    case((1, 1), 8, 0.25, -1.3923, -2.067e-2),
-    case((1, 1), 8, 0.5, 1.6006, -3.923e-3),
-    case((2, 1), 16, 0.0, -0.1215, -6.662e-3),
-    case((2, 1), 16, 0.33, -0.2819, 1.422e-3),
-    case((2, 1), 16, 0.67, -0.2489, 6.132e-4),
-    case((1, 1), 16, 0.0, -0.9315, -1.176e-3),
-    case((1, 1), 16, 0.25, -0.8985, -1.182e-3),
-    case((1, 1), 16, 0.5, 0.3072, -1.434e-3),
+    case((2, 1), 8, 0.0, -0.5419, -1.582e-02),
+    case((2, 1), 8, 0.33, -0.7636, -2.669e-02),
+    case((2, 1), 8, 0.67, -0.9289, 1.249e-02),
+    case((1, 1), 8, 0.0, -1.6298, -6.991e-03),
+    case((1, 1), 8, 0.25, -0.9163, -2.230e-02),
+    case((1, 1), 8, 0.5, 0.6775, -6.162e-03),
+    case((2, 1), 16, 0.0, -0.1126, -1.273e-03),
+    case((2, 1), 16, 0.33, -0.1927, -3.099e-03),
+    case((2, 1), 16, 0.67, -0.1485, 4.589e-04),
+    case((1, 1), 16, 0.0, -0.5987, -1.061e-03),
+    case((1, 1), 16, 0.25, -0.5841, -1.155e-03),
+    case((1, 1), 16, 0.5, 0.1562, -1.544e-03),
 ];
 
 fn check(cases: &[&Case], walls: WallTreatment) {
@@ -122,6 +126,11 @@ fn check(cases: &[&Case], walls: WallTreatment) {
             "{:?} {} cells, offset {}: flow rate {:+.4} % (expected {:+.4}), drift {:+.3e} (expected {:+.3e})",
             c.angle, c.cells, c.phase, r.flow_rate, c.flow_rate, r.drift, c.drift
         );
+        if std::env::var("ROTATED_RECORD").is_ok() {
+            // Print the numbers to record, assert nothing.
+            continue;
+        }
+        assert_eq!(r.no_crossing, 0, "{:?} {} {}: links without a crossing", c.angle, c.cells, c.phase);
         assert!((r.flow_rate - c.flow_rate).abs() < 2e-3, "{:?} {} {}: flow rate {} against {}", c.angle, c.cells, c.phase, r.flow_rate, c.flow_rate);
         assert!(
             (r.drift - c.drift).abs() < 1e-5 + 0.01 * c.drift.abs(),
