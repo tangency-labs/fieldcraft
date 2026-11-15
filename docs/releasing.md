@@ -3,7 +3,9 @@
 Releases are deliberate. Development lands on `develop`, the trunk; `main` holds released code
 only. Fast-forwarding `main` to the chosen, verified `develop` commit builds every package and
 creates a **draft** GitHub Release; a maintainer verifies the draft and publishes it. Pushes to
-`develop` and tags never start a release, and nothing bumps the version automatically. The workflow is `.github/workflows/release.yml`; the packaging scripts
+`develop` and tags never start a release, and nothing bumps the version automatically; the one
+thing published without a maintainer is the nightly pre-release of `develop`
+([Nightly builds](#nightly-builds)). The workflow is `.github/workflows/release.yml`; the packaging scripts
 are in `packaging/` and run the same way on a developer machine.
 
 ## What a release contains
@@ -123,12 +125,15 @@ The web build on Pages gets the key only when it runs from `main`: its build job
 
 Every release secret (the `APPLE_*` secrets, `KEYCHAIN_PASSWORD`, `FIELDCRAFT_SIGNING_KEY`,
 `POSTHOG_KEY`, `FLATPAK_GPG_KEY`) is a secret of the GitHub Environment `release`, whose deployment branches allow
-`main` only. Repository secrets are readable by any workflow a writer can run on any branch;
+`main` and `develop` (`develop` for the nightlies only). Repository secrets are readable by any workflow a writer can run on any branch;
 environment secrets reach only jobs that name the environment and run from an allowed branch, so a
 contributor with write access cannot read the signing keys from a branch of their own. The jobs
 that read them (`release.yml`'s macos, linux, flatpak, windows and release jobs, `pages.yml`'s build job)
-ask for `release` only on `main`
-(`environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}`); elsewhere the name is
+ask for `release` only on `main` and, in `release.yml`, for a nightly: the version job's
+`environment` output decides once for all five (`release` when `github.ref` is `main`, or when the
+run is a `workflow_run` of CI's scheduled run; [Nightly builds](#nightly-builds) says why that is
+sound and what it costs), and `pages.yml` asks on `main` only
+(`environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}`). Elsewhere the name is
 empty, the job runs in no environment, sees no secrets and builds unsigned. `FLATPAK_GPG_KEY`
 reaches only `pages.yml`'s `flatpak` job, which runs on `main` only and builds no code
 ([Flatpak repository](#flatpak-repository)). `.github/CODEOWNERS`
@@ -188,6 +193,7 @@ the version instead.
 | Weekly (Sunday) | The oracle on macOS. |
 | Daily (06:07 UTC) and `gh workflow run solidcraft-compat.yml` | `SolidCraft compatibility`: SolidCraft's latest release saves the design test recipes and `fieldcraft-geometry`'s design tests open them (docs/architecture.md, "SolidCraft pin"). |
 | `gh workflow run corpus-bless.yml --ref <branch> -f parts=<names>` | `Corpus bless`: blesses the named meshing corpus parts on Linux x86_64 (the heavy job's runner and toolchain) and uploads the fixtures that changed as an artifact; it pushes nothing (docs/meshing/corpus.md, "Blessing"). |
+| Nightly (`release.yml`, when CI's nightly run on `develop` completes) | The packaging jobs and the `release` job, which publishes the nightly pre-release; no verify jobs, since the CI run that started it passed them ([Nightly builds](#nightly-builds)). Every other completed CI run on `develop` starts a `release.yml` run whose jobs are all skipped. |
 | Release (`release.yml`, push to `main` and dry runs) | `verify-ci` (full `cargo xtask ci`), `verify-heavy`, and `verify-oracle` on Linux and macOS, in parallel with the packaging jobs (macOS aarch64, Linux, Flatpak, Windows), which only upload workflow artifacts. The `release` job, the only one that signs `SHA256SUMS.txt` or creates/updates the draft, needs every verify and packaging job but Flatpak, which is not yet part of the release: a failing verify means no draft and no signature. The verify jobs restore develop's CI caches (shared keys); only `main` saves release caches. A run takes about as long as its slowest job, ~30 min with warm caches (the macOS package; it was ~55–60 min when packaging waited for verify). |
 
 `cargo xtask affected --base <rev> [--head <rev>]` prints the plan for any range, e.g. what a
@@ -228,6 +234,55 @@ Publishing is a maintainer's call; an agent preparing a release stops at the dra
 6. Once releases carry the Flatpak bundle, check the Flatpak repository took it: the `Flatpak
    repository` run starts a `Pages` run on `main`, whose `Install from the Flatpak repository` job
    installs the new version from Pages and runs it ([Flatpak repository](#flatpak-repository)).
+
+## Nightly builds
+
+A nightly is a pre-release of `develop`, for trying what is coming before it is released.
+
+- **When.** CI's nightly run on `develop` (`ci.yml`, 03:23 UTC: the full `cargo xtask ci`, the heavy
+  tests and the oracle) starts `release.yml` when it completes (its `workflow_run` trigger), so a
+  nightly follows that run however long it takes and builds the commit it tested. A passing
+  rerun of a failed CI nightly starts it again.
+- **Skipped** (the run's summary says why, and nothing is built) when CI's run, or its gate, heavy
+  or oracle job, did not pass (a red `develop`); when the run is the weekly macOS-oracle run
+  (Sunday 04:41 UTC); and when its commit is already the newest nightly's (`develop` has not
+  moved). `packaging/nightly.sh decide` makes the call.
+- **What.** The release's packaging jobs build version
+  `<MAJOR.MINOR.PATCH>-nightly.<YYYYMMDD>.<run>.<attempt>` (`MAJOR.MINOR.PATCH` from `develop`'s
+  `Cargo.toml`, the date in UTC, this run's number and attempt); the verify jobs do not run
+  again, since the CI run passed them. The binaries report that version (`fieldcraft --version`,
+  Help, crash reports) and each packaging job checks they do. The `release` job writes and signs
+  `SHA256SUMS.txt`, then publishes the pre-release `FieldCraft v<version> (nightly)`
+  (`--prerelease --latest=false`, so `releases/latest` and the Download buttons keep pointing at
+  the latest release, and the Flatpak repository ignores it). Its notes say it is a nightly and
+  which CI run verified it, followed by `.github/release-notes.md` and the changes since the
+  newest published release, nightly or not.
+- **Kept:** the newest `NIGHTLY_KEEP` (7) published nightlies; the same job deletes older ones with
+  their tags (`packaging/nightly.sh prune`). Only published pre-releases whose tag has the nightly
+  form are listed, so a release or a release candidate is never deleted.
+- **Signed and notarized like releases.** The macOS app is signed with the Developer ID and
+  notarized, `SHA256SUMS.txt` is signed with the release key, and so FieldCraft installed from a
+  nightly updates itself ([updates.md](updates.md#nightly-builds)). The packaging and `release`
+  jobs of a nightly run in the `release` environment, which is why `develop` is one of its
+  deployment branches. That is sound because a `workflow_run` run always executes the workflow
+  file of the default branch, `develop`, which changes only through reviewed pull requests, and
+  because CI has a scheduled run only on that branch of this repository: a pull request,
+  a fork's included, starts a CI run whose event is `pull_request`, whatever its branch is
+  called, and `release.yml` runs nothing for it.
+- **The cost.** With `develop` allowed, any job of a workflow on `develop` that names `release`
+  can read every release secret, the update-signing key that every installed FieldCraft trusts
+  included. Only `release.yml` names it, through its version job's `environment` output behind
+  the condition above, and
+  `.github/CODEOWNERS` keeps the workflows under the owner's review; a pull request that adds
+  `environment: release` anywhere else, or widens that condition, must be refused.
+- **Opting in:** download a nightly from the
+  [nightly pre-releases](https://github.com/tangency-labs/fieldcraft/releases?q=nightly&expanded=true);
+  from then on that install is offered newer nightlies and newer releases
+  ([updates.md](updates.md#nightly-builds)).
+
+A nightly cannot be started by hand: `gh workflow run release.yml --ref <branch>` is a dry run
+([Dry runs](#dry-runs)), unsigned, and publishes nothing. To build tonight's nightly again, rerun
+its `release.yml` run (`gh run rerun <id> -R tangency-labs/fieldcraft`).
 
 ## Flatpak repository
 
