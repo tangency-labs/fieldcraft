@@ -30,6 +30,8 @@ struct Run {
     flow_rate: f64,
     /// Drift of the mean density over the fluid cells per 10 000 steps (lattice density 1).
     drift: f64,
+    /// Wall links on which no crossing with the surface was found (kept halfway).
+    no_crossing: u64,
 }
 
 /// The channel `cells` cells across, turned `a:b`, its walls moved `phase` cells, run [`STEPS`]
@@ -93,7 +95,7 @@ fn rotated_channel((a, b): (usize, usize), cells: usize, phase: f64, walls: Wall
         })
         .sum();
     let flow_rate = along / exact - 1.0;
-    Run { flow_rate: 100.0 * flow_rate, drift }
+    Run { flow_rate: 100.0 * flow_rate, drift, no_crossing: flow.wall_links().map_or(0, |w| w.no_crossing) }
 }
 
 /// One expected case: the angle, the grid, the wall offset in cells, the flow-rate error in
@@ -110,21 +112,21 @@ const fn case(angle: (usize, usize), cells: usize, phase: f64, flow_rate: f64, d
     Case { angle, cells, phase, flow_rate, drift }
 }
 
-/// Known: the linear rule on the turned channel. Flow rates miss by up to 1.9 % on 8 cells and the
-/// mean density drifts by up to 3.3e-2 per 10 000 steps.
+/// Known: the linear rule on the turned channel. Flow rates miss by up to 1.4 % on 8 cells and the
+/// mean density drifts by up to 2.7e-2 per 10 000 steps.
 const LINEAR: [Case; 12] = [
-    case((2, 1), 8, 0.0, -0.8242, -3.297e-2),
-    case((2, 1), 8, 0.33, -1.0281, 1.252e-3),
-    case((2, 1), 8, 0.67, -1.0976, 7.518e-3),
-    case((1, 1), 8, 0.0, -1.9410, -7.201e-3),
-    case((1, 1), 8, 0.25, -1.6530, -2.067e-2),
-    case((1, 1), 8, 0.5, 1.8458, -3.923e-3),
-    case((2, 1), 16, 0.0, -0.1491, -6.662e-3),
-    case((2, 1), 16, 0.33, -0.2496, 1.422e-3),
-    case((2, 1), 16, 0.67, -0.2119, 6.132e-4),
-    case((1, 1), 16, 0.0, -0.8731, -1.176e-3),
-    case((1, 1), 16, 0.25, -0.8478, -1.182e-3),
-    case((1, 1), 16, 0.5, 0.2492, -1.434e-3),
+    case((2, 1), 8, 0.0, -0.6864, -1.582e-2),
+    case((2, 1), 8, 0.33, -0.7247, -2.669e-2),
+    case((2, 1), 8, 0.67, -0.7125, 1.249e-2),
+    case((1, 1), 8, 0.0, -1.3624, -6.991e-3),
+    case((1, 1), 8, 0.25, -1.1782, -2.230e-2),
+    case((1, 1), 8, 0.5, 0.9205, -6.162e-3),
+    case((2, 1), 16, 0.0, -0.1402, -1.273e-3),
+    case((2, 1), 16, 0.33, -0.1604, -3.099e-3),
+    case((2, 1), 16, 0.67, -0.1115, 4.589e-4),
+    case((1, 1), 16, 0.0, -0.5402, -1.061e-3),
+    case((1, 1), 16, 0.25, -0.5332, -1.155e-3),
+    case((1, 1), 16, 0.5, 0.0983, -1.544e-3),
 ];
 
 /// Runs every case, prints what it measured, and fails at the end with every case that left its
@@ -137,6 +139,9 @@ fn check(cases: &[&Case], walls: WallTreatment) {
             "{:?} {} cells, offset {}: flow rate {:+.4} % (expected {:+.4}), drift {:+.3e} (expected {:+.3e})",
             c.angle, c.cells, c.phase, r.flow_rate, c.flow_rate, r.drift, c.drift
         );
+        if r.no_crossing != 0 {
+            failures.push(format!("{:?} {} {}: {} links without a crossing", c.angle, c.cells, c.phase, r.no_crossing));
+        }
         if (r.flow_rate - c.flow_rate).abs() >= 2e-3 {
             failures.push(format!("{:?} {} {}: flow rate {} against {}", c.angle, c.cells, c.phase, r.flow_rate, c.flow_rate));
         }
