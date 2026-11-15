@@ -1,6 +1,7 @@
 //! A published release, as the GitHub Releases API describes it
-//! (`GET /repos/{owner}/{repo}/releases/latest`, `…/releases/tags/{tag}`). The reply is hostile
-//! input: every string and list is capped, and a draft is refused.
+//! (`GET /repos/{owner}/{repo}/releases/latest`, `…/releases/tags/{tag}`, `…/releases`), and
+//! which one an install is offered ([`Check::choose`]). The reply is hostile input: every string
+//! and list is capped, and a draft is refused.
 
 use serde_json::{Value, json};
 
@@ -94,7 +95,7 @@ impl Release {
     }
 }
 
-/// What a check found: the running version and the latest release.
+/// What a check found: the running version and the latest release for it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Check {
     pub current: Version,
@@ -102,9 +103,27 @@ pub struct Check {
 }
 
 impl Check {
+    /// The release `current` is offered, from the latest stable release (`releases/latest`;
+    /// `None` when none is published) and the published nightlies.
+    ///
+    /// A stable or candidate install is offered the latest stable release only: never a nightly,
+    /// and a pre-release in `stable` is refused (GitHub's `releases/latest` never names one, so
+    /// the answer is not GitHub's). A nightly install is offered the newest of the latest stable
+    /// release and the nightlies, in [`Version::cmp_build`] order.
+    pub fn choose(current: Version, stable: Option<Release>, nightlies: Vec<Release>) -> Result<Check> {
+        if let Some(r) = stable.as_ref().filter(|r| r.prerelease || r.version.is_prerelease()) {
+            return Err(Error::Release(format!("the latest stable release is a pre-release ({})", r.version)));
+        }
+        let candidates = stable.into_iter().chain(nightlies.into_iter().filter(|r| current.is_nightly() && r.version.is_nightly()));
+        let latest = candidates
+            .max_by(|a, b| a.version.cmp_build(&b.version))
+            .ok_or_else(|| Error::Release("no FieldCraft release is published yet".into()))?;
+        Ok(Check { current, latest })
+    }
+
     /// The latest release is newer than the running version.
     pub fn newer(&self) -> bool {
-        self.latest.version > self.current
+        self.latest.version.cmp_build(&self.current).is_gt()
     }
 
     /// As `app.update.check` and `fieldcraft-cli update --check` report it; `asset` is the
@@ -171,5 +190,39 @@ mod tests {
         let mut long = github("v1.0.0");
         long["body"] = json!("é".repeat(MAX_NOTES));
         assert!(Release::from_github(&long).unwrap().notes.len() <= MAX_NOTES);
+    }
+
+    fn release(tag: &str) -> Release {
+        let mut r = github(tag);
+        r["prerelease"] = json!(tag.contains('-'));
+        Release::from_github(&r).unwrap()
+    }
+
+    fn offered(current: &str, stable: Option<&str>, nightlies: &[&str]) -> Option<String> {
+        let check = Check::choose(Version::parse(current).unwrap(), stable.map(release), nightlies.iter().map(|t| release(t)).collect()).unwrap();
+        check.newer().then(|| check.latest.version.to_string())
+    }
+
+    /// A stable install is never offered a nightly; a nightly install is offered the newest
+    /// nightly, or a stable release newer than the one it is numbered from.
+    #[test]
+    fn each_install_is_offered_its_own_channel() {
+        let nightlies = ["v0.8.0-nightly.20261117.41.1", "v0.8.0-nightly.20261116.40.1"];
+        assert_eq!(offered("0.7.5", Some("v0.8.0"), &nightlies).as_deref(), Some("0.8.0"));
+        assert_eq!(offered("0.8.0", Some("v0.8.0"), &nightlies), None, "a stable install never sees nightlies");
+        assert_eq!(offered("0.8.0-rc.1", Some("v0.7.5"), &nightlies), None);
+        assert_eq!(offered("0.8.0-nightly.20261116.40.1", Some("v0.8.0"), &nightlies).as_deref(), Some("0.8.0-nightly.20261117.41.1"));
+        assert_eq!(offered("0.8.0-nightly.20261117.41.1", Some("v0.8.0"), &nightlies), None, "its own release is not newer");
+        assert_eq!(offered("0.8.0-nightly.20261117.41.1", Some("v0.8.1"), &nightlies).as_deref(), Some("0.8.1"));
+        assert_eq!(offered("0.8.0-nightly.20261117.41.1", None, &["v0.8.1-nightly.20261201.60.1"]).as_deref(), Some("0.8.1-nightly.20261201.60.1"));
+        assert_eq!(offered("0.8.0-nightly.20261116.40.1", Some("v0.7.5"), &["v0.8.0-rc.2"]), None, "a candidate is not a nightly");
+
+        // A pre-release where the latest stable release belongs is refused; no release at all is an error.
+        let current = Version::parse("0.8.0").unwrap();
+        assert!(Check::choose(current.clone(), Some(release("v0.9.0-nightly.20261201.60.1")), Vec::new()).is_err());
+        let mut flagged = github("v0.9.0");
+        flagged["prerelease"] = json!(true);
+        assert!(Check::choose(current.clone(), Some(Release::from_github(&flagged).unwrap()), Vec::new()).is_err());
+        assert!(Check::choose(current, None, vec![release("v0.9.0-nightly.20261201.60.1")]).is_err());
     }
 }

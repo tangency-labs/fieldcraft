@@ -8,7 +8,9 @@ each step. The code is `crates/update` (`fieldcraft-update`); the window's side 
 
 The app asks the GitHub Releases API for the latest published release
 (`GET https://api.github.com/repos/tangency-labs/fieldcraft/releases/latest`; drafts and pre-releases
-are never offered) and compares its version with the running one (Semantic Versioning order).
+are never offered, and a pre-release in that answer is refused) and compares its version with the
+running one (Semantic Versioning order). A nightly build also asks for the published nightlies
+([Nightly builds](#nightly-builds)).
 
 - **At start-up**, at most once a day, when **Check for updates automatically** is on (the
   default). It is shown with the first run's question and in **Help › Settings… › Updates**.
@@ -27,6 +29,32 @@ address, as with any download. Nothing else is sent ([privacy.md](privacy.md)).
 A newer release shows a notice in the status bar: **FieldCraft 0.5.9 is available — What's new ·
 Install · Skip**. What's new opens the release page; Skip stops offering that version (Settings
 can offer it again).
+
+## Nightly builds
+
+Each night `develop` has moved and passed CI's nightly run (03:23 UTC), a nightly pre-release
+`FieldCraft v<version> (nightly)` is published as soon as that run finishes, with version
+`<MAJOR.MINOR.PATCH>-nightly.<YYYYMMDD>.<run>.<attempt>`; a night `develop` is red or has not moved
+has none ([releasing.md](releasing.md#nightly-builds) has the details). The newest 7 nightlies
+are kept and older ones deleted. Nightlies are signed and notarized like releases (releasing.md
+says what signing them from `develop` costs), so a nightly install verifies and installs its
+updates as a release install does.
+
+- **Opting in:** download a nightly from the
+  [nightly pre-releases](https://github.com/tangency-labs/fieldcraft/releases?q=nightly&expanded=true)
+  and install it as you would a release. The install's own version decides what it is offered;
+  there is no setting.
+- **A nightly install** (its version carries `-nightly.`) asks for the latest stable release
+  and the releases list (`GET …/releases`, the newest first) and is offered the newest of the
+  nightlies and the latest stable release. A nightly counts as the `MAJOR.MINOR.PATCH` it is
+  numbered from or later (it is built from `develop` once that version is set there), so the
+  stable release of that number is not offered to it, and the next stable release is.
+- **A release install** (stable or candidate) is never offered a nightly.
+- **Leaving the nightlies:** install a stable release by hand from its page; from then on the
+  install is offered releases only.
+
+A build knows its version from `FIELDCRAFT_VERSION`, which `release.yml` sets when it builds the
+packages (`fieldcraft_update::VERSION`); any other build uses the crate version.
 
 ## Verifying
 
@@ -87,7 +115,9 @@ automatically in automation runs, so the notice can be looked at:
 FIELDCRAFT_UPDATE_HOST=http://127.0.0.1:8899 fieldcraft-cli update --check
 ```
 
-The tests cover version order, the daily schedule and no request when checks are off, asset
+The tests cover version order (a nightly against its release, candidates and other nightlies),
+which release a stable, candidate or nightly install is offered, a pre-release refused where the
+latest stable release belongs, the daily schedule and no request when checks are off, asset
 selection and the swap plan for every install kind, a checksum mismatch and a missing or foreign
 signature refused (without downloading the asset), archives that try to write outside their
 folder, undoing a failed swap, and the CLI against a local server. They never replace a running

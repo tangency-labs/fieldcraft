@@ -1,7 +1,8 @@
 //! FieldCraft's updates (docs/updates.md).
 //!
-//! - **Check** ([`net::check`]): ask the GitHub Releases API for the latest published release and
-//!   compare its [`Version`] with the running one. The desktop app checks at start-up at most
+//! - **Check** ([`net::Client::check`]): ask the GitHub Releases API for the latest published
+//!   release (a nightly build also for the published nightlies; [`Check::choose`]) and compare
+//!   its [`Version`] with the running one. The desktop app checks at start-up at most
 //!   once a day ([`due`]) when the user leaves automatic checks on, and from Help › Check for
 //!   Updates; `app.update.check` and `fieldcraft-cli update --check` run the same check.
 //! - **Verify** ([`verify`]): a release's `SHA256SUMS.txt` must carry a signature by the release
@@ -32,7 +33,7 @@ pub mod stage;
 
 pub use install::{Finish, Install, Plan, Staged};
 pub use release::{Asset, Check, Release};
-pub use version::Version;
+pub use version::{NIGHTLY, Version};
 
 /// The repository releases come from.
 pub const REPO: &str = "tangency-labs/fieldcraft";
@@ -72,9 +73,16 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// The running version as text: the version release.yml built this binary as
+/// (`FIELDCRAFT_VERSION`, which carries a nightly's suffix), else the crate version.
+pub const VERSION: &str = match option_env!("FIELDCRAFT_VERSION") {
+    Some(v) if !v.is_empty() => v,
+    _ => env!("CARGO_PKG_VERSION"),
+};
+
 /// The running version.
 pub fn current() -> Version {
-    Version::parse(env!("CARGO_PKG_VERSION")).unwrap_or(Version { major: 0, minor: 0, patch: 0, pre: Vec::new() })
+    Version::parse(VERSION).unwrap_or(Version { major: 0, minor: 0, patch: 0, pre: Vec::new() })
 }
 
 /// Whether an automatic check is due: checks are on and the last one (seconds since the Unix
@@ -104,6 +112,6 @@ mod tests {
         assert!(due(true, 1_000, 1_000 + day));
         assert!(due(true, 5_000, 1_000), "the clock went back");
         assert!(!due(false, 0, 10 * day), "off means no check");
-        assert_eq!(current().to_string(), env!("CARGO_PKG_VERSION"));
+        assert_eq!(current().to_string(), VERSION);
     }
 }

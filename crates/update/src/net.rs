@@ -14,6 +14,8 @@ use crate::{Check, Error, REPO, Release, Result, Version};
 const MAX_JSON: u64 = 4 * 1024 * 1024;
 /// The largest asset downloaded (bytes; FieldCraft's are well under 200 MB).
 pub const MAX_ASSET: u64 = 2 * 1024 * 1024 * 1024;
+/// The most entries a release list may have (GitHub's largest page, `per_page=100`).
+const MAX_LISTED: usize = 100;
 /// How long connecting and the release description may take.
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// How long a whole download may take.
@@ -22,7 +24,7 @@ const DOWNLOAD_TIME: Duration = Duration::from_secs(30 * 60);
 /// Which release to ask for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Which {
-    /// The latest published, non-draft, non-pre-release release.
+    /// The latest published, non-draft, non-pre-release release (`releases/latest`).
     Latest,
     /// The release of this version (to reinstall it).
     Version(Version),
@@ -66,12 +68,8 @@ impl Client {
         }
     }
 
-    /// The release `which` describes.
-    pub fn release(&self, which: &Which) -> Result<Release> {
-        let path = match which {
-            Which::Latest => format!("/repos/{REPO}/releases/latest"),
-            Which::Version(v) => format!("/repos/{REPO}/releases/tags/v{v}"),
-        };
+    /// The JSON the API answers at `path`; `None` when it answers 404 (no such release).
+    fn api(&self, path: &str) -> Result<Option<serde_json::Value>> {
         let url = format!("{}{path}", self.host);
         let reply = self
             .agent
@@ -92,22 +90,53 @@ impl Client {
             .map_err(|e| Error::Network(format!("the release server's reply: {e}")))?;
         match status {
             200 => {}
-            404 => {
-                return Err(Error::Release(match which {
-                    Which::Latest => "no FieldCraft release is published yet".into(),
-                    Which::Version(v) => format!("there is no published release of FieldCraft {v}"),
-                }));
-            }
+            404 => return Ok(None),
             403 | 429 => return Err(Error::Network("the release server is limiting requests; try again later".into())),
             other => return Err(Error::Network(format!("the release server answered {other}"))),
         }
-        let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| Error::Release(format!("the release description is not JSON: {e}")))?;
+        serde_json::from_str(&body).map(Some).map_err(|e| Error::Release(format!("the release description is not JSON: {e}")))
+    }
+
+    /// The release `which` describes.
+    pub fn release(&self, which: &Which) -> Result<Release> {
+        let path = match which {
+            Which::Latest => format!("/repos/{REPO}/releases/latest"),
+            Which::Version(v) => format!("/repos/{REPO}/releases/tags/v{v}"),
+        };
+        let json = self.api(&path)?.ok_or_else(|| {
+            Error::Release(match which {
+                Which::Latest => "no FieldCraft release is published yet".into(),
+                Which::Version(v) => format!("there is no published release of FieldCraft {v}"),
+            })
+        })?;
         Release::from_github(&json)
     }
 
-    /// Compare the latest release with the running version.
+    /// The published nightlies among the newest releases (`GET …/releases`, GitHub's first page:
+    /// newest first, and nightlies are published daily, so the newest nightly is on it).
+    /// Entries that are not nightlies, or not usable, are left out.
+    pub fn nightlies(&self) -> Result<Vec<Release>> {
+        let json = self.api(&format!("/repos/{REPO}/releases"))?.unwrap_or_default();
+        let list = json.as_array().ok_or_else(|| Error::Release("the release list is not a list".into()))?;
+        if list.len() > MAX_LISTED {
+            return Err(Error::Release(format!("the release list has {} entries (at most {MAX_LISTED})", list.len())));
+        }
+        Ok(list.iter().filter_map(|v| Release::from_github(v).ok()).filter(|r| r.version.is_nightly()).collect())
+    }
+
+    /// Compare the latest release for the running version with it ([`Check::choose`]).
     pub fn check(&self) -> Result<Check> {
-        Ok(Check { current: crate::current(), latest: self.release(&Which::Latest)? })
+        self.check_for(crate::current())
+    }
+
+    /// [`Client::check`] for an install of `current`: a nightly also asks for the nightlies.
+    pub fn check_for(&self, current: Version) -> Result<Check> {
+        let stable = match self.api(&format!("/repos/{REPO}/releases/latest"))? {
+            Some(json) => Some(Release::from_github(&json)?),
+            None => None,
+        };
+        let nightlies = if current.is_nightly() { self.nightlies()? } else { Vec::new() };
+        Check::choose(current, stable, nightlies)
     }
 
     /// A small file (the checksum list, its signature), at most `max` bytes.
@@ -169,6 +198,49 @@ mod tests {
         server.route("/repos/tangency-labs/fieldcraft/releases/latest", 403, b"{}".to_vec());
         assert!(matches!(Client::new(&server.url()).check(), Err(Error::Network(_))));
         assert!(matches!(Client::new("http://127.0.0.1:1").check(), Err(Error::Network(_))));
+    }
+
+    /// `releases/latest` never names a pre-release (GitHub's definition), but the answer comes
+    /// from the network: a stable install refuses one rather than offer it.
+    #[test]
+    fn a_stable_install_is_never_offered_a_nightly() {
+        let server = Server::start().unwrap();
+        let nightly = json!({"tag_name": "v99.0.0-nightly.20261116.40.1", "prerelease": true, "assets": []});
+        server.release("latest", &nightly);
+        let offered = Client::new(&server.url()).check().map(|c| c.newer());
+        assert!(!matches!(offered, Ok(true)), "a stable install was offered a nightly: {offered:?}");
+    }
+
+    #[test]
+    fn a_nightly_install_is_offered_the_newest_nightly() {
+        let server = Server::start().unwrap();
+        server.release("latest", &json!({"tag_name": "v0.8.0", "assets": []}));
+        let nightly = |tag: &str| json!({"tag_name": tag, "prerelease": true, "assets": []});
+        server.releases(&json!([
+            nightly("v0.8.0-nightly.20261117.41.1"),
+            {"tag_name": "v0.8.0", "assets": []},
+            {"tag_name": "v0.8.0-rc.1", "prerelease": true, "assets": []},
+            nightly("v0.8.0-nightly.20261116.40.1"),
+            {"tag_name": "not a version"},
+        ]));
+        let client = Client::new(&server.url());
+        let check = client.check_for(Version::parse("0.8.0-nightly.20261116.40.1").unwrap()).unwrap();
+        assert!(check.newer());
+        assert_eq!(check.latest.version.to_string(), "0.8.0-nightly.20261117.41.1");
+        assert_eq!(server.requests(), 2);
+        // A stable install asks for the latest stable release only.
+        let check = client.check_for(Version::parse("0.7.5").unwrap()).unwrap();
+        assert_eq!((check.latest.version.to_string().as_str(), server.requests()), ("0.8.0", 3));
+
+        // Before any stable release, a nightly still finds the nightlies; a hostile list is an error.
+        let server = Server::start().unwrap();
+        server.releases(&json!([nightly("v0.8.0-nightly.20261117.41.1")]));
+        let client = Client::new(&server.url());
+        assert!(client.check_for(Version::parse("0.8.0-nightly.20261116.40.1").unwrap()).unwrap().newer());
+        server.releases(&json!(vec![nightly("v0.8.0-nightly.20261117.41.1"); MAX_LISTED + 1]));
+        assert!(matches!(client.check_for(Version::parse("0.8.0-nightly.20261116.40.1").unwrap()), Err(Error::Release(_))));
+        server.releases(&json!({"message": "not a list"}));
+        assert!(matches!(client.check_for(Version::parse("0.8.0-nightly.20261116.40.1").unwrap()), Err(Error::Release(_))));
     }
 
     #[test]
