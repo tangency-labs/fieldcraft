@@ -58,6 +58,8 @@ fn extrude(sketch: u64, distance: &str, operation: Operation) -> FeatureKind {
             to_offset: None,
             from: None,
             to_body_apart: false,
+            // Picks no object to end at or start from, so no other component's placement.
+            picked_placements: Vec::new(),
         },
         operation,
         targets: vec![],

@@ -255,6 +255,8 @@ fn recent_row(path: &str) -> Recent<'static, Action> {
         path: folder.into(),
         when: "".into(),
         kind: kind.into(),
+        // FieldCraft reads no signing provenance from the files it lists.
+        security: None,
         thumbnail: None,
         thumbnail_failed: false,
         chosen: Action::Recent(path.to_string()),

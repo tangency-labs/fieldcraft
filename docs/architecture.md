@@ -56,7 +56,7 @@ Rules beyond the layer order:
 `solidcraft-*` come from https://github.com/tangency-labs/solidcraft (formerly
 bherbruck/solidcraft, which redirects there), pinned in the workspace `Cargo.toml` to the commit
 of a SolidCraft release tag or, when FieldCraft needs a change not yet released, a commit on
-SolidCraft's main branch (now 81dd685, 2026-11-12, after v0.40.1). From v0.40 SolidCraft's
+SolidCraft's main branch (now the v0.42.0 tag, 1b1e940, 2026-11-14). From v0.40 SolidCraft's
 modelling kernel is solidcore (Apache-2.0, a Rust port of NVIDIA's SMLib), which replaced the
 truck crates; SolidCraft vendors it in its repository (`solidcore/`). SolidCraft's API takes and
 gives solidcore's records (`Vec3`, `Plane`, `Region2`, …), so `fieldcraft-geometry` also depends
@@ -66,14 +66,17 @@ kit (`solidcraft-ui-kit`, and the `solidcraft-theme` tokens it draws from) at th
 FieldCraft is on SolidCraft's egui line (0.37) and moves with it. SolidCraft's `[patch.crates-io]`
 does not reach dependents; the workspace repeats the patches its desktop app needs (`egui-wgpu`:
 MSAA clamped to what the device supports, 1x on OpenGL adapters, so the 4x never fails pipeline
-validation at start; `winit`) from the same rev.
+validation at start; `winit`) from the same rev. `solidcraft-engine` comes without its default
+`plugins` feature (from v0.42, a sandboxed WebAssembly plugin host on wasmtime): FieldCraft runs
+command scripts and loads no plugin.
 
 The pin decides which designs FieldCraft opens: SolidCraft's reader migrates every older design
 format and refuses a newer one, and SolidCraft releases often raise the format. A design newer
 than the pin reads (`fieldcraft_geometry::DESIGN_FORMAT`) fails with "this design was saved by a
 newer SolidCraft (format N); this FieldCraft reads up to M. Update FieldCraft to open it" (#605:
 FieldCraft 0.7.0 read up to format 21, SolidCraft 0.16.2 saves 27; #655: a FieldCraft on 0.16.2
-reads up to 27, SolidCraft 0.17 and 0.18 save 28).
+reads up to 27, SolidCraft 0.17 and 0.18 save 28; the pin after 0.40.1 reads up to 55, which
+SolidCraft 0.41.0 saves, and 0.42.0 saves 57).
 
 A newer pin can also name the same geometry otherwise: SolidCraft 0.16 names the pieces of a
 split face from their history (`F9:face:4` became `F9:section`), so a model saved before names

@@ -10,6 +10,13 @@ ignore = [
     { id = "RUSTSEC-2026-0367", reason = "zip 8 via cadmpeg-codec-freecad (solidcraft-io); extract() is never called" },
     { id = "RUSTSEC-2026-0368", reason = "zip 8 via cadmpeg-codec-freecad (solidcraft-io); extract() is never called" },
     { id = "RUSTSEC-2026-0369", reason = "zip 8 via cadmpeg-codec-freecad (solidcraft-io); extract() is never called" },
+    # rsa 0.9 and crypto-bigint 0.5 come only through pgp in solidcraft-io, which verifies the
+    # OpenPGP signature of a design's provenance record with a public key. Both advisories concern
+    # private-key operations (Marvin timing on RSA decryption, constant-time arithmetic on
+    # secrets); FieldCraft opens designs and never hands these crates a private key. SolidCraft's
+    # own deny.toml ignores both for the same reason. Drop them once pgp moves to rsa 0.10.
+    { id = "RUSTSEC-2023-0071", reason = "rsa via pgp (solidcraft-io) verifies public-key signatures only; no private-key operations" },
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint via pgp (solidcraft-io) is used for public-key verification only; no secret arithmetic" },
 ]
 
 [bans]
