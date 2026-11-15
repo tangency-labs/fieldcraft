@@ -34,6 +34,15 @@ const ACCENT_HOVER: f32 = 0.12;
 /// step, (53 − 28) / (255 − 28). The bar is dark in both themes, and the light theme's own tab
 /// colour is almost the bar's.
 const TAB_ON_BAR: f32 = 0.11;
+/// How far the start page's rail moves from the accent toward the title bar: halfway, a deep
+/// blue-green band (the bar's blue-grey adds the tint of blue) with white on it at 7:1 or more
+/// (WCAG AAA) in both themes, and the accent-coloured hovered row standing out on it.
+const RAIL_DEPTH: f32 = 0.5;
+/// How far the agent's busy mark moves from the dark theme's accent ink toward white: halfway, as
+/// the rail moves halfway toward the bar. What tells teal from the ready mark's green is mostly
+/// blue-yellow, which tritan vision loses (Machado, Oliveira and Fernandes 2009); the lift parts
+/// them by lightness, which every dichromacy keeps (the colour tests check the status floor).
+const AGENT_BUSY_LIFT: f32 = 0.5;
 
 /// `a` moved the fraction `t` of the way to `b`, channel by channel: `Color32::lerp_to_gamma` for
 /// opaque colours, as a `const fn` so the themes stay constants.
@@ -78,7 +87,8 @@ const fn accent(dark: bool) -> Accent {
 
 /// The tokens the kit draws with: SolidCraft's chrome for the theme, with FieldCraft's accent in
 /// every slot that carries an accent (the primary action, selection, focus, links, the start page
-/// and the accents SolidCraft gives its own workspaces), so no SolidCraft blue is left.
+/// and its rail, the agent's busy mark and the accents SolidCraft gives its own workspaces), so no
+/// SolidCraft blue is left outside its 3D view's colours, which FieldCraft's view does not use.
 pub const fn kit(dark: bool) -> kit_theme::Tokens {
     let mut k = if dark { kit_theme::Tokens::dark() } else { kit_theme::Tokens::light() };
     let a = accent(dark);
@@ -95,7 +105,13 @@ pub const fn kit(dark: bool) -> kit_theme::Tokens {
     k.file_primary = a.soft;
     k.file_primary_ink = a.ink;
     k.file_primary_border = a.fill;
+    k.file_rail = mix(a.fill, k.app_bar, RAIL_DEPTH);
+    k.file_rail_ink = a.on;
     k.file_rail_hover = a.hover;
+    k.chip = a.fill;
+    // The agent's status sits on the title bar, dark in both themes: the dark theme's accent ink,
+    // lifted toward white to stay apart from the ready mark.
+    k.agent_busy = mix(accent(true).ink, Color32::WHITE, AGENT_BUSY_LIFT);
     // SolidCraft's workspaces each have an accent; FieldCraft's tabs all take its own.
     k.sketch_accent = a.fill;
     k.sketch_ink = a.ink;
