@@ -963,7 +963,7 @@ impl ModelApp {
         self.begin_job(kind.command(), json!({"path": path}), format!("{doing} {name}"), format!("{done} {name}"), Some(path));
     }
 
-    /// Help › Samples (and the empty viewport): open a sample model, asking first when that
+    /// The start page and File › Samples…: open a sample model, asking first when that
     /// would discard unsaved changes.
     pub fn open_sample(&mut self, name: &str) {
         let Some(sample) = fieldcraft_engine::sample::find(name) else {

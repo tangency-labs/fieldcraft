@@ -129,12 +129,6 @@ pub fn page(app: &mut ModelApp, ui: &mut egui::Ui) -> bool {
         return false;
     }
     let interactive = app.busy().is_none() && app.picker.is_none();
-    // Decided from the last frame's end: a menu drawn before the page this frame has already
-    // closed on this Esc.
-    if interactive && !app.start_page.covered && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-        app.close_start();
-        return false;
-    }
     let rect = ui.available_rect_before_wrap();
     app.place("start_page", rect);
     if app.start_page.section == Section::Recover && app.start_page.recoverable.is_none() {
@@ -147,7 +141,13 @@ pub fn page(app: &mut ModelApp, ui: &mut egui::Ui) -> bool {
             app.place(region, r);
         }
     }
-    if let Some(action) = chosen {
+    // Esc chooses Back. A stop-gap until the kit's start page binds Esc itself
+    // (solidcraft#17391); delete it then, or it takes the key first. It runs after the kit has
+    // drawn, so the kit's open rail menu (a narrow window) takes Esc first, and only when nothing
+    // of the window's was over the page as the last frame ended: a menu drawn before the page
+    // this frame has already closed on this Esc.
+    let back = interactive && !app.start_page.covered && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    if let Some(action) = chosen.or(back.then_some(Action::Back)) {
         run(app, action);
     }
     app.start_page.covered = app.prompt.is_some() || app.ui.menu.is_some() || app.ui.palette;
@@ -320,33 +320,47 @@ mod tests {
     const W: f32 = 1280.0;
     const H: f32 = 800.0;
 
-    /// Draws `app` frame by frame in a window `W` × `H`.
+    /// Draws `app` frame by frame as the window does (its logic, then its layout), in a window
+    /// `size` points.
     struct Drive {
         ctx: egui::Context,
         time: f64,
+        size: egui::Vec2,
     }
 
     impl Drive {
         fn new() -> Drive {
-            Drive { ctx: egui::Context::default(), time: 0.0 }
+            Drive::sized(W, H)
+        }
+
+        fn sized(w: f32, h: f32) -> Drive {
+            Drive { ctx: egui::Context::default(), time: 0.0, size: egui::vec2(w, h) }
         }
 
         fn frame(&mut self, app: &mut ModelApp, events: Vec<egui::Event>) {
             self.time += 0.1;
             let raw = egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(W, H))),
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, self.size)),
                 time: Some(self.time),
                 events,
                 ..Default::default()
             };
-            let mut out = self.ctx.run_ui(raw, |ui| app.ui(ui));
+            let mut out = self.ctx.run_ui(raw, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            });
             out.textures_delta.clear();
         }
 
-        /// A click where the kit published `name` last frame, as a pointer would: move, press,
-        /// release, each a frame.
-        fn click(&mut self, app: &mut ModelApp, name: &str) {
-            let at = solidcraft_ui_registry::handle_at(name).unwrap_or_else(|| panic!("{name} was not drawn"));
+        /// A key pressed and released with `modifiers`, then a frame to settle.
+        fn key(&mut self, app: &mut ModelApp, key: egui::Key, modifiers: egui::Modifiers) {
+            let event = |pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers };
+            self.frame(app, vec![egui::Event::ModifiersChanged(modifiers), event(true), event(false)]);
+            self.frame(app, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)]);
+        }
+
+        /// A click at `at`, as [`Drive::click`] makes it.
+        fn click_at(&mut self, app: &mut ModelApp, at: egui::Pos2) {
             let button =
                 |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
             self.frame(app, vec![egui::Event::PointerMoved(at)]);
@@ -354,15 +368,23 @@ mod tests {
             self.frame(app, vec![button(false)]);
         }
 
-        /// Wheel the page's body until what the kit published as `name` is inside the page.
-        fn scroll_to(&mut self, app: &mut ModelApp, name: &str) {
-            for _ in 0..60 {
+        /// A click where the kit published `name` last frame, as a pointer would: move, press,
+        /// release, each a frame.
+        fn click(&mut self, app: &mut ModelApp, name: &str) {
+            let at = solidcraft_ui_registry::handle_at(name).unwrap_or_else(|| panic!("{name} was not drawn"));
+            self.click_at(app, at);
+        }
+
+        /// Wheel the page's body until what the kit published as `name` is inside the page;
+        /// whether it had to.
+        fn scroll_to(&mut self, app: &mut ModelApp, name: &str) -> bool {
+            for wheeled in 0..60 {
                 let page = solidcraft_ui_registry::rect_of("start:page");
                 let rect = solidcraft_ui_registry::rect_of(name);
                 if let (Some(page), Some(rect)) = (page, rect)
                     && page.contains_rect(rect)
                 {
-                    return;
+                    return wheeled > 0;
                 }
                 let over = page.map_or(egui::Pos2::ZERO, |p| p.center() + egui::vec2(p.width() / 4.0, 0.0));
                 let wheel = egui::Event::MouseWheel {
@@ -455,24 +477,59 @@ mod tests {
         assert!(!shown(&app), "then Esc returns to the model");
     }
 
-    /// Every sample's card is on the page and a click opens that sample: with unsaved work (a
+    /// Every sample's card is on the page and a click opens that sample, at 1280 × 800 and in a
+    /// small window where the page must scroll to reach them (#245): with unsaved work (a
     /// material) it asks first, naming the sample, and the page stays up behind the question.
     #[test]
     fn every_sample_card_opens_its_sample() {
-        for (i, sample) in crate::samples::ordered().into_iter().enumerate() {
-            let mut drive = Drive::new();
-            let mut app = ModelApp::new(Session::default());
-            app.run("model.material.create", json!({"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}})).unwrap();
-            app.open_start();
-            drive.frame(&mut app, vec![]);
-            drive.frame(&mut app, vec![]);
-            let card = format!("start:sample:{i}");
-            drive.scroll_to(&mut app, &card);
-            drive.click(&mut app, &card);
-            assert_eq!(app.prompt, Some(files::Prompt::Unsaved(files::Replace::Sample(sample.name))), "clicking {}", sample.name);
-            drive.frame(&mut app, vec![]);
-            assert!(shown(&app), "{}: the page waits for the answer", sample.name);
+        for (w, h) in [(W, H), (900.0, 560.0)] {
+            let mut scrolled = false;
+            for (i, sample) in crate::samples::ordered().into_iter().enumerate() {
+                let mut drive = Drive::sized(w, h);
+                let mut app = ModelApp::new(Session::default());
+                app.run("model.material.create", json!({"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}}))
+                    .unwrap();
+                app.open_start();
+                drive.frame(&mut app, vec![]);
+                drive.frame(&mut app, vec![]);
+                let card = format!("start:sample:{i}");
+                scrolled |= drive.scroll_to(&mut app, &card);
+                drive.click(&mut app, &card);
+                assert_eq!(app.prompt, Some(files::Prompt::Unsaved(files::Replace::Sample(sample.name))), "{w}×{h}: clicking {}", sample.name);
+                drive.frame(&mut app, vec![]);
+                assert!(shown(&app), "{w}×{h}: {}: the page waits for the answer", sample.name);
+            }
+            // The small window cannot show them all at once.
+            if w < W {
+                assert!(scrolled, "{w}×{h}");
+            }
         }
+    }
+
+    /// In a narrow window (the web app) the kit folds the rail into a menu; Esc with that menu
+    /// open closes the menu, and the page stays.
+    #[test]
+    fn esc_closes_the_narrow_rail_menu_before_the_page() {
+        // Narrower than the kit's rail beside one tile column with its insets (start_page::show).
+        let k = solidcraft_theme::Tokens::get();
+        let narrow = k.file_nav_width + solidcraft_ui_kit::FileView::tile_min_width() + k.file_content_inset_x * 2.0 - k.space_24;
+        let mut drive = Drive::sized(narrow, H);
+        let mut app = ModelApp::new(Session::default());
+        app.open_start();
+        drive.frame(&mut app, vec![]);
+        drive.frame(&mut app, vec![]);
+        assert!(solidcraft_ui_registry::handle_at("start:back").is_none(), "the rail is folded into its menu");
+        // The menu's button heads the page: the kit's rail frame (`FileView::navigation`) is
+        // inset `space_14` from the page's top, and the button is a control high.
+        let page = app.layout["start_page"];
+        drive.click_at(&mut app, egui::pos2(page.center().x, page.top() + k.space_14 + k.control_height / 2.0));
+        drive.frame(&mut app, vec![]);
+        assert!(solidcraft_ui_registry::handle_at("start:back").is_some(), "the rail menu is open");
+        drive.key(&mut app, egui::Key::Escape, egui::Modifiers::NONE);
+        assert!(shown(&app), "Esc closes the menu, not the page");
+        assert!(solidcraft_ui_registry::handle_at("start:back").is_none(), "the menu is closed");
+        drive.key(&mut app, egui::Key::Escape, egui::Modifiers::NONE);
+        assert!(!shown(&app), "the next Esc returns to the model");
     }
 
     /// A sample opened from the page replaces it once it has loaded; while it loads the page
@@ -487,8 +544,8 @@ mod tests {
         let card = format!("start:sample:{i}");
         drive.scroll_to(&mut app, &card);
         drive.click(&mut app, &card);
+        // Both at once: a later frame's logic may already have finished the load.
         assert!(app.busy().is_some(), "the sample opens in the background");
-        drive.frame(&mut app, vec![]);
         assert!(shown(&app), "the page stays up while the sample loads");
         app.wait_loaded();
         drive.frame(&mut app, vec![]);

@@ -1,6 +1,6 @@
 //! The application bar: the window's title bar, drawn by the kit's application bar
 //! (`solidcraft_ui_kit::app_bar`) as SolidCraft's is: FieldCraft's mark and name, Home (the
-//! samples), File and its actions (save, undo, redo), a quick-access button (the theme), the
+//! start page), File and its actions (save, undo, redo), a quick-access button (the theme), the
 //! model's document tab, Solve, Settings, Help, Report a bug and the version. The command search
 //! is at the end of the ribbon's tab row, SolidCraft's default place for it ([`crate::toolbar`]).
 //! The kit's window chrome (`solidcraft_ui_kit::window_chrome`, [`crate::titlebar`]) makes its
@@ -363,10 +363,11 @@ pub fn shortcut(key: &str) -> String {
     format!("{}+{key}", if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" })
 }
 
-/// Help: the samples (ready to solve), how to navigate, keys, updates, crash reports and the version.
+/// Help: how to navigate, keys, updates, crash reports and the version.
 fn help_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
-    // The samples are Home's (and File › Samples…): listed here too, they pushed Report a Bug,
-    // Crash Reports, Settings and the version below a laptop window's edge.
+    // The samples are on the start page (Home) and in File › Samples…, not here: listed here
+    // too, they pushed Report a Bug, Crash Reports, Settings and the version below a laptop
+    // window's edge.
     crate::frame::menu_heading(ui, "Navigation");
     let note = |ui: &mut egui::Ui, text: &str| {
         ui.horizontal(|ui| {
