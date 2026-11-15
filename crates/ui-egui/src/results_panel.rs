@@ -41,9 +41,9 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
     let bar = crate::viewport::selection_bar_rect(ui.ctx());
     // The legend sits beside the browser card.
     let beside = crate::viewport::beside_card(app, rect);
-    let extremes = legend(&plot, &painter, beside, bar, t);
+    let extremes = legend(&plot, &painter, rect, beside, bar, t);
     // The markers and their labels keep off the legend: its Max and Min lines name a node under it.
-    let covered = plot.contour.as_ref().map(|_| legend_layout(&plot, &painter, beside, bar, t).frame);
+    let covered = plot.contour.as_ref().map(|_| legend_layout(&plot, &painter, rect, beside, bar, t).frame);
     let placed = if app.ui.result_extremes { markers(app, &plot, &painter, rect, covered, t) } else { Vec::new() };
     probe(app, &plot, &painter, rect, covered, &placed, t);
     let mut focus = None;
@@ -87,10 +87,10 @@ const LEGEND_LINE: f32 = 16.0;
 /// The room the legend keeps from the selection bar (points).
 const LEGEND_GAP: f32 = 6.0;
 
-/// Where the legend of `plot` goes in the viewport `rect`, clear of the selection `bar` (a fit
-/// leaves it free).
-pub fn legend_rect(plot: &Plot, painter: &egui::Painter, rect: Rect, bar: Option<Rect>, t: &Tokens) -> Rect {
-    legend_layout(plot, painter, rect, bar, t).frame
+/// Where the legend of `plot` goes in `rect`, the part of the viewport `view` clear of the cards,
+/// clear of the selection `bar` (a fit leaves it free).
+pub fn legend_rect(plot: &Plot, painter: &egui::Painter, view: Rect, rect: Rect, bar: Option<Rect>, t: &Tokens) -> Rect {
+    legend_layout(plot, painter, view, rect, bar, t).frame
 }
 
 /// The legend's title: the field with its unit (a mode shape normalised), or the shape drawn.
@@ -148,7 +148,7 @@ fn frame_text(increments: bool, k: usize, n: usize, at: f64, time_unit: Option<&
 
 /// The legend's text and frame: top left (below the selection bar when they would meet), as wide
 /// as its longest line. All bands fit above navigation; short plots thin their tick labels.
-fn legend_layout(plot: &Plot, painter: &egui::Painter, rect: Rect, bar: Option<Rect>, t: &Tokens) -> Legend {
+fn legend_layout(plot: &Plot, painter: &egui::Painter, view: Rect, rect: Rect, bar: Option<Rect>, t: &Tokens) -> Legend {
     let mut lines: Vec<(String, Color32)> = Vec::new();
     let title = title(plot);
     let mut step = format!("Step {}", plot.view.step);
@@ -203,7 +203,7 @@ fn legend_layout(plot: &Plot, painter: &egui::Painter, rect: Rect, bar: Option<R
     }
     // Reserve the full-size title, metadata and clickable extremes before giving the bands
     // their room. Keep the over-limit band full height so its true/clamped maxima stay legible.
-    let nav = crate::navigation::bar_rect(rect);
+    let nav = crate::navigation::bar_rect(view, rect);
     let bottom = if frame.left() < nav.right() && frame.right() > nav.left() { nav.top() - LEGEND_GAP } else { rect.bottom() - 12.0 };
     let over_height = bands.filter(|b| b.over).map_or(0.0, |_| SWATCH.y);
     let band_height = bands.map_or(SWATCH.y, |b| ((bottom - frame.top() - fixed_height - over_height) / b.count.max(1) as f32).clamp(1.0, SWATCH.y));
@@ -218,8 +218,8 @@ fn swatches(b: &fieldcraft_render::contour::Bands) -> u32 {
 
 /// The legend, top left under the view buttons. Returns the Max and Min lines' rects with their
 /// nodes.
-fn legend(plot: &Plot, painter: &egui::Painter, rect: Rect, bar: Option<Rect>, t: &Tokens) -> Vec<(Rect, u32)> {
-    let Legend { frame, title, lines, band_height } = legend_layout(plot, painter, rect, bar, t);
+fn legend(plot: &Plot, painter: &egui::Painter, view: Rect, rect: Rect, bar: Option<Rect>, t: &Tokens) -> Vec<(Rect, u32)> {
+    let Legend { frame, title, lines, band_height } = legend_layout(plot, painter, view, rect, bar, t);
     let origin = frame.min;
     let k = solidcraft_theme::Tokens::get();
     let (font, line_h) = (FontId::proportional(k.font_body), LEGEND_LINE);
@@ -1313,8 +1313,8 @@ mod tests {
         capped.unavailable = true;
         let ctx = egui::Context::default();
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
-            let legend =
-                legend_layout(&capped, &ui.ctx().debug_painter(), Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0)), None, &Tokens::dark());
+            let view = Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0));
+            let legend = legend_layout(&capped, &ui.ctx().debug_painter(), view, view, None, &Tokens::dark());
             assert!(legend.lines.iter().any(|(line, _)| line == "Field not saved at this increment"));
         });
         out.textures_delta.clear();
@@ -1337,14 +1337,14 @@ mod tests {
             plot.stale = stale;
             let mut output = ctx.run_ui(Default::default(), |ui| {
                 let painter = ui.painter_at(view);
-                let layout = legend_layout(&plot, &painter, view, bar, &t);
-                let targets = legend(&plot, &painter, view, bar, &t);
+                let layout = legend_layout(&plot, &painter, view, view, bar, &t);
+                let targets = legend(&plot, &painter, view, view, bar, &t);
                 assert_eq!(targets.len(), 2);
                 assert!(layout.band_height < SWATCH.y);
                 for (target, node) in targets {
                     assert!(layout.frame.contains_rect(target), "{target:?} outside {:?}", layout.frame);
                     assert!(target.height() >= 12.0, "extremes retain their readable font");
-                    assert!(!target.intersects(crate::navigation::bar_rect(view)));
+                    assert!(!target.intersects(crate::navigation::bar_rect(view, view)));
                     focus_node(&mut app, &plot, node);
                     assert_eq!(app.cam.target, plot.extreme_position(node).unwrap());
                     assert!(app.probe.is_some());
@@ -1513,7 +1513,7 @@ mod tests {
         let t = Tokens::get(true);
         let view = Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0));
         let mut out = ctx.run_ui(Default::default(), |ui| {
-            legend(&plot, &ui.painter_at(view), view, None, &t);
+            legend(&plot, &ui.painter_at(view), view, view, None, &t);
         });
         out.textures_delta.clear();
         let rights: Vec<f32> = out

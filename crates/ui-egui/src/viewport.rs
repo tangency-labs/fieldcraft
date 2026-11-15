@@ -119,7 +119,7 @@ fn status_toast(app: &mut ModelApp, ui: &egui::Ui, content: Rect) {
         return;
     }
     let k = solidcraft_theme::Tokens::get();
-    let nav = navigation::bar_rect(content);
+    let nav = navigation::bar_rect(app.viewport.rect.unwrap_or(content), content);
     let free = Rect::from_min_max(content.min, pos2(content.right(), nav.top().min(content.bottom()))).shrink(k.space_8);
     let countdown = (!status.error).then(|| (kit::toast::countdown_left(0.0, shown_for, STATUS_TOAST_SECONDS), STATUS_TOAST_SECONDS));
     let extras = kit::toast::Extras { close: Some("toast:status:close"), countdown, ..Default::default() };
@@ -163,11 +163,12 @@ pub(crate) fn beside_card(app: &ModelApp, rect: Rect) -> Rect {
 /// the results legend, the selection bar (where it was drawn last), the orientation gizmo, the
 /// navigation bar and the cards.
 fn overlays(app: &mut ModelApp, ui: &egui::Ui, rect: Rect, content: Rect, t: &Tokens) -> Vec<Rect> {
-    let mut out: Vec<Rect> = [axis_view_rect(content), navigation::bar_rect(content)].into_iter().filter(|r| content.contains_rect(*r)).collect();
+    let mut out: Vec<Rect> =
+        [axis_view_rect(content), navigation::bar_rect(rect, content)].into_iter().filter(|r| content.contains_rect(*r)).collect();
     out.extend(app.shell.covered());
     if let Some(plot) = app.plot() {
         let bar = selection_bar_rect(ui.ctx());
-        let legend = crate::results_panel::legend_rect(&plot, &ui.painter_at(rect), content, bar, t);
+        let legend = crate::results_panel::legend_rect(&plot, &ui.painter_at(rect), rect, content, bar, t);
         app.place("legend", legend);
         out.push(legend);
     }
@@ -685,15 +686,16 @@ fn sampled_note(app: &ModelApp, painter: &egui::Painter, rect: Rect, t: &Tokens)
         return;
     }
     let text = format!("Symbols sampled: {}", notes.join("; "));
-    let room = sampled_note_width(rect);
+    let room = sampled_note_width(app.viewport.rect.unwrap_or(rect), rect);
     let k = solidcraft_theme::Tokens::get();
     let galley = painter.layout(text, egui::FontId::proportional(k.font_small), t.text_dim, room);
     painter.galley(pos2(rect.left() + k.space_10, rect.bottom() - k.space_10 - galley.size().y), galley, t.text_dim);
 }
 
-/// How wide the sampled-symbols note may be: up to the navigation bar, with a gap.
-fn sampled_note_width(rect: Rect) -> f32 {
-    let bar = navigation::bar_rect(rect);
+/// How wide the sampled-symbols note may be in `rect`: up to the navigation bar (placed on the
+/// viewport `view`), with a gap.
+fn sampled_note_width(view: Rect, rect: Rect) -> f32 {
+    let bar = navigation::bar_rect(view, rect);
     let right = if rect.contains_rect(bar) { bar.left() - 12.0 } else { rect.right() - 10.0 };
     (right - rect.left() - 10.0).max(80.0)
 }
@@ -809,8 +811,8 @@ mod tests {
     #[test]
     fn the_sampled_note_stays_left_of_the_navigation_bar() {
         let view = egui::Rect::from_min_size(egui::pos2(300.0, 80.0), egui::vec2(900.0, 700.0));
-        let w = sampled_note_width(view);
-        assert!(view.left() + 10.0 + w < crate::navigation::bar_rect(view).left());
+        let w = sampled_note_width(view, view);
+        assert!(view.left() + 10.0 + w < crate::navigation::bar_rect(view, view).left());
     }
 
     /// A status message is the kit's toast in the view, above the navigation bar: information goes
@@ -833,7 +835,7 @@ mod tests {
         draw(&mut app, vec![]);
         let toast = app.layout.get("toast").copied().expect("the toast");
         let view = app.layout.get("viewport").copied().unwrap_or(egui::Rect::NOTHING);
-        assert!(toast.bottom() < crate::navigation::bar_rect(super::beside_card(&app, view)).top(), "{toast:?}");
+        assert!(toast.bottom() < crate::navigation::bar_rect(view, super::beside_card(&app, view)).top(), "{toast:?}");
         app.now = 16.5;
         draw(&mut app, vec![]);
         assert!(app.status.is_none() && !app.layout.contains_key("toast"), "information goes");
