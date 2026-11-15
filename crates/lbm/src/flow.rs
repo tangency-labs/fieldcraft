@@ -958,9 +958,25 @@ impl Flow {
             let Rule::Bounce { group, du } = rule else { return rule };
             let k = owner.get(solid as usize).copied().unwrap_or(NONE) as usize;
             let Some((tree, tags, exact)) = trees.get(k) else { return rule };
-            let (centre, cq) = (grid.centre(cell), c(q));
+            let (mut centre, cq) = (grid.centre(cell), c(q));
             // The solid centre where the link really ends (unwrapped across a periodic face).
-            let end = [0, 1, 2].map(|a| centre[a] - cq[a] * grid.spacing);
+            let mut end = [0, 1, 2].map(|a| centre[a] - cq[a] * grid.spacing);
+            // A solid cell across a periodic face: the surface lies on its own side of the box, so
+            // the whole segment moves by a box length to put its solid end inside the box.
+            for a in 0..3 {
+                let length = grid.cells[a] as f64 * grid.spacing;
+                let shift = if end[a] < grid.origin[a] {
+                    length
+                } else if end[a] > grid.origin[a] + length {
+                    -length
+                } else {
+                    0.0
+                };
+                if periodic[a] && shift != 0.0 {
+                    centre[a] += shift;
+                    end[a] += shift;
+                }
+            }
             let Some(frac) = crate::voxel::link_fraction(tree, tags, exact, centre, end) else {
                 counts.no_crossing += 1;
                 return rule;
