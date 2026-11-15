@@ -1,13 +1,11 @@
-//! The samples as the kit's sample cards (the start page, File › Samples) and as rows (Help › Samples):
-//! every sample of `fieldcraft_engine::sample::SAMPLES`, the flagship ones first, each with its
-//! thumbnail where one exists. Thumbnails are the gallery captures (docs/media/examples) cropped
-//! and scaled to 320 px, embedded at build time so they work on the web too.
+//! The samples as the kit's sample cards (the start page, File › Samples): every sample of
+//! `fieldcraft_engine::sample::SAMPLES`, the flagship ones first, each with its thumbnail where
+//! one exists. Thumbnails are the gallery captures (docs/media/examples) cropped and scaled to
+//! 320 px, embedded at build time so they work on the web too.
 
 use egui::TextureHandle;
 use fieldcraft_engine::sample::{SAMPLES, Sample};
 use solidcraft_ui_kit::{self as kit, BackingTooltipExt as _};
-
-use crate::theme::Tokens;
 
 /// The order the samples are offered in: these first, then any other in the registry's order.
 const FLAGSHIP: &[&str] = &["crank-arm", "drop-test", "rubber-seal", "heated-bracket", "bracket-hex", "flow-past", "cantilever", "impact", "parts"];
@@ -115,27 +113,6 @@ fn cards(ui: &mut egui::Ui, open: &mut Option<&'static str>) {
             *open = Some(sample.name);
         }
     }
-}
-
-/// The samples as rows (name, what it shows, Open) for a narrow menu; `open` gets the one clicked.
-pub fn rows(ui: &mut egui::Ui, t: &Tokens, open: &mut Option<&'static str>) {
-    let width = ui.available_width().clamp(280.0, 420.0);
-    ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
-    egui::ScrollArea::vertical().id_salt("fc_sample_rows").auto_shrink([false, true]).show(ui, |ui| {
-        for sample in ordered() {
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(width - 70.0);
-                    ui.label(egui::RichText::new(sample.label).strong());
-                    ui.add(egui::Label::new(egui::RichText::new(sample.about).small().color(t.text_dim)).wrap());
-                });
-                if solidcraft_ui_kit::button(ui, "Open", solidcraft_ui_kit::Button::Small).clicked() {
-                    *open = Some(sample.name);
-                }
-            });
-            ui.add_space(4.0);
-        }
-    });
 }
 
 #[cfg(test)]
