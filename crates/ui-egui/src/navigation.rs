@@ -90,17 +90,24 @@ fn slot_width(kind: kit::NavigationKind) -> f32 {
     }
 }
 
-/// The bar's rect, bottom centre of the view `rect`.
-pub(crate) fn bar_rect(rect: Rect) -> Rect {
+/// The bar's rect: bottom centre of the viewport `view`, which the cards float over, moved only as
+/// far as it must to keep to `content`, the part of the view clear of them
+/// ([`crate::viewport::beside_card`]): its sides [`kit::NAV_EDGE`] inside, its bottom
+/// [`kit::NAV_BOTTOM`] above. SolidCraft measures the kit's centred row on the whole view
+/// (`navigation_bar_view::measured`, `nav_bar_layout::measure`) and places it at the nearest
+/// spot clear of the panels.
+pub(crate) fn bar_rect(view: Rect, content: Rect) -> Rect {
     let m = kit::NavigationMetrics::for_size(kit::NavigationSize::Regular);
     let inner = BAR.iter().map(|s| slot_width(s.1)).sum::<f32>() + kit::NAV_GAP * (BAR.len() - 1) as f32;
     let width = inner + 2.0 * (kit::NAV_BORDER + kit::NAV_PADDING);
-    Rect::from_min_size(pos2(rect.center().x - width / 2.0, rect.bottom() - m.height() - kit::NAV_BOTTOM), vec2(width, m.height()))
+    let left = kit::within(view.center().x - width / 2.0, content.left() + kit::NAV_EDGE, content.right() - kit::NAV_EDGE - width);
+    Rect::from_min_size(pos2(left, content.bottom() - m.height() - kit::NAV_BOTTOM), vec2(width, m.height()))
 }
 
-/// The navigation bar at the bottom centre of the view `rect`, and its two menus.
+/// The navigation bar at the bottom centre of the viewport, in the part of it clear of the cards
+/// (`rect`, [`bar_rect`]), and its two menus.
 pub(crate) fn bar(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
-    let bar = bar_rect(rect);
+    let bar = bar_rect(app.viewport.rect.unwrap_or(rect), rect);
     if !rect.contains_rect(bar) {
         return;
     }
@@ -462,6 +469,37 @@ mod tests {
         frame(&mut app, vec![press(true)]);
         frame(&mut app, vec![press(false)]);
         assert!(app.ui.perspective, "the display menu's Perspective row");
+    }
+
+    /// ux1 N1: the bar sits bottom centre of the viewport the cards float over, as SolidCraft's
+    /// (`navigation_bar_view::measured` on the whole view): the browser card beside it does not
+    /// push it off the window's centre, and it stays above History.
+    #[test]
+    fn the_bar_is_centred_on_the_viewport() {
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx, true);
+        let frame = |app: &mut ModelApp| {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(2000.0, 1200.0))), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+            out.textures_delta.clear();
+        };
+        (0..3).for_each(|_| frame(&mut app));
+        let at = |app: &ModelApp, k: &str| app.layout.get(k).copied().unwrap_or_else(|| panic!("{k} not drawn"));
+        let (view, bar) = (at(&app, "viewport"), at(&app, "nav_bar"));
+        assert!(app.shell.browser.is_some_and(|b| b.intersects(view)), "the browser card is over the view");
+        assert!((bar.center().x - view.center().x).abs() <= 0.5, "{bar:?} centred on {view:?}");
+        if let Some(history) = app.shell.history {
+            assert!(bar.bottom() < history.top(), "{bar:?} above History {history:?}");
+        }
+        // A card on the right that leaves room keeps it where it is; a card it would run under
+        // moves it only as far as it must.
+        let content = crate::viewport::beside_card(&app, view);
+        let right_card = Rect::from_min_max(content.min, pos2(view.right() - 400.0, content.bottom()));
+        assert_eq!(bar_rect(view, right_card), bar_rect(view, content), "it stays put");
+        let wide_browser = Rect::from_min_max(pos2(view.center().x, content.top()), content.max);
+        let moved = bar_rect(view, wide_browser);
+        assert!((moved.left() - (wide_browser.left() + kit::NAV_EDGE)).abs() <= 0.5 && moved.width() == bar.width(), "{moved:?}");
     }
 
     const SHIFT: Modifiers = Modifiers::SHIFT;
