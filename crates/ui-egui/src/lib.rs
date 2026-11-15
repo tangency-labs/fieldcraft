@@ -2336,6 +2336,36 @@ impl ModelApp {
         if ctx.memory(|m| m.focused().is_some()) {
             return;
         }
+        let shortcut = |modifiers, key| egui::KeyboardShortcut::new(modifiers, key);
+        let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        // The file's keys work on the start page too.
+        let (save_as, save, open, new) = ctx.input_mut(|i| {
+            // Shift first: the plain shortcut matches it too.
+            let save_as = i.consume_shortcut(&shortcut(shift, egui::Key::S));
+            let save = i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::S));
+            let open = i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::O));
+            (save_as, save, open, i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::N)))
+        });
+        if save_as {
+            self.save_as();
+        } else if save {
+            self.save();
+        }
+        if open {
+            self.open_dialog(None);
+        } else if new {
+            self.new_model();
+        }
+        // The workspace's keys act on what it shows: the start page hides it, and Esc there is
+        // the page's (Back).
+        if !self.start_shown() {
+            self.workspace_shortcuts(ctx);
+        }
+    }
+
+    /// The keys of the model's workspace: Esc (a Move Nodes drag, then the selection), undo and
+    /// redo, Delete and the command search.
+    fn workspace_shortcuts(&mut self, ctx: &egui::Context) {
         // Escape cancels a Move Nodes drag first.
         if self.node_drag.is_some() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             self.node_move_cancel();
@@ -2351,28 +2381,14 @@ impl ModelApp {
         let shortcut = |modifiers, key| egui::KeyboardShortcut::new(modifiers, key);
         let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
         // Shift first: the plain shortcut matches it too.
-        let (redo, undo, save_as, save, open, new) = ctx.input_mut(|i| {
+        let (redo, undo) = ctx.input_mut(|i| {
             let redo = i.consume_shortcut(&shortcut(shift, egui::Key::Z)) || i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Y));
-            let undo = i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Z));
-            let save_as = i.consume_shortcut(&shortcut(shift, egui::Key::S));
-            let save = i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::S));
-            let open = i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::O));
-            (redo, undo, save_as, save, open, i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::N)))
+            (redo, i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Z)))
         });
         if redo {
             let _ = self.run("edit.redo", json!({}));
         } else if undo {
             let _ = self.run("edit.undo", json!({}));
-        }
-        if save_as {
-            self.save_as();
-        } else if save {
-            self.save();
-        }
-        if open {
-            self.open_dialog(None);
-        } else if new {
-            self.new_model();
         }
         // Delete (or Backspace) deletes the definition selected in the browser, after asking.
         if self.prompt.is_none()
@@ -4133,6 +4149,53 @@ mod tests {
         };
         let found = (0..600).any(|x| (150..400).any(|y| near(image.pixels[y * 1200 + x], red)));
         assert!(found, "a red legend swatch");
+    }
+
+    /// The start page hides the workspace, so the workspace's keys do nothing while it is up
+    /// (review of S1): Esc goes Back without clearing the hidden selection, Delete asks about
+    /// nothing, undo leaves the model, S opens no command search. Frames run `logic` before `ui`
+    /// as the window does.
+    #[test]
+    fn the_start_page_leaves_the_hidden_workspace_alone() {
+        let mut app = ModelApp::new(Session::default());
+        app.open_sample("cantilever");
+        app.wait_loaded();
+        let ctx = egui::Context::default();
+        let key = |key| egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        let draw = |app: &mut ModelApp, events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(raw, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        };
+        app.select([selection::Item::Node(1)], selection::Mode::Replace);
+        let step = app.session.model.steps().first().map(|s| s.name.clone()).expect("the sample's step");
+        app.select_definition(Some((browser::Def::Step, step)));
+        app.run("model.reference_point.create", serde_json::json!({"name": "RP", "xyz": [0, 0, 0]})).unwrap();
+        let journal = app.session.journal.len();
+        app.open_start();
+        for _ in 0..2 {
+            draw(&mut app, vec![]);
+        }
+        let ctrl_z = egui::Event::Key { key: egui::Key::Z, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND };
+        for event in [key(egui::Key::Delete), key(egui::Key::S), ctrl_z] {
+            draw(&mut app, vec![event]);
+            draw(&mut app, vec![]);
+        }
+        assert!(app.start_shown(), "the page stays up");
+        assert!(app.prompt.is_none(), "Delete asks about nothing hidden");
+        assert!(!app.ui.palette, "S opens no command search");
+        assert_eq!(app.session.journal.len(), journal, "undo leaves the hidden model");
+        draw(&mut app, vec![key(egui::Key::Escape)]);
+        draw(&mut app, vec![]);
+        assert!(!app.start_shown(), "one Esc goes Back");
+        assert!(!app.pick.selection.is_empty(), "the hidden selection is still there");
     }
 
     fn region(app: &ModelApp, name: &str) -> egui::Rect {
