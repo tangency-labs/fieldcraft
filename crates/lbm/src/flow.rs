@@ -20,8 +20,8 @@
 //!   wall-function bounce (`spalding_bounce`, [`crate::bounce`]) the outermost cell layer at a
 //!   wall face is the wall instead: those boundary nodes run their eq. 14 in place of the
 //!   collision and are not fluid cells.
-//! - **Interpolated walls** (`walls: "interpolated"`): each link into an obstacle bounces back
-//!   where the obstacle's surface crosses it, at the fraction `q` of the link from the fluid
+//! - **Interpolated walls** (`walls: "interpolated"` or `"interpolated_quadratic"`): each link
+//!   into an obstacle bounces back where the obstacle's surface crosses it, at the fraction `q` of the link from the fluid
 //!   cell ([`crate::voxel::link_fraction`]), by the linear interpolation of M. Bouzidi,
 //!   M. Firdaouss, P. Lallemand, *Momentum transfer of a Boltzmann-lattice fluid with
 //!   boundaries*, Phys. Fluids 13(11):3452, 2001. With `f*` the post-collision populations,
@@ -33,7 +33,11 @@
 //!   At `q = ½` both are halfway bounce-back. A link with `q < ½` whose `x_ff` is not a fluid
 //!   cell (another wall, a box face that is not periodic) has no second node to interpolate
 //!   from and keeps halfway bounce-back, as does a link no crossing was found on; both are
-//!   counted ([`WallLinks`]) and reported. The scheme is not mass conservative: the populations
+//!   counted ([`WallLinks`]) and reported. `"interpolated_quadratic"` reads the same characteristic
+//!   from three nodes in line ([`bouzidi_quadratic`]: Lagrange interpolation, the coefficients sum
+//!   to one and both lines are halfway bounce-back at `q = ½`) on links of walls at rest whose
+//!   nodes are fluid, and keeps the linear form on the others (counted in [`WallLinks`] and warned).
+//!   The scheme is not mass conservative: the populations
 //!   a wall sends back no longer sum to those it received. The box's walls lie halfway along
 //!   their links already and keep halfway bounce-back, as do thin walls and, with heat, the
 //!   temperature lattice.
@@ -207,6 +211,20 @@ pub fn bouzidi(frac: f64, out: f64, next_out: f64, same: f64, du: f64) -> f64 {
     if frac < 0.5 { 2.0 * frac * out + (1.0 - 2.0 * frac) * next_out + du } else { (out + (2.0 * frac - 1.0) * same + du) / (2.0 * frac) }
 }
 
+/// The quadratic form of [`bouzidi`]: the same characteristic read from three nodes in line
+/// (Lagrange interpolation; the coefficients sum to one and both lines are halfway bounce-back at
+/// `frac = ½`). For `frac < ½` the populations leaving toward the wall of the cell (`out`), of the
+/// next cell (`next_out`) and of the one after it (`next2_out`); otherwise `out`, the cell's `same`
+/// and the next cell's (`next_same`). Walls at rest: there is no moving-wall term.
+#[inline(always)]
+pub fn bouzidi_quadratic(frac: f64, out: f64, next_out: f64, next2_out: f64, same: f64, next_same: f64) -> f64 {
+    if frac < 0.5 {
+        frac * (1.0 + 2.0 * frac) * out + (1.0 - 4.0 * frac * frac) * next_out - frac * (1.0 - 2.0 * frac) * next2_out
+    } else {
+        out / (frac * (2.0 * frac + 1.0)) + (2.0 * frac - 1.0) / frac * same - (2.0 * frac - 1.0) / (2.0 * frac + 1.0) * next_same
+    }
+}
+
 /// An interpolated wall link's data ([`Rule::Interpolated`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Interpolation {
@@ -218,12 +236,26 @@ pub struct Interpolation {
     pub q: f64,
     /// Ladd's moving-wall term, as for [`Rule::Bounce`].
     pub du: f64,
+    /// Whether the link takes the quadratic form ([`bouzidi_quadratic`]): the walls ask for it, the
+    /// wall is at rest and the nodes it reads are fluid.
+    pub quadratic: bool,
+    /// The fluid cell two links further from the wall, read by the quadratic form when `q < ½`
+    /// (the link's own cell otherwise).
+    pub next2: u32,
 }
 
 /// [`bouzidi`] on the populations `f` (direction stride `s`) of cell `cell`, direction `q`.
 #[inline(always)]
 fn interpolated_value(f: &[f64], s: usize, cell: usize, q: usize, link: Interpolation) -> Option<f64> {
     let out = *f.get(opposite(q) * s + cell)?;
+    if link.quadratic {
+        let (next, next2) = (link.next as usize, link.next2 as usize);
+        return Some(if link.q < 0.5 {
+            bouzidi_quadratic(link.q, out, *f.get(opposite(q) * s + next)?, *f.get(opposite(q) * s + next2)?, 0.0, 0.0)
+        } else {
+            bouzidi_quadratic(link.q, out, 0.0, 0.0, *f.get(q * s + cell)?, *f.get(q * s + next)?)
+        });
+    }
     let next_out = if link.q < 0.5 { *f.get(opposite(q) * s + link.next as usize)? } else { 0.0 };
     let same = if link.q < 0.5 { 0.0 } else { *f.get(q * s + cell)? };
     Some(bouzidi(link.q, out, next_out, same, link.du))
@@ -239,12 +271,26 @@ pub struct WallLinks {
     pub no_second_node: u64,
     /// Links on which no crossing with the surface was found: halfway bounce-back.
     pub no_crossing: u64,
+    /// Of the interpolated links, those that take the quadratic form (`interpolated_quadratic`
+    /// walls).
+    pub quadratic: u64,
+    /// With `interpolated_quadratic` walls, the interpolated links that keep the linear form because
+    /// their wall moves (the quadratic form has no moving-wall term).
+    pub linear_moving_wall: u64,
+    /// With `interpolated_quadratic` walls, the interpolated links that keep the linear form because
+    /// the nodes in line it reads are not all fluid.
+    pub linear_too_few_nodes: u64,
 }
 
 impl WallLinks {
     /// The links that fell back to halfway bounce-back.
     pub fn halfway(&self) -> u64 {
         self.no_second_node + self.no_crossing
+    }
+
+    /// With `interpolated_quadratic` walls, the interpolated links that kept the linear form.
+    pub fn linear(&self) -> u64 {
+        self.linear_moving_wall + self.linear_too_few_nodes
     }
 }
 
@@ -951,7 +997,8 @@ impl Flow {
         };
         // With interpolated walls, an obstacle link's bounce-back where the surface crosses it
         // (Bouzidi et al.), or halfway when it has no crossing or no second fluid cell.
-        let interpolate = setup.walls == WallTreatment::Interpolated;
+        let interpolate = setup.walls.is_interpolated();
+        let quadratic_walls = setup.walls == WallTreatment::InterpolatedQuadratic;
         let mut wall_links = interpolate.then(WallLinks::default);
         let mut interpolations: Vec<Interpolation> = Vec::new();
         let interpolated = |cell: usize, solid: u32, q: usize, rule: Rule, counts: &mut WallLinks, slots: &mut Vec<Interpolation>| -> Rule {
@@ -990,9 +1037,23 @@ impl Flow {
                 counts.no_second_node += 1;
                 return rule;
             }
+            // The quadratic form reads one node more in line, on walls at rest.
+            let next2 =
+                next.and_then(|n| crate::surface::neighbour(&grid, periodic, grid.coords(n), q)).filter(|n| fluid.get(*n).copied().unwrap_or(false));
+            let nodes = next.is_some() && (frac >= 0.5 || next2.is_some());
+            let quadratic = quadratic_walls && du == 0.0 && nodes;
             counts.interpolated += 1;
+            if quadratic_walls {
+                if quadratic {
+                    counts.quadratic += 1;
+                } else if du != 0.0 {
+                    counts.linear_moving_wall += 1;
+                } else {
+                    counts.linear_too_few_nodes += 1;
+                }
+            }
             let slot = slots.len() as u32;
-            slots.push(Interpolation { next: next.unwrap_or(cell) as u32, q: frac, du });
+            slots.push(Interpolation { next: next.unwrap_or(cell) as u32, q: frac, du, quadratic, next2: next2.unwrap_or(cell) as u32 });
             Rule::Interpolated { group, slot }
         };
 
@@ -3379,6 +3440,10 @@ impl crate::backend::Backend for Flow {
                     fixed(a, i.next as u64)?;
                     fixed(a, i.q.to_bits())?;
                     fixed(a, i.du.to_bits())?;
+                    fixed(a, u64::from(i.quadratic))?;
+                    if i.quadratic {
+                        fixed(a, i.next2 as u64)?;
+                    }
                 }
                 Rule::Reflect { from, q, group } => {
                     fixed(a, 2)?;

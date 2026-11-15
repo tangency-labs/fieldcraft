@@ -166,9 +166,9 @@ pub fn sci(v: &[f64]) -> String {
 
 /// The least-squares slope of ln|error| against ln(cells): the order of convergence over several
 /// grids (the error of a curved wall on a lattice moves with how the wall cuts each grid's links,
-/// so the order between two grids alone is noisy).
-pub fn fitted_order(cells: &[usize], errors: &[f64]) -> f64 {
-    let x: Vec<f64> = cells.iter().map(|k| (*k as f64).ln()).collect();
+/// so the order between two grids alone is noisy). `cells` holds each grid's cells across.
+pub fn fitted_order(cells: &[f64], errors: &[f64]) -> f64 {
+    let x: Vec<f64> = cells.iter().map(|k| k.ln()).collect();
     let y: Vec<f64> = errors.iter().map(|e| e.abs().ln()).collect();
     let n = x.len() as f64;
     let (mx, my) = (x.iter().sum::<f64>() / n, y.iter().sum::<f64>() / n);

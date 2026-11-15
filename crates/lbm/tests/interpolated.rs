@@ -79,7 +79,8 @@ fn pipe_study(cells: &[usize]) -> (Vec<f64>, Vec<f64>, f64, f64) {
         halfway.push(h);
         interpolated.push(i);
     }
-    let (oh, oi) = (fitted_order(cells, &halfway), fitted_order(cells, &interpolated));
+    let grids: Vec<f64> = cells.iter().map(|&k| k as f64).collect();
+    let (oh, oi) = (fitted_order(&grids, &halfway), fitted_order(&grids, &interpolated));
     println!("pipe, {cells:?} cells per radius: halfway {} (order {oh:.2}), interpolated {} (order {oi:.2})", sci(&halfway), sci(&interpolated));
     (halfway, interpolated, oh, oi)
 }
@@ -282,10 +283,41 @@ fn links_without_a_second_fluid_cell_keep_halfway_and_are_reported() {
     let (_, flow) = prepare(&m, &obstacles);
     let links = flow.wall_links().unwrap();
     // Up, down and the four diagonals up and down: ten links, every one below ½.
-    assert_eq!(links, WallLinks { interpolated: 0, no_second_node: 10, no_crossing: 0 }, "{links:?}");
+    assert_eq!(links, WallLinks { interpolated: 0, no_second_node: 10, no_crossing: 0, ..Default::default() }, "{links:?}");
     let r = solve_fluid(&m, None, &obstacles, &Limits::default()).unwrap();
     assert_eq!(r.stats.wall_links, Some(links));
     assert!(r.warnings.iter().any(|w| w.contains("10 of 10 wall links kept halfway bounce-back")), "{:?}", r.warnings);
+}
+
+/// A channel two cells wide with quadratic walls a fifth of a link from both cells: every link
+/// has its second node (the other cell) but not the third the quadratic form reads, so all ten
+/// keep the linear form, are counted, and the solve says how many.
+#[test]
+fn quadratic_links_without_a_third_fluid_cell_keep_the_linear_form_and_are_reported() {
+    let dx = 0.1;
+    let mut d = domain([0.0; 3], [dx, 1.0, dx], dx);
+    for f in [BoxFace::XMin, BoxFace::XMax, BoxFace::ZMin, BoxFace::ZMax] {
+        *d.faces.get_mut(f) = PERIODIC;
+    }
+    d.acceleration = [0.01, 0.0, 0.0];
+    d.obstacles = vec!["Floor".into(), "Ceiling".into()];
+    let wide = |y0: f64, y1: f64| cuboid([-1.0, y0, -1.0], [1.0 + dx, y1, 1.0 + dx]);
+    // The cells centred at y = 0.35 and 0.45 are the fluid ones; the walls cross their links at
+    // 0.2 of a cell.
+    let obstacles = [obstacle("Floor", wide(-dx, 0.33), &CUBOID_FACES), obstacle("Ceiling", wide(0.47, 1.0 + dx), &CUBOID_FACES)];
+    let m = model(1.0, 1.0 / 6.0, d, with_walls(step(1.0, dx * dx, None), WallTreatment::InterpolatedQuadratic));
+    let (_, flow) = prepare(&m, &obstacles);
+    let links = flow.wall_links().unwrap();
+    assert_eq!(links, WallLinks { interpolated: 10, linear_too_few_nodes: 10, ..Default::default() }, "{links:?}");
+    let r = solve_fluid(&m, None, &obstacles, &Limits::default()).unwrap();
+    assert_eq!(r.stats.wall_links, Some(links));
+    assert!(
+        r.warnings
+            .iter()
+            .any(|w| w.contains("10 of 10 interpolated wall links kept the linear form (0 on a moving wall") && w.contains("10 without")),
+        "{:?}",
+        r.warnings
+    );
 }
 
 /// Interpolated walls refuse what would rebuild or reflect their links another way.
@@ -313,4 +345,21 @@ fn interpolated_walls_refuse_wall_models_and_free_surfaces() {
     let m = model(1.0, 0.01, d, with_walls(step(1.0, 0.01, None), INTERPOLATED));
     let e = Setup::new(&m, None, &[] as &[Obstacle], &Limits::default()).unwrap_err();
     assert!(matches!(&e, Error::Invalid(s) if s.contains("not supported yet: interpolated walls") && s.contains("free surface")), "{e}");
+}
+
+/// The quadratic form refuses what the linear one does, in its own name.
+#[test]
+fn quadratic_interpolated_walls_refuse_wall_models() {
+    let mut p = with_walls(step(1.0, 0.01, None), WallTreatment::InterpolatedQuadratic);
+    if let Procedure::Fluid { turbulence, .. } = &mut p {
+        *turbulence = Some(fieldcraft_model::Turbulence::Smagorinsky {
+            constant: 0.1,
+            prandtl: 0.9,
+            van_driest: None,
+            wall_model: Some(fieldcraft_model::WallModel::Musker),
+        });
+    }
+    let m = model(1.0, 0.01, domain([0.0; 3], [1.0; 3], 0.1), p);
+    let e = Setup::new(&m, None, &[] as &[Obstacle], &Limits::default()).unwrap_err();
+    assert!(matches!(&e, Error::Invalid(s) if s.contains("interpolated_quadratic") && s.contains("wall model")), "{e}");
 }

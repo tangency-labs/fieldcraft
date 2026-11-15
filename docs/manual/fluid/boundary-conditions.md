@@ -62,7 +62,7 @@ each obstacle face has at most one condition. A box face that is an inlet or out
 2 cells across it.
 
 Where the obstacle walls lie is set on the fluid step, beside the collision: `walls` in the
-`"fluid"` procedure of `model.step.create` is `"halfway"` (the default) or `"interpolated"`.
+`"fluid"` procedure of `model.step.create` is `"halfway"` (the default), `"interpolated"` or `"interpolated_quadratic"`.
 
 ```json
 {"command": "model.step.create", "params": {"name": "Run", "procedure": {"type": "fluid",
@@ -73,6 +73,7 @@ Where the obstacle walls lie is set on the fluid step, beside the collision: `wa
 |---|---|---|
 | `"halfway"` | Halfway between the fluid cell and the solid one: a staircase of cell faces. Mass conservative. | Bodies whose faces lie on cell faces (boxes aligned with the grid), and flows where a fraction of a cell in wall position does not matter. |
 | `"interpolated"` | Where the obstacle's surface crosses each link (below). Not mass conservative. | Curved bodies (cylinders, spheres, pipes, fins) and bodies that do not sit on the grid, when drag, pressure drop or the velocity near the wall matter on a grid you can afford. Keep τ⁺ at 1 or below (the automatic time step does). |
+| `"interpolated_quadratic"` | The same crossings, with the quadratic form below where the flow has three nodes in line. Not mass conservative. CPU only. | The same bodies when the wall is turned against the grid and the flow rate or wall shear matters: on a Poiseuille channel at 26.57° or 45° to the grid, 8 cells across, the velocity's L2 error is 1.1e-3 to 7.0e-3 against the linear form's 6.5e-3 to 1.6e-2, and the flow rate is within 0.76 % against 1.36 %. |
 
 The box's own faces are halfway with either setting: they lie halfway along their links already.
 Interpolated walls are refused with a wall model (`turbulence.wall_model`) and with a free surface,
@@ -133,6 +134,21 @@ two wide) or outside a box face that is not periodic, the link has nothing to in
 keeps halfway bounce-back; so does a link on which no crossing is found. The solve counts both and
 warns: "interpolated walls: N of M wall links kept halfway bounce-back (…)". Refine the spacing
 where obstacles nearly touch.
+
+**Quadratic form.** With `"interpolated_quadratic"` the same characteristic is read from three nodes
+in line (Lagrange interpolation; the coefficients sum to one and both lines are halfway bounce-back
+at q = ½). With x_ff = x_f + c_q and x_fff = x_f + 2c_q:
+
+```text
+q < ½:  f_q(x_f) = q(1 + 2q) f*_q̄(x_f) + (1 − 4q²) f*_q̄(x_ff) − q(1 − 2q) f*_q̄(x_fff)
+q ≥ ½:  f_q(x_f) = f*_q̄(x_f) / (q(2q + 1)) + (2q − 1)/q · f*_q(x_f) − (2q − 1)/(2q + 1) · f*_q(x_ff)
+```
+
+A link on a moving wall (the quadratic form has no moving-wall term), or whose nodes in line are
+not all fluid, keeps the linear form. The reply's `wall_links` counts the links that took the
+quadratic form (`quadratic`) and those that kept the linear one (`linear_moving_wall`,
+`linear_too_few_nodes`), and the solve warns: "quadratic interpolated walls: N of M interpolated
+wall links kept the linear form (…)". (The quadratic interpolation of Bouzidi et al. 2001, checked here against the continuity at q = ½ and a parabola.)
 
 **Mass.** The populations an interpolated wall sends back no longer sum to those it received, so
 the fluid's mass drifts. In the verification cases below the drift is 10⁻¹⁰ to 10⁻⁷ of the mass
@@ -420,8 +436,9 @@ walls' complete histories ([Fluid results](fluid-results.md)). Forces are in the
 sign is the force of the fluid on the wall.
 
 With interpolated walls the reply's `wall_links` counts the obstacle links: `interpolated`,
-`halfway_no_second_node` (q < ½ with no fluid cell behind) and `halfway_no_crossing`; it is
-`null` with halfway walls.
+`halfway_no_second_node` (q < ½ with no fluid cell behind) and `halfway_no_crossing`, and with
+quadratic walls `quadratic`, `linear_moving_wall` and `linear_too_few_nodes`; it is `null` with
+halfway walls.
 
 ## Worked example
 
@@ -507,6 +524,7 @@ the closed form.
 | Sphere array, periodic | Wall force = driving force at steady state | | 10⁻³ | `stokes_drag_of_a_sphere_array_matches_hasimoto` (heavy) |
 | Pipe, 4/6/8/12/16 cells per radius, halfway and interpolated walls, τ = 1 | Hagen–Poiseuille (theory) | L2 halfway 4.5e-2 … 9.5e-3 (fitted order 1.01), interpolated 6.6e-3 … 6.9e-4 (order 1.65); wall force = driving force | interpolated order > 1.5, halfway < 1.3; interpolated below 0.3 × halfway on every grid | `a_coarse_pipe_is_closer_with_interpolated_walls` (8 cells); the order studies `pipe_poiseuille_converges_at_second_order_with_interpolated_walls` and, up to 32 cells, `pipe_poiseuille_orders_on_eight_grids` (both heavy) |
 | Plane channel, walls 0, 0.2, 0.4, 0.6, 0.8 of a cell off the cell faces, 8/16/32 cells | The parabola (theory; Bouzidi et al.'s test) | Worst over the shifts: halfway 0.185, 0.096, 0.049 of the peak (order 0.95); interpolated 0.039, 0.0099, 0.0025 (order 1.99); both exact at shift 0 | interpolated orders > 1.8, halfway < 1.2 | `a_channel_with_walls_anywhere_in_a_cell_keeps_its_parabola` |
+| Plane channel turned 26.57° (2:1) and 45° (1:1) against the grid, three wall offsets each, 8/12/16/24 cells across, the same physical offset on each grid, quadratic walls | The parabola (theory); both of Bouzidi et al.'s interpolations second order | Velocity L2 error, fitted order: 26.57° 1.98, 2.76, 2.24; 45° 2.03 at offset 0.5; 45° at offsets 0 and 0.25 0.30 and 0.57 (the linear form 0.75 and 1.80), recorded as known misses: at offset 0 a wall through cell centres leaves 168 and 172 links without a crossing on 12 and 24 cells; at offset 0.25 the 24-cell error rises, cause not found yet | order > 1.5 | `the_quadratic_rule_on_a_turned_channel_converges_at_second_order` (heavy) |
 | Annular Couette: rod of radius ½ sliding along the axis of a pipe of radius 1, 6/8/12/16 cells per radius, τ = 1 | u = U ln(r/R₂)/ln(R₁/R₂); rod drag 2πμUL/ln(R₂/R₁) (theory) | L2 halfway 8.4e-2 … 3.4e-2 (order 1.02), interpolated 7.3e-3 … 1.1e-3 (order 1.98); rod drag halfway +1.5 … +14 %, interpolated within 0.11 %; the two walls' forces balance to 2e-7 | interpolated order > 1.6, halfway < 1.3; drag within 0.5 % | `a_sliding_rod_on_eight_cells_per_radius_is_closer_with_interpolated_walls`; the order studies `annular_couette_with_a_sliding_rod_converges_at_second_order_with_interpolated_walls` and, to 48 cells, `annular_couette_orders_on_seven_grids` (both heavy; 6–48 cells: orders 1.16 and 1.92) |
 | Sphere array, R = 3 cells in 16³ (#798), τ = 1 | Hasimoto (1959) with Sangani & Acrivos (1982) (theory) | K halfway +11.66 %, interpolated −1.64 % | halfway > 11 %, interpolated within 2 % | `stokes_drag_of_a_coarse_sphere_array_with_interpolated_walls` (heavy) |
 | Sphere array, R = 3, 6, 9 cells (16³, 32³, 48³), τ = 1 | The same | K halfway +11.7 %, +1.7 %, +2.3 % (not monotone); interpolated −1.64 %, −0.85 %, −0.32 % | interpolated within 2 % and closer at every refinement | `stokes_drag_of_a_sphere_array_with_interpolated_walls_over_radii_and_tau` (heavy, with the τ sweep above) |

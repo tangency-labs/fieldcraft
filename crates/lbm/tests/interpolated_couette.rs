@@ -154,7 +154,8 @@ fn study(cells: &[usize]) -> [f64; 4] {
             run.push(v);
         }
     }
-    let orders = runs.each_ref().map(|r| fitted_order(cells, r));
+    let grids: Vec<f64> = cells.iter().map(|&k| k as f64).collect();
+    let orders = runs.each_ref().map(|r| fitted_order(&grids, r));
     println!(
         "couette, {cells:?} cells per radius: L2 halfway {} (order {:.2}), interpolated {} (order {:.2}); drag halfway {} (order {:.2}), interpolated {} (order {:.2})",
         sci(&runs[0]),

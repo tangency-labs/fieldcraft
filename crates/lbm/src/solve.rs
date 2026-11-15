@@ -713,6 +713,15 @@ fn run_checkpointed(
             w.no_crossing
         ));
     }
+    if let Some(w) = flow.wall_links().filter(|w| w.linear() > 0) {
+        warnings.push(format!(
+            "quadratic interpolated walls: {} of {} interpolated wall links kept the linear form ({} on a moving wall, which the quadratic form has no term for, {} without the fluid cells in line it reads)",
+            w.linear(),
+            w.interpolated,
+            w.linear_moving_wall,
+            w.linear_too_few_nodes
+        ));
+    }
     if flow.name() != "cpu" {
         warnings
             .push(format!("solved on {}: single precision, deterministic on this device, within the backend's tolerance of the CPU", flow.name()));
