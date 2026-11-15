@@ -1056,8 +1056,8 @@ pub(crate) fn panel_bounds(available: Rect, width: f32, gap: f32) -> Rect {
 }
 
 /// The browser: a card at the top left of the viewport, as SolidCraft's, laid out by the kit's
-/// shared `Container`. It hugs its rows up to the space above History, folds to its
-/// header, is as wide as the user dragged it, and is translucent over the view when the user
+/// shared `Container`. It fills its column (below the top cards, down to History or the
+/// viewport's bottom) whatever its row count, scrolls its rows inside, folds to its header, is as wide as the user dragged it, and is translucent over the view when the user
 /// chose so. The viewport is drawn under it and keeps the space beside it.
 pub fn browser(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
@@ -1088,9 +1088,11 @@ pub fn browser(app: &mut ModelApp, ui: &mut egui::Ui) {
             ui.add_space(k.space_3);
             egui::ScrollArea::vertical()
                 .id_salt("fc_browser_scroll")
-                // The card may hug its rows all the way down to its header.
+                // The rows fill the card's column whatever their count, so nodes appearing as the
+                // setup is reached never resize the card; more rows than fit scroll. A short
+                // column may leave the rows no height at all.
                 .min_scrolled_height(0.0)
-                .auto_shrink([false, true])
+                .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     rows(app, ui, &mut acts);
@@ -2036,23 +2038,33 @@ pub(crate) mod tests {
     }
 
     /// The browser is a card at the top left of the viewport, a gap from the ribbon and the
-    /// window's edge, as wide as remembered; it hugs its rows and, when they are more than fit,
-    /// stops a gap above History (or the viewport's bottom). The viewport is drawn under it and
-    /// shows beside and below.
+    /// window's edge, as wide as remembered. It fills its column down to a gap above History
+    /// (owner, 2026-11-15, B1-2), whatever its row count, so nodes appearing as the setup is
+    /// reached never change its size; rows beyond it scroll inside. The viewport is drawn under
+    /// it and shows beside it.
     #[test]
-    fn the_card_hugs_its_rows_and_stops_above_history() {
+    fn the_card_fills_its_column_above_history() {
         let gap = kit::SHELL_GAP;
         let ctx = egui::Context::default();
         let size = vec2(1400.0, 1400.0);
+        let card_at = |app: &mut ModelApp| {
+            settle(app, &ctx, size);
+            region(app, "browser")
+        };
         let mut app = ModelApp::new(Session::default());
-        settle(&mut app, &ctx, size);
-        let (card, ribbon, view) = (region(&app, "browser"), region(&app, "ribbon"), region(&app, "viewport"));
-        assert!((card.left() - gap).abs() < 0.5 && (card.top() - (ribbon.bottom() + gap)).abs() < 1.0, "{card:?} {ribbon:?}");
-        assert!((card.width() - WIDTH).abs() < 0.5, "{card:?}");
+        let empty = card_at(&mut app);
+        let (ribbon, view) = (region(&app, "ribbon"), region(&app, "viewport"));
+        assert!((empty.left() - gap).abs() < 0.5 && (empty.top() - (ribbon.bottom() + gap)).abs() < 1.0, "{empty:?} {ribbon:?}");
+        assert!((empty.width() - WIDTH).abs() < 0.5, "{empty:?}");
         let floor = app.shell.history.map_or(view.bottom(), |h| h.top());
-        assert!(card.bottom() < floor - 200.0, "an empty model's rows on a tall window: {card:?} {floor}");
-        assert!(view.left() <= 0.5 && view.contains_rect(card), "{view:?} {card:?}");
-        assert_eq!(app.shell.browser, Some(card));
+        assert!((empty.bottom() - (floor - gap)).abs() < 1.0, "an empty model's card fills its column: {empty:?} {floor}");
+        assert!(view.left() <= 0.5 && view.contains_rect(empty), "{view:?} {empty:?}");
+        assert_eq!(app.shell.browser, Some(empty));
+        // Nodes appearing as the setup is reached leave the card as it is.
+        open_plate(&mut app, "the_card_fills_its_column_above_history");
+        assert_eq!(card_at(&mut app), empty, "after opening a design");
+        mesh_plate(&mut app);
+        assert_eq!(card_at(&mut app), empty, "after meshing");
         // More rows than fit a short window: the card stops a gap above History.
         let size = vec2(1400.0, 560.0);
         let mut app = every_kind();
