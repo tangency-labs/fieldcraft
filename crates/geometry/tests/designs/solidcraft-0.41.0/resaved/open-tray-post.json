@@ -1,0 +1,14 @@
+[
+ {
+  "command": "doc.open",
+  "params": {
+   "path": "../../open-tray-post.solidcraft"
+  }
+ },
+ {
+  "command": "file.save",
+  "params": {
+   "path": "open-tray-post.solidcraft"
+  }
+ }
+]
