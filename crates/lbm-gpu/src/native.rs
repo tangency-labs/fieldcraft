@@ -1079,6 +1079,9 @@ impl GpuFlow {
         // (lbm.wgsl, `link_f`).
         let interpolations = flow.interpolations();
         let interpolated = !interpolations.is_empty();
+        if interpolations.iter().any(|i| i.quadratic) {
+            return Err(Error::Invalid("not supported yet: `walls: \"interpolated_quadratic\"` on the GPU; use `walls: \"interpolated\"`".into()));
+        }
         let mut link_q = reserved(if interpolated { links.len() } else { 0 }, "link fractions")?;
         let mut link_f = reserved(if interpolated { 2 * links.len() + 4 * flow.groups().len() } else { links.len() }, "links")?;
         let mut by_group: Vec<(u32, u32)> = reserved(links.len(), "links by group")?;

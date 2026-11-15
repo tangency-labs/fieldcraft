@@ -645,9 +645,9 @@ impl Setup {
         }
         // Interpolated walls replace the bounce-back of the obstacles' links; the wall models and
         // the free surface rebuild or reflect those populations their own way.
-        if *walls == WallTreatment::Interpolated {
+        if walls.is_interpolated() {
             let refuse = |what: String| {
-                Err(Error::Invalid(format!("not supported yet: interpolated walls (`walls: \"interpolated\"`) {what}; use `walls: \"halfway\"`")))
+                Err(Error::Invalid(format!("not supported yet: interpolated walls (`walls: \"{}\"`) {what}; use `walls: \"halfway\"`", walls.name())))
             };
             if turbulence.as_ref().and_then(|t| t.wall_model()).is_some() {
                 return refuse("with a wall model (`wall_model`)".into());
