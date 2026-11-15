@@ -119,6 +119,24 @@ const LINEAR: [Case; 12] = [
     case((1, 1), 16, 0.5, 0.1562, -1.544e-03),
 ];
 
+/// The quadratic rule on the same channels, with the bars the heavy test asserts: the flow rate within 0.6 % on 8 cells
+/// and 0.16 % on 16. The 26.57° channel at offset 0.67 misses the rounder 0.5 % and 0.1 %, and the floor of 0.01 on q
+/// accounts for 0.12 and 0.06 points of it. The density still drifts: the walls do not conserve mass.
+const QUADRATIC: [Case; 12] = [
+    case((2, 1), 8, 0.0, 0.2001, -5.823e-03),
+    case((2, 1), 8, 0.33, 0.3503, -1.104e-02),
+    case((2, 1), 8, 0.67, 0.5443, -7.806e-03),
+    case((1, 1), 8, 0.0, 0.2307, -8.965e-03),
+    case((1, 1), 8, 0.25, 0.0219, -1.951e-02),
+    case((1, 1), 8, 0.5, 0.3308, -3.644e-03),
+    case((2, 1), 16, 0.0, 0.0476, 7.439e-04),
+    case((2, 1), 16, 0.33, 0.0943, 2.956e-05),
+    case((2, 1), 16, 0.67, 0.156, -1.388e-03),
+    case((1, 1), 16, 0.0, 0.0537, -9.363e-04),
+    case((1, 1), 16, 0.25, 0.0545, -1.005e-03),
+    case((1, 1), 16, 0.5, 0.0151, -4.774e-04),
+];
+
 fn check(cases: &[&Case], walls: WallTreatment) {
     for c in cases {
         let r = rotated_channel(c.angle, c.cells, c.phase, walls);
@@ -155,4 +173,40 @@ fn the_linear_rule_on_a_turned_channel_keeps_its_recorded_error() {
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
 fn the_linear_rule_on_a_turned_channel_keeps_its_recorded_error_everywhere() {
     check(&LINEAR.iter().collect::<Vec<_>>(), WallTreatment::Interpolated);
+}
+
+/// The quadratic rule, two coarse cases: the flow rate within 0.6 %.
+#[test]
+fn the_quadratic_rule_on_a_turned_channel_carries_the_flow_rate_within_six_tenths_of_a_percent() {
+    check(&[&QUADRATIC[2], &QUADRATIC[3]], WallTreatment::InterpolatedQuadratic);
+}
+
+/// The quadratic rule on all twelve cases: 0.6 % of the flow rate on 8 cells, 0.16 % on 16.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_quadratic_rule_on_a_turned_channel_meets_its_bars_everywhere() {
+    for c in &QUADRATIC {
+        let bar = if c.cells == 8 { 0.6 } else { 0.16 };
+        assert!(c.flow_rate.abs() < bar, "{:?} {} {}: recorded {} beyond the bar {bar}", c.angle, c.cells, c.phase, c.flow_rate);
+    }
+    check(&QUADRATIC.iter().collect::<Vec<_>>(), WallTreatment::InterpolatedQuadratic);
+}
+
+/// The quadratic form is Lagrange interpolation: it keeps a constant, reproduces a parabola in
+/// the populations for q < ½ and is halfway bounce-back at q = ½.
+#[test]
+fn the_quadratic_form_keeps_a_constant_reproduces_a_parabola_and_is_halfway_bounce_back_at_one_half() {
+    use fieldcraft_lbm::flow::bouzidi_quadratic;
+    for q in [0.05, 0.2, 0.4, 0.49, 0.5, 0.51, 0.6, 0.75, 0.95, 1.0f64] {
+        let k = bouzidi_quadratic(q, 3.0, 3.0, 3.0, 3.0, 3.0);
+        assert!((k - 3.0).abs() < 1e-12, "q {q}: {k}");
+        if q < 0.5 {
+            // The characteristic that starts 1 - 2q cells behind the cell, read from nodes 0, 1, 2.
+            let p = |x: f64| 0.3 + 0.5 * x - 0.2 * x * x;
+            let v = bouzidi_quadratic(q, p(0.0), p(1.0), p(2.0), 0.0, 0.0);
+            assert!((v - p(1.0 - 2.0 * q)).abs() < 1e-12, "q {q}: {v}");
+        }
+    }
+    assert!((bouzidi_quadratic(0.5, 0.7, 0.1, 0.2, 0.3, 0.4) - 0.7).abs() < 1e-12);
+    assert!((bouzidi_quadratic(0.5 - 1e-12, 0.7, 0.1, 0.2, 0.3, 0.4) - 0.7).abs() < 1e-9);
 }

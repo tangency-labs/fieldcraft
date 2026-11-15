@@ -1041,6 +1041,7 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
             "interpolated": w.interpolated,
             "halfway_no_second_node": w.no_second_node,
             "halfway_no_crossing": w.no_crossing,
+            "quadratic": w.quadratic,
         })),
         "eddy_viscosity_ratio": r.stats.eddy_viscosity_ratio,
         "velocity_scale": r.stats.velocity,
@@ -2187,7 +2188,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         let ri = s.execute("solve.fluid", &json!({})).unwrap();
-        assert_eq!(ri["wall_links"], json!({"interpolated": 0, "halfway_no_second_node": 0, "halfway_no_crossing": 0}), "{ri}");
+        assert_eq!(ri["wall_links"], json!({"interpolated": 0, "halfway_no_second_node": 0, "halfway_no_crossing": 0, "quadratic": 0}), "{ri}");
         assert_eq!(ri["forces"], r["forces"], "{ri}");
         assert!(
             s.execute(

@@ -55,7 +55,7 @@ each obstacle face has at most one condition. A box face that is an inlet or out
 2 cells across it.
 
 Where the obstacle walls lie is set on the fluid step, beside the collision: `walls` in the
-`"fluid"` procedure of `model.step.create` is `"halfway"` (the default) or `"interpolated"`.
+`"fluid"` procedure of `model.step.create` is `"halfway"` (the default), `"interpolated"` or `"interpolated_quadratic"`.
 
 ```json
 {"command": "model.step.create", "params": {"name": "Run", "procedure": {"type": "fluid",
@@ -66,6 +66,7 @@ Where the obstacle walls lie is set on the fluid step, beside the collision: `wa
 |---|---|---|
 | `"halfway"` | Halfway between the fluid cell and the solid one: a staircase of cell faces. Mass conservative. | Bodies whose faces lie on cell faces (boxes aligned with the grid), and flows where a fraction of a cell in wall position does not matter. |
 | `"interpolated"` | Where the obstacle's surface crosses each link (below). Not mass conservative. | Curved bodies (cylinders, spheres, pipes, fins) and bodies that do not sit on the grid, when drag, pressure drop or the velocity near the wall matter on a grid you can afford. Keep τ⁺ at 1 or below (the automatic time step does). |
+| `"interpolated_quadratic"` | The same crossings, with the quadratic form below where the flow has three nodes in line. Not mass conservative. CPU only. | The same bodies when the wall is turned against the grid and the flow rate or wall shear matters: a channel at 26.57° or 45° to the grid carries its Poiseuille flow rate within 0.6 % on 8 cells across (the linear form misses by up to 1.6 %). |
 
 The box's own faces are halfway with either setting: they lie halfway along their links already.
 Interpolated walls are refused with a wall model (`turbulence.wall_model`) and with a free surface,
@@ -126,6 +127,18 @@ two wide) or outside a box face that is not periodic, the link has nothing to in
 keeps halfway bounce-back; so does a link on which no crossing is found. The solve counts both and
 warns: "interpolated walls: N of M wall links kept halfway bounce-back (…)". Refine the spacing
 where obstacles nearly touch.
+
+**Quadratic form.** With `"interpolated_quadratic"` the same characteristic is read from three nodes
+in line (Lagrange interpolation; the coefficients sum to one and both lines are halfway bounce-back
+at q = ½). With x_ff = x_f + c_q and x_fff = x_f + 2c_q:
+
+```text
+q < ½:  f_q(x_f) = q(1 + 2q) f*_q̄(x_f) + (1 − 4q²) f*_q̄(x_ff) − q(1 − 2q) f*_q̄(x_fff)
+q ≥ ½:  f_q(x_f) = f*_q̄(x_f) / (q(2q + 1)) + (2q − 1)/q · f*_q(x_f) − (2q − 1)/(2q + 1) · f*_q(x_ff)
+```
+
+A link on a moving wall, or whose nodes are not all fluid, keeps the linear form; the reply's
+`wall_links.quadratic` counts the links that took the quadratic one. (The quadratic interpolation of Bouzidi et al. 2001, checked here against the continuity at q = ½ and a parabola.)
 
 **Mass.** The populations an interpolated wall sends back no longer sum to those it received, so
 the fluid's mass drifts. In the verification cases below the drift is 10⁻¹⁰ to 10⁻⁷ of the mass

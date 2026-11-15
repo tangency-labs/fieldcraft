@@ -70,7 +70,7 @@ Numbers are in the model's display units, here SI (set by `model.units`), or car
 | `sigma` | above 0, at most 1 | 0.99 | The hybrid collision's σ (`hrr` only; [Collision operators](collision.md)). |
 | `magic` | above 0, at most 1 | 3/16 | The two-relaxation-time parameter Λ. Warned about with any other collision. |
 | `turbulence` | `{"type": "smagorinsky", …}`, `{"type": "vreman", …}` | none | Smagorinsky's or Vreman's subgrid eddy viscosity, Van Driest damping (Smagorinsky's) and the wall model ([Turbulence](turbulence.md), [Large-eddy simulation](les.md)). |
-| `walls` | `"halfway"`, `"interpolated"` | `"halfway"` | Where obstacle walls lie: halfway between cells (a staircase), or where the surface crosses each link (Bouzidi et al. 2001; [Boundary conditions](boundary-conditions.md)). |
+| `walls` | `"halfway"`, `"interpolated"`, `"interpolated_quadratic"` | `"halfway"` | Where obstacle walls lie: halfway between cells (a staircase), or where the surface crosses each link (Bouzidi et al. 2001; linear, or quadratic from three nodes in line; [Boundary conditions](boundary-conditions.md)). |
 | `steady` | `{…}` | none | Stop once the flow stops changing ([Steady state and averaging](steady-state-and-averaging.md)). |
 
 ### The solve (`solve.fluid`)
