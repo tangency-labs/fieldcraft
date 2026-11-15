@@ -1,7 +1,8 @@
 //! The timeline (bottom): the command journal in order, as SolidCraft shows its features. Runs of
 //! the same command fold into one chip with their count, which a click opens to show each command
 //! (as SolidCraft folds a long run of one component's features); the marker stands after the
-//! current state, and undone commands follow it greyed, ready to redo. Clicking a command (or the
+//! current state, and undone commands follow it greyed, ready to redo. A run the marker stands
+//! inside is drawn open, so the marker shows between its commands. Clicking a command (or the
 //! transport buttons) undoes or redoes up to it with `edit.undo` / `edit.redo`, as dragging the
 //! marker does; commands older than the undo history cannot be reached and say so.
 //!
@@ -37,6 +38,12 @@ pub struct Item {
 impl Item {
     pub fn count(&self) -> usize {
         self.end - self.start
+    }
+
+    /// Whether the model stands inside this run, `done` commands done: some of its commands are
+    /// done and the rest undone.
+    fn holds_marker(&self, done: usize) -> bool {
+        self.start < done && done < self.end
     }
 
     /// The command at journal position `at` of this run, as an item of its own.
@@ -80,17 +87,50 @@ pub fn items(app: &ModelApp) -> (Vec<Item>, usize) {
     (out, done)
 }
 
+/// Why a command older than the undo history cannot be reached: opening a model starts the
+/// history empty (its journal came with the file), and the oldest steps go past the undo memory.
+const BEYOND_HISTORY: &str = "older than the undo history (it came with the opened model, or is past the undo memory), so it cannot be undone";
+
+/// Where the History bar asks the model to go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Roll {
+    /// Until the journal holds this many commands (a click on a command, the dragged marker).
+    To(usize),
+    /// Undo this many commands, as many as the history holds (Back, First).
+    Undo(usize),
+    /// Redo this many commands, as many as the history holds (Forward, Last).
+    Redo(usize),
+}
+
 impl ModelApp {
-    /// Undo or redo until the journal holds `target` commands (as far as the history reaches):
-    /// one `edit.undo` or `edit.redo` with a `count`.
+    /// Undo or redo until the journal holds `target` commands: one `edit.undo` or `edit.redo`
+    /// with a `count`. A target the history does not reach rolls nothing and says why in the
+    /// status bar.
     pub fn roll_to(&mut self, target: usize) {
         let (undo, redo) = self.session.undo_depth();
         let done = self.session.journal.len();
-        let target = target.clamp(done.saturating_sub(undo), done + redo);
-        let step = if target < done { "edit.undo" } else { "edit.redo" };
-        if target != done {
+        if target < done.saturating_sub(undo) {
+            self.set_status(format!("That command is {BEYOND_HISTORY}"), false);
+        } else if target > done + redo {
+            self.set_status("Nothing to redo", false);
+        } else if target != done {
+            let step = if target < done { "edit.undo" } else { "edit.redo" };
             // An error shows in the status bar.
             let _ = self.run(step, json!({"count": done.abs_diff(target)}));
+        }
+    }
+
+    /// Undo or redo as `roll` asks; with nothing to undo or redo, says why instead.
+    fn roll(&mut self, roll: Roll) {
+        let (undo, redo) = self.session.undo_depth();
+        let done = self.session.journal.len();
+        match roll {
+            Roll::To(target) => self.roll_to(target),
+            Roll::Undo(_) if undo == 0 && done > 0 => self.set_status(format!("Nothing to undo: every command shown is {BEYOND_HISTORY}"), false),
+            Roll::Undo(_) if undo == 0 => self.set_status("Nothing to undo", false),
+            Roll::Redo(_) if redo == 0 => self.set_status("Nothing to redo", false),
+            Roll::Undo(n) => self.roll_to(done.saturating_sub(n.min(undo))),
+            Roll::Redo(n) => self.roll_to(done + n.min(redo)),
         }
     }
 }
@@ -153,7 +193,11 @@ fn paint_badge(p: &egui::Painter, item: Rect, b: Badge, t: &Tokens) {
 /// Text for an item's tooltip: what it did, and whether a click reaches it.
 fn tip(item: &Item, reachable: bool) -> String {
     let mut s = describe(item);
-    s.push_str(if reachable { "\nClick to roll the model to here" } else { "\nOlder than the undo history" });
+    if reachable {
+        s.push_str("\nClick to roll the model to here");
+    } else {
+        s.push_str(&format!("\nThis command is {BEYOND_HISTORY}"));
+    }
     s
 }
 
@@ -237,9 +281,11 @@ impl Steps<'_> {
         }
     }
 
-    /// A run's chip: the kit's group chip (its icon, name and count); a click opens or folds it.
+    /// A run's chip: the kit's group chip (its icon, name and count); a click opens or folds it,
+    /// unless the marker stands inside it, which keeps it open.
     fn run(&mut self, strip: &mut history_bar::Strip<'_, '_>, item: &Item, open: bool) {
         let (done, oldest, t, accent) = (self.done, self.oldest, self.t, self.accent);
+        let held = item.holds_marker(done);
         let mut clicked = false;
         strip.chip(item.start, item.end, open, 0, |ui, p, at| {
             let chip = kit::HistoryGroupChip {
@@ -263,15 +309,19 @@ impl Steps<'_> {
                     paint_badge(p, rect, b, t);
                 }
             }
-            let what = if open { "click to fold them" } else { "click to show each one" };
+            let what = match (held, open) {
+                (true, _) => "shown one by one while the model stands among them",
+                (false, true) => "click to fold them",
+                (false, false) => "click to show each one",
+            };
             let mut text = format!("{}: {} commands, {what}", describe(item), item.count());
             if item.end < oldest {
-                text.push_str("\nOlder than the undo history");
+                text.push_str(&format!("\nThese commands are {BEYOND_HISTORY}"));
             }
             clicked = response.on_hover_cursor(egui::CursorIcon::PointingHand).backing_on_hover_text(text).clicked();
             rect.width()
         });
-        if clicked {
+        if clicked && !held {
             self.toggle = Some(item.start);
         }
     }
@@ -359,8 +409,8 @@ pub fn timeline(app: &mut ModelApp, ui: &mut egui::Ui) {
     {
         app.timeline_open.insert(start);
     }
-    if let Some(target) = roll {
-        app.roll_to(target);
+    if let Some(roll) = roll {
+        app.roll(roll);
     }
 }
 
@@ -403,13 +453,13 @@ fn follow_grip(ui: &egui::Ui, grip: &egui::Response, at: Rect, top: Rect, bottom
 /// The kit's header (grip, title and the History controls) and strip (a chip per command or run,
 /// the marker after the current state) in `ui`'s rect. Returns where to roll the model and the
 /// run to open or fold, and the grip's response (the grip and the title). Its controls, a click on a
-/// command and a dragged marker undo or redo through [`ModelApp::roll_to`]; the journal cannot be
+/// command and a dragged marker undo or redo through [`ModelApp::roll`]; the journal cannot be
 /// reordered.
-fn contents(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, floating: bool) -> (Option<usize>, Option<usize>, egui::Response) {
-    let mut roll: Option<usize> = None;
+fn contents(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, floating: bool) -> (Option<Roll>, Option<usize>, egui::Response) {
+    let mut roll: Option<Roll> = None;
     let mut toggle: Option<usize> = None;
     let r = ui.max_rect();
-    let (undo, redo) = app.session.undo_depth();
+    let (undo, _) = app.session.undo_depth();
     let (list, done) = cached_items(app);
     let oldest = done.saturating_sub(undo);
     let accent = solidcraft_theme::TabAccent::current(ui.ctx());
@@ -444,20 +494,24 @@ fn contents(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, floating: bool) -
         let strip = Rect::from_min_max(pos2(head.x, r.top()), r.right_bottom());
         // A run that is no longer one (undone, another model) forgets it was open.
         app.timeline_open.retain(|start| list.iter().any(|i| i.start == *start && i.count() > 1));
-        let shown = entries(&list, &app.timeline_open);
+        // A run the marker stands inside is drawn open, so the marker shows between its commands
+        // and its undone ones dimmed; it is not remembered as opened.
+        let open: BTreeSet<usize> = app.timeline_open.iter().copied().chain(list.iter().filter(|i| i.holds_marker(done)).map(|i| i.start)).collect();
+        let shown = entries(&list, &open);
         let mut steps = Steps { list: &list, entries: &shown, done, oldest, t, accent, toggle: None };
         actions.extend(history_bar::strip(ui, &bar, r, strip, "fc_timeline_strip", &mut steps).actions);
         toggle = steps.toggle;
     }
     for action in actions {
         roll = match action {
-            history_bar::Action::Seek(history_bar::Seek::First) => Some(oldest),
-            history_bar::Action::Seek(history_bar::Seek::Back) => Some(done.saturating_sub(1)),
-            history_bar::Action::Seek(history_bar::Seek::Forward) => Some(done + 1),
-            history_bar::Action::Seek(history_bar::Seek::Last) => Some(done + redo),
-            history_bar::Action::Seek(history_bar::Seek::Slot { slot, .. }) => Some(slot),
-            // A command's chip rolls the model to just after it, when the history reaches it.
-            history_bar::Action::Select { step, .. } => usize::try_from(step).ok().map(|at| at + 1).filter(|end| *end >= oldest),
+            // First and Last go as far as the history holds.
+            history_bar::Action::Seek(history_bar::Seek::First) => Some(Roll::Undo(usize::MAX)),
+            history_bar::Action::Seek(history_bar::Seek::Back) => Some(Roll::Undo(1)),
+            history_bar::Action::Seek(history_bar::Seek::Forward) => Some(Roll::Redo(1)),
+            history_bar::Action::Seek(history_bar::Seek::Last) => Some(Roll::Redo(usize::MAX)),
+            history_bar::Action::Seek(history_bar::Seek::Slot { slot, .. }) => Some(Roll::To(slot)),
+            // A command's chip rolls the model to just after it (or says why it cannot).
+            history_bar::Action::Select { step, .. } => usize::try_from(step).ok().map(|at| Roll::To(at + 1)),
             _ => roll,
         };
     }
@@ -493,7 +547,9 @@ mod tests {
         assert_eq!(list.iter().map(|i| (i.start, i.end)).collect::<Vec<_>>(), [(0, 3), (3, 4)]);
         app.roll_to(4);
         assert!(app.session.model.materials().contains_key("Steel"));
-        app.roll_to(100);
+        // From below the tip, a redo past what was undone goes as far as the history holds.
+        app.roll_to(1);
+        app.roll(Roll::Redo(100));
         assert_eq!(app.session.journal.len(), 4, "clamped to what can be redone");
     }
 
@@ -627,6 +683,48 @@ mod tests {
         }
     }
 
+    /// A sample opened from the start page comes with its journal but no undo history (opening
+    /// starts it empty): no History control and no command older than the history rolls the
+    /// model, and each click says why instead of doing nothing. A command made after it rolls.
+    /// (Shown in the app on 2026-11-15, W1-22 and F2-01: 13/13 clicks did nothing, with no word.)
+    #[test]
+    fn clicks_beyond_the_undo_history_roll_nothing_and_say_why() {
+        let mut app = ModelApp::new(Session::default());
+        app.run("file.sample", json!({"name": "cantilever"})).unwrap();
+        let done = app.session.journal.len();
+        assert!(done > 1, "the sample has a journal");
+        assert_eq!(app.session.undo_depth(), (0, 0), "opening starts the undo history empty");
+        let ctx = egui::Context::default();
+        let size = vec2(1400.0, 900.0);
+        for _ in 0..3 {
+            frame(&ctx, &mut app, size, Vec::new());
+        }
+        // A single command older than the history (the sample's are each one of a kind or runs).
+        let (list, _) = items(&app);
+        let old = list.iter().find(|i| i.count() == 1 && i.end < done).expect("a single command before the last");
+        let step = format!("{}{}", HANDLES.step, describe(old));
+        let controls = ["first", "back", "forward", "last"].map(|c| format!("{}{c}", HANDLES.controls));
+        for name in controls.iter().chain([&step]) {
+            app.status = None;
+            let at = solidcraft_ui_registry::handle_at(name).unwrap_or_else(|| panic!("{name} is drawn"));
+            click_at(&ctx, &mut app, size, at);
+            assert_eq!(app.session.journal.len(), done, "{name} rolls nothing");
+            let said = app.status.as_ref().map(|s| s.text.clone()).unwrap_or_default();
+            let why = if name.ends_with("forward") || name.ends_with("last") { "Nothing to redo" } else { "undo history" };
+            assert!(said.contains(why), "{name} says why it did nothing: {said:?}");
+            assert!(!said.contains('{'), "in words: {said:?}");
+        }
+        // A command made now is in the history: Back undoes it and Forward redoes it.
+        app.run("model.reference_point.create", json!({"name": "RP1", "xyz": [0, 0, 0]})).unwrap();
+        frame(&ctx, &mut app, size, Vec::new());
+        let back = solidcraft_ui_registry::handle_at(&controls[1]).expect("Back");
+        click_at(&ctx, &mut app, size, back);
+        assert_eq!(app.session.journal.len(), done);
+        let forward = solidcraft_ui_registry::handle_at(&controls[2]).expect("Forward");
+        click_at(&ctx, &mut app, size, forward);
+        assert_eq!(app.session.journal.len(), done + 1);
+    }
+
     /// The marker inside a run marks it apart from its done and undone commands, but the run
     /// stays one item: rolling never regroups the journal.
     #[test]
@@ -639,6 +737,81 @@ mod tests {
         let (list, done) = items(&app);
         assert_eq!(done, 1);
         assert_eq!(list.iter().map(|i| (i.start, i.end)).collect::<Vec<_>>(), [(0, 3)]);
+    }
+
+    /// The colours `shapes` paint inside `within`.
+    fn colours_in(shapes: &[egui::epaint::ClippedShape], within: Rect) -> Vec<Color32> {
+        fn walk(shape: &egui::Shape, within: Rect, out: &mut Vec<Color32>) {
+            if let egui::Shape::Vec(v) = shape {
+                v.iter().for_each(|s| walk(s, within, out));
+                return;
+            }
+            if !within.contains_rect(shape.visual_bounding_rect()) {
+                return;
+            }
+            match shape {
+                egui::Shape::Rect(r) => out.extend([r.fill, r.stroke.color]),
+                egui::Shape::Circle(c) => out.extend([c.fill, c.stroke.color]),
+                egui::Shape::Path(p) => {
+                    out.push(p.fill);
+                    if let egui::epaint::ColorMode::Solid(c) = p.stroke.color {
+                        out.push(c);
+                    }
+                }
+                egui::Shape::LineSegment { stroke, .. } => out.push(stroke.color),
+                egui::Shape::Text(t) => {
+                    out.push(t.fallback_color);
+                    out.extend(t.galley.job.sections.iter().map(|s| s.format.color));
+                }
+                egui::Shape::Mesh(m) => out.extend(m.vertices.iter().map(|v| v.color)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        shapes.iter().for_each(|c| walk(&c.shape, within, &mut out));
+        out
+    }
+
+    /// Back from the tip of a folded run of four reference points: the run is drawn open, as a
+    /// tray, the marker between its third and fourth commands and the fourth dimmed, undone; at
+    /// the tip it is folded again. Nothing is remembered as opened (review of pr/ux-right-cards
+    /// 8da16a22 and asks/lead-2: a folded run spanning the marker looked the same after a step
+    /// back).
+    #[test]
+    fn a_folded_run_holding_the_marker_is_drawn_open() {
+        let mut app = ModelApp::new(Session::default());
+        for k in 0..4 {
+            app.run("model.reference_point.create", json!({"name": format!("RP{k}"), "xyz": [0, 0, k]})).unwrap();
+        }
+        let ctx = egui::Context::default();
+        let size = vec2(1400.0, 900.0);
+        for _ in 0..3 {
+            frame(&ctx, &mut app, size, Vec::new());
+        }
+        let steps = || (0..4).map(|k| solidcraft_ui_registry::handle_at(&format!("{}Add reference point RP{k}", HANDLES.step))).collect::<Vec<_>>();
+        assert!(steps().iter().all(Option::is_none), "at the tip the run is folded");
+        let back = solidcraft_ui_registry::handle_at(&format!("{}back", HANDLES.controls)).expect("Back");
+        click_at(&ctx, &mut app, size, back);
+        assert_eq!(app.session.journal.len(), 3);
+        let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+        out.textures_delta.clear();
+        let Some(at) = steps().into_iter().collect::<Option<Vec<_>>>() else { panic!("each command is drawn: {:?}", steps()) };
+        let marker = solidcraft_ui_registry::rect_of(HANDLES.marker).expect("the marker");
+        assert!(at[2].x < marker.center().x && marker.center().x < at[3].x, "the marker between RP2 and RP3: {marker:?} {at:?}");
+        // A step's square chip around its handle: the strip's pitch less the gap to the next
+        // chip's edge, so only that step's own shapes lie inside.
+        let pitch = at[1].x - at[0].x;
+        let chip = |p: egui::Pos2| Rect::from_center_size(p, egui::Vec2::splat(pitch - 2.0));
+        let colours = |k: usize| colours_in(&out.shapes, chip(at[k]));
+        assert!(!colours(1).is_empty(), "the steps are drawn");
+        assert_eq!(colours(0), colours(1), "the done commands are drawn alike");
+        assert_ne!(colours(3), colours(1), "the undone command is dimmed");
+        assert!(app.timeline_open.is_empty(), "nothing is remembered as opened");
+        let forward = solidcraft_ui_registry::handle_at(&format!("{}forward", HANDLES.controls)).expect("Forward");
+        click_at(&ctx, &mut app, size, forward);
+        assert_eq!(app.session.journal.len(), 4);
+        assert!(steps().iter().all(Option::is_none), "back at the tip the run is folded");
     }
 
     /// Drags the grip by `dy` points, a frame per step, and releases it.
