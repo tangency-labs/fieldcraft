@@ -1,9 +1,18 @@
 //! Release versions: `MAJOR.MINOR.PATCH` with an optional pre-release suffix (`0.6.0-rc.1`),
 //! ordered as Semantic Versioning 2.0.0 orders them (§11): a pre-release sorts before its
 //! release, and pre-release identifiers compare numerically when both are numbers.
+//!
+//! Nightly builds (`0.8.0-nightly.20261116.40.1`, docs/releasing.md "Nightly builds") are the one
+//! exception when offering updates ([`Version::cmp_build`]): a nightly is built from `develop` once
+//! its `MAJOR.MINOR.PATCH` is set there, so it counts as that release or later, never before it.
+//! The rule is SolidCraft's (`crates/ui-egui/src/update.rs`, `comparable`; MIT OR Apache-2.0).
 
 use std::cmp::Ordering;
 use std::fmt;
+
+/// The first pre-release identifier of a nightly build's version (release.yml writes
+/// `<MAJOR.MINOR.PATCH>-nightly.<YYYYMMDD>.<run>.<attempt>`).
+pub const NIGHTLY: &str = "nightly";
 
 /// The longest version string accepted (a release tag is short; anything longer is hostile).
 const MAX_LEN: usize = 64;
@@ -53,6 +62,22 @@ impl Version {
     /// Whether this is a pre-release (`-rc.1`).
     pub fn is_prerelease(&self) -> bool {
         !self.pre.is_empty()
+    }
+
+    /// Whether this is a nightly build (`-nightly.…`).
+    pub fn is_nightly(&self) -> bool {
+        self.pre.first().is_some_and(|id| id == NIGHTLY)
+    }
+
+    /// Which of two builds is newer, for offering updates: SemVer order, except that a nightly
+    /// counts above every other build of its `MAJOR.MINOR.PATCH` (the module docs say why), and
+    /// nightlies of one `MAJOR.MINOR.PATCH` follow their date, run and attempt.
+    pub fn cmp_build(&self, other: &Version) -> Ordering {
+        let core = |v: &Version| (v.major, v.minor, v.patch);
+        match (self.is_nightly(), other.is_nightly()) {
+            (true, false) | (false, true) => core(self).cmp(&core(other)).then_with(|| self.is_nightly().cmp(&other.is_nightly())),
+            _ => self.cmp(other),
+        }
     }
 }
 
@@ -146,5 +171,29 @@ mod tests {
             assert!(v(pair[0]) < v(pair[1]), "{} < {}", pair[0], pair[1]);
         }
         assert_eq!(v("1.0.0").cmp(&v("v1.0.0+x")), Ordering::Equal);
+    }
+
+    /// A nightly is its release or later: above that release and its candidates, below the next
+    /// release; between nightlies, the later date, run and attempt is newer.
+    #[test]
+    fn a_nightly_counts_as_its_release_or_later() {
+        let order = [
+            "0.7.5",
+            "0.8.0-rc.1",
+            "0.8.0",
+            "0.8.0-nightly.20261116.40.1",
+            "0.8.0-nightly.20261116.40.2",
+            "0.8.0-nightly.20261117.41.1",
+            "0.8.1-rc.1",
+            "0.8.1",
+            "0.8.1-nightly.20261201.60.1",
+            "0.9.0",
+        ];
+        for pair in order.windows(2) {
+            assert_eq!(v(pair[0]).cmp_build(&v(pair[1])), Ordering::Less, "{} < {}", pair[0], pair[1]);
+            assert_eq!(v(pair[1]).cmp_build(&v(pair[0])), Ordering::Greater, "{} > {}", pair[1], pair[0]);
+        }
+        assert!(v("0.8.0-nightly.20261116.40.1").is_nightly() && !v("0.8.0-rc.1").is_nightly() && !v("0.8.0").is_nightly());
+        assert!(!v("0.8.0-rc.nightly").is_nightly(), "only the first identifier names a nightly");
     }
 }

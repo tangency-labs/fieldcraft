@@ -58,6 +58,11 @@ impl Server {
         self.route(&path, 200, release.to_string().into_bytes());
     }
 
+    /// Answer the API's release list (`releases`) with `list`.
+    pub fn releases(&self, list: &serde_json::Value) {
+        self.route(&format!("/repos/{}/releases", crate::REPO), 200, list.to_string().into_bytes());
+    }
+
     /// How many requests it has had.
     pub fn requests(&self) -> usize {
         self.requests.load(Ordering::SeqCst)
