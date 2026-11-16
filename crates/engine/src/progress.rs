@@ -1,9 +1,10 @@
 //! Where the model is in the analysis workflow: the setup checklist ([`Session::progress`]).
 //!
-//! The stages run in the usual order — geometry, preparation, mesh, material, section, sets,
-//! boundary conditions, loads, step, solve, results — each with whether it is done, the next one
-//! to do, still to do, blocked (its command cannot run yet) or optional, and the command that
-//! provides it. It is a guide, never a gate: a script can define things in any order, and
+//! The stages run geometry, preparation, mesh, material, sets, section, boundary conditions,
+//! loads, step, solve, results: each comes after every stage whose command provides what its own
+//! command requires (a section needs a material and a set). Each has whether it is done, the
+//! next one to do, still to do, blocked (its command cannot run yet) or optional, and the command
+//! that provides it. It is a guide, never a gate: a script can define things in any order, and
 //! [`crate::requirement`] still decides what each command needs.
 //!
 //! Each stage is a [`Requirement`] check (a count), and Solve also reads the model check's first
@@ -26,8 +27,8 @@ pub enum Stage {
     Prepare,
     Mesh,
     Material,
-    Section,
     Sets,
+    Section,
     BoundaryConditions,
     Loads,
     Step,
@@ -41,8 +42,8 @@ impl Stage {
         Stage::Prepare,
         Stage::Mesh,
         Stage::Material,
-        Stage::Section,
         Stage::Sets,
+        Stage::Section,
         Stage::BoundaryConditions,
         Stage::Loads,
         Stage::Step,
@@ -227,6 +228,27 @@ mod tests {
 
     fn status(s: &Session, stage: Stage) -> Status {
         statuses(s).into_iter().find(|(st, _)| *st == stage).map(|(_, st)| st).unwrap()
+    }
+
+    /// The stage that provides `r`: the one whose command is `r`'s provider (a set or a reference
+    /// point is provided by Sets' command, a material for the elements by Material's).
+    fn provided_by(r: Requirement) -> Option<Stage> {
+        Stage::ALL.into_iter().find(|st| st.requirement().provider() == r.provider())
+    }
+
+    /// The checklist's order is the commands' own: every stage comes after each stage its command
+    /// requires (`model.section.create` needs a material and a set, so Sets precedes Section).
+    #[test]
+    fn every_stage_comes_after_what_its_command_requires() {
+        for (at, stage) in Stage::ALL.into_iter().enumerate() {
+            let command = stage.requirement().provider();
+            let spec = crate::find_command(command).unwrap();
+            for &r in spec.requires {
+                let Some(needed) = provided_by(r) else { continue };
+                let before = Stage::ALL.iter().position(|st| *st == needed).unwrap();
+                assert!(before < at, "{stage:?} ({command}) needs {r:?} from {needed:?}, which comes after it in Stage::ALL");
+            }
+        }
     }
 
     #[test]
