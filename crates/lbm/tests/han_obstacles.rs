@@ -344,6 +344,12 @@ fn junctions_keep_one_rule_per_cell() {
                 let [i, j, k] = grid.coords(w.cell as usize);
                 assert!(open.contains(&grid.index([(i as i64 + i64::from(towards)) as usize, j, k])), "the junction cell is an open cell");
             }
+            let d = flow.sa_wall_distance().unwrap();
+            let junction = if plate { grid.index([nx - 1, 1, 0]) } else { grid.index([0, ny - 1, 0]) };
+            assert_eq!(d[junction], 0.5, "the junction cell's halfway wall");
+            for w in nodes.iter().filter(|w| w.sampled()) {
+                assert_eq!(d[w.interior as usize], 1.0, "{w:?}");
+            }
             let mut pairs = 0.0f64;
             let mut stopped = None;
             for _ in 0..setup.steps {
