@@ -52,6 +52,8 @@ impl ModelApp {
             // Window: last frame's layout, devices, counters.
             shell: _,
             toolbar_rects: _,
+            // Whether this frame's input came from the control channel.
+            driven: _,
             gpu_info: _,
             #[cfg(not(target_arch = "wasm32"))]
                 capturer: _,
