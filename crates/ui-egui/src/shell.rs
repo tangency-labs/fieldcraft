@@ -9,7 +9,7 @@ use solidcraft_theme::Tokens;
 use solidcraft_ui_kit as kit;
 
 /// The History card's docks: along the bottom of the viewport (the default) or under the top
-/// cards. The kit's grip drags the bar to the other dock (`history_bar::header`); there is no
+/// cards. The grip in its header drags the bar to the other dock (`timeline::header`); there is no
 /// free place between them, as in SolidCraft.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

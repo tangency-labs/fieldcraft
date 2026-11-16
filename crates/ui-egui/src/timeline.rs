@@ -6,9 +6,9 @@
 //! transport buttons) undoes or redoes up to it with `edit.undo` / `edit.redo`, as dragging the
 //! marker does; commands older than the undo history cannot be reached and say so.
 //!
-//! The bar is the kit's History bar (`solidcraft_ui_kit::history_bar`) and its run chip the kit's
-//! `HistoryGroupChip`, as SolidCraft draws its own; FieldCraft keeps its journal and undo behind
-//! them.
+//! The strip is the kit's History strip (`solidcraft_ui_kit::history_bar`) and its run chip the
+//! kit's `HistoryGroupChip`, as SolidCraft draws its own; FieldCraft keeps its journal and undo
+//! behind them. Its header is a row of the kit's panel header parts ([`header`]).
 
 use std::collections::BTreeSet;
 
@@ -201,9 +201,50 @@ fn tip(item: &Item, reachable: bool) -> String {
     s
 }
 
-/// Where the History bar publishes its grip, marker, steps and controls.
-const HANDLES: history_bar::Handles<'static> =
-    history_bar::Handles { grip: "timeline:grip", marker: "timeline:marker", step: "timeline:step:", controls: "timeline:" };
+/// Where the History strip publishes its marker and steps.
+const HANDLES: history_bar::Handles<'static> = history_bar::Handles { grip: GRIP, marker: "timeline:marker", step: "timeline:step:", controls: CONTROLS };
+/// Where the header publishes its grip.
+const GRIP: &str = "timeline:grip";
+/// Where the header publishes each History control (this followed by the control's id).
+const CONTROLS: &str = "timeline:";
+
+/// The header drawn: where the strip may start, the grip's response, the History control clicked.
+struct Header {
+    x: f32,
+    grip: egui::Response,
+    clicked: Option<kit::HistoryTransport>,
+}
+
+/// The header along the left of `rect`, made of the kit's panel header parts: its grip
+/// (`panel_grip`), the strip heading when it leaves room for the controls, and the four History
+/// controls (no Play: the journal is not played back). The grip and the heading together are the
+/// handle that drags the card to the other dock ([`follow_grip`]).
+fn header(ui: &mut egui::Ui, rect: Rect) -> Header {
+    let t = solidcraft_theme::Tokens::get();
+    let inner = Rect::from_min_max(pos2(rect.left() + t.space_10, rect.top()), rect.right_bottom());
+    let mut row = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    row.spacing_mut().item_spacing.x = 0.0;
+    let mut handle = kit::panel_grip(&mut row).rect;
+    row.add_space(t.space_8);
+    let heading = kit::StripHeading::new(row.painter(), "History");
+    if heading.width() + kit::history_transport_width() <= row.available_width() {
+        handle = handle.union(heading.show(&mut row).rect);
+    }
+    let grip = ui.interact(handle, ui.scope_id().with(GRIP), egui::Sense::drag());
+    solidcraft_ui_registry::publish_handle(GRIP, handle.center());
+    let mut clicked = None;
+    for (k, control) in kit::HistoryTransport::ALL.into_iter().enumerate() {
+        if k > 0 {
+            row.add_space(t.space_2);
+        }
+        let (_, bounds) = row.allocate_space(vec2(t.space_24, t.space_24));
+        // Play's labels go unused: it is not among the four.
+        if control.show_as(&mut row, bounds, false, CONTROLS, kit::PlayLabels { play: "", stop: "" }).clicked() {
+            clicked = Some(control);
+        }
+    }
+    Header { x: row.min_rect().right() + t.space_16, grip, clicked }
+}
 
 /// What the strip shows, in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -450,13 +491,12 @@ fn follow_grip(ui: &egui::Ui, grip: &egui::Response, at: Rect, top: Rect, bottom
     None
 }
 
-/// The kit's header (grip, title and the History controls) and strip (a chip per command or run,
-/// the marker after the current state) in `ui`'s rect. Returns where to roll the model and the
-/// run to open or fold, and the grip's response (the grip and the title). Its controls, a click on a
-/// command and a dragged marker undo or redo through [`ModelApp::roll`]; the journal cannot be
+/// The [`header`] (grip, title and the History controls) and the kit's strip (a chip per command
+/// or run, the marker after the current state) in `ui`'s rect. Returns where to roll the model and
+/// the run to open or fold, and the grip's response (the grip and the title). Its controls, a click
+/// on a command and a dragged marker undo or redo through [`ModelApp::roll`]; the journal cannot be
 /// reordered.
 fn contents(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, floating: bool) -> (Option<Roll>, Option<usize>, egui::Response) {
-    let mut roll: Option<Roll> = None;
     let mut toggle: Option<usize> = None;
     let r = ui.max_rect();
     let (undo, _) = app.session.undo_depth();
@@ -479,8 +519,17 @@ fn contents(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, floating: bool) -
         reorder: false,
         handles: HANDLES,
     };
-    let head = history_bar::header(ui, &bar, r);
-    let mut actions = head.actions;
+    let head = header(ui, r);
+    let mut roll = head.clicked.and_then(|control| match control {
+        // First and Last go as far as the history holds.
+        kit::HistoryTransport::First => Some(Roll::Undo(usize::MAX)),
+        kit::HistoryTransport::Back => Some(Roll::Undo(1)),
+        kit::HistoryTransport::Forward => Some(Roll::Redo(1)),
+        kit::HistoryTransport::Last => Some(Roll::Redo(usize::MAX)),
+        // Not shown: the journal is not played back.
+        kit::HistoryTransport::Play => None,
+    });
+    let mut actions = Vec::new();
     if list.is_empty() {
         let k = solidcraft_theme::Tokens::get();
         ui.painter().text(
@@ -504,11 +553,6 @@ fn contents(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, floating: bool) -
     }
     for action in actions {
         roll = match action {
-            // First and Last go as far as the history holds.
-            history_bar::Action::Seek(history_bar::Seek::First) => Some(Roll::Undo(usize::MAX)),
-            history_bar::Action::Seek(history_bar::Seek::Back) => Some(Roll::Undo(1)),
-            history_bar::Action::Seek(history_bar::Seek::Forward) => Some(Roll::Redo(1)),
-            history_bar::Action::Seek(history_bar::Seek::Last) => Some(Roll::Redo(usize::MAX)),
             history_bar::Action::Seek(history_bar::Seek::Slot { slot, .. }) => Some(Roll::To(slot)),
             // A command's chip rolls the model to just after it (or says why it cannot).
             history_bar::Action::Select { step, .. } => usize::try_from(step).ok().map(|at| Roll::To(at + 1)),
@@ -703,7 +747,7 @@ mod tests {
         let (list, _) = items(&app);
         let old = list.iter().find(|i| i.count() == 1 && i.end < done).expect("a single command before the last");
         let step = format!("{}{}", HANDLES.step, describe(old));
-        let controls = ["first", "back", "forward", "last"].map(|c| format!("{}{c}", HANDLES.controls));
+        let controls = ["first", "back", "forward", "last"].map(|c| format!("{}{c}", CONTROLS));
         for name in controls.iter().chain([&step]) {
             app.status = None;
             let at = solidcraft_ui_registry::handle_at(name).unwrap_or_else(|| panic!("{name} is drawn"));
@@ -790,7 +834,7 @@ mod tests {
         }
         let steps = || (0..4).map(|k| solidcraft_ui_registry::handle_at(&format!("{}Add reference point RP{k}", HANDLES.step))).collect::<Vec<_>>();
         assert!(steps().iter().all(Option::is_none), "at the tip the run is folded");
-        let back = solidcraft_ui_registry::handle_at(&format!("{}back", HANDLES.controls)).expect("Back");
+        let back = solidcraft_ui_registry::handle_at(&format!("{}back", CONTROLS)).expect("Back");
         click_at(&ctx, &mut app, size, back);
         assert_eq!(app.session.journal.len(), 3);
         let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default() };
@@ -808,7 +852,7 @@ mod tests {
         assert_eq!(colours(0), colours(1), "the done commands are drawn alike");
         assert_ne!(colours(3), colours(1), "the undone command is dimmed");
         assert!(app.timeline_open.is_empty(), "nothing is remembered as opened");
-        let forward = solidcraft_ui_registry::handle_at(&format!("{}forward", HANDLES.controls)).expect("Forward");
+        let forward = solidcraft_ui_registry::handle_at(&format!("{}forward", CONTROLS)).expect("Forward");
         click_at(&ctx, &mut app, size, forward);
         assert_eq!(app.session.journal.len(), 4);
         assert!(steps().iter().all(Option::is_none), "back at the tip the run is folded");
@@ -816,7 +860,7 @@ mod tests {
 
     /// Drags the grip by `dy` points, a frame per step, and releases it.
     fn drag_grip(ctx: &egui::Context, app: &mut ModelApp, size: egui::Vec2, dy: f32) {
-        let grip = solidcraft_ui_registry::handle_at(HANDLES.grip).expect("the grip");
+        let grip = solidcraft_ui_registry::handle_at(GRIP).expect("the grip");
         let to = grip + vec2(0.0, dy);
         frame(ctx, app, size, vec![egui::Event::PointerMoved(grip)]);
         frame(ctx, app, size, vec![press(grip, true)]);
@@ -842,6 +886,10 @@ mod tests {
         }
         let bottom = app.shell.history.expect("the History card");
         assert_eq!(app.ui.history_dock, HistoryDock::Bottom);
+        // The grip heads the card: inside it, on its middle line, before the History controls.
+        let grip = solidcraft_ui_registry::handle_at(GRIP).expect("the grip");
+        let first = solidcraft_ui_registry::handle_at(&format!("{CONTROLS}first")).expect("First");
+        assert!(bottom.contains(grip) && (grip.y - bottom.center().y).abs() < 0.5 && grip.x < first.x, "{grip:?} {first:?} {bottom:?}");
         // Dropped nearer the bottom: it stays there.
         drag_grip(&ctx, &mut app, size, -250.0);
         assert_eq!((app.ui.history_dock, app.shell.history), (HistoryDock::Bottom, Some(bottom)));
