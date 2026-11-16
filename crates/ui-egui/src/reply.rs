@@ -298,7 +298,10 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     // longest key.
     kit::scope(ui, |ui| {
         ui.add_space(4.0);
-        if kit::button(ui, "Run again", kit::Button::Normal).backing_on_hover_text(reply.command.as_str()).clicked() {
+        if kit::button(ui, "Run again", kit::Button::Normal)
+            .backing_on_hover_text(format!("{} again, with the same parameters", reply.label))
+            .clicked()
+        {
             acts.push(Act::Rerun);
         }
         ui.add_space(4.0);
@@ -703,7 +706,8 @@ fn quality(ui: &mut egui::Ui, t: &Tokens, v: &Value, units: &DisplaySystem, acts
     }
     if let Some(skipped) = v.get("skipped").and_then(Value::as_object).filter(|s| !s.is_empty()) {
         ui.add_space(6.0);
-        let text: Vec<String> = skipped.iter().map(|(k, n)| format!("{k}: {}", n.as_u64().map_or_else(|| n.to_string(), count))).collect();
+        let text: Vec<String> =
+            skipped.iter().map(|(k, n)| format!("{k}: {}", n.as_u64().map_or_else(|| crate::context::value_text(n), count))).collect();
         kit::status_line(ui, &format!("Not measured: {}", text.join(", ")), kit::StatusTone::Dim);
     }
 }

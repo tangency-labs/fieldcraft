@@ -398,8 +398,14 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 app.close_dialog();
                 return ok(Value::Null);
             }
-            if let (Some(d), Some(params)) = (app.dialog.as_mut(), p.get("params")) {
-                d.text = serde_json::to_string_pretty(params).unwrap_or_default();
+            // The form's fields are an object's: anything else is refused before it reaches them.
+            if let Some(params) = p.get("params") {
+                if !params.is_object() {
+                    return err("`params` must be an object of the form's fields");
+                }
+                if let Some(d) = app.dialog.as_mut() {
+                    d.text = params.to_string();
+                }
             }
             // The form's Target row: the viewport's selection into the parameters.
             if b("use_selection")
@@ -1063,6 +1069,11 @@ mod tests {
         let mut app = ModelApp::new(Session::default());
         assert_eq!(call(&mut app, "ui.dialog", json!({"run": true}))["ok"], false);
         assert_eq!(call(&mut app, "ui.start", json!({"command": "mesh.node.add"}))["result"]["dialog"], "mesh.node.add");
+        // The form has fields, never a text: parameters that are not an object are refused and
+        // leave the form as it was.
+        let before = app.dialog.as_ref().map(|d| d.text.clone());
+        assert_eq!(call(&mut app, "ui.dialog", json!({"params": [1, 2]}))["ok"], false);
+        assert_eq!(app.dialog.as_ref().map(|d| d.text.clone()), before);
         let r = call(&mut app, "ui.dialog", json!({"params": {"label": 3, "xyz": [1, 2, 3]}, "run": true}));
         assert_eq!(r["ok"], true, "{r}");
         assert!(app.dialog.is_none() && app.session.model.node(3).is_some());
