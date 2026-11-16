@@ -10,7 +10,7 @@ use fieldcraft_lbm::lattice::{C, Q, W};
 use fieldcraft_lbm::outlet::UNKNOWN;
 use fieldcraft_lbm::setup::MAX_LATTICE_SPEED;
 use fieldcraft_lbm::{Error, Flow, Group, Result, Rule, Target};
-use fieldcraft_model::ThermalCondition;
+use fieldcraft_model::{BoxFace, ThermalCondition};
 use wgpu::util::DeviceExt;
 
 const SHADER: &str = include_str!("lbm.wgsl");
@@ -874,6 +874,12 @@ impl GpuFlow {
         let mut node_links: Vec<(u32, u32)> = Vec::new();
         if let Some(nodes) = flow.wall_nodes() {
             let links = flow.links();
+            if let Some(w) = nodes.nodes().iter().find(|w| !w.flat || w.group as usize >= BoxFace::ALL.len()) {
+                return Err(Error::Invalid(format!(
+                    "not supported yet on the GPU: Han et al.'s on-node wall (`spalding_bounce`) at an obstacle wall, an edge or a corner (boundary node {}); run on the CPU",
+                    w.cell
+                )));
+            }
             for w in nodes.nodes() {
                 let (cell, axis) = (w.cell as usize, usize::from(w.axis).min(2));
                 let mut normal = [0i32; 3];
