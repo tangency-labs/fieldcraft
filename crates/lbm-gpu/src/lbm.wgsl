@@ -110,6 +110,12 @@ override WALL_BOUNCE: bool = false;
 override ON_NODE: bool = false;
 // Interpolated walls; likewise.
 override INTERPOLATED: bool = false;
+// The interpolated walls' mass correction (fieldcraft_lbm::wall_mass): the link gather records what
+// each interpolated link created in `contrib.w`, `wall_delta` sums it per wall node into `wallf.x`
+// (over the sum of the lattice weights of the node's fluid targets), and `wall_remove` one step
+// later has every target cell take back the lattice-weighted share of what its neighbours
+// handed out; likewise.
+override WALL_MASS: bool = false;
 // Some interpolated links take the quadratic form (`link_f` then has a third row of links, the
 // third node of each, and the groups' wall velocities follow it); likewise.
 override QUADRATIC: bool = false;
@@ -257,6 +263,11 @@ struct Params {
 @group(0) @binding(25) var<storage, read_write> velocity: array<f32>;
 // The flags buffer (`fluid`), writable, for `fan_update` alone.
 @group(0) @binding(26) var<storage, read_write> zones_rw: array<u32>;
+// Per cell: x the share a wall node hands to each target per unit of lattice weight (its delta
+// over W), y 1 where the cell takes mass back (`wall_remove`, `wall_delta`).
+@group(0) @binding(27) var<storage, read_write> wallf: array<vec2<f32>>;
+// Per wall node: its cell, the range of its cell's links (first, end) and 1/W as f32 bits.
+@group(0) @binding(28) var<storage, read> wallnode: array<vec4<u32>>;
 
 var<workgroup> red: array<vec4<f32>, 256>;
 // The largest squared speed of a workgroup's cells (collide): one atomic per workgroup, not
@@ -1530,12 +1541,58 @@ fn gather_link(l: u32, exchange: bool) {
     } else {
         v = post(opp(q), cell);
     }
+    // What an interpolated wall link returned beyond what left along it (`wall_mass`).
+    var created = 0.0;
+    if WALL_MASS && kind == KIND_BOUNCE && is_interpolated(lu) { created = v - post(opp(q), cell); }
     if AA_MODE {
         g[l] = v;
-        if exchange { contrib[l] = vec4<f32>(momentum_exchange(l, lu, q, kind, q2), 0.0); }
+        if exchange { contrib[l] = vec4<f32>(momentum_exchange(l, lu, q, kind, q2), created); }
+        else if WALL_MASS { contrib[l].w = created; }
     } else {
         g[q * n + cell] = v;
+        if WALL_MASS { contrib[l].w = created; }
     }
+}
+
+// What the wall nodes handed out one step ago, taken back: each target cell removes, spread over
+// its populations by the lattice weights, the sum over its neighbours y of w_i * share(y) (the
+// weights renormalised over the fluid targets are in `share`). Run after the streamed populations
+// are complete, before `wall_delta` replaces the shares.
+@compute @workgroup_size(256)
+fn wall_remove(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let cell = cell_of(lid, wg);
+    if cell >= params.n || wallf[cell].y == 0.0 { return; }
+    let xyz = coords(cell);
+    let size = vec3<i32>(i32(params.nx), i32(params.ny), i32(params.nz));
+    let periodic = params.periodic.xyz != vec3<u32>(0u);
+    var got = 0.0;
+    for (var i = 0u; i < 19u; i = i + 1u) {
+        let p = xyz - c_of(i);
+        if any(((p < vec3<i32>(0)) | (p >= size)) & !periodic) { continue; }
+        got = got + w_of(i) * wallf[wrapped(p)].x;
+    }
+    if got == 0.0 { return; }
+    let at = aa_coords(cell);
+    for (var q = 0u; q < 19u; q = q + 1u) {
+        store_streamed(q, cell, at, streamed(q, cell, at) - got * w_of(q));
+    }
+}
+
+// One thread per wall node: what its links created this step, over the sum of the weights of its
+// fluid targets, kept for the next step's `wall_remove`.
+@compute @workgroup_size(256)
+fn wall_delta(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let k = cell_of(lid, wg);
+    if k >= arrayLength(&wallnode) { return; }
+    let node = wallnode[k];
+    var s = 0.0;
+    for (var l = node.y; l < node.z; l = l + 1u) {
+        let lu = link_u[l];
+        if ((lu.x >> 8u) & 0xffu) == KIND_BOUNCE && is_interpolated(lu) {
+            s = s + contrib[l].w;
+        }
+    }
+    wallf[node.x].x = s * bitcast<f32>(node.w);
 }
 
 // The gather above must complete before any AA boundary population is overwritten.

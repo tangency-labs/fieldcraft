@@ -217,6 +217,13 @@ pub struct GpuFlow {
     gradients: bool,
     walls: wgpu::Buffer,
     wall_count: usize,
+    /// The interpolated walls' mass correction runs after every step's links.
+    wall_mass: bool,
+    /// Its per-cell shares (x) and gate (y), the wall nodes' cells with their weight sums, and the
+    /// dispatch over the nodes.
+    wall_shares: wgpu::Buffer,
+    wall_nodes: Vec<(u32, f64)>,
+    wall_node_groups: (u32, u32),
     /// Van Driest's damping, when it has wall cells.
     damping: Option<Damping>,
     /// The uniforms of the two phases (the body acceleration can change between steps).
@@ -393,7 +400,7 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 35] = [
+const KERNELS: [&str; 37] = [
     "clear_eddy",
     "gradient_velocity",
     "fan_partials",
@@ -408,6 +415,8 @@ const KERNELS: [&str; 35] = [
     "stream_links",
     "stream_links_exchange",
     "scatter_links",
+    "wall_remove",
+    "wall_delta",
     "outlet_convect",
     "open_boundaries",
     "link_forces",
@@ -521,6 +530,8 @@ struct Variant {
     interpolated: bool,
     /// Some of them take the quadratic form.
     quadratic: bool,
+    /// Their mass correction runs after every step's links.
+    wall_mass: bool,
 }
 
 /// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
@@ -574,6 +585,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("ZONES", if variant.zones { 1.0 } else { 0.0 }),
                     ("INTERPOLATED", if variant.interpolated { 1.0 } else { 0.0 }),
                     ("QUADRATIC", if variant.quadratic { 1.0 } else { 0.0 }),
+                    ("WALL_MASS", if variant.wall_mass { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
                 ..Default::default()
@@ -957,6 +969,39 @@ impl GpuFlow {
             }
         }
         let by_group: Vec<u32> = by_group.iter().map(|(_, l)| *l).collect();
+        // The interpolated walls' mass correction: per wall node its cell, the range of its cell's
+        // links and 1/W, and per cell the gate of the cells that take mass back.
+        let correction = flow.wall_mass().filter(|_| interpolated);
+        let wall_mass = correction.is_some();
+        let wall_nodes = correction.map_or_else(Vec::new, |c| c.nodes());
+        let wall_gate = correction.map_or(&[][..], |c| c.receivers());
+        let mut spans: Vec<Option<(usize, usize)>> = vec![None; wall_nodes.len()];
+        for (l, link) in links.iter().enumerate() {
+            if let Ok(k) = wall_nodes.binary_search_by_key(&link.cell, |n| n.0)
+                && let Some(span) = spans.get_mut(k)
+            {
+                match span {
+                    None => *span = Some((l, 1)),
+                    Some((first, count)) if *first + *count == l => *count += 1,
+                    Some(_) => return Err(Error::Invalid("not supported yet: interpolated walls with the links of a cell not in a row".into())),
+                }
+            }
+        }
+        let mut wall_node_words: Vec<u32> = Vec::with_capacity(4 * wall_nodes.len());
+        for (&(cell, total), span) in wall_nodes.iter().zip(&spans) {
+            let Some((first, count)) = *span else { continue };
+            let inv = if total > 0.0 { (1.0 / total) as f32 } else { 0.0 };
+            wall_node_words.extend_from_slice(&[cell, first as u32, (first + count) as u32, inv.to_bits()]);
+        }
+        let mut wall_share_data: Vec<f32> = if wall_mass { reserved(2 * n, "interpolated wall shares")? } else { Vec::new() };
+        if wall_mass {
+            wall_share_data.resize(2 * n, 0.0f32);
+            for &cell in wall_gate {
+                if let Some(x) = wall_share_data.get_mut(2 * cell as usize + 1) {
+                    *x = 1.0;
+                }
+            }
+        }
         // Each group's thermal condition (held temperatures shifted by T₀).
         let mut group_t = reserved(4 * group_count, "thermal conditions")?;
         for g in 0..group_count {
@@ -1161,6 +1206,8 @@ impl GpuFlow {
         let velocity = empty("lbm gradient velocities", if gradients { 12 * n as u64 } else { 16 });
         let stats = storage("lbm stats", &bytes_u32(&[0, 0, 0, 0]));
         let contrib = empty("lbm link forces", 16 * links.len() as u64);
+        let wall_shares = storage("lbm interpolated wall shares", &bytes_f32(&wall_share_data));
+        let wall_node_buf = storage("lbm interpolated wall nodes", &bytes_u32(&wall_node_words));
         let by_group = storage("lbm links by group", &bytes_u32(&by_group));
         let group_start = storage("lbm group start", &bytes_u32(&group_start));
         let forces = empty("lbm forces", 16 * group_count as u64);
@@ -1198,6 +1245,7 @@ impl GpuFlow {
             zones: zones.zones > 0,
             interpolated,
             quadratic,
+            wall_mass,
         })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
@@ -1230,6 +1278,8 @@ impl GpuFlow {
                 25 => &velocity,
                 // The flags buffer again, writable, for `fan_update` alone (lbm.wgsl).
                 26 => &fluid_buf,
+                27 => &wall_shares,
+                28 => &wall_node_buf,
                 _ => return None,
             })
         };
@@ -1274,6 +1324,10 @@ impl GpuFlow {
             gradients,
             walls: walls_buf,
             wall_count,
+            wall_mass,
+            wall_node_groups: groups(wall_nodes.len())?,
+            wall_nodes,
+            wall_shares,
             damping: match damping {
                 Some(distances) => Some(Damping { buffer: damping_buf, groups: groups(distances.len())?, distances, nu: nu0 }),
                 None => None,
@@ -1470,6 +1524,17 @@ impl GpuFlow {
         Ok(rows.as_chunks::<WALL_ROW>().0.iter().map(|r| ([f64::from(r[8]), f64::from(r[9]), f64::from(r[10])], f64::from(r[11]))).collect())
     }
 
+    /// The mass the interpolated walls made at the last step that the correction has not taken back
+    /// yet (lattice units); subtract it from the total mass to read the conserved quantity. Zero
+    /// without the correction.
+    pub fn wall_mass_pending(&self) -> Result<f64> {
+        if !self.wall_mass {
+            return Ok(0.0);
+        }
+        let shares = self.read_f32(&self.wall_shares, 2 * self.n)?;
+        Ok(self.wall_nodes.iter().map(|&(cell, total)| shares.get(2 * cell as usize).map_or(0.0, |&s| f64::from(s) * total)).sum())
+    }
+
     /// Stored population momentum before any wall-target substitution. Diagnostic only;
     /// currently restricted to closed, unheated boxes without zones or on-node boundaries.
     /// Uses the same current AA/AB orientation as the normal moments readback.
@@ -1544,6 +1609,10 @@ impl GpuFlow {
                 commands.push((self.current, if exchange { "stream_links_exchange" } else { "stream_links" }, self.links_groups));
                 if self.aa {
                     commands.push((self.current, "scatter_links", self.links_groups));
+                }
+                if self.wall_mass {
+                    commands.push((self.current, "wall_remove", self.cells));
+                    commands.push((self.current, "wall_delta", self.wall_node_groups));
                 }
             }
             if self.prepare_outlets {

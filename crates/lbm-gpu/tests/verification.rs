@@ -351,6 +351,35 @@ fn quadratic_interpolated_walls_match_the_cpu_fields_and_forces() {
     }
 }
 
+/// The interpolated walls' mass correction on the device (linear and quadratic walls, at rest and
+/// moving): the GPU's fields and skin force against the CPU's with the correction on, and the
+/// mass of the periodic box less the mass still in flight held, on the CPU to round-off and on the
+/// device to the single-precision sums of its cells. Every collision and layout.
+#[test]
+fn the_walls_mass_correction_matches_the_cpu_and_holds_the_mass() {
+    for walls in [WallTreatment::Interpolated, WallTreatment::InterpolatedQuadratic] {
+        for moving in [None, Some([0.0, 0.05, 0.0])] {
+            for (collision, streaming) in cases() {
+                let (setup, mut flow) = sphere_flow(collision, walls, moving);
+                flow.set_wall_mass_correction(true).unwrap();
+                let start = Backend::mass(&mut flow).unwrap();
+                let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+                let (du, drho) = field_difference(&mut cpu, &mut gpu);
+                let (fc, fg, dforce) = skin_forces(&mut cpu, &mut gpu);
+                let cpu_drift = (Backend::mass(&mut cpu).unwrap() - cpu.wall_mass_pending()) / start - 1.0;
+                let gpu_drift = (Backend::mass(&mut *gpu).unwrap() - gpu.wall_mass_pending().unwrap()) / start - 1.0;
+                println!(
+                    "{walls:?} {collision:?} (moving {moving:?}) with the correction: CPU/GPU velocity {du:.2e}, density {drho:.2e}; force CPU {fc:?} GPU {fg:?} ({dforce:.2e}); mass drift CPU {cpu_drift:.1e}, GPU {gpu_drift:.1e}"
+                );
+                assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
+                assert!(dforce < 5e-5, "{dforce}");
+                assert!(cpu_drift.abs() < 1e-10, "{cpu_drift}");
+                assert!(gpu_drift.abs() < 1e-7, "{gpu_drift}");
+            }
+        }
+    }
+}
+
 /// Halfway walls, the default, stay halfway on the GPU: no link interpolates, and the sphere's
 /// GPU drag is the CPU's halfway drag within the tolerance, which interpolated walls move by
 /// far more than it (so the check tells the two apart).

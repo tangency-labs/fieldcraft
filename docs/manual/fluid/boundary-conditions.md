@@ -150,7 +150,9 @@ fluid neighbours with the lattice weights, and the receivers remove it one step 
 `crates/lbm/src/wall_mass.rs`). On the turned channels the mean density then holds to round-off
 (1e-12 per 10 000 steps against up to 2.7e-2) with the flow rate where the wall rule puts it; in an
 open channel it leaves the flux and the pressure gradient to the inlet and the outlet (inlet and outlet
-cells take no share). A flow with the correction on cannot be checkpointed yet.
+cells take no share). It runs on the GPU too (two kernels, no reduction: the mass drift of a sphere in a
+periodic box is below 1e-8 there, 4e-12 on the CPU). A moving wall's term is counted in what the walls
+create. A flow with the correction on cannot be checkpointed yet.
 
 **The wall depends on τ.** The linear interpolation's effective wall position carries an error
 that depends on the relaxation rates (Ginzburg & d'Humières 2003), so its drag moves with τ. On
