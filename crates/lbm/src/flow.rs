@@ -899,15 +899,14 @@ impl Flow {
                         ijk[t2] = j;
                         let cell = grid.index(ijk);
                         ijk[a] = if inward > 0 { layer + 1 } else { layer - 1 };
-                        node_list.push(WallNode {
-                            cell: cell as u32,
-                            interior: grid.index(ijk) as u32,
-                            axis: a as u8,
-                            inward: inward as i8,
-                            group: face.index() as u32,
-                            stress: [0.0; 3],
-                            taken: [0.0; 3],
-                        });
+                        node_list.push(WallNode::new(
+                            cell as u32,
+                            grid.index(ijk) as u32,
+                            a as u8,
+                            inward as i8,
+                            face.index() as u32,
+                            crate::bounce::flat_roles(a, inward),
+                        ));
                     }
                 }
             }
@@ -2281,7 +2280,7 @@ impl Flow {
             for (q, x) in fq.iter_mut().enumerate() {
                 *x = self.f.get(q * s + cell).copied().unwrap_or(0.0);
             }
-            w.taken = crate::bounce::on_node(&mut fq, usize::from(w.axis), i32::from(w.inward), w.stress);
+            w.collide(&mut fq);
             for (q, v) in fq.iter().enumerate() {
                 if let Some(x) = self.f.get_mut(q * s + cell) {
                     *x = *v;
