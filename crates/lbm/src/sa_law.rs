@@ -147,6 +147,28 @@ pub fn y_plus_for_reynolds(re: f64) -> f64 {
     if y.is_finite() { y.clamp(ya, yb) } else { ya }
 }
 
+/// The growth of the table's grid from one node to the next (the GPU solver reads it to bound a
+/// segment from above).
+pub const GRID_RATIO: f64 = RATIO;
+
+/// The table as the segments [`y_plus_for_reynolds`] searches, for a device that has no way to
+/// share the host's table: segment k (k = 1, …) between nodes k − 1 and k is `[P_k, y_(k−1), s, b]`
+/// with P_k = y⁺_k u⁺_k, the largest Reynolds number it holds, the node it starts at, and the slope
+/// s and intercept b of u⁺ = b + s y⁺ inside it. The same table, bit for bit, as the host's.
+pub fn segments() -> Vec<[f64; 4]> {
+    let t = table();
+    let mut out = Vec::with_capacity(t.y.len().saturating_sub(1));
+    for k in 1..t.y.len() {
+        let (Some(&ya), Some(&yb), Some(&ua), Some(&ub), Some(&p)) = (t.y.get(k - 1), t.y.get(k), t.u.get(k - 1), t.u.get(k), t.product.get(k))
+        else {
+            break;
+        };
+        let s = (ub - ua) / (yb - ya);
+        out.push([p, ya, s, ua - s * ya]);
+    }
+    out
+}
+
 /// The friction velocity of a flow of speed `speed` parallel to a wall at distance `y` with
 /// kinematic viscosity `nu`, from the equilibrium layer: u_τ with u_τ u⁺(y u_τ / ν) = U. 0 for a
 /// speed, distance or viscosity that is not a positive number.
@@ -189,6 +211,27 @@ mod tests {
         // The values the wall function is checked at (docs/verification.md).
         for (y, u) in [(7.5, 7.183), (15.0, 11.089), (30.0, 13.383), (60.0, 15.100), (1000.0, 21.890)] {
             assert!((u_plus(y) - u).abs() < 5e-3, "y⁺ {y}: {} vs {u}", u_plus(y));
+        }
+    }
+
+    /// The segments a device searches give the inversion's answer: the first one whose largest
+    /// Reynolds number is above `re`, its quadratic, clamped to the segment.
+    #[test]
+    fn the_segments_invert_like_the_table() {
+        let seg = segments();
+        assert!(seg.len() < MAX_NODES && seg.windows(2).all(|w| w[0][0] < w[1][0] && w[0][1] < w[1][1]));
+        for e in 0..=60 {
+            let re = 2e-6 * 10f64.powf(e as f64 / 5.0);
+            let k = seg.partition_point(|s| s[0] <= re);
+            let Some(&[_, ya, s, b]) = seg.get(k) else {
+                assert!(re >= seg[seg.len() - 1][0] || y_plus_for_reynolds(re) > 0.0);
+                continue;
+            };
+            let disc = (b * b + 4.0 * s * re).max(0.0).sqrt();
+            let y = if b >= 0.0 { 2.0 * re / (b + disc) } else { (disc - b) / (2.0 * s) };
+            let y = y.clamp(ya, ya * GRID_RATIO);
+            let want = y_plus_for_reynolds(re);
+            assert!((y - want).abs() <= 1e-12 * want.max(1e-3), "re {re}: {y} vs {want}");
         }
     }
 
