@@ -577,6 +577,20 @@ impl ThermalState {
     }
 }
 
+/// What the corner rule did to the velocity inlets: the cells in an inlet's layer that touch two walls (a box edge, a
+/// staircase step on a rim) became wall cells.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct InletCornerReport {
+    /// Cells reclassified, over all velocity inlets.
+    pub cells: usize,
+    /// The inlet-layer cells that were fluid before, over the inlets that lost some.
+    pub inlet_cells: usize,
+    /// The largest share of one inlet's cells that was lost.
+    pub area_lost: f64,
+    /// The largest factor an inlet's velocity was raised by to keep its volume flow.
+    pub flux_rescale: f64,
+}
+
 /// The flow state.
 #[derive(Debug, Clone)]
 pub struct Flow {
@@ -613,6 +627,8 @@ pub struct Flow {
     wall_bounce: bool,
     /// Han et al.'s on-node wall-function bounce (`spalding_bounce`): its boundary nodes.
     nodes: Option<WallNodes>,
+    /// The inlet cells the on-node wall law's corner rule made wall cells.
+    inlet_corners: InletCornerReport,
     /// With it, the cells that collide: the fluid cells less the boundary nodes (empty
     /// otherwise: every fluid cell collides).
     bulk: Vec<bool>,
@@ -822,6 +838,99 @@ impl Flow {
         // A symmetry plane is a slip face to the flow (and adiabatic: the model holds it so).
         let is_slip = |face: BoxFace| domain.faces.get(face).is_slip();
         let is_symmetry = |face: BoxFace| domain.faces.get(face).is_symmetry();
+        // An inlet cell that touches two walls (a solid cell or a wall face in its plane) is a wall cell under the
+        // on-node wall: with the inlet rule on it a density mode grows. Decided once on the layer as it stands. The
+        // inlet's velocity is raised to deliver the requested flow; an inlet left with no flux is refused.
+        let mut corner_cells: Vec<usize> = Vec::new();
+        let mut inlet_corners = InletCornerReport::default();
+        let mut inlet_rescale = [1.0f64; 6];
+        if matches!(setup.wall_model, Some(WallModel::SpaldingBounce)) {
+            for face in BoxFace::ALL {
+                let profile = match *domain.faces.get(face) {
+                    FaceCondition::Velocity { profile, .. } => profile,
+                    _ => continue,
+                };
+                let a = face.axis();
+                let layer = if face.is_max() { grid.cells[a] - 1 } else { 0 };
+                let (t1, t2) = ((a + 1) % 3, (a + 2) % 3);
+                let weight = |ijk: [usize; 3]| -> f64 {
+                    let mut w = 1.0;
+                    if profile == Profile::Parabolic {
+                        for t in [t1, t2].into_iter().filter(|t| !periodic[*t]) {
+                            let s = (ijk[t] as f64 + 0.5) / grid.cells[t] as f64;
+                            w *= 4.0 * s * (1.0 - s);
+                        }
+                    }
+                    w
+                };
+                let is_wall = |ijk: [usize; 3], t: usize, up: bool| -> bool {
+                    let i = ijk[t] as i64 + if up { 1 } else { -1 };
+                    let n_t = grid.cells[t] as i64;
+                    let mut q = ijk;
+                    if i < 0 || i >= n_t {
+                        if !periodic[t] {
+                            return wall_velocity(BoxFace::of(t, up)).is_some();
+                        }
+                        q[t] = i.rem_euclid(n_t) as usize;
+                    } else {
+                        q[t] = i as usize;
+                    }
+                    !fluid.get(grid.index(q)).copied().unwrap_or(false)
+                };
+                let (mut cells_before, mut flux_before, mut flux_after) = (0usize, 0.0f64, 0.0f64);
+                let mut corner: Vec<usize> = Vec::new();
+                for j in 0..grid.cells[t2] {
+                    for i in 0..grid.cells[t1] {
+                        let mut ijk = [0usize; 3];
+                        ijk[a] = layer;
+                        ijk[t1] = i;
+                        ijk[t2] = j;
+                        let cell = grid.index(ijk);
+                        if !fluid.get(cell).copied().unwrap_or(false) {
+                            continue;
+                        }
+                        cells_before += 1;
+                        let w = weight(ijk);
+                        flux_before += w;
+                        let walls =
+                            [t1, t2].into_iter().map(|t| usize::from(is_wall(ijk, t, false)) + usize::from(is_wall(ijk, t, true))).sum::<usize>();
+                        if walls >= 2 {
+                            corner.push(cell);
+                        } else if walls == 0 {
+                            // A cell on a wall's row takes the wall's velocity (at rest): it delivers nothing.
+                            flux_after += w;
+                        }
+                    }
+                }
+                if corner.is_empty() {
+                    continue;
+                }
+                let lost = corner.len() as f64 / cells_before.max(1) as f64;
+                if !(flux_after > 0.0) {
+                    return Err(Error::Invalid(format!(
+                        "the velocity inlet on box face {} has {} of its {cells_before} cells in the on-node wall law's corner rule (a cell touching two walls is a wall cell) and none left to deliver its flow: the spacing ({}) is too coarse for its shape; refine it",
+                        face.name(),
+                        corner.len(),
+                        grid.spacing
+                    )));
+                }
+                corner_cells.extend(&corner);
+                for c in &corner {
+                    if let Some(x) = fluid.get_mut(*c) {
+                        *x = false;
+                    }
+                    if let Some(x) = owner.get_mut(*c) {
+                        *x = NONE;
+                    }
+                }
+                inlet_rescale[face.index()] = flux_before / flux_after;
+                inlet_corners.cells += corner.len();
+                inlet_corners.inlet_cells += cells_before;
+                inlet_corners.area_lost = inlet_corners.area_lost.max(lost);
+                inlet_corners.flux_rescale = inlet_corners.flux_rescale.max(flux_before / flux_after);
+            }
+        }
+        corner_cells.sort_unstable();
         // The wall-function bounce reflects at its walls instead of bouncing back; only at rest.
         let wall_bounce = setup.wall_model == Some(WallModel::SpaldingBounceHalfway);
         if wall_bounce && let Some(face) = BoxFace::ALL.iter().find(|f| matches!(domain.faces.get(**f), FaceCondition::MovingWall { .. })) {
@@ -832,7 +941,7 @@ impl Flow {
         }
         // The group and moving-wall term of a link into fluid cell `cell` (direction q) from the
         // obstacle cell `solid`: the face of the triangle nearest the link's midpoint.
-        let obstacle_link = |cell: usize, solid: u32, q: usize| -> Rule {
+        let obstacle_face = |cell: usize, solid: u32, q: usize| -> Rule {
             let k = owner.get(solid as usize).copied().unwrap_or(NONE) as usize;
             let (Some((tree, tags, _)), Some(faces), Some(&first)) = (trees.get(k), setup.obstacles.get(k), base.get(k)) else {
                 return Rule::Bounce { group: 0, du: 0.0 };
@@ -842,6 +951,35 @@ impl Flow {
             let tag = tree.nearest(mid).and_then(|t| tags.get(t as usize).copied()).unwrap_or(0);
             let u = faces.velocities.get(tag as usize).copied().unwrap_or([0.0; 3]);
             Rule::Bounce { group: first + tag, du: moving_wall(q, u) }
+        };
+        // A link out of a cell the corner rule made a wall cell takes the group of the wall it touches.
+        let obstacle_link = |cell: usize, solid: u32, q: usize| -> Rule {
+            if corner_cells.binary_search(&(solid as usize)).is_err() {
+                return obstacle_face(cell, solid, q);
+            }
+            let p = grid.coords(solid as usize);
+            for a in 0..3 {
+                for s in [-1i32, 1] {
+                    let i = p[a] as i64 + i64::from(s);
+                    if !(0..grid.cells[a] as i64).contains(&i) {
+                        let face = BoxFace::of(a, s > 0);
+                        if !periodic[a] && wall_velocity(face).is_some() {
+                            return Rule::Bounce { group: face.index() as u32, du: 0.0 };
+                        }
+                        continue;
+                    }
+                    let mut np = p;
+                    np[a] = i as usize;
+                    let nb = grid.index(np);
+                    if owner.get(nb).copied().unwrap_or(NONE) != NONE {
+                        let mut v = [0i32; 3];
+                        v[a] = -s;
+                        let q = C.iter().position(|c| *c == v).unwrap_or(0);
+                        return obstacle_face(solid as usize, nb as u32, q);
+                    }
+                }
+            }
+            Rule::Bounce { group: 0, du: 0.0 }
         };
 
         // Han et al.'s on-node wall ([`crate::bounce`]): a fluid cell next to a wall is a boundary node.
@@ -928,10 +1066,7 @@ impl Flow {
                         .into_iter()
                         .find_map(|(at, face)| (at && wall_velocity(face).is_none()).then_some(face))
                 });
-                if let Some(face) = open_face {
-                    if dirs.len() > 1 && matches!(domain.faces.get(face), FaceCondition::Velocity { .. }) {
-                        return refuse(format!("where a cell of the velocity inlet `{}` touches two walls", face.name()));
-                    }
+                if open_face.is_some() {
                     on_wall_row.push(cell);
                     continue;
                 }
@@ -1161,7 +1296,7 @@ impl Flow {
                                     scale *= 4.0 * s * (1.0 - s);
                                 }
                             }
-                            Target::Velocity(setup.to_lattice(velocity).map(|v| v * scale))
+                            Target::Velocity(setup.to_lattice(velocity).map(|v| v * scale * inlet_rescale[face.index()]))
                         }
                         // A characteristic outlet starts as a uniform one ([`Flow::characteristic_outlet`]).
                         FaceCondition::Pressure { pressure, outflow: Outflow::Uniform | Outflow::Characteristic, .. } => {
@@ -1399,6 +1534,7 @@ impl Flow {
             wall_model: setup.wall_model == Some(WallModel::Musker),
             wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounceHalfway),
             nodes: on_node.then(|| WallNodes::new(node_list, nu)),
+            inlet_corners,
             bulk,
             rheology: setup.rheology.clone(),
             clamps: Clamps::default(),
@@ -1715,6 +1851,11 @@ impl Flow {
     /// wall-function bounce.
     fn collides(&self) -> &[bool] {
         if self.bulk.is_empty() { &self.fluid } else { &self.bulk }
+    }
+
+    /// What the corner rule did to the velocity inlets (all zero without an on-node wall law).
+    pub fn inlet_corner_report(&self) -> InletCornerReport {
+        self.inlet_corners
     }
 
     /// Whether Han et al.'s on-node wall-function bounce runs (`spalding_bounce`).
@@ -3158,6 +3299,7 @@ impl crate::backend::Backend for Flow {
             wall_model,
             wall_bounce,
             nodes,
+            inlet_corners: _,
             bulk: _,
             rheology,
             clamps,

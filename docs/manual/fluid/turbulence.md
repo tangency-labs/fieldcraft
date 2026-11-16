@@ -189,6 +189,12 @@ Each time step, before the collision:
    and the fluid's mass is kept. A cell in an inlet, outlet or slip layer keeps that face's rule.
    A channel built from obstacle slabs gives the box-face channel's result bit for bit
    (`han_obstacles.rs`). The device refuses nodes that are not on a plane box face.
+   A cell in a velocity inlet's layer that touches two walls (a box edge, a staircase step on an
+   obstacle's rim) is a wall cell, plain bounce-back with no inlet condition and no wall law,
+   because the inlet and the law together grow a density mode there. Its links count in the force
+   group of the wall it touches. The inlet's velocity is raised so that the cells that keep the
+   inlet deliver the requested flow (the row on a wall's plane takes the wall's velocity, at
+   rest, and delivers nothing).
 3. **Collision.** For each fluid cell: the flux P from its populations; the cell's constant C,
    scaled by `1 − exp(−y⁺/A⁺)` with damping (taken as 1 from y⁺/A⁺ = 40, where it rounds to 1);
    the cell's rate from the closed form above, or the fluid's own rate where the result is not a
