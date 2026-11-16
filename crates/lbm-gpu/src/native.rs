@@ -850,8 +850,11 @@ impl GpuFlow {
                         "not supported yet: the Spalart–Allmaras model on the GPU with {what}; solve on the CPU (`backend: \"cpu\"`)"
                     )))
                 };
-                if flow.wall_model() || flow.wall_bounce() || flow.wall_nodes().is_some() {
-                    return refuse("a wall model (its wall function)");
+                if flow.wall_model() {
+                    return refuse("Malaspinas and Sagaut's wall model with Musker's profile (`musker`)");
+                }
+                if flow.wall_bounce() {
+                    return refuse("the halfway wall-function bounce (`spalding_bounce_halfway`)");
                 }
                 if flow.thermal().is_some() {
                     return refuse("heat");

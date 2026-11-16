@@ -283,23 +283,26 @@ fn the_sub_step_count_is_planned_or_refused() {
     assert!(e.contains("more than 64 sub-steps"), "{e}");
 }
 
-/// What the device does not run yet is refused before a device is opened, naming the model
-/// and the CPU: a wall model (its wall function) and heat.
+/// What the device does not run with the model yet is refused before a device is opened, naming
+/// the model, the wall treatment and the CPU: Malaspinas and Sagaut's wall model (`musker`) and
+/// heat. Han's on-node wall runs with it (the halfway wall-function bounce is refused by the
+/// setup on either backend).
 #[test]
 fn what_the_gpu_does_not_run_with_spalart_allmaras_is_refused_clearly() {
     let refused = |flow: &Flow| {
         GpuFlow::with_options(flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string())
     };
     let mut channel = forced_channel(Collision::Mrt, 10.0, 180.0);
+    let (model, name) = (WallModel::Musker, "`musker`");
     let mut step = channel.step("Run").cloned().unwrap();
     if let Procedure::Fluid { turbulence, .. } = &mut step.procedure {
-        *turbulence = Some(sa(3.0, Some(WallModel::Musker)));
+        *turbulence = Some(sa(3.0, Some(model)));
     }
     channel.replace_step(step).unwrap();
     let (_, flow) = prepare(&channel, &[]);
     let e = refused(&flow);
-    println!("Musker's wall function: {e:?}");
-    assert!(e.as_deref().is_some_and(|e| e.contains("Spalart–Allmaras") && e.contains("wall model") && e.contains("cpu")), "{e:?}");
+    println!("{model:?}: {e:?}");
+    assert!(e.as_deref().is_some_and(|e| e.contains("Spalart–Allmaras") && e.contains(name) && e.contains("cpu")), "{e:?}");
     let mut d = domain([0.0; 3], [4.0, 2.0, 2.0], 1.0);
     d.thermal = Some(FluidThermal::default());
     d.faces.y_max = FaceCondition::MovingWall { velocity: [0.01, 0.0, 0.0] };
