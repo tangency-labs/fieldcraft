@@ -34,7 +34,13 @@ pub const HEX_PROJECT: CommandSpec = CommandSpec {
 };
 
 /// Most operations, face targets or division settings one command takes.
-const MAX_LIST: usize = 10_000;
+pub(crate) const MAX_LIST: usize = 10_000;
+/// Most vertices of a template's blocks: eight per block.
+pub(crate) const MAX_VERTICES: usize = 8 * MAX_LIST;
+/// Most grid cells along one direction (so at most one more plane).
+pub(crate) const MAX_GRID_CELLS: usize = 1000;
+/// Most levels of a sphere or butterfly.
+pub(crate) const MAX_LEVELS: usize = 1001;
 /// Default element size relative to the body's diagonal.
 const DEFAULT_RELATIVE_SIZE: f64 = 1.0 / 25.0;
 const MIN_RELATIVE_SIZE: f64 = 1e-4;
@@ -432,15 +438,15 @@ fn topology(p: &ProjectParams, lo: [f64; 3], hi: [f64; 3]) -> Result<Topology> {
             let levels = p.levels.clone().unwrap_or_else(|| {
                 vec![along.iter().copied().fold(f64::INFINITY, f64::min), along.iter().copied().fold(f64::NEG_INFINITY, f64::max)]
             });
-            if levels.len() > 1001 {
-                return Err(EngineError::Params("`levels` lists more than 1001 levels".into()));
+            if levels.len() > MAX_LEVELS {
+                return Err(EngineError::Params(format!("`levels` lists more than {MAX_LEVELS} levels")));
             }
             Topology::butterfly(c, a, r, &levels, inset)?
         }
         "blocks" => {
             let b = p.blocks.as_ref().ok_or_else(|| EngineError::Params("template `blocks` needs `blocks`: {vertices, blocks}".into()))?;
             bounded(&b.blocks, "blocks.blocks")?;
-            if b.vertices.len() > 8 * MAX_LIST {
+            if b.vertices.len() > MAX_VERTICES {
                 return Err(EngineError::Params("`blocks.vertices` lists too many vertices".into()));
             }
             Topology { vertices: b.vertices.clone(), blocks: b.blocks.clone() }
@@ -456,14 +462,14 @@ fn topology(p: &ProjectParams, lo: [f64; 3], hi: [f64; 3]) -> Result<Topology> {
                 }
                 None => {
                     let cells = g.and_then(|g| g.cells).unwrap_or([1, 1, 1]);
-                    if cells.iter().any(|&c| !(1..=1000).contains(&c)) {
-                        return Err(EngineError::invalid("grid.cells", "1 to 1000 per direction"));
+                    if cells.iter().any(|&c| !(1..=MAX_GRID_CELLS).contains(&c)) {
+                        return Err(EngineError::invalid("grid.cells", format!("1 to {MAX_GRID_CELLS} per direction")));
                     }
                     [0, 1, 2].map(|d| (0..=cells[d]).map(|q| lo[d] + (hi[d] - lo[d]) * q as f64 / cells[d] as f64).collect())
                 }
             };
-            if planes.iter().any(|p| p.len() > 1001) {
-                return Err(EngineError::Params("at most 1000 grid cells per direction".into()));
+            if planes.iter().any(|p| p.len() > MAX_GRID_CELLS + 1) {
+                return Err(EngineError::Params(format!("at most {MAX_GRID_CELLS} grid cells per direction")));
             }
             let mut t = Topology::grid([&planes[0], &planes[1], &planes[2]])?;
             if let Some(carve) = g.map(|g| &g.carve).filter(|c| !c.is_empty()) {

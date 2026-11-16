@@ -147,6 +147,12 @@ fn capture_results(s: &Session, v: &ResultsView) -> Option<ResultsSetup> {
     Some(out)
 }
 
+/// The `camera` parameter of a view command, as an [`Aim`] in the display units: the form gives
+/// its lengths (distance, a target point) dimensions, so they reach the command in SI, its frame.
+pub(crate) fn camera_param(s: &Session, p: &Value) -> Result<Option<Aim>> {
+    p.get("camera").filter(|v| !v.is_null()).map(|c| Ok(aim_in(&crate::view::camera(c)?, crate::units::si(), s.units()))).transpose()
+}
+
 /// `aim`'s lengths (distance, a target point) read in `from` and given in `to`.
 fn aim_in(aim: &Aim, from: &DisplaySystem, to: &DisplaySystem) -> Aim {
     let length = |x: f64| from.to_si(Quantity::Length, x).and_then(|m| to.express(Quantity::Length, m)).unwrap_or(f64::NAN);
@@ -166,10 +172,7 @@ fn view_name(p: &Value) -> Result<String> {
 
 fn save(s: &mut Session, p: &Value) -> Result<Value> {
     let name = view_name(p)?;
-    let camera = match p.get("camera").filter(|v| !v.is_null()) {
-        Some(c) => Some(crate::view::camera(c)?),
-        None => s.camera.clone(),
-    };
+    let camera = camera_param(s, p)?.or_else(|| s.camera.clone());
     let with_results = super::opt::<bool>(p, "results")?.unwrap_or(true);
     let results = if with_results { s.results_view.as_ref().and_then(|v| capture_results(s, v)) } else { None };
     if camera.is_none() && results.is_none() {

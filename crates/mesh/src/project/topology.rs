@@ -17,6 +17,8 @@ const MERGE: f64 = 1e-9; // unit-factors: relative to the template's size
 
 /// Most blocks one topology holds.
 pub const MAX_BLOCKS: usize = 20_000;
+/// Most layers of one connection or extrusion.
+pub const MAX_LAYERS: usize = 1000;
 
 /// Corner `c` of a block in parameter space (hex8 order).
 pub(crate) const CORNERS: [[usize; 3]; 8] = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]];
@@ -376,8 +378,8 @@ impl Topology {
     /// to the nearest of the other's (over the eight ways of laying one quad on the other).
     /// Returns the new blocks.
     pub fn connect(&mut self, from: (usize, u8), to: (usize, u8), layers: usize) -> Result<Vec<usize>> {
-        if !(1..=1000).contains(&layers) {
-            return Err(Error::Invalid(format!("a connection has 1 to 1000 layers, got {layers}")));
+        if !(1..=MAX_LAYERS).contains(&layers) {
+            return Err(Error::Invalid(format!("a connection has 1 to {MAX_LAYERS} layers, got {layers}")));
         }
         let a = self.face_quad(from.0, from.1)?;
         let b = self.face_quad(to.0, to.1)?;
@@ -554,8 +556,8 @@ impl Topology {
     /// shared vertices stay shared. Returns the new blocks' indices, the last layer's outer face
     /// is face 2 of the blocks made from it.
     pub fn extrude(&mut self, faces: &[(usize, u8)], offset: P, layers: usize) -> Result<Vec<usize>> {
-        if !(1..=1000).contains(&layers) {
-            return Err(Error::Invalid(format!("an extrusion has 1 to 1000 layers, got {layers}")));
+        if !(1..=MAX_LAYERS).contains(&layers) {
+            return Err(Error::Invalid(format!("an extrusion has 1 to {MAX_LAYERS} layers, got {layers}")));
         }
         if !offset.iter().all(|x| x.is_finite()) {
             return Err(Error::Invalid("the extrusion offset must be finite".into()));

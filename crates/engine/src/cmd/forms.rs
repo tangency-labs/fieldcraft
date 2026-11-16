@@ -1630,6 +1630,127 @@ pub const CELLS: &[Field] = &[
         .def("\"pyramid\""),
 ];
 
+/// The most grid planes along one direction.
+const MAX_GRID_PLANES: usize = super::project::MAX_GRID_CELLS + 1;
+/// Most entries of a mesh.hex.project list (operations, face targets, divisions, fixed faces).
+const PROJECT_LIST: usize = super::project::MAX_LIST;
+/// The most blocks of a projected topology: a block index is below it.
+const LAST_BLOCK: i64 = fieldcraft_mesh::project::topology::MAX_BLOCKS as i64 - 1;
+/// Most layers of a topology extrusion or connection.
+const TOPOLOGY_LAYERS: i64 = fieldcraft_mesh::project::topology::MAX_LAYERS as i64;
+
+const fn topology_block(key: &'static str) -> Field {
+    int(key, "Block", 0, LAST_BLOCK).help("A block of the topology, from 0 in the order the template and the operations made them.")
+}
+/// The directions a block face may be named by.
+const FACING: &[(&str, &str)] = &[("+x", "+x"), ("-x", "−x"), ("+y", "+y"), ("-y", "−y"), ("+z", "+z"), ("-z", "−z")];
+const BLOCK_FACE_FACING: Field = choice("", "Facing", FACING).help("The direction the block face faces most.");
+const BLOCK_FACE_NUMBER: Field =
+    int("", "Face number", 1, 6).help("The hex8 face: 1 = corners 1-2-3-4, 2 = 5-6-7-8, 3 = 1-2-6-5, 4 = 2-3-7-6, 5 = 3-4-8-7, 6 = 4-1-5-8.");
+const fn block_face(key: &'static str) -> Field {
+    name_or_value(key, "Face", &BLOCK_FACE_FACING, &BLOCK_FACE_NUMBER).help("A face of the block: the direction it faces, or its hex8 face number.")
+}
+/// A face of a block, `[block, face]`.
+const BLOCK_SIDE: &[Field] = &[topology_block(""), block_face("")];
+const BLOCK_SIDE_ITEM: Field = seq("", "Block face", BLOCK_SIDE).help("A block and one of its faces.");
+const TOPOLOGY_LAYER_COUNT: Field = int("layers", "Layers", 1, TOPOLOGY_LAYERS).help("Blocks across the new layer.").hint("1");
+const SPLIT_AXIS: Field = choice("", "Nearest axis", &[("x", "x"), ("y", "y"), ("z", "z")])
+    .help("The block direction that runs nearest this axis; fractions count from its low end.");
+const SPLIT_DIRECTION: Field =
+    int("", "Block direction", 1, 3).help("1 along corners 1→2, 2 along 1→4, 3 along 1→5; fractions count from the block's side-0 face.");
+const FRACTION: Field = range("", "Fraction", D::None, 0.0, 1.0).help("A fraction of the block's length, from 0 to 1.");
+const BLOCK_INDEX: Field = topology_block("");
+const O_GRID_EXTRUDE: &[Field] = &[
+    xyz("offset", "Offset", D::Length).help("How far and which way the new blocks reach.").req(),
+    TOPOLOGY_LAYER_COUNT,
+    choice("faces", "Faces", &[("all", "The whole open face (a round branch)"), ("inner", "The inner face (a square stub)")])
+        .help("What is extruded: the open face's butterfly, or only its inner block's face.")
+        .hint("all"),
+];
+const OPERATIONS: &[Variant] = &[
+    variant(
+        "o_grid",
+        "O-grid",
+        &[
+            topology_block("block").req(),
+            list("open", "Open faces", &block_face(""), 6).help("Faces of the block left open (the O-grid has no layer there)."),
+            per_axis("inset", "Inset", D::None, None, &["1", "2", "3"])
+                .help("The inner block's size as a fraction of the block, one value or one per block direction.")
+                .hint("0.5"),
+            group("extrude", "Extrude", O_GRID_EXTRUDE).help("Extrude the first open face into a branch."),
+        ],
+    ),
+    variant(
+        "extrude",
+        "Extrude",
+        &[
+            list("faces", "Faces", &BLOCK_SIDE_ITEM, PROJECT_LIST).help("The block faces extruded together.").req(),
+            xyz("offset", "Offset", D::Length).help("How far and which way the new blocks reach.").req(),
+            TOPOLOGY_LAYER_COUNT,
+        ],
+    ),
+    variant(
+        "connect",
+        "Connect",
+        &[
+            seq("from", "From", BLOCK_SIDE).help("The first block face.").req(),
+            seq("to", "To", BLOCK_SIDE).help("The face it is bridged to (closes a handle).").req(),
+            TOPOLOGY_LAYER_COUNT,
+        ],
+    ),
+    variant("remove", "Remove", &[list("blocks", "Blocks", &BLOCK_INDEX, PROJECT_LIST).help("The blocks carved away; later blocks renumber.").req()]),
+    variant("merge", "Merge", &[positive("distance", "Distance", D::Length).help("Join block vertices closer than this.").req()]),
+    variant(
+        "split",
+        "Split",
+        &[
+            topology_block("block").req(),
+            name_or_value("direction", "Direction", &SPLIT_AXIS, &SPLIT_DIRECTION).help("The block direction cut across.").req(),
+            list("at", "At", &FRACTION, PROJECT_LIST)
+                .help("Where the cuts are, as fractions along the direction; the whole sheet of blocks the cut runs through is split.")
+                .req(),
+        ],
+    ),
+];
+const OPERATION: Field = tagged("", "Operation", "op", OPERATIONS).help("One change to the block topology.");
+const GRID_PLANE: Field = num("", "Plane", D::Length).help("Where a plane of the grid is.");
+const GRID_PLANES: &[Field] = &[
+    list("x", "x", &GRID_PLANE, MAX_GRID_PLANES).help("The planes across x, in order.").hint("the bounding box"),
+    list("y", "y", &GRID_PLANE, MAX_GRID_PLANES).help("The planes across y, in order.").hint("the bounding box"),
+    list("z", "z", &GRID_PLANE, MAX_GRID_PLANES).help("The planes across z, in order.").hint("the bounding box"),
+];
+const CARVE_RANGE: &[&str] = &["From", "To"];
+const CARVE: &[Field] = &[
+    tuple_from("i", "i", CARVE_RANGE, 2, true, 0.0).help("The block columns along x carved, from and to (inclusive, from 0).").hint("all"),
+    tuple_from("j", "j", CARVE_RANGE, 2, true, 0.0).help("The block columns along y carved, from and to (inclusive, from 0).").hint("all"),
+    tuple_from("k", "k", CARVE_RANGE, 2, true, 0.0).help("The block columns along z carved, from and to (inclusive, from 0).").hint("all"),
+];
+const GRID: &[Field] = &[
+    group("planes", "Planes", GRID_PLANES).help("The grid's planes per axis; instead of Cells."),
+    tuple("cells", "Cells", &["i", "j", "k"], 3, true).help("Blocks along x, y and z, evenly over the bounding box.").hint("1, 1, 1"),
+    rows_up_to("carve", "Carve", CARVE, PROJECT_LIST).help("Ranges of blocks removed from the grid."),
+];
+/// The corners of a hex8 block, in order.
+const HEX8_CORNERS: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8"];
+const GIVEN_BLOCK: Field = tuple_from("", "Block", HEX8_CORNERS, 8, true, 0.0).help("A hex8 block: its eight vertices (from 0) in hex8 order.");
+const GIVEN_BLOCKS: &[Field] = &[
+    points("vertices", "Vertices", D::Length, super::project::MAX_VERTICES).help("The block vertices.").req(),
+    list("blocks", "Blocks", &GIVEN_BLOCK, PROJECT_LIST).help("The blocks, each by its eight vertices.").req(),
+];
+const BREP_FACE: Field = topology("", "Face", Side3::Face, "body").help("A persistent face name of the body (e.g. F3).");
+const FACE_TARGET: &[Field] = &[
+    topology_block("block").req(),
+    block_face("face").req(),
+    list("to", "Body faces", &BREP_FACE, PROJECT_LIST).help("The body's faces the block face lies on.").req(),
+];
+const DIVISION: &[Field] = &[
+    topology_block("block").req(),
+    int("direction", "Direction", 1, 3).help("1 along corners 1→2, 2 along 1→4, 3 along 1→5.").req(),
+    int("count", "Elements", 1, fieldcraft_mesh::block::MAX_DIVISIONS as i64).help("Elements along the direction.").req(),
+];
+
+const LEVEL: Field = num("", "Level", D::Length).help("A level: a height, or for a butterfly a distance along the axis from the centre.");
+
 pub const HEX_PROJECT: &[Field] = &[
     reference("body", "Body", C::Body).help("The body to mesh with a projected block topology.").req(),
     HEX_SIZE,
@@ -1643,21 +1764,22 @@ pub const HEX_PROJECT: &[Field] = &[
     xyz("center", "Centre", POINT).help("Sphere or butterfly centre.").hint("from the body's bounding box"),
     positive("radius", "Radius", D::Length).help("Sphere or butterfly radius.").hint("from the body"),
     xyz("axis", "Axis", D::None).help("Butterfly axis direction.").hint("0, 0, 1"),
-    json("levels", "Levels")
-        .numbers(&[("", D::Length)])
-        .help("Sphere and butterfly levels; for a butterfly, distances along the axis from the centre, as JSON.")
-        .hint("[z0, z1, ...]; from the bounding box"),
+    list("levels", "Levels", &LEVEL, super::project::MAX_LEVELS)
+        .help("Sphere and butterfly levels; for a butterfly, distances along the axis from the centre.")
+        .hint("from the bounding box"),
     range("inset", "Inset", D::None, 0.05, 0.95).help("Inner square or cube corner at this fraction of the radius.").def("0.55"),
-    json("grid", "Grid").numbers(&[("/planes/*", D::Length)]).help("The block grid: planes per axis or a cell count, and blocks to carve away, as JSON.").hint(r#"{"cells": [ni, nj, nk], "carve": [{"i": [a, b], "j": [c, d], "k": [e, f]}]}"#),
-    json("blocks", "Blocks").numbers(&[("/vertices", D::Length)]).help("Template Blocks: vertices and hex8 blocks, as JSON.").hint(r#"{"vertices": [[x, y, z], ...], "blocks": [[v1..v8], ...]}"#),
-    json("operations", "Operations")
-        .numbers(&[("/*/offset", D::Length), ("/*/extrude/offset", D::Length), ("/*/distance", D::Length)])
-        .help("O-grids, extrusions, connections, removals and merges applied in order, as JSON.").hint(r#"[{"op": "o_grid", "block": 0, "open": ["+z"]}]"#),
-    json("faces", "Face targets").help("Block faces sent to chosen B-rep faces; other outer faces go to the nearest surfaces.").hint(r#"[{"block": 0, "face": "+x", "to": ["F1:+x"]}]"#),
-    json("divisions", "Divisions").help("Element counts per block direction.").hint(r#"[{"block": 0, "direction": 1, "count": 8}]"#),
-    json("fixed", "Fixed faces")
+    group("grid", "Grid", GRID).help("The block grid: planes per axis or a cell count, and blocks to carve away.").hint("one block over the bounding box"),
+    group("blocks", "Blocks", GIVEN_BLOCKS).help("Template Blocks: the vertices and the hex8 blocks on them."),
+    list("operations", "Operations", &OPERATION, PROJECT_LIST)
+        .help("O-grids, extrusions, connections, removals, merges and splits applied in order.")
+        .hint("none"),
+    rows_up_to("faces", "Face targets", FACE_TARGET, PROJECT_LIST)
+        .help("Block faces sent to chosen B-rep faces; other outer faces go to the nearest surfaces.")
+        .hint("the nearest faces"),
+    rows_up_to("divisions", "Divisions", DIVISION, PROJECT_LIST).help("Element counts per block direction.").hint("from the element size"),
+    list("fixed", "Fixed faces", &BREP_FACE, PROJECT_LIST)
         .help("Faces of the body another body's mesh already covers: its element faces there are kept as they are and this mesh meets them node to node.")
-        .hint(r#"["F3:partition:P:b"]"#),
+        .hint("none"),
     choice("smoothing", "Smoothing", &[("elliptic", "Elliptic"), ("elliptic-controlled", "Elliptic, controlled (Thomas–Middlecoff)"), ("laplace", "Laplace"), ("none", "None")])
         .help("How interior nodes are smoothed after projection, with the boundary held on the geometry.")
         .def("\"elliptic\""),
@@ -1750,6 +1872,43 @@ pub const HEX_EXTRUDE: &[Field] = &[
 /// A block's edge directions, from corner 1.
 const BLOCK_DIRECTIONS: &[&str] = &["1-2", "1-4", "1-5"];
 
+/// A curved or named edge of a block, by its two corners.
+const BLOCK_EDGE: &[Field] = &[
+    tuple("corners", "Corners", &["From", "To"], 2, true).help("The edge's two corners (1 to 8; 1 to 4 for 2D).").req(),
+    text("name", "Name").help("A name for the edge; sets by geometry select it.").hint("none"),
+    group("arc", "Arc", &[xyz("center", "Centre", D::Length).help("The arc's centre; the edge is the shorter arc between its corners.").req()])
+        .help("A circular edge."),
+    group(
+        "ellipse",
+        "Ellipse",
+        &[
+            xyz("center", "Centre", D::Length).help("The ellipse's centre.").req(),
+            points("axes", "Axes", D::Length, 2).help("Its two perpendicular semi-axes.").req(),
+        ],
+    )
+    .help("An elliptical edge."),
+];
+/// The names of a block's six faces, by hex8 face number.
+const BLOCK_FACE_NAMES: &[Field] = &[
+    text("1", "Face 1 (1-2-3-4)").help("A name for face 1 (corners 1-2-3-4).").hint("none"),
+    text("2", "Face 2 (5-6-7-8)").help("A name for face 2 (corners 5-6-7-8).").hint("none"),
+    text("3", "Face 3 (1-2-6-5)").help("A name for face 3 (corners 1-2-6-5).").hint("none"),
+    text("4", "Face 4 (2-3-7-6)").help("A name for face 4 (corners 2-3-7-6).").hint("none"),
+    text("5", "Face 5 (3-4-8-7)").help("A name for face 5 (corners 3-4-8-7).").hint("none"),
+    text("6", "Face 6 (4-1-5-8)").help("A name for face 6 (corners 4-1-5-8).").hint("none"),
+];
+/// The names of a block's corners (four for 2D).
+const BLOCK_CORNER_NAMES: &[Field] = &[
+    text("1", "Corner 1").help("A name for corner 1.").hint("none"),
+    text("2", "Corner 2").help("A name for corner 2.").hint("none"),
+    text("3", "Corner 3").help("A name for corner 3.").hint("none"),
+    text("4", "Corner 4").help("A name for corner 4.").hint("none"),
+    text("5", "Corner 5").help("A name for corner 5 (3D).").hint("none"),
+    text("6", "Corner 6").help("A name for corner 6 (3D).").hint("none"),
+    text("7", "Corner 7").help("A name for corner 7 (3D).").hint("none"),
+    text("8", "Corner 8").help("A name for corner 8 (3D).").hint("none"),
+];
+
 pub const BLOCK: &[Field] = &[
     text("body", "Body").help("Name of the new block body.").req().def("\"Block\""),
     choice(
@@ -1777,9 +1936,11 @@ pub const BLOCK: &[Field] = &[
     tuple("bias", "Bias", BLOCK_DIRECTIONS, 2, false)
         .help("Last over first element size along each direction; 1 is uniform. A 2D block takes the first two.")
         .hint("uniform"),
-    json("edges", "Curved and named edges").help("Edge curves and names, as JSON."),
-    json("faces", "Face names").help("Names of the block's faces, as JSON.").hint("{\"1\": \"bottom\"}"),
-    json("vertices", "Corner names").help("Names of the block's corners, as JSON."),
+    rows("edges", "Curved and named edges", BLOCK_EDGE).help("Edges made arcs or ellipses, and edge names.").hint("straight, unnamed"),
+    group("faces", "Face names", BLOCK_FACE_NAMES)
+        .help("Names of the block's faces, by hex8 face number; sets by geometry select them.")
+        .hint("none"),
+    group("vertices", "Corner names", BLOCK_CORNER_NAMES).help("Names of the block's corners; sets by geometry select them.").hint("none"),
     text("face", "2D face name").help("Name of a 2D block's face.").hint("area"),
     positive("merge", "Merge distance", D::Length).help("Nodes closer than this merge with existing nodes.").hint("1e-6 of the diagonal"),
 ];
@@ -2272,11 +2433,29 @@ pub const DATUM_POINT: &[Field] = &[
     .req()
     .def(r#"{"type": "coordinates"}"#),
 ];
+// The camera of a view or a picture (ui.camera's parameters, `view::camera`).
+const CAMERA_POINT: Field = xyz("", "Point", D::Length).help("The point the camera looks at.");
+const CAMERA_CENTRE: &[Field] = &[
+    choice("center_of", "Centre of", &[("mass", "Mass"), ("bbox", "Bounding box")])
+        .help("The centre of mass of the bodies, or of their bounding box.")
+        .hint("mass"),
+    references("bodies", "Bodies", C::Body).help("The bodies whose centre it looks at.").hint("every body drawn"),
+];
+const CAMERA: &[Field] = &[
+    num("yaw", "Yaw", D::Degree).help("The turn about the vertical (z) axis.").req(),
+    num("pitch", "Pitch", D::Degree).help("The elevation above the horizontal plane.").req(),
+    above_zero("distance", "Distance", D::Length).help("From the camera to the point it looks at; instead of Fit.").hint("the camera's"),
+    name_or("target", "Target", &CAMERA_POINT, "Centre of bodies", CAMERA_CENTRE)
+        .help("What the camera looks at: a point, or the centre of bodies.")
+        .hint("the model's centre of mass"),
+    flag("fit", "Fit").help("The target's bodies fill the frame (not with a distance)."),
+    range("fov", "Field of view", D::Degree, 0.0, crate::view::Aim::MAX_FOV)
+        .help("The vertical field of view; 0 is orthographic.")
+        .hint("the camera's"),
+];
 pub const VIEW_SAVE: &[Field] = &[
     text("name", "Name").help("The view's name; a view of that name is replaced.").req(),
-    json("camera", "Camera")
-        .help("ui.camera's parameters: yaw and pitch in degrees, distance and target in the display units; the camera last aimed when empty.")
-        .hint(r#"{"yaw": -70, "pitch": 18, "fit": true}"#),
+    group("camera", "Camera", CAMERA).help("The camera kept: where it looks from and at.").hint("the camera last aimed"),
     flag("results", "Results display").help("Keep what the results display shows with the camera.").def("true"),
 ];
 pub const SOLVE_SETTINGS: &[Field] = &[
@@ -2291,9 +2470,7 @@ pub const SOLVE_SETTINGS: &[Field] = &[
 pub const IMAGE_SAVE: &[Field] = &[
     path("path", "File", true).help("The PNG picture to write.").req(),
     tuple("size", "Size", &["Width", "Height"], 2, true).help("The picture's width and height in pixels, each 16 to 4096.").hint("1600 × 1000"),
-    json("camera", "Camera")
-        .help("ui.camera's parameters: yaw and pitch in degrees, distance and target in the display units; the viewport's camera when empty.")
-        .hint(r#"{"yaw": -70, "pitch": 18, "fit": true}"#),
+    group("camera", "Camera", CAMERA).help("The camera the picture is taken with: where it looks from and at.").hint("the viewport's camera"),
 ];
 pub const VIEW_NAME: &[Field] = &[reference("name", "View", C::SavedView).help("The saved view.").req()];
 const RENDER_ALL_FRAMES: Field = choice("", "All frames", &[("all", "All frames")]);
@@ -3199,47 +3376,133 @@ mod tests {
         *form_of(command).iter().find(|f| f.key == key).unwrap_or_else(|| panic!("{command} has `{key}`"))
     }
 
-    /// A1-09: the fields left as raw JSON text are these, each a shape no field kind describes
-    /// yet (a map, a nested point list, a blocking topology, a value of mixed kinds). A field
-    /// typed since stays typed.
+    /// A1-09, ux1 J1: no field is left as raw JSON text; every shape a command takes has a kind
+    /// (a form draws a widget for it, never a JSON text box).
     #[test]
-    fn raw_json_fields_are_only_those_no_kind_describes() {
+    fn no_field_is_raw_json() {
         let mut raw: Vec<String> = Vec::new();
-        fn walk(id: &str, fields: &[Field], raw: &mut Vec<String>) {
+        fn walk(id: &str, fields: &[Field], raw: &mut Vec<String>, depth: usize) {
+            if depth > crate::schema::MAX_DEPTH {
+                return;
+            }
             for f in fields {
                 match f.kind {
                     Kind::Json => raw.push(format!("{id} {}", f.key)),
-                    Kind::Group(g) | Kind::Rows { fields: g, .. } | Kind::Either(g) | Kind::NameOr { fields: g, .. } => walk(id, g, raw),
-                    Kind::Variants { variants, .. } => variants.iter().for_each(|v| walk(id, v.fields, raw)),
+                    Kind::Group(g) | Kind::Rows { fields: g, .. } | Kind::Either(g) | Kind::NameOr { fields: g, .. } => walk(id, g, raw, depth + 1),
+                    Kind::Variants { variants, .. } => variants.iter().for_each(|v| walk(id, v.fields, raw, depth + 1)),
+                    Kind::List { item, .. } => walk(id, std::slice::from_ref(item), raw, depth + 1),
+                    Kind::NameOrValue { name, value } => walk(id, &[*name, *value], raw, depth + 1),
+                    Kind::Seq(items) => walk(id, items, raw, depth + 1),
                     _ => {}
                 }
             }
         }
         for c in crate::commands() {
-            walk(c.id, c.form.unwrap_or_default(), &mut raw);
+            walk(c.id, c.form.unwrap_or_default(), &mut raw, 0);
         }
         raw.sort();
         raw.dedup();
-        for typed in [
-            "mesh.planar polygon",
-            "mesh.seed.edge edges",
-            "mesh.seed.clear edges",
-            "results.xy y",
-            "model.units overrides",
-            "mesh.planar holes",
-            "solve.probe forces",
-            "solve.probe heat",
-            "model.step.create monitors",
-            "model.step.edit monitors",
-            "results.render.save frames",
-        ] {
-            assert!(!raw.iter().any(|r| r == typed), "{typed} is typed");
+        assert!(raw.is_empty(), "raw JSON fields: {raw:?}");
+    }
+
+    /// ux1 J1: what mesh.hex.project takes checks against its typed fields, a wrong value is
+    /// named at its own path, and its lengths convert as the command reads them (millimetres).
+    #[test]
+    fn hex_project_fields_describe_what_it_takes() {
+        let ok = json!({
+            "body": "Ball",
+            "template": "grid",
+            "levels": [0, 5, 10],
+            "grid": {"planes": {"x": [0, 1, 2], "z": [0, 3]}, "cells": [2, 2, 1], "carve": [{"i": [0, 0], "k": [0, 0]}]},
+            "blocks": {"vertices": [[0, 0, 0], [1, 0, 0]], "blocks": [[0, 1, 2, 3, 4, 5, 6, 7]]},
+            "faces": [{"block": 0, "face": "+x", "to": ["F1", "F2"]}, {"block": 1, "face": 4, "to": ["F3"]}],
+            "divisions": [{"block": 0, "direction": 1, "count": 8}],
+            "fixed": ["F3:partition:P:b"],
+            "operations": [
+                {"op": "o_grid", "block": 8, "open": ["+z", 2], "inset": [0.5, 0.5, 0.4], "extrude": {"offset": [0, 0, 18], "layers": 2, "faces": "inner"}},
+                {"op": "extrude", "faces": [[0, "+x"], [1, 4]], "offset": [1, 0, 0]},
+                {"op": "connect", "from": [0, "+y"], "to": [3, "-y"], "layers": 3},
+                {"op": "remove", "blocks": [0, 1]},
+                {"op": "merge", "distance": 0.01},
+                {"op": "split", "block": 0, "direction": "x", "at": [0.25, 0.5]},
+                {"op": "split", "block": 1, "direction": 2, "at": [0.5]},
+            ],
+        });
+        assert!(problems(HEX_PROJECT, &ok).is_empty(), "{:?}", problems(HEX_PROJECT, &ok));
+        let at = |p: Value| problems(HEX_PROJECT, &p).into_iter().map(|p| p.path).collect::<Vec<_>>();
+        assert_eq!(at(json!({"body": "B", "faces": [{"block": 0, "face": "+w", "to": ["F1"]}]})), ["faces/0/face"]);
+        assert_eq!(at(json!({"body": "B", "faces": [{"block": 0, "face": 7, "to": ["F1"]}]})), ["faces/0/face"]);
+        assert_eq!(at(json!({"body": "B", "divisions": [{"block": 0, "direction": 4, "count": 2}]})), ["divisions/0/direction"]);
+        assert_eq!(at(json!({"body": "B", "levels": [0, "x"]})), ["levels/1"]);
+        assert_eq!(
+            at(json!({"body": "B", "operations": [{"op": "extrude", "faces": [[0, "+w"]], "offset": [0, 0, 1]}]})),
+            ["operations/0/faces/0/1"]
+        );
+        assert_eq!(at(json!({"body": "B", "operations": [{"op": "connect", "from": [0], "to": [1, 2]}]})), ["operations/0/from"]);
+        assert_eq!(at(json!({"body": "B", "operations": [{"op": "split", "block": 0, "direction": 4, "at": [0.5]}]})), ["operations/0/direction"]);
+        assert_eq!(at(json!({"body": "B", "operations": [{"op": "spin"}]})), ["operations/0"]);
+        assert_eq!(at(json!({"body": "B", "blocks": {"vertices": [[0, 0, 0]], "blocks": [[0, 1, 2]]}})), ["blocks/blocks/0"]);
+        // Lengths given in metres reach the mesher in millimetres; indices and counts as they are.
+        let si = crate::units::si();
+        let mm = crate::units::convert_params(HEX_PROJECT, &ok, si, crate::units::geometry()).unwrap();
+        assert_eq!(mm["levels"], json!([0.0, 5000.0, 10000.0]));
+        assert_eq!(mm["grid"]["planes"]["x"], json!([0.0, 1000.0, 2000.0]));
+        assert_eq!(mm["grid"]["cells"], json!([2, 2, 1]));
+        assert_eq!(mm["blocks"]["vertices"][1], json!([1000.0, 0.0, 0.0]));
+        assert_eq!(mm["blocks"]["blocks"], ok["blocks"]["blocks"]);
+        assert_eq!(mm["divisions"], ok["divisions"]);
+        assert_eq!(mm["operations"][0]["extrude"]["offset"], json!([0.0, 0.0, 18000.0]));
+        assert_eq!(mm["operations"][0]["inset"], ok["operations"][0]["inset"], "a fraction");
+        assert_eq!(mm["operations"][1]["offset"], json!([1000.0, 0.0, 0.0]));
+        assert_eq!(mm["operations"][1]["faces"], ok["operations"][1]["faces"]);
+        assert_eq!(mm["operations"][4]["distance"], json!(10.0));
+    }
+
+    /// ux1 J1: mesh.block's edges are rows (corners, a name, an arc or an ellipse) and its face
+    /// and corner names a group per hex8 number, as the command takes them.
+    #[test]
+    fn block_names_and_edges_are_typed() {
+        let ok = json!({
+            "body": "Bar", "kind": "hex20", "corners": vec![[0, 0, 0]; 8], "divisions": [2, 2, 2],
+            "faces": {"6": "root"}, "vertices": {"7": "corner"},
+            "edges": [{"corners": [5, 8], "name": "top_root"}, {"corners": [1, 2], "arc": {"center": [0, 1, 0]}},
+                      {"corners": [2, 3], "ellipse": {"center": [0, 0, 0], "axes": [[1, 0, 0], [0, 2, 0]]}}],
+        });
+        assert!(problems(BLOCK, &ok).is_empty(), "{:?}", problems(BLOCK, &ok));
+        let at = |p: Value| problems(BLOCK, &p).into_iter().map(|p| p.path).collect::<Vec<_>>();
+        let base = |k: &str, v: Value| {
+            let mut p = json!({"body": "B", "kind": "hex8", "corners": vec![[0, 0, 0]; 8], "divisions": [1, 1, 1]});
+            p[k] = v;
+            p
+        };
+        assert_eq!(at(base("faces", json!({"1": 3}))), ["faces/1"]);
+        assert_eq!(at(base("edges", json!([{"corners": [1, 2], "arc": {}}]))), ["edges/0/arc/center"]);
+    }
+
+    /// ux1 J1: a camera (view.save, view.image.save) is yaw and pitch in degrees, a distance and a
+    /// target point that are lengths, or the centre of bodies.
+    #[test]
+    fn a_camera_is_typed() {
+        for form in [VIEW_SAVE, IMAGE_SAVE] {
+            for camera in [
+                json!({"yaw": -70, "pitch": 18, "fit": true}),
+                json!({"yaw": 0, "pitch": 0, "distance": 300, "target": [1, 2, 3], "fov": 30}),
+                json!({"yaw": 0, "pitch": 0, "target": {"center_of": "bbox", "bodies": ["Base"]}}),
+            ] {
+                let p = json!({"name": "V", "path": "v.png", "camera": camera});
+                assert!(problems(form, &p).is_empty(), "{camera}: {:?}", problems(form, &p));
+            }
+            let at = |c: Value| problems(form, &json!({"name": "V", "path": "v.png", "camera": c})).into_iter().map(|p| p.path).collect::<Vec<_>>();
+            assert_eq!(at(json!({"pitch": 0})), ["camera/yaw"]);
+            assert_eq!(at(json!({"yaw": 0, "pitch": 0, "target": [1, 2]})), ["camera/target"]);
+            assert_eq!(at(json!({"yaw": 0, "pitch": 0, "target": {"center_of": "top"}})), ["camera/target/center_of"]);
+            assert_eq!(at(json!({"yaw": 0, "pitch": 0, "fov": 400})), ["camera/fov"]);
         }
-        // What stays JSON: whole blocking topologies (a follow-up), a camera, and the hex blocks.
-        for r in &raw {
-            let command = r.split(' ').next().unwrap_or_default();
-            assert!(["mesh.hex.project", "mesh.block", "view.save", "view.image.save"].contains(&command), "{r} is raw JSON");
-        }
+        // Lengths follow the display units; angles stay degrees.
+        let mm = DisplaySystem::default();
+        let p = json!({"name": "V", "camera": {"yaw": 30, "pitch": 20, "distance": 300, "target": [10, 0, 0]}});
+        let si = crate::units::convert_params(VIEW_SAVE, &p, &mm, crate::units::si()).unwrap();
+        assert_eq!(si["camera"], json!({"yaw": 30, "pitch": 20, "distance": 0.3, "target": [0.01, 0.0, 0.0]}));
     }
 
     /// The 2D outline is a table of x, y points, read in the display length unit.

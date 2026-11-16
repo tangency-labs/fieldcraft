@@ -32,8 +32,8 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     if [w, h].iter().any(|side| !(MIN_SIDE..=MAX_SIDE).contains(side)) {
         return Err(EngineError::invalid("size", format!("[width, height], each {MIN_SIDE} to {MAX_SIDE} pixels")));
     }
-    let aim = match p.get("camera").filter(|v| !v.is_null()) {
-        Some(c) => crate::view::camera(c)?,
+    let aim = match super::views::camera_param(s, p)? {
+        Some(aim) => aim,
         None => s
             .camera
             .as_ref()
@@ -87,6 +87,33 @@ mod tests {
         let full = d.join("full.png");
         s.execute("view.image.save", &json!({"path": full})).unwrap();
         assert_eq!(png_size(&std::fs::read(&full).unwrap()), (super::DEFAULT_SIZE[0], super::DEFAULT_SIZE[1]));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// ux1 J1: the camera's distance and target are lengths of the form, so they may carry their
+    /// own unit, and a bare one is in the display units, as a typed widget gives them.
+    #[test]
+    fn a_camera_length_may_carry_its_unit() {
+        use fieldcraft_model::units::Quantity;
+        let d = dir("units");
+        let mut s = Session::default();
+        s.run_script(&crate::sample::cantilever()).unwrap();
+        let shown = s.units().symbol(Quantity::Length).to_string();
+        let (distance, target) = (400.0, [10.0, 0.0, 5.0]);
+        let metres = |x: f64| s.units().to_si(Quantity::Length, x).unwrap();
+        let (distance_m, target_m) = (metres(distance), target.map(metres));
+        let picture = |s: &mut Session, name: &str, camera: serde_json::Value| {
+            let path = d.join(name);
+            s.execute("view.image.save", &json!({"path": path, "size": [64, 48], "camera": camera})).unwrap();
+            std::fs::read(&path).unwrap()
+        };
+        let bare = picture(&mut s, "bare.png", json!({"yaw": 30, "pitch": 20, "distance": distance, "target": target}));
+        let with_units = picture(
+            &mut s,
+            "units.png",
+            json!({"yaw": 30, "pitch": 20, "distance": format!("{distance_m} m"), "target": target_m.map(|x| json!({"value": x, "unit": "m"}))}),
+        );
+        assert_eq!(bare, with_units, "the same camera ({shown} bare, metres with their unit)");
         let _ = std::fs::remove_dir_all(&d);
     }
 

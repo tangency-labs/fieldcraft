@@ -367,7 +367,7 @@ impl Form<'_> {
                 })
             }
             // Edited as JSON until their own widgets land.
-            Kind::Json | Kind::List { .. } | Kind::NameOrValue { .. } => self.json(ui, id, value, f.hint),
+            Kind::Json | Kind::List { .. } | Kind::NameOrValue { .. } | Kind::Seq(_) => self.json(ui, id, value, f.hint),
             Kind::Labels(of) => self.labels(ui, id, value, of, f.hint),
             Kind::Sides(side) => self.sides(ui, id, value, side, f.hint),
             Kind::Points { columns, max, .. } => self.points(ui, id, value, f, columns, max),

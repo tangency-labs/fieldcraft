@@ -328,9 +328,13 @@ fn field(f: &Field, v: &mut Value, parent: &Value, path: &str, leaf: &mut dyn Le
             }
             Ok(())
         }
-        Kind::Group(fields) | Kind::NameOr { fields, .. } => match v {
+        Kind::Group(fields) => match v {
             Value::Object(o) => walk(fields, o, path, leaf, depth + 1),
             _ => Ok(()),
+        },
+        Kind::NameOr { name, fields, .. } => match v {
+            Value::Object(o) => walk(fields, o, path, leaf, depth + 1),
+            _ => field(name, v, holder, path, leaf, depth + 1),
         },
         Kind::Rows { fields, .. } => {
             if let Value::Array(rows) = v {
@@ -358,6 +362,14 @@ fn field(f: &Field, v: &mut Value, parent: &Value, path: &str, leaf: &mut dyn Le
             Ok(())
         }
         Kind::NameOrValue { value, .. } if !v.is_string() => field(value, v, holder, path, leaf, depth + 1),
+        Kind::Seq(items) => {
+            if let Value::Array(entries) = v {
+                for (i, (x, item)) in entries.iter_mut().zip(items).enumerate() {
+                    field(item, x, holder, &format!("{path}/{i}"), leaf, depth + 1)?;
+                }
+            }
+            Ok(())
+        }
         Kind::Either(options) => {
             let holder = v.clone();
             if let Value::Object(o) = v {
