@@ -144,13 +144,13 @@ pub fn page(app: &mut ModelApp, ui: &mut egui::Ui) -> bool {
     // Esc chooses Back. A stop-gap until the kit's start page binds Esc itself
     // (solidcraft#17391); delete it then, or it takes the key first. It runs after the kit has
     // drawn, so the kit's open rail menu (a narrow window) takes Esc first, and only when nothing
-    // of the window's was over the page as the last frame ended: a menu drawn before the page
-    // this frame has already closed on this Esc.
+    // of the window's (a prompt, a menu, the command search, Settings) was over the page as the
+    // last frame ended: a menu drawn before the page this frame has already closed on this Esc.
     let back = interactive && !app.start_page.covered && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     if let Some(action) = chosen.or(back.then_some(Action::Back)) {
         run(app, action);
     }
-    app.start_page.covered = app.prompt.is_some() || app.ui.menu.is_some() || app.ui.palette;
+    app.start_page.covered = app.prompt.is_some() || app.ui.menu.is_some() || app.ui.palette || app.settings.open;
     true
 }
 

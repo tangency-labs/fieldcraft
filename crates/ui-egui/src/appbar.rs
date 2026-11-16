@@ -129,7 +129,7 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
         ],
         quick: 1,
         help: chrome("help", "help", "Help: navigation, keys, updates, about"),
-        settings: chrome("settings", "settings", "Settings: privacy and updates"),
+        settings: chrome("settings", "settings", "Settings: units, the window, privacy and updates"),
         report: app_bar::Report {
             label: "Report a bug",
             tip: "Report a bug: draft a GitHub issue with the version, the OS and the last error; nothing is sent until you submit it",
@@ -393,7 +393,7 @@ fn help_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
             row(ui, "help.reinstall", "Reinstall FieldCraft…", "Download this version again, verify it and swap it in, to repair a damaged install");
     }
     let crashes = row(ui, "help.crash_reports", "Crash Reports…", "The crash reports saved on this computer: report, copy or delete them");
-    let settings = row(ui, "help.settings", "Settings…", "Privacy and updates");
+    let settings = row(ui, "help.settings", "Settings…", "Units, the window, privacy and updates");
     crate::frame::menu_separator(ui);
     note(ui, &format!("FieldCraft {}", crate::VERSION));
     // Everything the menu drew, down to the version (control channel, tests).
@@ -416,6 +416,37 @@ mod tests {
     use fieldcraft_engine::Session;
 
     use super::*;
+
+    /// The bar's Settings opens Settings as the kit's Preferences window (its page list and
+    /// footer published under `prefs:`), and no other window.
+    #[test]
+    fn the_bar_settings_opens_the_kits_preferences_window() {
+        let mut app = ModelApp::new(Session::default());
+        let ctx = egui::Context::default();
+        let run = |app: &mut ModelApp, events: Vec<egui::Event>| {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        };
+        for _ in 0..2 {
+            run(&mut app, Vec::new());
+        }
+        assert!(solidcraft_ui_registry::rect_of("prefs:window").is_none(), "closed at launch");
+        let at = app.layout.get("app_bar:settings").copied().expect("the bar draws Settings").center();
+        let press = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        run(&mut app, vec![egui::Event::PointerMoved(at), press(true)]);
+        run(&mut app, vec![press(false)]);
+        for _ in 0..2 {
+            run(&mut app, Vec::new());
+        }
+        for name in ["prefs:window", "prefs:page:General", "prefs:page:Privacy", "prefs:page:Updates", "prefs:ok", "prefs:cancel", "prefs:apply"] {
+            assert!(solidcraft_ui_registry::rect_of(name).is_some() || solidcraft_ui_registry::handle_at(name).is_some(), "{name} is drawn");
+        }
+        assert_eq!(app.prompt, None, "no other window opens");
+    }
 
     /// The bar's regions after a frame of a window `width` wide.
     fn regions(width: f32, integrated: bool) -> std::collections::BTreeMap<&'static str, Rect> {

@@ -309,10 +309,10 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 crate::files::Prompt::CrashReports(r) => json!({"crash_reports": r}),
                 crate::files::Prompt::ReportBug => json!({"report_bug": app.report.as_ref().and_then(|f| f.drafted_json())}),
                 crate::files::Prompt::Consent => json!({"consent": crate::privacy::QUESTION}),
-                crate::files::Prompt::Settings => json!("settings"),
                 crate::files::Prompt::Update => json!({"update": app.update_json()}),
             }),
             "privacy": privacy_json(app),
+            "settings": crate::settings::describe(app),
             "updates": app.update_json(),
             "recent": app.recent.paths,
             "version": crate::VERSION,
@@ -320,10 +320,7 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
         })),
         "ui.toolbar" => ok(crate::toolbar::describe(app)),
         "ui.path" => wrap(path_action(app, p)),
-        "ui.settings" => {
-            app.open_settings();
-            ok(privacy_json(app))
-        }
+        "ui.settings" => wrap(crate::settings::from_control(app, p)),
         "ui.select" if p.get("kind").is_none() && VIEWPORT_SELECT.iter().any(|k| p.get(*k).is_some()) => wrap(select(app, p)),
         "ui.selection" => ok(selection_json(app)),
         "ui.select" => {
@@ -536,37 +533,9 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     app.answer_consent(a == "share");
                     ok(privacy_json(app))
                 }
-                (crate::files::Prompt::Settings, Some("set")) if p.get("units").is_some() => {
-                    match p.get("units").cloned().map(serde_json::from_value::<fieldcraft_model::DisplaySystem>) {
-                        Some(Ok(units)) => {
-                            app.set_default_units(units);
-                            ok(json!({"units": app.prefs().units}))
-                        }
-                        _ => err("`units` must be a unit system (mm-t-s-N-MPa, m-kg-s-N-Pa, mm-kg-ms-kN-GPa, mm-g-ms-N-MPa, in-lbf-s-psi)"),
-                    }
-                }
-                (crate::files::Prompt::Settings, Some("set")) if p.get("update_check").is_some() || p.get("update_skip").is_some() => {
-                    let automatic = p.get("update_check").and_then(Value::as_bool).unwrap_or(app.prefs().update_check);
-                    let skip = p.get("update_skip").and_then(Value::as_str).map(str::to_string);
-                    app.set_update_prefs(automatic, skip);
-                    ok(app.update_json())
-                }
                 (crate::files::Prompt::Update, Some(a @ ("restart" | "later"))) => {
                     app.answer_update(a == "restart");
                     ok(app.update_json())
-                }
-                (crate::files::Prompt::Settings, Some("set")) => {
-                    if !app.usage_available() {
-                        return err("this run cannot share usage (no analytics key, or FIELDCRAFT_TELEMETRY=0, CI or automation)");
-                    }
-                    let sharing = p.get("usage_sharing").and_then(Value::as_bool).unwrap_or(app.prefs().usage_sharing == Some(true));
-                    let automation = p.get("usage_automation").and_then(Value::as_bool).unwrap_or(app.prefs().usage_automation);
-                    app.set_usage(sharing, automation);
-                    ok(privacy_json(app))
-                }
-                (crate::files::Prompt::Settings, Some("close" | "cancel")) => {
-                    app.prompt = None;
-                    ok(Value::Null)
                 }
                 (crate::files::Prompt::ReportBug, Some("close" | "cancel")) => {
                     app.prompt = None;
@@ -581,7 +550,7 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     None => err("missing `id` (from file.recovery.list)"),
                 },
                 (_, a) => err(format!(
-                    "`answer` {a:?} does not answer this prompt (unsaved: save, discard, cancel; design: new, keep, cancel; replace_mesh: replace, cancel; delete: delete, cancel; recover: recover with id, close; samples: open with name, close; crashed: report, close; report_bug: set with title/observed/share_session/include_model, close; consent: share, decline; settings: set with usage_sharing/usage_automation or update_check/update_skip, close; update: restart, later)"
+                    "`answer` {a:?} does not answer this prompt (unsaved: save, discard, cancel; design: new, keep, cancel; replace_mesh: replace, cancel; delete: delete, cancel; recover: recover with id, close; samples: open with name, close; crashed: report, close; report_bug: set with title/observed/share_session/include_model, close; consent: share, decline; update: restart, later)"
                 )),
             }
         }

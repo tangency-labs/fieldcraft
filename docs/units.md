@@ -30,7 +30,7 @@ mm-t-s, J for SI, …). Angles are radians in every preset; an override such as
 Which system applies, in order:
 
 1. the model's own (`model.units {system, overrides}`, saved in the model as `display_units`),
-2. the user's setting (Help › Settings › Units, `prefs.json`; `ui.prompt settings set {units}`),
+2. the user's setting (Settings › General, `prefs.json`; `ui.settings {set: {units}}`),
 3. `mm-t-s-N-MPa` with °C.
 
 A model migrated from format 2 keeps the system its file declared (`unspecified` displays as
