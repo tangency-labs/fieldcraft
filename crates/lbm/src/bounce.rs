@@ -317,6 +317,9 @@ pub struct WallNode {
     pub cell: u32,
     /// The interior node one cell into the fluid along the normal, which gives the stress.
     pub interior: u32,
+    /// The second open cell off the wall, one beyond `interior` (`interior` itself where there is
+    /// none): what the law reads where the nodes sample the second cell ([`WallNodes::with_second_cell`]).
+    pub sample_cell: u32,
     /// The wall's normal axis and the sign of its inward normal (+1 at a min face).
     pub axis: u8,
     pub inward: i8,
@@ -344,7 +347,20 @@ impl WallNode {
     /// `interior`, its force in `group`, with `roles`.
     pub fn new(cell: u32, interior: u32, axis: u8, inward: i8, group: u32, roles: [Role; Q]) -> WallNode {
         let flat = roles == flat_roles(usize::from(axis), i32::from(inward));
-        WallNode { cell, interior, axis, inward, group, stress: [0.0; 3], taken: [0.0; 3], roles, flat, wanted: [0.0; 3], edge: [0.0; 3] }
+        WallNode {
+            cell,
+            interior,
+            sample_cell: interior,
+            axis,
+            inward,
+            group,
+            stress: [0.0; 3],
+            taken: [0.0; 3],
+            roles,
+            flat,
+            wanted: [0.0; 3],
+            edge: [0.0; 3],
+        }
     }
 
     /// Whether it samples Spalding's law at its interior node: its normal link is Han's (always on
@@ -381,13 +397,16 @@ pub struct WallNodes {
     /// The law's distance y of the interior node from the wall, in cells: 1 for a wall through the
     /// node centres (Han et al.), ½ for the wall half way between the interior node and the node.
     distance: f64,
+    /// Whether a node with a second open cell behind its interior node reads the law there
+    /// ([`WallNode::sample_cell`]), at `distance + 1`, rather than at its interior node.
+    second_cell: bool,
 }
 
 impl WallNodes {
     /// `nodes` (sorted here by cell) for a fluid of kinematic viscosity `nu` (lattice units).
     pub fn new(mut nodes: Vec<WallNode>, nu: f64, law: crate::sa::WallLaw) -> WallNodes {
         nodes.sort_by_key(|n| n.cell);
-        WallNodes { nodes, nu, law, distance: 1.0 }
+        WallNodes { nodes, nu, law, distance: 1.0, second_cell: false }
     }
 
     /// These nodes with the law evaluated at `distance` cells from the wall (default 1): ½ where
@@ -396,6 +415,26 @@ impl WallNodes {
     pub fn with_distance(mut self, distance: f64) -> WallNodes {
         self.distance = distance;
         self
+    }
+
+    /// These nodes reading the law at the second open cell off the wall (one cell beyond the
+    /// interior node) wherever a node has one, at `distance + 1` from the wall: the sample is
+    /// then clear of the buffer layer the first cell sits in. A node without a second open cell
+    /// keeps reading its interior node, at `distance`.
+    #[must_use]
+    pub fn with_second_cell(mut self) -> WallNodes {
+        self.second_cell = true;
+        self
+    }
+
+    /// Whether the law is read at the second open cell where there is one.
+    pub fn second_cell(&self) -> bool {
+        self.second_cell
+    }
+
+    /// The distance at which the law is read for `node`, in cells from the wall.
+    pub fn law_distance(&self, node: &WallNode) -> f64 {
+        if self.second_cell && node.sample_cell != node.interior { self.distance + 1.0 } else { self.distance }
     }
 
     /// The law's distance of the interior node from the wall, in cells.
@@ -439,7 +478,7 @@ impl WallNodes {
     /// Spalart–Allmaras model's own) at the interior node's distance from the wall ([`WallNodes::distance`], 1 or ½),
     /// in parallel: each node's is its own. Zero at rest or with a number that is not usable.
     pub fn sample(&mut self, moments: impl Fn(usize) -> Option<(f64, [f64; 3])> + Sync) {
-        let (nu, law, y) = (self.nu, self.law, self.distance);
+        let (nu, law, distance, second) = (self.nu, self.law, self.distance, self.second_cell);
         parallel::for_each_mut(&mut self.nodes, |_, w| {
             w.stress = [0.0; 3];
             w.wanted = [0.0; 3];
@@ -448,7 +487,8 @@ impl WallNodes {
             if !w.sampled() {
                 return;
             }
-            let Some((rho, u)) = moments(w.interior as usize) else { return };
+            let (cell, y) = if second && w.sample_cell != w.interior { (w.sample_cell, distance + 1.0) } else { (w.interior, distance) };
+            let Some((rho, u)) = moments(cell as usize) else { return };
             let mut t = u;
             if let Some(v) = t.get_mut(axis) {
                 *v = 0.0;

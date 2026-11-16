@@ -1669,6 +1669,7 @@ impl Flow {
             }
         };
         open.shrink_to_fit();
+        let open_cells: Vec<bool> = if surface_model { if bulk.is_empty() { fluid.clone() } else { bulk.clone() } } else { Vec::new() };
         let mut flow = Flow {
             grid,
             n,
@@ -1690,7 +1691,34 @@ impl Flow {
             walls,
             wall_model: setup.wall_model == Some(WallModel::Musker),
             wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounceHalfway),
-            nodes: on_node.then(|| WallNodes::new(node_list, nu, node_law).with_distance(if surface_model { 0.5 } else { 1.0 })),
+            nodes: on_node.then(|| {
+                let mut node_list = node_list;
+                if surface_model {
+                    let open = &open_cells;
+                    // A cell that is some node's own first cell is never another's second: two rows
+                    // would write its ν̃.
+                    let first_cells: std::collections::BTreeSet<u32> = node_list.iter().map(|w| w.interior).collect();
+                    for w in node_list.iter_mut() {
+                        let axis = usize::from(w.axis).min(2);
+                        let p = grid.coords(w.interior as usize);
+                        let next = p[axis] as i64 + i64::from(w.inward).signum();
+                        let periodic_axis = periodic.get(axis).copied().unwrap_or(false);
+                        let n = grid.cells[axis] as i64;
+                        let next = if periodic_axis { next.rem_euclid(n) } else { next };
+                        if (0..n).contains(&next) {
+                            let mut q = p;
+                            q[axis] = next as usize;
+                            let cell = grid.index(q);
+                            if open.get(cell).copied().unwrap_or(false) && !first_cells.contains(&(cell as u32)) {
+                                w.sample_cell = cell as u32;
+                            }
+                        }
+                    }
+                    WallNodes::new(node_list, nu, node_law).with_distance(0.5).with_second_cell()
+                } else {
+                    WallNodes::new(node_list, nu, node_law)
+                }
+            }),
             inlet_corners,
             wall_layer,
             bulk,
@@ -2745,6 +2773,27 @@ impl Flow {
             return Ok(());
         }
         let wall = self.wall_friction();
+        let mut extra: Vec<(usize, f64, f64)> = self
+            .nodes
+            .as_ref()
+            .filter(|nodes| nodes.second_cell())
+            .map(|nodes| {
+                nodes
+                    .nodes()
+                    .iter()
+                    .filter(|w| w.sampled() && w.sample_cell != w.interior)
+                    .filter_map(|w| {
+                        let tau = w.wanted.iter().map(|s| s * s).sum::<f64>().sqrt();
+                        let rho = self.moments(w.sample_cell as usize)?.0;
+                        let ut = (tau / rho).sqrt();
+                        ut.is_finite().then_some((w.sample_cell as usize, nodes.law_distance(w), ut))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        // Nodes that share a second cell: the larger u_τ, as for the first cells.
+        extra.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.total_cmp(&a.2)));
+        extra.dedup_by_key(|w| w.0);
         let Some(sa) = &mut self.sa else { return Ok(()) };
         let (grid, periodic, block, steps) = (self.grid, self.periodic, self.block, self.steps_done);
         let fluid = populated_mask(&self.fluid, &self.bulk, self.surface.as_ref());
@@ -2770,7 +2819,7 @@ impl Flow {
         // transport so the collision reads it. Not with the sources off (the transport alone).
         if let Some(law) = sa.law.filter(|_| sa.model) {
             let mut fixed = Vec::with_capacity(wall.len());
-            for &(c, y, ut) in &wall {
+            for &(c, y, ut) in wall.iter().chain(&extra) {
                 if law == crate::sa::WallLaw::SpalartAllmaras {
                     let v = crate::sa::KAPPA * ut * y;
                     fixed.push((c, if v.is_finite() { v } else { 0.0 }));
@@ -3814,7 +3863,7 @@ impl crate::backend::Backend for Flow {
     }
 
     fn wall_layer(&self) -> Option<crate::wall_layer::WallLayerReport> {
-        self.nodes.as_ref().map(|_| self.wall_layer)
+        self.nodes.as_ref().filter(|n| n.second_cell()).map(|_| self.wall_layer)
     }
 
     fn conducting(&self) -> &[Vec<u32>] {
