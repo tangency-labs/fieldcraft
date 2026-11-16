@@ -56,6 +56,7 @@ pub mod results_panel;
 pub mod samples;
 pub mod scene;
 pub mod selection;
+pub mod settings;
 pub mod shell;
 pub mod start;
 pub mod status_bar;
@@ -122,7 +123,7 @@ pub struct UiState {
     pub browser_width: f32,
     /// The browser card folded to its header (remembered per user).
     pub browser_collapsed: bool,
-    /// The browser card is translucent over the view (Settings › Interface; remembered per
+    /// The browser card is translucent over the view (Settings › General › Window; remembered per
     /// user).
     pub browser_float: bool,
     /// The browser rows' eye beside the fold arrow instead of at the row's end (Settings ›
@@ -132,7 +133,7 @@ pub struct UiState {
     pub show_timeline: bool,
     /// Where History docks, top or bottom (its grip moves it; remembered per user).
     pub history_dock: shell::HistoryDock,
-    /// The status bar along the window's bottom edge (Settings › Interface; off by default,
+    /// The status bar along the window's bottom edge (Settings › General › Window; off by default,
     /// remembered per user).
     pub status_bar: bool,
     /// The mouse navigation preset ([`navigation::NAV_PRESETS`] id; remembered per user).
@@ -510,6 +511,9 @@ pub struct ModelApp {
     usage: Option<privacy::UsageHost>,
     /// The consent question was asked in this run.
     consent_asked: bool,
+    /// Settings (the kit's Preferences window, [`settings`]): open, the page shown, its search and
+    /// the snapshot Cancel puts back.
+    pub(crate) settings: solidcraft_ui_kit::prefs_window::State<settings::Snapshot>,
     /// Checking for and installing updates, when this run may ([`updates`]).
     updates: Option<updates::State>,
     /// The web app: a new deployment is out, and this reloads the page into it.
@@ -645,6 +649,7 @@ impl ModelApp {
             prefs: files::Prefs::default(),
             usage: None,
             consent_asked: false,
+            settings: Default::default(),
             updates: None,
             reload: None,
             setup: (None, std::sync::Arc::default()),
@@ -1182,7 +1187,7 @@ impl ModelApp {
     }
 
     /// Read the probe, the reaction sums and the XY series again when the display units changed
-    /// (`model.units`, Settings › Units): they are kept as shown, in the units they were read in.
+    /// (`model.units`, Settings › General): they are kept as shown, in the units they were read in.
     #[allow(clippy::disallowed_methods, reason = "reads one probed node and one step's reaction sums again")]
     fn follow_units(&mut self) {
         let units = self.session.units().label();
@@ -2333,6 +2338,10 @@ impl ModelApp {
         if ctx.memory(|m| m.focused().is_some()) {
             return;
         }
+        // Settings is modal: its search takes the typing, and nothing acts on the model behind it.
+        if self.settings.open {
+            return;
+        }
         let shortcut = |modifiers, key| egui::KeyboardShortcut::new(modifiers, key);
         let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
         // The file's keys work on the start page too.
@@ -2452,6 +2461,7 @@ impl ModelApp {
         report::show(self, ui.ctx());
         self.ask_consent();
         privacy::show(self, ui.ctx());
+        settings::show(self, ui.ctx());
         updates::show(self, ui.ctx());
         if self.custom_titlebar {
             titlebar::resize_zones(ui);
@@ -2507,7 +2517,7 @@ impl ModelApp {
 
     /// Save the preferences the window changed (a View menu toggle, `ui.set`).
     /// Show and take numbers in `units` from now on, in models without their own, and remember
-    /// it (Help › Settings). Nothing in the model changes: it is stored in SI.
+    /// it (Settings › General). Nothing in the model changes: it is stored in SI.
     pub fn set_default_units(&mut self, units: fieldcraft_model::DisplaySystem) {
         self.session.default_units = units.clone();
         self.prefs.units = units;

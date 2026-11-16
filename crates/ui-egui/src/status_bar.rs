@@ -1,4 +1,4 @@
-//! The status bar (Settings › Interface › Status bar; off by default), after SolidCraft's
+//! The status bar (Settings › General › Window › Status bar; off by default), after SolidCraft's
 //! `crates/ui-egui/src/status_bar.rs` (MIT OR Apache-2.0, see ATTRIBUTION.md): a thin bar along
 //! the window's bottom edge, below the History card, with the model's size, the projection and
 //! the graphics device, right-aligned, and an update on offer before them. Status messages are

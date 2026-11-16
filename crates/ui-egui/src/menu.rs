@@ -629,7 +629,7 @@ mod tests {
     /// command id (owner's rule: no command ids as UI text). Read from drawn frames (each
     /// widget's hover text is its accessibility description), across the browser, its item
     /// menu, the results panel with reactions, a probed node, saved views, the XY plot and
-    /// streamlines, and the Help menu, so a new hover that names an id fails here.
+    /// streamlines, the Help menu and every Settings page, so a new hover that names an id fails here.
     #[test]
     fn no_drawn_hover_names_a_command_id() {
         let ids: Vec<&str> = fieldcraft_engine::commands().iter().map(|c| c.id).collect();
@@ -659,6 +659,27 @@ mod tests {
                 ("context", "Views", egui::PointerButton::Primary),
                 ("browser", "Loads & BCs", egui::PointerButton::Primary),
                 ("browser", "Clamp", egui::PointerButton::Secondary),
+            ],
+        ));
+        // Settings, every page.
+        let ctx = egui::Context::default();
+        let (_tx, events) = crate::inbox::channel();
+        let mut app = ModelApp::new(Session::default()).with_updates(crate::updates::UpdateHost {
+            unsupported: None,
+            automatic: false,
+            start: Box::new(|_| {}),
+            events,
+            now: Box::new(|| 0),
+            open_file: Box::new(|_| Ok(())),
+        });
+        app.open_settings();
+        hovers.extend(hovers_drawn(
+            &mut app,
+            &ctx,
+            &[
+                ("settings", "Privacy", egui::PointerButton::Primary),
+                ("settings", "Updates", egui::PointerButton::Primary),
+                ("settings", "General", egui::PointerButton::Primary),
             ],
         ));
         // An XY plot of an explicit step.
@@ -705,6 +726,9 @@ mod tests {
             "Write the series to a CSV file",
             "Streamlines from the inlet",
             "New Material: Properties › Material",
+            "Numbers are shown and typed in these units",
+            "Count the commands that scripts, the control channel and AI agents run",
+            "At start-up, at most once a day",
         ] {
             assert!(hovers.iter().any(|h| h.starts_with(reached)), "{reached} not drawn: {hovers:?}");
         }

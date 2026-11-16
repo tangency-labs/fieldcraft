@@ -98,6 +98,8 @@ impl ModelApp {
             recent: _,
             start_page: _,
             prefs: _,
+            // The Preferences window: the user's settings, not the document's.
+            settings: _,
             usage: _,
             consent_asked: _,
             updates: _,
