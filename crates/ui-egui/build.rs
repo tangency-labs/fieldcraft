@@ -5,6 +5,9 @@ use std::fmt::Write;
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The target this crate is built for, so its tests can ask `cargo metadata` for that
+    // platform's packages only (theme.rs `kit_message_ids`).
+    println!("cargo:rustc-env=FIELDCRAFT_BUILD_TARGET={}", std::env::var("TARGET")?);
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
     let dir = manifest.join("../../assets/icons");
     println!("cargo:rerun-if-changed={}", dir.display());

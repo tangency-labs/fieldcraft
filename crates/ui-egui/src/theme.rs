@@ -581,11 +581,22 @@ mod tests {
     }
 
     /// The `ui.…` message ids `solidcraft-ui-kit` reads: each `"ui.…"` literal in its sources at
-    /// the revision Cargo.lock pins (found through `cargo metadata`), outside its tests (its
+    /// the revision Cargo.lock pins (found through `cargo metadata` for the target being built), outside its tests (its
     /// `*_tests.rs` files and each file's `#[cfg(test)]` module, which ends the file).
     fn kit_message_ids() -> std::collections::BTreeSet<String> {
         let out = std::process::Command::new(env!("CARGO"))
-            .args(["metadata", "--format-version", "1", "--offline", "--manifest-path", concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")])
+            // Only this target's packages: an offline resolve of every platform's would need packages
+            // no build here downloads (a dependency used only on another OS).
+            .args([
+                "metadata",
+                "--format-version",
+                "1",
+                "--offline",
+                "--filter-platform",
+                env!("FIELDCRAFT_BUILD_TARGET"),
+                "--manifest-path",
+                concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"),
+            ])
             .output()
             .expect("cargo metadata runs");
         assert!(out.status.success(), "cargo metadata: {}", String::from_utf8_lossy(&out.stderr));
