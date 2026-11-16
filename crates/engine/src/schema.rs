@@ -39,9 +39,9 @@ pub struct Field {
     /// For a [`Kind::Choice`]: a one-line note per option value (what it needs), shown under the
     /// field for the option chosen.
     pub notes: &'static [(&'static str, &'static str)],
-    /// The numbers inside a JSON value (a [`Kind::Json`] field, or a name-or-object [`Kind::Text`]
-    /// one), by JSON pointer pattern relative to the value: what they measure, converted like any
-    /// other number of the form ([`crate::units`]).
+    /// The numbers inside a JSON value (a name-or-object [`Kind::Text`] field), by JSON pointer
+    /// pattern relative to the value: what they measure, converted like any other number of the
+    /// form ([`crate::units`]).
     pub numbers: Numbers,
 }
 
@@ -174,8 +174,6 @@ pub enum Kind {
     /// A list of exactly these fields' values in order (their keys unused): a block face
     /// `[block, face]`.
     Seq(&'static [Field]),
-    /// Any JSON: what the schema does not describe.
-    Json,
 }
 
 /// What a [`Kind::Topology`] name names: a face, an edge or a vertex of a body.
@@ -743,9 +741,6 @@ pub const fn name_or(key: &'static str, label: &'static str, name: &'static Fiel
 pub const fn reference_text(key: &'static str, label: &'static str, c: Collection) -> Field {
     field(key, label, Kind::RefText(c))
 }
-pub const fn json(key: &'static str, label: &'static str) -> Field {
-    field(key, label, Kind::Json)
-}
 pub const fn variant(tag: &'static str, label: &'static str, fields: &'static [Field]) -> Variant {
     Variant { tag, label, fields }
 }
@@ -1272,7 +1267,7 @@ fn value_problem(f: &'static Field, v: &Value, path: &str, out: &mut Vec<Problem
             };
             (!ok).then_some(ProblemKind::NotAChoice)
         }
-        Kind::Unit | Kind::Json => None,
+        Kind::Unit => None,
         Kind::Sides(side) => match v.as_array() {
             Some(a)
                 if a.len() <= MAX_LABELS

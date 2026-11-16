@@ -439,8 +439,6 @@ impl Form<'_> {
                     None => Some(Value::Null),
                 })
             }
-            // What the schema does not describe has no widget: worded, with Reset.
-            Kind::Json => value.filter(|v| !v.is_null()).and_then(|v| self.unshown(ui, v)),
             Kind::Labels(of) => self.labels(ui, id, value, f, of),
             Kind::Sides(side) => self.sides(ui, id, value, side, f.hint),
             Kind::Points { columns, max, .. } => self.points(ui, id, value, f, columns, max),
@@ -1564,7 +1562,6 @@ pub(crate) mod tests {
             Kind::NameOrValue { .. } => "NameOrValue",
             Kind::Topology { .. } => "Topology",
             Kind::Seq(_) => "Seq",
-            Kind::Json => "Json",
         }
     }
 
@@ -1661,7 +1658,6 @@ pub(crate) mod tests {
             Kind::Seq(items) => {
                 json!(items.iter().enumerate().map(|(i, item)| example(item, &format!("{path}/{i}"), depth + 1, cover)).collect::<Vec<_>>())
             }
-            Kind::Json => json!({"a": 1}),
         }
     }
 

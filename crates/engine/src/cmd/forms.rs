@@ -3374,35 +3374,6 @@ mod tests {
         *form_of(command).iter().find(|f| f.key == key).unwrap_or_else(|| panic!("{command} has `{key}`"))
     }
 
-    /// A1-09, ux1 J1: no field is left as raw JSON text; every shape a command takes has a kind
-    /// (a form draws a widget for it, never a JSON text box).
-    #[test]
-    fn no_field_is_raw_json() {
-        let mut raw: Vec<String> = Vec::new();
-        fn walk(id: &str, fields: &[Field], raw: &mut Vec<String>, depth: usize) {
-            if depth > crate::schema::MAX_DEPTH {
-                return;
-            }
-            for f in fields {
-                match f.kind {
-                    Kind::Json => raw.push(format!("{id} {}", f.key)),
-                    Kind::Group(g) | Kind::Rows { fields: g, .. } | Kind::Either(g) | Kind::NameOr { fields: g, .. } => walk(id, g, raw, depth + 1),
-                    Kind::Variants { variants, .. } => variants.iter().for_each(|v| walk(id, v.fields, raw, depth + 1)),
-                    Kind::List { item, .. } => walk(id, std::slice::from_ref(item), raw, depth + 1),
-                    Kind::NameOrValue { name, value } => walk(id, &[*name, *value], raw, depth + 1),
-                    Kind::Seq(items) => walk(id, items, raw, depth + 1),
-                    _ => {}
-                }
-            }
-        }
-        for c in crate::commands() {
-            walk(c.id, c.form.unwrap_or_default(), &mut raw, 0);
-        }
-        raw.sort();
-        raw.dedup();
-        assert!(raw.is_empty(), "raw JSON fields: {raw:?}");
-    }
-
     /// ux1 J1: what mesh.hex.project takes checks against its typed fields, a wrong value is
     /// named at its own path, and its lengths convert as the command reads them (millimetres).
     #[test]

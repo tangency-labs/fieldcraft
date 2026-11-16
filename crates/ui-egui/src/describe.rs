@@ -249,7 +249,7 @@ fn scalar(f: &Field, v: &Value, units: &DisplaySystem) -> String {
             Some(a) => a.iter().zip(items.iter()).map(|(x, f)| scalar(f, x, units)).collect::<Vec<_>>().join(" "),
             None => crate::context::value_text(v),
         },
-        Kind::Json | Kind::Unit | Kind::Group(_) | Kind::Variants { .. } => crate::context::value_text(v),
+        Kind::Unit | Kind::Group(_) | Kind::Variants { .. } => crate::context::value_text(v),
     }
 }
 
