@@ -67,5 +67,9 @@ Remove-Item -Force $Zip -ErrorAction SilentlyContinue
 $Tar = Join-Path $env:SystemRoot 'System32\tar.exe'
 Invoke-Native 'zip' { & $Tar -a -cf $Zip -C (Split-Path $Stage) $Name }
 
-Invoke-Native 'fieldcraft-cli --version' { & (Join-Path $Stage 'fieldcraft-cli.exe') --version }
+# The CLI reports the version it was packaged as (a nightly's suffix included). The app is a GUI
+# program (no console), so its --version is checked on Linux and macOS.
+$Reported = & (Join-Path $Stage 'fieldcraft-cli.exe') --version
+if ($LASTEXITCODE -ne 0) { throw "fieldcraft-cli --version failed with exit code $LASTEXITCODE" }
+if ("$Reported".Trim() -ne "fieldcraft-cli $Version") { throw "fieldcraft-cli --version printed '$Reported', not 'fieldcraft-cli $Version'" }
 Get-Item $Zip | Format-Table Name, Length

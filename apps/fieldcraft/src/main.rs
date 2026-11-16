@@ -241,6 +241,12 @@ struct Args {
     files: Vec<String>,
 }
 
+/// What `--version` prints: the version the build was packaged as (a nightly's suffix included),
+/// which the release packaging checks.
+fn version_line() -> String {
+    format!("fieldcraft {}", fieldcraft_ui_egui::VERSION)
+}
+
 fn parse_args(args: impl IntoIterator<Item = String>, env_port: Option<String>) -> Result<Option<Args>, String> {
     let mut out = Args { control: env_port.and_then(|p| p.trim().parse().ok()), ..Default::default() };
     let mut args = args.into_iter().peekable();
@@ -259,7 +265,7 @@ fn parse_args(args: impl IntoIterator<Item = String>, env_port: Option<String>) 
                 out.control = Some(port.parse().map_err(|_| format!("--control: `{port}` is not a port number"))?);
             }
             "--version" | "-V" => {
-                println!("fieldcraft {}", fieldcraft_ui_egui::VERSION);
+                println!("{}", version_line());
                 return Ok(None);
             }
             "--help" | "-h" => {
@@ -441,5 +447,17 @@ mod tests {
         assert_eq!((a.sample.as_deref(), a.files), (Some("parts"), vec!["x.fieldcraft".to_string()]));
         assert_eq!(parse(&["a.fieldcraft", "--sample"], None).map(|a| a.map(|a| a.files)), Ok(Some(vec!["a.fieldcraft".to_string()])));
         assert_eq!(parse(&["--help"], None), Ok(None));
+        assert_eq!(parse(&["--version"], None), Ok(None));
+    }
+
+    #[test]
+    fn version_is_the_packaged_version() {
+        // The version the build was given (release.yml's FIELDCRAFT_VERSION), written out here
+        // rather than taken from the code under test.
+        let packaged = match option_env!("FIELDCRAFT_VERSION") {
+            Some(v) if !v.is_empty() => v,
+            _ => env!("CARGO_PKG_VERSION"),
+        };
+        assert_eq!(version_line(), format!("fieldcraft {packaged}"));
     }
 }

@@ -133,7 +133,7 @@ fn command(args: &[String], out: &mut impl Write) -> Result<(), Error> {
         Some("update") => update::run(args.get(1..).unwrap_or(&[]), out)?,
         Some("snapshot") => snapshot::run(args.get(1..).unwrap_or(&[]), out)?,
         Some("run") => run(args.get(1).ok_or_else(|| format!("run needs a script\n\n{USAGE}"))?, out)?,
-        Some("-V" | "--version") => writeln!(out, "fieldcraft-cli {}", env!("CARGO_PKG_VERSION"))?,
+        Some("-V" | "--version") => writeln!(out, "fieldcraft-cli {}", fieldcraft_update::VERSION)?,
         Some("-h" | "--help" | "help") | None => write!(out, "{USAGE}")?,
         Some(other) => return Err(format!("unknown command `{other}`\n\n{USAGE}").into()),
     }

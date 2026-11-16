@@ -85,11 +85,12 @@ pub struct Build {
 }
 
 impl Build {
-    /// This build: the workspace version, and the commit when the build named one
-    /// (`FIELDCRAFT_BUILD_SHA`, packaging/env.sh).
+    /// This build: the version it was packaged as ([`fieldcraft_update::VERSION`]; a nightly's
+    /// carries its suffix), and the commit when the build named one (`FIELDCRAFT_BUILD_SHA`,
+    /// packaging/env.sh).
     pub fn current() -> Build {
         let sha = option_env!("FIELDCRAFT_BUILD_SHA").unwrap_or("");
-        Build { version: env!("CARGO_PKG_VERSION"), commit: sha.get(..10).unwrap_or(sha) }
+        Build { version: fieldcraft_update::VERSION, commit: sha.get(..10).unwrap_or(sha) }
     }
 
     /// `v0.5.8 (abc1234567), macos aarch64`.
