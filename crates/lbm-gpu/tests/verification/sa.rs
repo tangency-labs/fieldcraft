@@ -312,3 +312,273 @@ fn what_the_gpu_does_not_run_with_spalart_allmaras_is_refused_clearly() {
     println!("heat: {e:?}");
     assert!(e.as_deref().is_some_and(|e| e.contains("Spalart–Allmaras") && e.contains("heat") && e.contains("cpu")), "{e:?}");
 }
+
+/// The model on Han, Ooka and Kikumoto's on-node wall (`spalding_bounce`), inflow ν̃/ν 3.
+fn on_han() -> Turbulence {
+    sa(3.0, Some(WallModel::SpaldingBounce))
+}
+
+/// `p` with the model on Han's wall, and the hybrid collision's σ 0.99 when it is the hybrid one.
+fn han_procedure(p: Procedure, collision: Collision) -> Procedure {
+    let mut p = with(p, on_han());
+    if let Procedure::Fluid { sigma, .. } = &mut p
+        && collision == Collision::Hrr
+    {
+        *sigma = Some(HrrSigma::Value(0.99));
+    }
+    p
+}
+
+/// The forced channel on Han's wall, 4 cells per half-height, 12 × 9 × 6 cells, periodic in x and
+/// z, started from a blunt profile at the bulk speed 15.7 (lattice 0.1), ν set for τ − ½ =
+/// `tau_half`: the walls are the box's y faces, or (`slabs`) obstacle slabs one cell thick in a
+/// box periodic in y too. Every node is flat: the plane path, `Side::Node` and the wall function.
+fn han_channel(slabs: bool, collision: Collision, tau_half: f64, steps: f64) -> (Setup, Flow) {
+    let (n, ub) = (4usize, 15.7);
+    let dx = 1.0 / n as f64;
+    let (lx, lz) = (12.0 * dx, 6.0 * dx);
+    let mut d = if slabs { domain([0.0, -dx, 0.0], [lx, 2.0 + 2.0 * dx, lz], dx) } else { domain([0.0; 3], [lx, 2.0 + dx, lz], dx) };
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    let obstacles = if slabs {
+        d.faces.y_min = PERIODIC;
+        d.faces.y_max = PERIODIC;
+        vec![
+            obstacle("Floor", cuboid([-1.0, -dx, -1.0], [lx + 1.0, 0.0, lz + 1.0]), &CUBOID_FACES),
+            obstacle("Roof", cuboid([-1.0, 2.0 + dx, -1.0], [lx + 1.0, 2.0 + 2.0 * dx, lz + 1.0]), &CUBOID_FACES),
+        ]
+    } else {
+        Vec::new()
+    };
+    d.obstacles = obstacles.iter().map(|o| o.body.clone()).collect();
+    d.acceleration = [1.0, 0.0, 0.0];
+    let dt = 0.1 * dx / ub;
+    let nu = tau_half / 3.0 * dx * dx / dt;
+    let (setup, mut flow) = prepare(&model(1.0, nu, d, han_procedure(collide(steps * dt, dt, None, collision), collision)), &obstacles);
+    let grid = *flow.grid();
+    let to_lattice = 1.0 / setup.velocity_scale();
+    flow.set_equilibrium(|cell| {
+        let [_, y, _] = grid.centre(cell);
+        let eta = y - 1.0 - 0.5 * dx;
+        (1.0, [1.15 * ub * (1.0 - eta.abs().min(1.0).powi(8)) * to_lattice, 0.0, 0.0])
+    });
+    (setup, flow)
+}
+
+/// The junction duct (64 × 16 × 1 cells): a uniform inflow on −x, a convective outlet on +x, Han's
+/// walls on y, periodic in z, lattice speed 0.05, τ − ½ = `tau_half`. The four cells where the
+/// walls meet the inflow and the outlet keep the open rule, and the four nodes beside them are
+/// not flat (their link along the wall to the open cell is not Han's): the general path.
+fn han_junction_duct(collision: Collision, tau_half: f64, steps: f64) -> (Setup, Flow) {
+    let (n, u_lat) = (16usize, 0.05);
+    let dx = 1.0 / n as f64;
+    let dt = u_lat * dx;
+    let nu = tau_half / 3.0 * dx * dx / dt;
+    let mut d = domain([0.0; 3], [4.0, 1.0, dx], dx);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [1.0, 0.0, 0.0], profile: Profile::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    d.initial_velocity = [1.0, 0.0, 0.0];
+    prepare(&model(1.0, nu, d, han_procedure(collide(steps * dt, dt, None, collision), collision)), &[])
+}
+
+/// A block on a forced channel's floor: 32 × 16 × 16 cells at Δ 1/8, periodic in x and z, Han's
+/// walls at the y faces, the block 8 × 5 × 4 cells, started at the bulk speed 15.7 (lattice 0.1),
+/// τ − ½ = `tau_half`. Its nodes: flat ones on the faces, nodes beside the block's convex edges
+/// with one wall direction (not flat), and corner nodes in its concave edges with two (no
+/// normal, never sampled); interior cells shared by two sampled nodes, so the wall function
+/// reduces rows of several nodes.
+fn han_floor_block(collision: Collision, tau_half: f64, steps: f64) -> (Setup, Flow) {
+    let (dx, ub) = (1.0 / 8.0, 15.7);
+    let mut d = domain([0.0; 3], [4.0, 2.0, 2.0], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    let obstacles = vec![obstacle("Block", cuboid([1.5, -1.0, 0.75], [2.5, 5.0 * dx, 1.25]), &CUBOID_FACES)];
+    d.obstacles = vec!["Block".into()];
+    d.acceleration = [1.0, 0.0, 0.0];
+    d.initial_velocity = [ub, 0.0, 0.0];
+    let dt = 0.1 * dx / ub;
+    let nu = tau_half / 3.0 * dx * dx / dt;
+    prepare(&model(1.0, nu, d, han_procedure(collide(steps * dt, dt, None, collision), collision)), &obstacles)
+}
+
+/// A flow's boundary nodes: how many, how many flat, how many sampled.
+fn node_counts(flow: &Flow) -> [usize; 3] {
+    let nodes = flow.wall_nodes().map(|w| w.nodes()).unwrap_or_default();
+    [nodes.len(), nodes.iter().filter(|w| w.flat).count(), nodes.iter().filter(|w| w.sampled()).count()]
+}
+
+/// What one run of the model on Han's wall measured, GPU against CPU: velocity (over the largest
+/// CPU speed), density, ν̃ (over the largest CPU ν̃); the wall function's friction velocities at
+/// the last step (over the largest CPU one); and every group's force averaged over the last 200
+/// steps (over the largest CPU group force).
+struct HanParity {
+    du: f64,
+    drho: f64,
+    dv: f64,
+    dut: f64,
+    dforce: f64,
+    rows: usize,
+}
+
+/// `steps` steps of `flow` on the CPU and the GPU (`streaming`), both with 2 fixed sub-steps of ν̃,
+/// and what [`HanParity`] measures; the wall function's rows are the same cells on both.
+fn han_parity(flow: Flow, steps: u64, streaming: Streaming) -> Option<HanParity> {
+    let mut cpu = flow;
+    cpu.set_sa_substeps(Some(2));
+    let mut gpu = gpu(&cpu, streaming)?;
+    gpu.fix_sa_substeps(Some(2)).unwrap();
+    let tail = 200.min(steps);
+    cpu.advance(steps - tail).unwrap();
+    gpu.advance(steps - tail).unwrap();
+    let groups = cpu.groups().len();
+    let (mut mc, mut mg) = (vec![[0.0f64; 3]; groups], vec![[0.0f64; 3]; groups]);
+    for _ in 0..tail {
+        cpu.advance(1).unwrap();
+        gpu.advance(1).unwrap();
+        let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
+        assert_eq!(fg.len(), groups);
+        for g in 0..groups {
+            for k in 0..3 {
+                mc[g][k] += fc[g][k] / tail as f64;
+                mg[g][k] += fg[g][k] / tail as f64;
+            }
+        }
+    }
+    let norm = |v: &[f64; 3]| v.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let scale = mc.iter().map(norm).fold(0.0, f64::max).max(1e-300);
+    let dforce = mc.iter().zip(&mg).map(|(a, b)| norm(&[a[0] - b[0], a[1] - b[1], a[2] - b[2]])).fold(0.0, f64::max) / scale;
+    let (wc, wg) = (cpu.sa_wall_function().1.to_vec(), gpu.sa_wall_function().unwrap());
+    assert_eq!(wc.iter().map(|r| r.0).collect::<Vec<_>>(), wg.iter().map(|r| r.0).collect::<Vec<_>>(), "the wall function's rows");
+    let ut = wc.iter().map(|r| r.2).fold(0.0, f64::max).max(1e-300);
+    let dut = wc.iter().zip(&wg).map(|(a, b)| (a.2 - b.2).abs()).fold(0.0, f64::max) / ut;
+    let (dv, _) = nu_tilde_difference(&mut cpu, &mut gpu);
+    let (du, drho) = field_difference(&mut cpu, &mut gpu);
+    Some(HanParity { du, drho, dv, dut, dforce, rows: wc.len() })
+}
+
+/// The bounds: velocity 1e-4, density 1e-5, ν̃ 5e-5, the friction velocities the wall function
+/// asked for and the groups' 200-step mean forces 1e-3. Prints what it measured; false past any.
+fn han_check(what: &str, r: &HanParity) -> bool {
+    println!(
+        "{what}: velocity {:.2e}, density {:.2e}, ν̃ {:.2e}; wall function u_τ {:.2e} over {} rows; group forces, mean of 200 steps {:.2e}",
+        r.du, r.drho, r.dv, r.dut, r.rows, r.dforce
+    );
+    r.du < 1e-4 && r.drho < 1e-5 && r.dv < 5e-5 && r.dut < 1e-3 && r.dforce < 1e-3
+}
+
+/// The model on Han's on-node wall, GPU against CPU, at τ − ½ 1.2e-4 (the gated cases' τ), both
+/// layouts: the forced channel with box-face walls and with obstacle slabs (144 flat nodes and
+/// 144 wall-function rows each), on the hybrid collision (σ 0.99) and the multiple-relaxation-time
+/// one, 2000 steps; and the junction duct (120 flat and 4 edge nodes, 124 rows) on the hybrid
+/// collision, 2000 steps (with the multiple-relaxation-time collision the CPU itself goes unstable
+/// at this τ, at step 255), and on both at τ 0.6.
+fn the_model_on_han_s_wall_follows_the_cpu_cases(steps: f64) {
+    let mut failed = Vec::new();
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        for slabs in [false, true] {
+            for collision in [Collision::Hrr, Collision::Mrt] {
+                let (setup, flow) = han_channel(slabs, collision, 1.2e-4, steps);
+                assert_eq!(node_counts(&flow), [144, 144, 144]);
+                let Some(r) = han_parity(flow, setup.steps, streaming) else { return };
+                let walls = if slabs { "obstacle slabs" } else { "box faces" };
+                let what = format!("SA on Han, channel ({walls}), {collision:?}, {streaming:?}, τ − ½ 1.2e-4, {steps} steps");
+                assert_eq!(r.rows, 144);
+                if !han_check(&what, &r) {
+                    failed.push(what);
+                }
+            }
+        }
+        for (collision, tau_half) in [(Collision::Hrr, 1.2e-4), (Collision::Hrr, 0.1), (Collision::Mrt, 0.1)] {
+            let (setup, flow) = han_junction_duct(collision, tau_half, steps);
+            assert_eq!(node_counts(&flow), [124, 120, 124]);
+            let Some(r) = han_parity(flow, setup.steps, streaming) else { return };
+            let what = format!("SA on Han, junction duct, {collision:?}, {streaming:?}, τ − ½ {tau_half}, {steps} steps");
+            assert_eq!(r.rows, 124);
+            if !han_check(&what, &r) {
+                failed.push(what);
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+#[test]
+fn the_model_on_han_s_wall_follows_the_cpu() {
+    the_model_on_han_s_wall_follows_the_cpu_cases(300.0);
+}
+
+/// [`the_model_on_han_s_wall_follows_the_cpu`] over 2000 steps.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_model_on_han_s_wall_follows_the_cpu_for_2000_steps() {
+    the_model_on_han_s_wall_follows_the_cpu_cases(2000.0);
+}
+
+/// The block on a channel floor `steps` steps, GPU against CPU, at τ − ½ 1.2e-4 on the hybrid
+/// (σ 0.99) and multiple-relaxation-time collisions, both layouts: 984 flat, 112 edge and 24
+/// corner nodes, 1096 sampled, 1072 wall-function rows. The CPU's stresses have no component
+/// along a node's normal axis (the sample takes the velocity parallel to the wall), which the
+/// device's general path relies on.
+fn floor_block_cases(steps: f64) {
+    let mut failed = Vec::new();
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        for collision in [Collision::Hrr, Collision::Mrt] {
+            let (setup, flow) = han_floor_block(collision, 1.2e-4, steps);
+            assert_eq!(node_counts(&flow), [1120, 984, 1096]);
+            let Some(r) = han_parity(flow, setup.steps, streaming) else { return };
+            let what = format!("SA on Han, block on a floor, {collision:?}, {streaming:?}, τ − ½ 1.2e-4, {steps} steps");
+            assert_eq!(r.rows, 1072);
+            if !han_check(&what, &r) {
+                failed.push(what);
+            }
+        }
+    }
+    let (setup, mut cpu) = han_floor_block(Collision::Hrr, 1.2e-4, steps);
+    cpu.set_sa_substeps(Some(2));
+    cpu.advance(setup.steps).unwrap();
+    for w in cpu.wall_nodes().unwrap().nodes() {
+        assert_eq!(w.stress[usize::from(w.axis)], 0.0, "node {}", w.cell);
+    }
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+/// [`floor_block_cases`] over 400 steps, the trunk gate's row.
+#[test]
+fn the_model_on_han_s_wall_follows_the_cpu_around_a_block() {
+    floor_block_cases(400.0);
+}
+
+/// [`floor_block_cases`] over 2000 steps.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_model_on_han_s_wall_follows_the_cpu_around_a_block_for_2000_steps() {
+    floor_block_cases(2000.0);
+}
+
+/// The model on Han's wall twice on one device gives the same fields, ν̃, forces and wall-function
+/// rows bit for bit: the block on a floor (the general path, rows of several nodes), 100 steps,
+/// hybrid collision, both layouts.
+#[test]
+fn the_model_on_han_s_wall_is_deterministic_on_its_device() {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let (_, mut flow) = han_floor_block(Collision::Hrr, 1.2e-4, 100.0);
+        flow.set_sa_substeps(Some(2));
+        let run = || {
+            let mut g = gpu(&flow, streaming)?;
+            g.fix_sa_substeps(Some(2)).unwrap();
+            g.advance(100).unwrap();
+            let mut bits = field_bits(&g.fields().unwrap());
+            bits.extend(g.nu_tilde().unwrap().unwrap().iter().map(|v| v.to_bits()));
+            bits.extend(g.forces().unwrap().iter().flatten().map(|v| v.to_bits()));
+            bits.extend(g.sa_wall_function().unwrap().iter().map(|r| r.2.to_bits()));
+            Some(bits)
+        };
+        let (Some(a), Some(b)) = (run(), run()) else { return };
+        println!("SA on Han, block on a floor, {streaming:?}: two runs bit for bit: {}", a == b);
+        assert!(a == b);
+    }
+}
