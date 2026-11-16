@@ -262,6 +262,10 @@ pub struct GpuFlow {
     /// distance buffer.
     sa: Option<SaDevice>,
     sa_cells: Option<wgpu::Buffer>,
+    /// With the model on Han's wall, its wall function's rows (`sa_wall_function`) and their
+    /// dispatch.
+    sa_wall_rows: u32,
+    sa_wall_groups: Option<(u32, u32)>,
 }
 
 /// The Spalart–Allmaras model on the device (see `lbm.wgsl`): its ν̃ buffer and the chunk's
@@ -314,8 +318,9 @@ const SA_DT: u64 = SA_PARAMS + 8;
 
 /// The Spalart–Allmaras model's box-face kinds for `lbm.wgsl` (2 bits per face: 1 wall,
 /// 2 inflow, 3 open), checked against every fluid cell's faces on the CPU: the device's rule is a
-/// fluid neighbour, a solid cell (a halfway wall) or, beyond a face that is not periodic, that
-/// face's one kind. A face it cannot reproduce (an inlet patch, an on-node wall) is refused.
+/// fluid neighbour, a boundary node of Han's on-node wall, a solid cell (a halfway wall) or,
+/// beyond a face that is not periodic, that face's one kind. A face it cannot reproduce (an inlet
+/// patch) is refused.
 fn sa_faces(flow: &Flow, field: &fieldcraft_lbm::sa::SaField) -> Result<u32> {
     use fieldcraft_lbm::sa::Side;
     let refuse = |what: String| {
@@ -328,6 +333,12 @@ fn sa_faces(flow: &Flow, field: &fieldcraft_lbm::sa::SaField) -> Result<u32> {
         let at = if k % 2 == 1 { p[axis] + 1 == grid.cells[axis] } else { p[axis] == 0 };
         at && !periodic[axis]
     };
+    let mut nodes = vec![false; grid.len()];
+    for w in flow.wall_nodes().map_or(&[][..], |n| n.nodes()) {
+        if let Some(x) = nodes.get_mut(w.cell as usize) {
+            *x = true;
+        }
+    }
     let mut kinds = [None::<u32>; 6];
     for (cell, sides) in field.sides().iter().enumerate() {
         if !flow.is_fluid(cell) {
@@ -371,6 +382,8 @@ fn sa_faces(flow: &Flow, field: &fieldcraft_lbm::sa::SaField) -> Result<u32> {
                 let nb = grid.index(q);
                 if flow.is_fluid(nb) {
                     Side::Cell(u32::try_from(nb).map_err(|_| Error::Limit("too many cells for the GPU solver".into()))?)
+                } else if nodes.get(nb).copied().unwrap_or(false) {
+                    Side::Node
                 } else {
                     Side::Wall
                 }
@@ -516,7 +529,7 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 38] = [
+const KERNELS: [&str; 39] = [
     "clear_eddy",
     "gradient_velocity",
     "fan_partials",
@@ -555,6 +568,7 @@ const KERNELS: [&str; 38] = [
     "sa_prepare",
     "sa_rate",
     "sa_update",
+    "sa_wall_function",
 ];
 
 /// The bindings each kernel uses, read from the shader (naga's analysis of which globals an entry
@@ -1284,6 +1298,29 @@ impl GpuFlow {
         let l_max = flow.grid().cells.iter().copied().min().unwrap_or(1) as f32;
         let les = [fixed_sigma as f32, flow.vreman() as f32, l_max, 0.0];
         let periodic = flow.periodic().map(u32::from);
+        let mut sa_wall_rows = 0u32;
+        if sa_faces.is_some() && on_node {
+            let mut by_cell: std::collections::BTreeMap<u32, Vec<u32>> = std::collections::BTreeMap::new();
+            for (k, w) in flow.wall_nodes().map_or(&[][..], |n| n.nodes()).iter().enumerate() {
+                if w.sampled() {
+                    by_cell.entry(w.interior).or_default().push(k as u32);
+                }
+            }
+            for (cell, nodes) in &by_cell {
+                if nodes.len() > 6 {
+                    return Err(Error::Invalid(format!("cell {cell} is the first fluid node of {} boundary nodes (at most 6)", nodes.len())));
+                }
+                let mut row = [0u32; 8];
+                row[0] = *cell;
+                row[1] = nodes.len() as u32;
+                for (slot, k) in row.iter_mut().skip(2).zip(nodes) {
+                    *slot = *k;
+                }
+                wall_rows.extend(row.map(f32::from_bits));
+                wall_rows.extend([0.0; 4]);
+            }
+            sa_wall_rows = u32::try_from(by_cell.len()).map_err(|_| Error::Limit("too many first fluid nodes for the GPU solver".into()))?;
+        }
         let sa_inflow = flow.spalart_allmaras().map_or(0.0, |f| f.inflow());
         let params = [0u32, 1].map(|phase| {
             let mut bytes = params.clone();
@@ -1294,6 +1331,7 @@ impl GpuFlow {
             bytes.extend_from_slice(&bytes_f32(&les));
             bytes.extend_from_slice(&bytes_u32(&[periodic[0], periodic[1], periodic[2], 0]));
             bytes.extend_from_slice(&bytes_u32(&[sa_faces.unwrap_or(0), (sa_inflow as f32).to_bits(), 1.0f32.to_bits(), 1]));
+            bytes.extend_from_slice(&bytes_u32(&[sa_wall_rows, 0, 0, 0]));
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("lbm params"),
                 contents: &bytes,
@@ -1517,6 +1555,8 @@ impl GpuFlow {
             },
             sa: sa_faces.map(|_| SaDevice { nu_tilde, substeps: None, fixed: false }),
             sa_cells: sa_faces.map(|_| sa_cell),
+            sa_wall_rows,
+            sa_wall_groups: if sa_wall_rows > 0 { Some(groups(sa_wall_rows as usize)?) } else { None },
         })
     }
 
@@ -1557,6 +1597,19 @@ impl GpuFlow {
         let Some(cells) = self.sa_cells.as_ref() else { return Ok(None) };
         let v = self.read_f32(cells, 2 * self.n)?;
         Ok(Some(v.as_chunks::<2>().0.iter().map(|c| f64::from(c[1])).collect()))
+    }
+
+    /// With the Spalart–Allmaras model on Han's wall, the wall function's samples of the last step
+    /// as the CPU's [`Flow::sa_wall_function`] gives them: each first fluid node's cell, its
+    /// distance to the wall and the friction velocity it read (lattice units), in cell order.
+    /// Empty without them.
+    pub fn sa_wall_function(&self) -> Result<Vec<(usize, f64, f64)>> {
+        if self.sa_wall_rows == 0 {
+            return Ok(Vec::new());
+        }
+        let base = (WALL_ROW + 8) * self.wall_count;
+        let rows = self.read_f32(&self.walls, base + 12 * self.sa_wall_rows as usize)?;
+        Ok(rows.get(base..).unwrap_or_default().as_chunks::<12>().0.iter().map(|r| (r[0].to_bits() as usize, 1.0, f64::from(r[8]))).collect())
     }
 
     /// With the Spalart–Allmaras model, the sub-steps per lattice step the next chunk takes (none
@@ -1829,6 +1882,9 @@ impl GpuFlow {
                 for _ in 0..sa_substeps {
                     commands.push((self.current, "sa_rate", self.cells));
                     commands.push((self.current, "sa_update", self.cells));
+                }
+                if let Some(groups) = self.sa_wall_groups {
+                    commands.push((self.current, "sa_wall_function", groups));
                 }
             }
             commands.push((self.current, "collide", self.cells));
@@ -2169,6 +2225,76 @@ mod tests {
             }
         }
         println!("{checked} neighbourhoods packed as the CPU's roles");
+    }
+
+    /// The wall function's constants in the shader are the CPU's (κ, B, c_v1), and its f32
+    /// algorithm (`sa_exp_tail`, `sa_spalding_nu_t`, `sa_nu_tilde_for`, ported here line by line)
+    /// gives the CPU's first-node ν̃ within 2e-5 relative over y⁺ from 0.1 to 3000 (measured:
+    /// 9.7e-7), the viscous sublayer included, where the series keeps e^x − 1 − x − x²/2 from
+    /// cancelling.
+    #[test]
+    fn the_wall_function_s_f32_roots_follow_the_cpu() {
+        use fieldcraft_lbm::sa::{C_V1, WallLaw, law_eddy_viscosity, nu_tilde_for};
+        use fieldcraft_lbm::wall::{BOUNCE_B, BOUNCE_KAPPA};
+        let constant = |name: &str| -> f64 {
+            let at = SHADER.find(&format!("const {name}: f32 = ")).unwrap() + name.len() + 14;
+            SHADER[at..].split(';').next().unwrap().trim().parse().unwrap()
+        };
+        let (law_e, kappa, cv1) = (constant("SA_LAW_E"), constant("SA_KAPPA"), constant("SA_CV1"));
+        assert!(((law_e - (-BOUNCE_KAPPA * BOUNCE_B).exp()) / law_e).abs() < 1e-12, "{law_e}");
+        assert_eq!(kappa, BOUNCE_KAPPA);
+        assert_eq!(cv1, C_V1);
+        let (e, k, cv1) = (law_e as f32, kappa as f32, cv1 as f32);
+        let tail = |x: f32, m: u32| -> f32 {
+            if x < 0.5 {
+                let x2 = x * x;
+                let x4 = x2 * x2;
+                let mut s = x4 / 24.0 + x4 * x / 120.0 + x4 * x2 / 720.0 + x4 * x2 * x / 5040.0 + x4 * x4 / 40320.0 + x4 * x4 * x / 362880.0;
+                if m == 3 {
+                    s += x2 * x / 6.0;
+                }
+                return s;
+            }
+            let mut s = x.exp() - 1.0 - x - 0.5 * x * x;
+            if m == 4 {
+                s -= x * x * x / 6.0;
+            }
+            s
+        };
+        let bisect = |mut lo: f32, mut hi: f32, below: &dyn Fn(f32) -> bool| -> f32 {
+            for _ in 0..40 {
+                let mid = 0.5 * (lo + hi);
+                if hi - lo <= 1e-7 * hi || !(mid > lo && mid < hi) {
+                    break;
+                }
+                if below(mid) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            hi
+        };
+        let fv1 = |chi: f32| {
+            let c3 = chi * chi * chi;
+            c3 / (c3 + 357.911)
+        };
+        let nu = 1e-4f32;
+        let mut worst = 0.0f64;
+        let mut y = 0.1f64;
+        while y < 3000.0 {
+            let yp = y as f32;
+            let u = bisect(0.0, yp, &|u| u + e * tail(k * u, 4) < yp);
+            let nu_t_plus = (k * e * tail(k * u, 3)).max(0.0);
+            let t = nu_t_plus;
+            let device = if t > 0.0 { f64::from(bisect(t, t + cv1, &|chi| chi * fv1(chi) < t) * nu) } else { 0.0 };
+            let host = nu_tilde_for(f64::from(nu) * law_eddy_viscosity(WallLaw::Spalding, y).unwrap(), f64::from(nu)).unwrap();
+            let rel = (device - host).abs() / host.max(1e-30);
+            assert!(rel < 2e-5, "y⁺ {y}: device {device:e} host {host:e}");
+            worst = worst.max(rel);
+            y *= 1.05;
+        }
+        println!("the device's first-node ν̃ within {worst:.1e} of the CPU's over y⁺ 0.1–3000");
     }
 
     /// An adapter that allows fewer is refused before anything is built, saying what to do.
