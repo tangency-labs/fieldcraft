@@ -6,9 +6,9 @@
 //! takes; it never changes it. The UI draws its command forms from it, `fieldcraft-cli commands
 //! --json` and the MCP `list_commands` tool give it as JSON Schema ([`json_schema`]).
 //!
-//! The schema is descriptive: the command's `run` stays the judge of its parameters. What the
-//! schema cannot express (a mass given per direction, a table of load-path points) stays reachable
-//! through the form's JSON view.
+//! The schema is descriptive: the command's `run` stays the judge of its parameters. Every shape a
+//! command takes has a kind, so a form draws a widget for every field; JSON is for scripts, MCP
+//! and the control channel.
 
 use fieldcraft_model::units::{DisplaySystem, Quantity};
 use serde_json::{Map, Value, json};
@@ -139,9 +139,9 @@ pub enum Kind {
         whole: bool,
         min: Option<f64>,
     },
-    /// A name (`name`, a [`Kind::Ref`] or [`Kind::Choice`] whose key is unused) as a bare
-    /// string, or an object of `fields` (`object` labels that choice): a mirror plane is a datum
-    /// plane's name or a point and a normal.
+    /// `name`'s value (its key unused; any kind but an object: a [`Kind::Ref`] name, a point),
+    /// or an object of `fields` (`object` labels that choice): a mirror plane is a datum plane's
+    /// name or a point and a normal, a camera's target a point or the centre of bodies.
     NameOr {
         name: &'static Field,
         object: &'static str,
@@ -171,6 +171,9 @@ pub enum Kind {
         entity: Side3,
         body_key: &'static str,
     },
+    /// A list of exactly these fields' values in order (their keys unused): a block face
+    /// `[block, face]`.
+    Seq(&'static [Field]),
     /// Any JSON: what the schema does not describe.
     Json,
 }
@@ -616,6 +619,10 @@ pub const fn above(key: &'static str, label: &'static str, dim: Dim, min: f64, m
 pub const fn positive(key: &'static str, label: &'static str, dim: Dim) -> Field {
     field(key, label, Kind::Number { dim, min: Some(0.0), max: None, open: false })
 }
+/// A number above zero (zero itself refused).
+pub const fn above_zero(key: &'static str, label: &'static str, dim: Dim) -> Field {
+    field(key, label, Kind::Number { dim, min: Some(0.0), max: None, open: true })
+}
 pub const fn int(key: &'static str, label: &'static str, min: i64, max: i64) -> Field {
     field(key, label, Kind::Integer { min, max })
 }
@@ -657,6 +664,10 @@ pub const fn group(key: &'static str, label: &'static str, fields: &'static [Fie
 pub const fn variants(key: &'static str, label: &'static str, variants: &'static [Variant]) -> Field {
     field(key, label, Kind::Variants { tag: "type", variants })
 }
+/// One of `variants`, picked by the value of `tag` (where [`variants`] uses `type`).
+pub const fn tagged(key: &'static str, label: &'static str, tag: &'static str, variants: &'static [Variant]) -> Field {
+    field(key, label, Kind::Variants { tag, variants })
+}
 pub const fn either(key: &'static str, label: &'static str, options: &'static [Field]) -> Field {
     field(key, label, Kind::Either(options))
 }
@@ -665,6 +676,10 @@ pub const fn unit(key: &'static str, label: &'static str) -> Field {
 }
 pub const fn rows(key: &'static str, label: &'static str, fields: &'static [Field]) -> Field {
     field(key, label, Kind::Rows { fields, max: MAX_ROWS })
+}
+/// Rows of `fields`, at most `max` (the command's own cap).
+pub const fn rows_up_to(key: &'static str, label: &'static str, fields: &'static [Field], max: usize) -> Field {
+    field(key, label, Kind::Rows { fields, max })
 }
 /// A list of node or element labels.
 pub const fn labels(key: &'static str, label: &'static str, of: LabelOf) -> Field {
@@ -712,11 +727,15 @@ pub const fn list(key: &'static str, label: &'static str, item: &'static Field, 
 pub const fn name_or_value(key: &'static str, label: &'static str, name: &'static Field, value: &'static Field) -> Field {
     field(key, label, Kind::NameOrValue { name, value })
 }
+/// A list of `items`' values, one each, in order.
+pub const fn seq(key: &'static str, label: &'static str, items: &'static [Field]) -> Field {
+    field(key, label, Kind::Seq(items))
+}
 /// A persistent name of a face, edge or vertex of the body the sibling `body_key` names.
 pub const fn topology(key: &'static str, label: &'static str, entity: Side3, body_key: &'static str) -> Field {
     field(key, label, Kind::Topology { entity, body_key })
 }
-/// A name as `name` gives it, or an object of `fields` (labelled `object`).
+/// `name`'s value, or an object of `fields` (labelled `object`).
 pub const fn name_or(key: &'static str, label: &'static str, name: &'static Field, object: &'static str, fields: &'static [Field]) -> Field {
     field(key, label, Kind::NameOr { name, object, fields })
 }
@@ -1122,6 +1141,8 @@ pub fn field_at(fields: &'static [Field], path: &str) -> Option<&'static Field> 
         }
         field = match field.kind {
             Kind::Rows { .. } if segment.parse::<usize>().is_ok() => field,
+            Kind::List { item, .. } if segment.parse::<usize>().is_ok() => item,
+            Kind::Seq(items) => segment.parse::<usize>().ok().and_then(|i| items.get(i))?,
             Kind::Group(inner) | Kind::Rows { fields: inner, .. } | Kind::NameOr { fields: inner, .. } => find(inner, segment)?,
             Kind::Variants { tag, .. } if tag == segment => field,
             Kind::Variants { variants, .. } => variants.iter().find_map(|v| find(v.fields, segment))?,
@@ -1219,12 +1240,12 @@ fn value_problem(f: &'static Field, v: &Value, path: &str, out: &mut Vec<Problem
             None => Some(ProblemKind::NotAnObject),
         },
         Kind::NameOr { name, fields, .. } => match v {
-            Value::String(_) => value_problem(name, v, path, out, depth + 1),
             Value::Object(o) => {
                 check(fields, o, path, out, depth + 1);
                 None
             }
-            _ => Some(ProblemKind::Invalid(format!("a {} or an object", name.label.to_lowercase()))),
+            _ if depth <= MAX_DEPTH => value_problem(name, v, path, out, depth + 1),
+            _ => None,
         },
         Kind::RefText(_) => match v.as_object() {
             Some(o) if o.len() <= MAX_NAMES && o.values().all(Value::is_string) => None,
@@ -1339,6 +1360,19 @@ fn value_problem(f: &'static Field, v: &Value, path: &str, out: &mut Vec<Problem
             _ => value_problem(value, v, path, out, depth + 1),
         },
         Kind::NameOrValue { .. } => None,
+        Kind::Seq(items) => match v.as_array() {
+            Some(a) if a.len() == items.len() && depth <= MAX_DEPTH => {
+                for (i, (x, item)) in a.iter().zip(items).enumerate() {
+                    let at = format!("{path}/{i}");
+                    if let Some(kind) = value_problem(item, x, &at, out, depth + 1) {
+                        out.push(Problem::new(at, item, kind));
+                    }
+                }
+                None
+            }
+            Some(a) if a.len() == items.len() => None,
+            _ => Some(ProblemKind::Invalid(format!("a list of {}", items.iter().map(|i| i.label.to_lowercase()).collect::<Vec<_>>().join(", ")))),
+        },
         Kind::Rows { fields, max } => match v.as_array() {
             Some(a) if a.len() <= max => {
                 for (i, row) in a.iter().enumerate() {
@@ -1453,6 +1487,13 @@ fn field_schema(f: &Field, depth: usize) -> Value {
         Kind::NameOrValue { name, value } if depth <= MAX_DEPTH => {
             json!({"oneOf": [field_schema(name, depth + 1), field_schema(value, depth + 1)]})
         }
+        Kind::Seq(items) if depth <= MAX_DEPTH => json!({
+            "type": "array",
+            "prefixItems": items.iter().map(|i| field_schema(i, depth + 1)).collect::<Vec<_>>(),
+            "items": false,
+            "minItems": items.len(),
+            "maxItems": items.len(),
+        }),
         Kind::Unit => json!({"const": f.key}),
         Kind::Sides(side) => json!({
             "type": "array",
