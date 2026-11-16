@@ -334,8 +334,11 @@ pub fn solve_fluid_on(model: &Model, step: Option<&str>, obstacles: &[Obstacle],
     let setup = Setup::new(model, step, obstacles, limits)?;
     crate::memory::Memory::of(&setup, choice)?.check(limits)?;
     let flow = Flow::new(&setup, obstacles)?;
+    let corners = flow.inlet_corner_report().message();
     let mut backend = crate::backend::backend(choice, flow, &setup)?;
-    run(&setup, backend.as_mut(), limits)
+    let mut result = run(&setup, backend.as_mut(), limits)?;
+    result.warnings.extend(corners);
+    Ok(result)
 }
 
 /// An explicit CPU checkpoint/resume run. The store checks model/settings identity and owns
@@ -354,6 +357,7 @@ pub fn solve_fluid_checkpointed(
         return Err(Error::Limit("CPU checkpoint run plus streaming buffer exceeds the memory bound".into()));
     }
     let mut flow = Flow::new(&setup, obstacles)?;
+    let corners = flow.inlet_corner_report().message();
     // A restart fills one rebuilt flow in place, never keeps a second snapshot or file buffer.
     // Include retained histories and monitor windows, which the ordinary frame estimate omits.
     let groups = flow.groups().len() as u64;
@@ -386,7 +390,9 @@ pub fn solve_fluid_checkpointed(
         )));
     }
     store.checked_memory(needed);
-    run_checkpointed(&setup, &mut flow, limits, Some(store))
+    let mut result = run_checkpointed(&setup, &mut flow, limits, Some(store))?;
+    result.warnings.extend(corners);
+    Ok(result)
 }
 
 fn frame(setup: &Setup, flow: &mut dyn Backend, step: u64, validity: &mut crate::validity::Sampler) -> Result<Frame> {

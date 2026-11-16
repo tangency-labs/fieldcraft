@@ -32,13 +32,25 @@ fn procedure(wall_model: Option<WallModel>, steps: u64, time_step: f64) -> Proce
 /// A channel `nx` x `ny` x `nz` cells with a parabolic inlet at x min, a pressure outlet at x max, and the y and z faces
 /// as given; spalart_allmaras turbulence with `wall_model`, with the given obstacles.
 fn channel(
-    (nx, ny, nz): (usize, usize, usize),
+    dims: (usize, usize, usize),
     y_periodic: bool,
     z_max_slip: bool,
     wall_model: Option<WallModel>,
     names: Vec<String>,
     obstacles: Vec<fieldcraft_lbm::Obstacle>,
 ) -> (Setup, Vec<fieldcraft_lbm::Obstacle>) {
+    let m = channel_model(dims, y_periodic, z_max_slip, wall_model, names);
+    let setup = Setup::new(&m, None, &obstacles, &Limits::default()).unwrap();
+    (setup, obstacles)
+}
+
+fn channel_model(
+    (nx, ny, nz): (usize, usize, usize),
+    y_periodic: bool,
+    z_max_slip: bool,
+    wall_model: Option<WallModel>,
+    names: Vec<String>,
+) -> fieldcraft_model::Model {
     let mut d = domain([0.0; 3], [nx as f64 * DX, ny as f64 * DX, nz as f64 * DX], DX);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.1, 0.0, 0.0], profile: Profile::Parabolic };
     d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
@@ -50,9 +62,7 @@ fn channel(
         d.faces.z_max = FaceCondition::Slip {};
     }
     d.obstacles = names;
-    let m = model(1.0, 1.0e-3, d, procedure(wall_model, 10, 0.01));
-    let setup = Setup::new(&m, None, &obstacles, &Limits::default()).unwrap();
-    (setup, obstacles)
+    model(1.0, 1.0e-3, d, procedure(wall_model, 10, 0.01))
 }
 
 /// All four sides walls: the four edge cells of the inlet face are wall cells, reported by the flow; the cells next to
@@ -72,6 +82,18 @@ fn an_inlet_cell_touching_two_walls_is_a_wall_cell() {
     for (j, k) in [(1, 0), (0, 1), (3, 0), (7, 3), (3, 3)] {
         assert!(Backend::is_fluid(&flow, g.index([0, j, k])), "({j},{k}) keeps the inlet rule");
     }
+}
+
+/// A solved run reports the count and the area lost, and a run without the rule reports nothing.
+#[test]
+fn a_run_prints_the_reclassified_cells_and_the_area_lost() {
+    let m = channel_model((16, 8, 8), false, false, Some(WallModel::SpaldingBounce), vec![]);
+    let r = fieldcraft_lbm::solve_fluid(&m, None, &[], &Limits::default()).unwrap();
+    let line = r.warnings.iter().find(|w| w.starts_with("inlet corner rule:")).expect("the run reports the corner rule");
+    assert!(line.contains("4 of 64 inlet-layer cells") && line.contains("6.2 % of its area"), "{line}");
+    let m = channel_model((16, 8, 8), true, true, Some(WallModel::SpaldingBounce), vec![]);
+    let r = fieldcraft_lbm::solve_fluid(&m, None, &[], &Limits::default()).unwrap();
+    assert!(r.warnings.iter().all(|w| !w.starts_with("inlet corner rule:")), "{:?}", r.warnings);
 }
 
 /// Walls on one side only (periodic span, z max slip): the inlet cells touch one wall, none is reclassified, and the

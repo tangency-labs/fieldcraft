@@ -611,6 +611,23 @@ pub struct InletCornerReport {
     pub flux_rescale: f64,
 }
 
+impl InletCornerReport {
+    /// The line a run prints: how many inlet cells became wall cells, the inlet area lost and the velocity factor;
+    /// None when the rule changed nothing.
+    pub fn message(&self) -> Option<String> {
+        if self.cells == 0 {
+            return None;
+        }
+        Some(format!(
+            "inlet corner rule: {} of {} inlet-layer cells became wall cells; the inlet loses {:.1} % of its area at most and its velocity is raised by up to {:.3} to deliver the requested flow",
+            self.cells,
+            self.inlet_cells,
+            100.0 * self.area_lost,
+            self.flux_rescale
+        ))
+    }
+}
+
 /// The flow state.
 #[derive(Debug, Clone)]
 pub struct Flow {
