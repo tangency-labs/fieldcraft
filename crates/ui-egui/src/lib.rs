@@ -214,7 +214,7 @@ pub enum NavMode {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParamsDialog {
     pub command: &'static str,
-    /// The parameters as JSON text.
+    /// The parameters (a JSON object the form's fields edit; never shown as text).
     pub text: String,
     pub error: Option<String>,
     /// The command refused one parameter: its path and the problem phrased for the form, shown
@@ -224,8 +224,6 @@ pub struct ParamsDialog {
     pub touched: std::collections::BTreeSet<String>,
     /// OK was tried with something missing: every problem shows.
     pub attempted: bool,
-    /// The JSON text is shown instead of the typed fields.
-    pub advanced: bool,
     /// Which opening of a form this is (counts up): a form opened over another one, even of the
     /// same command, gets fresh widget ids, so nothing typed into the one it replaces carries over.
     pub opening: u64,
@@ -950,7 +948,6 @@ impl ModelApp {
                 refused: None,
                 touched: Default::default(),
                 attempted: false,
-                advanced: spec.form.is_none(),
                 opening: self.forms_opened,
                 back: None,
                 pending_set: None,

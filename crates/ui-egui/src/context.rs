@@ -105,7 +105,7 @@ fn refused(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     for fieldcraft_engine::requirement::Missing(r) in &u.missing {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("• {}", r.what())).color(t.text));
-            if kit::button(ui, format!("{}…", r.place()), kit::Button::Normal).backing_on_hover_text(r.provider()).clicked() {
+            if kit::button(ui, format!("{}…", r.place()), kit::Button::Normal).backing_on_hover_text(crate::command_label(r.provider())).clicked() {
                 start = Some(r.provider());
             }
         });
@@ -117,14 +117,11 @@ fn refused(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     }
 }
 
-/// JSON shorter than this is shown pretty-printed in the JSON view.
-const MAX_PRETTY: usize = 100_000;
-
 /// The open command's form, the kit's feature card on top of the panel (`column`, the room left
-/// in it): its header; typed fields drawn from its schema (or its JSON text, the Advanced view),
-/// what is missing or wrong as the kit's status lines, and the command's parameter
-/// documentation; then OK and Cancel pinned under the fields (or in the header, by the kit's
-/// Dialog buttons preference). OK runs it; while a job runs (this form's mesher, a solve) OK
+/// in it): its header; typed fields drawn from its schema, each with its help on hover, and what
+/// is missing or wrong as the kit's status lines; then OK and Cancel pinned under the fields (or
+/// in the header, by the kit's Dialog buttons preference). Never JSON, never the command's id: the
+/// parameters' JSON is for scripts, MCP and the control channel. OK runs it; while a job runs (this form's mesher, a solve) OK
 /// waits for it and the card shows it as its compute status.
 /// A command that applies to part of the model (a set, a boundary condition, a load, a section, a
 /// coupling) has a Target row that takes the viewport's selection.
@@ -159,7 +156,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, column: egui::Rect) {
     // the form it replaces (egui drops focus from a widget no longer drawn) never land here.
     let form_id = egui::Id::unique(("fc_form", spec.id, d.opening));
     let params = serde_json::from_str::<Value>(&d.text).unwrap_or(Value::Null);
-    // What is missing or wrong, by the fields' labels: OK waits for it (in either view).
+    // What is missing or wrong, by the fields' labels: OK waits for it.
     let problems = match (spec.form, params.as_object()) {
         (Some(fields), Some(obj)) => crate::form::messages(fields, obj),
         _ => Vec::new(),
@@ -176,14 +173,13 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, column: egui::Rect) {
         apply_label: None,
     };
     let (closed, action) = card.feature(ui, heading, false, missing.is_empty(), |ui| {
-        kit::text(ui, spec.id, kit::Text::Note("form:command"));
         if let Some(target) = selection::target(spec.id, &params) {
             kit::section_heading(ui, "Target");
             ui.vertical(|ui| {
                 let tip = match target {
                     selection::Target::Members => "The selection becomes the set's members (geometry by name, the mesh by label)",
                     selection::Target::Set | selection::Target::TargetSet => {
-                        "Names a set of the selection here: an existing set with the same members, or a new one made on OK (model.set.create)"
+                        "Names a set of the selection here: an existing set with the same members, or a new one made on OK"
                     }
                     selection::Target::Edges => "The selected design edges (Select: Edges) become the edges seeded",
                     selection::Target::Position => {
@@ -211,24 +207,10 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, column: egui::Rect) {
             });
         }
         kit::section_heading(ui, "Parameters");
-        let mut advanced = d.advanced;
-        if spec.form.is_some() {
-            kit::checkbox(ui, "Edit as JSON", &mut advanced).backing_on_hover_text("Advanced: edit the parameters as JSON");
-        }
-        // The typed fields edit the JSON text's object; text that is not an object stays in the
-        // JSON view until it is.
-        let object = params.as_object().cloned();
-        if advanced != d.advanced && !advanced && object.is_none() {
-            d.error = Some("fix the JSON before going back to the fields".into());
-            advanced = true;
-        }
-        // Pretty-printed once, when the JSON view opens.
-        if advanced && !d.advanced && params.is_object() && d.text.len() < MAX_PRETTY {
-            d.text = serde_json::to_string_pretty(&params).unwrap_or_else(|_| d.text.clone());
-        }
-        d.advanced = advanced;
-        match (spec.form, object) {
-            (Some(fields), Some(mut obj)) if !d.advanced => {
+        // The typed fields edit the parameters' object (every command has a form, and the form
+        // and the control channel only ever store an object).
+        match (spec.form, params.as_object().cloned()) {
+            (Some(fields), Some(mut obj)) => {
                 let refused = d.refused.as_ref().map(|(k, p)| (k.as_str(), p.as_str()));
                 let cx = crate::form::Context {
                     units: &units,
@@ -262,7 +244,7 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, column: egui::Rect) {
                 d.touched.extend(out.touched);
             }
             _ => {
-                kit::text_area(ui, "Parameters", form_id.with("json"), &mut d.text, 6, usize::MAX);
+                kit::status_line(ui, "These parameters do not fit this form: cancel it and start the command again", kit::StatusTone::Error);
             }
         }
         if let Some(e) = &d.error {
@@ -279,9 +261,6 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, column: egui::Rect) {
                 kit::status_line(ui, problem, kit::StatusTone::Error);
             }
         }
-        kit::section(ui, "fc_form_takes", "What it takes", false, |ui| {
-            kit::text(ui, spec.params, kit::Text::Note("form:takes"));
-        });
         // Read after the fields are drawn: a field holding something that is not a value, or
         // a running job, keeps OK greyed (the kit's `applying`).
         kit::ComputeStatus {
@@ -361,9 +340,13 @@ fn properties(app: &mut ModelApp, ui: &mut egui::Ui, kind: Def, name: &str) {
     let editing = kind.edit_command(&app.session.model, name);
     ui.horizontal(|ui| {
         if let Some(command) = &editing {
-            edit = kit::button(ui, "Edit…", kit::Button::Normal).backing_on_hover_text(command).clicked();
+            edit = kit::button(ui, "Edit…", kit::Button::Normal)
+                .backing_on_hover_text(format!("{}, filled in", crate::command_label(command)))
+                .clicked();
         }
-        delete = kit::button(ui, "Delete…", kit::Button::Normal).backing_on_hover_text(format!("{} (Delete key)", kind.command("delete"))).clicked();
+        delete = kit::button(ui, "Delete…", kit::Button::Normal)
+            .backing_on_hover_text(format!("Delete this {} (Delete key)", kind.label().to_lowercase()))
+            .clicked();
     });
     if deselect {
         app.select_definition(None);
@@ -386,8 +369,10 @@ fn seed_card(app: &mut ModelApp, ui: &mut egui::Ui, edge: fieldcraft_model::Geom
     ui.add_space(solidcraft_theme::Tokens::get().space_6);
     let (mut edit, mut delete) = (false, false);
     ui.horizontal(|ui| {
-        edit = kit::button(ui, "Edit…", kit::Button::Normal).backing_on_hover_text(crate::menu::seed_command(&edge)).clicked();
-        delete = kit::button(ui, "Delete", kit::Button::Normal).backing_on_hover_text("mesh.seed.clear (undo brings it back)").clicked();
+        edit = kit::button(ui, "Edit…", kit::Button::Normal)
+            .backing_on_hover_text(format!("{}, filled in", crate::command_label(crate::menu::seed_command(&edge))))
+            .clicked();
+        delete = kit::button(ui, "Delete", kit::Button::Normal).backing_on_hover_text("Clear this seed (undo brings it back)").clicked();
     });
     let target = crate::menu::Target::Seed(edge);
     if deselect {
@@ -434,12 +419,12 @@ fn mesh_card(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
     }
     for (i, (command, params, rows)) in made.iter().enumerate() {
         ui.add_space(k.space_8);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(crate::command_label(command)).strong());
-            ui.label(RichText::new(command.as_str()).size(k.font_small).color(t.text_dim));
-        });
+        ui.label(RichText::new(crate::command_label(command)).strong());
         property_grid(ui, &format!("fc_mesh_made_{i}"), rows);
-        if kit::button(ui, "Edit…", kit::Button::Normal).backing_on_hover_text(format!("{command}: its form with these parameters")).clicked() {
+        if kit::button(ui, "Edit…", kit::Button::Normal)
+            .backing_on_hover_text(format!("{}: its form with these parameters", crate::command_label(command)))
+            .clicked()
+        {
             edit = Some((command.clone(), params.clone()));
         }
     }
@@ -614,6 +599,76 @@ mod tests {
         assert!(lefts.iter().all(|l| (l - lefts[0]).abs() < 0.5), "{lefts:?}");
     }
 
+    /// Every text `shapes` draws inside `within`.
+    fn texts_in(shapes: &[egui::epaint::ClippedShape], within: egui::Rect) -> Vec<String> {
+        fn walk(shape: &egui::Shape, within: egui::Rect, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(t) if within.intersects(t.galley.rect.translate(t.pos.to_vec2())) => out.push(t.galley.text().to_string()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, within, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        shapes.iter().for_each(|c| walk(&c.shape, within, &mut out));
+        out
+    }
+
+    /// Opens each `(command, parameters)` form on the meshed cantilever, one over the last as a
+    /// click on another entry does, and lists every text drawn in its card that is JSON or a
+    /// command id: "Edit as JSON", raw parameter documentation, an id under the title, a value
+    /// shown as JSON text (owner, 2026-11-15).
+    fn json_or_ids_shown(forms: impl IntoIterator<Item = (&'static fieldcraft_engine::CommandSpec, serde_json::Map<String, Value>)>) -> Vec<String> {
+        let mut session = fieldcraft_engine::Session::default();
+        session.run_script(&fieldcraft_engine::sample::cantilever()).expect("the cantilever sample");
+        let ids: Vec<&str> = fieldcraft_engine::commands().iter().map(|c| c.id).collect();
+        let mut seen = Vec::new();
+        let ctx = egui::Context::default();
+        let mut app = ModelApp::new(session);
+        for (n, (spec, filled)) in forms.into_iter().enumerate() {
+            app.open_form(spec.id, Value::Object(filled));
+            frame(&mut app, &ctx, vec![]);
+            let raw =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+            out.textures_delta.clear();
+            let Some(panel) = app.layout.get("context").copied() else {
+                seen.push(format!("{} (form {n}): no form drawn", spec.id));
+                continue;
+            };
+            for text in texts_in(&out.shapes, panel) {
+                if text.contains(['{', '[']) || text.contains("JSON") || ids.iter().any(|id| text.contains(id)) {
+                    seen.push(format!("{} (form {n}): {text:?}", spec.id));
+                }
+            }
+        }
+        seen
+    }
+
+    /// The forms holding every shape of field ([`crate::form::tests::representatives`]: each
+    /// kind, both sides of every name-or, every kind of option and variant), each with a value
+    /// in every field, show no JSON text and no command id in their card as a window shows it.
+    /// An empty field draws nothing, so it would hide a value shown as JSON text. A field
+    /// scrolled out of the card is drawn by `form::tests::every_field_has_a_widget`, which
+    /// checks every example of every form's fields for JSON text.
+    #[test]
+    fn no_form_shows_json_or_a_command_id() {
+        let seen = json_or_ids_shown(crate::form::tests::representatives());
+        assert!(seen.is_empty(), "{} texts:\n{}", seen.len(), seen.join("\n"));
+    }
+
+    /// Every example of every command's form (every variant and option of each) shows no JSON
+    /// text and no command id: the whole walk of [`no_form_shows_json_or_a_command_id`].
+    #[test]
+    #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+    fn no_example_of_any_form_shows_json_or_a_command_id() {
+        let all = fieldcraft_engine::commands()
+            .iter()
+            .filter_map(|c| c.form.filter(|f| !f.is_empty()).map(|f| (c, f)))
+            .flat_map(|(c, f)| crate::form::tests::examples(f).into_iter().map(move |e| (c, e)));
+        let seen = json_or_ids_shown(all);
+        assert!(seen.is_empty(), "{} texts:\n{}", seen.len(), seen.join("\n"));
+    }
+
     /// Lists and objects read as words, never as JSON.
     #[test]
     fn values_are_worded() {
@@ -629,6 +684,7 @@ mod tests {
             assert!(!text.contains(['{', '}', '[', ']', '"']), "{v} → {text}");
         }
     }
+
     #[test]
     fn long_values_are_shortened() {
         assert_eq!(value_text(&json!("Steel")), "Steel");
