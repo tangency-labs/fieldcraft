@@ -1208,7 +1208,7 @@ const PROCEDURE: Field = variants(
                     .help("The lattice Boltzmann collision. Regularized stays stable with τ close to ½ (fast flows on coarse grids, sharp corners), at a little more cost per step. Hybrid regularized blends in the strain rate of finite differences (σ), which damps the shortest waves.")
                     .def("\"trt\""),
                 choice("walls", "Obstacle walls", &[("halfway", "Halfway"), ("interpolated", "Interpolated"), ("interpolated_quadratic", "Interpolated, quadratic")])
-                    .help("Where the links into obstacles bounce back. Halfway puts every wall halfway between cells, a staircase on curved walls. Interpolated puts it where the surface crosses each link (Bouzidi et al. 2001): curved walls second order, best with τ ≤ 1; not mass conservative; on the CPU and the GPU. Interpolated, quadratic reads three nodes in line (CPU only for now), closer to the exact flow rate on walls off the grid; walls at rest only.")
+                    .help("Where the links into obstacles bounce back. Halfway puts every wall halfway between cells, a staircase on curved walls. Interpolated puts it where the surface crosses each link (Bouzidi et al. 2001): curved walls second order, best with τ ≤ 1; not mass conservative; on the CPU and the GPU. Interpolated, quadratic reads three nodes in line (CPU and GPU), closer to the exact flow rate on walls off the grid; walls at rest only.")
                     .def("\"halfway\""),
                 positive("magic", "TRT Λ", D::None).help("The two-relaxation-time magic parameter; 0.1875 is usual.").hint("0.1875"),
                 range("sigma", "HRR σ", D::None, 0.0, 1.0)
