@@ -875,6 +875,8 @@ impl Flow {
         let on_node = setup.wall_model == Some(WallModel::SpaldingBounce);
         let mut node_list: Vec<WallNode> = Vec::new();
         let mut bulk = Vec::new();
+        // The open-face cells on a wall's node row (a junction, below), which lie on the wall.
+        let mut on_wall_row: Vec<usize> = Vec::new();
         if on_node {
             let refuse = |what: String| {
                 Err(Error::Invalid(format!(
@@ -946,7 +948,8 @@ impl Flow {
                     continue;
                 }
                 // Where a wall meets an inlet, outlet or slip face, the cell in that face's layer keeps the
-                // face's rule and is no node (one rule per cell, as at the edge of two open faces).
+                // face's rule and is no node. The node beside it bounces back the link between them, so
+                // the cell lies on the wall's plane: an inlet cell there takes the wall's velocity.
                 let open_face = (0..3).filter(|a| !periodic[*a]).find_map(|a| {
                     [(p[a] == 0, BoxFace::of(a, false)), (p[a] + 1 == grid.cells[a], BoxFace::of(a, true))]
                         .into_iter()
@@ -956,6 +959,7 @@ impl Flow {
                     if dirs.len() > 1 && matches!(domain.faces.get(face), FaceCondition::Velocity { .. }) {
                         return refuse(format!("where a cell of the velocity inlet `{}` touches two walls", face.name()));
                     }
+                    on_wall_row.push(cell);
                     continue;
                 }
                 walled.push((cell, dirs));
@@ -1160,6 +1164,7 @@ impl Flow {
                         continue;
                     }
                     let target = match *domain.faces.get(face) {
+                        FaceCondition::Velocity { .. } if on_wall_row.binary_search(&cell).is_ok() => Target::Velocity([0.0; 3]),
                         FaceCondition::Velocity { velocity, profile } => {
                             let mut scale = 1.0;
                             if profile == Profile::Parabolic {
