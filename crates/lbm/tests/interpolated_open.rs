@@ -31,10 +31,14 @@ struct Open {
     mean_density: f64,
 }
 
-/// The open channel with the wall treatment `walls`.
-fn open_channel(walls: WallTreatment) -> Open {
+/// The open channel with the wall treatment `walls`; `correct` switches the walls' mass
+/// correction on once the flow exists.
+fn open_channel(walls: WallTreatment, correct: bool) -> Open {
     let (m, obstacles) = open_channel_model(NX, STEPS, walls);
     let (_, mut flow) = prepare(&m, &obstacles);
+    if correct {
+        flow.set_wall_mass_correction(true).unwrap();
+    }
     for _ in 0..STEPS {
         flow.step().unwrap();
     }
@@ -90,10 +94,10 @@ struct Known {
     mean_density: f64,
 }
 
-fn check(walls: WallTreatment, known: Known) {
-    let r = open_channel(walls);
+fn check(walls: WallTreatment, correct: bool, known: Known) {
+    let r = open_channel(walls, correct);
     println!(
-        "{walls:?}: flux ratio {:.5} (recorded {:.5}), gradient {:+.2} % (recorded {:+.2}), mean density {:.5} (recorded {:.5})",
+        "{walls:?} correction {correct}: flux ratio {:.5} (recorded {:.5}), gradient {:+.2} % (recorded {:+.2}), mean density {:.5} (recorded {:.5})",
         r.flux_ratio, known.flux_ratio, r.gradient_error, known.gradient_error, r.mean_density, known.mean_density
     );
     if std::env::var("OPEN_RECORD").is_ok() {
@@ -110,12 +114,22 @@ fn check(walls: WallTreatment, known: Known) {
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
 fn the_linear_rule_in_an_open_channel_keeps_its_recorded_error() {
-    check(WallTreatment::Interpolated, Known { flux_ratio: 1.00000, gradient_error: 3.00, mean_density: 1.01603 });
+    check(WallTreatment::Interpolated, false, Known { flux_ratio: 1.00000, gradient_error: 3.00, mean_density: 1.01603 });
 }
 
 /// The quadratic rule, no correction: the same, recorded.
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
 fn the_quadratic_rule_in_an_open_channel_keeps_its_recorded_error() {
-    check(WallTreatment::InterpolatedQuadratic, Known { flux_ratio: 1.00000, gradient_error: -0.75, mean_density: 1.01568 });
+    check(WallTreatment::InterpolatedQuadratic, false, Known { flux_ratio: 1.00000, gradient_error: -0.75, mean_density: 1.01568 });
+}
+
+/// With the walls' mass correction (linear, then quadratic): the correction does not move the open
+/// channel's flux ratio (1 within 1e-3) or its pressure gradient (+2.99 and -0.76 % against +3.00 and
+/// -0.75 %; the linear rule's +3 % miss is its wall position, not mass).
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_mass_correction_in_an_open_channel_leaves_the_flux_and_the_gradient_to_the_open_ends() {
+    check(WallTreatment::Interpolated, true, Known { flux_ratio: 1.00000, gradient_error: 2.99, mean_density: 1.01558 });
+    check(WallTreatment::InterpolatedQuadratic, true, Known { flux_ratio: 1.00000, gradient_error: -0.76, mean_density: 1.01491 });
 }

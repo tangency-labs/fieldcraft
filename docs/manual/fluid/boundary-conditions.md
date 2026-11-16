@@ -144,6 +144,14 @@ A link on a moving wall, or whose nodes are not all fluid, keeps the linear form
 the fluid's mass drifts. In the verification cases below the drift is 10⁻¹⁰ to 10⁻⁷ of the mass
 over a run; `mass.relative_change` in the reply shows it for yours.
 
+A library user can take the mass back: `Flow::set_wall_mass_correction(true)` (off by default; not
+reachable from `solve.fluid` yet) makes each wall node hand what its links created to itself and its
+fluid neighbours with the lattice weights, and the receivers remove it one step later (see
+`crates/lbm/src/wall_mass.rs`). On the turned channels the mean density then holds to round-off
+(1e-12 per 10 000 steps against up to 2.7e-2) with the flow rate where the wall rule puts it; in an
+open channel it leaves the flux and the pressure gradient to the inlet and the outlet (inlet and outlet
+cells take no share). A flow with the correction on cannot be checkpointed yet.
+
 **The wall depends on τ.** The linear interpolation's effective wall position carries an error
 that depends on the relaxation rates (Ginzburg & d'Humières 2003), so its drag moves with τ. On
 the 3-cell sphere array below the drag error is +0.72 % at τ⁺ = 0.6, −1.6 % at 1, −6.2 % at 2

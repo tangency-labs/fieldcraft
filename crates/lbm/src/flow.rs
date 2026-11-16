@@ -242,7 +242,7 @@ pub struct Interpolation {
 
 /// [`bouzidi`] on the populations `f` (direction stride `s`) of cell `cell`, direction `q`.
 #[inline(always)]
-fn interpolated_value(f: &[f64], s: usize, cell: usize, q: usize, link: Interpolation) -> Option<f64> {
+pub(crate) fn interpolated_value(f: &[f64], s: usize, cell: usize, q: usize, link: Interpolation) -> Option<f64> {
     let out = *f.get(opposite(q) * s + cell)?;
     if link.quadratic {
         let (next, next2) = (link.next as usize, link.next2 as usize);
@@ -661,6 +661,8 @@ pub struct Flow {
     /// with halfway walls).
     wall_velocity: Vec<[f64; 3]>,
     wall_links: Option<WallLinks>,
+    /// The mass correction of the interpolated walls, when switched on ([`Flow::set_wall_mass_correction`]).
+    wall_mass: Option<crate::wall_mass::WallMass>,
     /// The interpolated links' data, by slot.
     interpolations: Vec<Interpolation>,
     /// Per direction, the index offset of the neighbour a population streams from.
@@ -1350,6 +1352,7 @@ impl Flow {
             groups,
             wall_velocity: wall_velocities,
             wall_links,
+            wall_mass: None,
             interpolations,
             offset,
             fluid_cells,
@@ -1669,6 +1672,45 @@ impl Flow {
     /// With interpolated walls, how the obstacles' links bounce back.
     pub fn wall_links(&self) -> Option<WallLinks> {
         self.wall_links
+    }
+
+    /// Switch the mass correction of the interpolated walls on or off (off at the start; see
+    /// [`crate::wall_mass`]). Refused without interpolated links. While it is on the flow cannot be
+    /// checkpointed (the mass in flight is state a checkpoint does not carry yet).
+    pub fn set_wall_mass_correction(&mut self, on: bool) -> Result<()> {
+        if !on {
+            self.wall_mass = None;
+            return Ok(());
+        }
+        if self.interpolations.is_empty() {
+            return Err(Error::Invalid("this flow has no interpolated walls to correct the mass of".into()));
+        }
+        let (grid, periodic) = (self.grid, self.periodic);
+        let mut open = vec![false; self.n];
+        for cell in &self.open {
+            if let Some(x) = open.get_mut(cell.cell as usize) {
+                *x = true;
+            }
+        }
+        // The targets: a wall node's own cell and its fluid neighbours (across periodic faces), not
+        // the open cells.
+        let target = |cell: u32, i: usize| {
+            let t = crate::surface::neighbour(&grid, periodic, grid.coords(cell as usize), i)?;
+            (self.fluid.get(t).copied().unwrap_or(false) && !open.get(t).copied().unwrap_or(false)).then_some(t as u32)
+        };
+        self.wall_mass = Some(crate::wall_mass::WallMass::new(&self.links, target));
+        Ok(())
+    }
+
+    /// The mass correction of the interpolated walls, when it is on.
+    pub fn wall_mass(&self) -> Option<&crate::wall_mass::WallMass> {
+        self.wall_mass.as_ref()
+    }
+
+    /// The mass the walls created at the last step that the correction has not taken back yet; total
+    /// mass less this is the conserved quantity. Zero with the correction off.
+    pub fn wall_mass_pending(&self) -> f64 {
+        self.wall_mass.as_ref().map_or(0.0, |w| w.pending())
     }
 
     /// The interpolated links' data, by [`Rule::Interpolated`] slot.
@@ -2715,6 +2757,11 @@ impl Flow {
                 }
             }
         }
+        // The walls' mass correction, after the forces read what the links sent back.
+        if let Some(wall_mass) = &mut self.wall_mass {
+            let s = self.stride;
+            wall_mass.conserve(&self.f, &mut self.g, s, &self.links, &self.interpolations);
+        }
     }
 
     /// Zou–He velocity, extrapolated pressure and convective boundaries. Every inner-cell read
@@ -2932,6 +2979,9 @@ impl crate::backend::Backend for Flow {
     }
 
     fn checkpoint(&mut self, a: &mut dyn crate::checkpoint::Archive) -> Result<()> {
+        if self.wall_mass.is_some() {
+            return Err(Error::Invalid("not supported yet: checkpoint of a flow with the interpolated walls' mass correction".into()));
+        }
         use crate::checkpoint::{boolean, doubles, f64, fixed, u64, vectors};
         // Streaming targets are allocated once, not cloned into a separate snapshot.
         self.targets()?;
@@ -2968,6 +3018,7 @@ impl crate::backend::Backend for Flow {
             // Fixed by the setup (the links carry their rules and are saved).
             wall_velocity: _,
             wall_links: _,
+            wall_mass: _,
             interpolations,
             offset: _,
             fluid_cells: _,

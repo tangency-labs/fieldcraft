@@ -36,7 +36,7 @@ struct Run {
 
 /// The channel `cells` cells across, turned `a:b`, its walls moved `phase` cells, run [`STEPS`]
 /// steps with the wall treatment `walls`.
-fn rotated_channel((a, b): (usize, usize), cells: usize, phase: f64, walls: WallTreatment) -> Run {
+fn rotated_channel((a, b): (usize, usize), cells: usize, phase: f64, walls: WallTreatment, correct: bool) -> Run {
     let nu_lat = 0.05;
     let dx = 1.0 / cells as f64;
     let dt = nu_lat * dx * dx;
@@ -75,8 +75,14 @@ fn rotated_channel((a, b): (usize, usize), cells: usize, phase: f64, walls: Wall
     d.acceleration = [g * dir[0], g * dir[1], 0.0];
     let proc = with_walls(step(STEPS as f64 * dt, dt, None), walls);
     let (_, mut flow) = prepare(&model(1.0, 1.0, d, proc), &obstacles);
+    if correct {
+        flow.set_wall_mass_correction(true).unwrap();
+    }
     let fluid: Vec<usize> = (0..flow.grid().len()).filter(|&c| flow.is_fluid(c)).collect();
-    let mean_density = |flow: &fieldcraft_lbm::Flow| fluid.iter().map(|&c| flow.moments(c).map_or(0.0, |(r, _)| r)).sum::<f64>() / fluid.len() as f64;
+    // The mass the correction has handed out and not yet taken back is in the box: leave it out.
+    let mean_density = |flow: &fieldcraft_lbm::Flow| {
+        (fluid.iter().map(|&c| flow.moments(c).map_or(0.0, |(r, _)| r)).sum::<f64>() - flow.wall_mass_pending()) / fluid.len() as f64
+    };
     let start = mean_density(&flow);
     for _ in 0..STEPS {
         flow.step().unwrap();
@@ -137,9 +143,41 @@ const QUADRATIC: [Case; 12] = [
     case((1, 1), 16, 0.5, 0.0151, -4.774e-04),
 ];
 
-fn check(cases: &[&Case], walls: WallTreatment) {
+/// The linear rule with the walls' mass correction.
+const LINEAR_MASS: [Case; 12] = [
+    case((2, 1), 8, 0.0, -0.77, -7.888e-13),
+    case((2, 1), 8, 0.33, -1.0376, -7.856e-13),
+    case((2, 1), 8, 0.67, -1.2522, -7.495e-13),
+    case((1, 1), 8, 0.0, -1.6332, -6.619e-13),
+    case((1, 1), 8, 0.25, -0.9324, -8.140e-13),
+    case((1, 1), 8, 0.5, 0.673, -8.967e-13),
+    case((2, 1), 16, 0.0, -0.2146, -8.538e-13),
+    case((2, 1), 16, 0.33, -0.337, -8.441e-13),
+    case((2, 1), 16, 0.67, -0.2916, -8.655e-13),
+    case((1, 1), 16, 0.0, -0.6009, -8.538e-13),
+    case((1, 1), 16, 0.25, -0.5866, -8.560e-13),
+    case((1, 1), 16, 0.5, 0.1519, -8.474e-13),
+];
+
+/// The quadratic rule with the walls' mass correction.
+const QUADRATIC_MASS: [Case; 12] = [
+    case((2, 1), 8, 0.0, -0.1126, -8.366e-13),
+    case((2, 1), 8, 0.33, -0.1856, -6.816e-13),
+    case((2, 1), 8, 0.67, -0.2212, -7.858e-13),
+    case((1, 1), 8, 0.0, 0.2308, -8.381e-13),
+    case((1, 1), 8, 0.25, 0.0118, -7.496e-13),
+    case((1, 1), 8, 0.5, 0.3291, -7.698e-13),
+    case((2, 1), 16, 0.0, -0.0796, -8.448e-13),
+    case((2, 1), 16, 0.33, -0.1691, -8.454e-13),
+    case((2, 1), 16, 0.67, -0.1236, -8.663e-13),
+    case((1, 1), 16, 0.0, 0.0533, -8.478e-13),
+    case((1, 1), 16, 0.25, 0.0538, -8.539e-13),
+    case((1, 1), 16, 0.5, 0.0143, -8.468e-13),
+];
+
+fn check(cases: &[&Case], walls: WallTreatment, correct: bool) {
     for c in cases {
-        let r = rotated_channel(c.angle, c.cells, c.phase, walls);
+        let r = rotated_channel(c.angle, c.cells, c.phase, walls, correct);
         println!(
             "{:?} {} cells, offset {}: flow rate {:+.4} % (expected {:+.4}), drift {:+.3e} (expected {:+.3e})",
             c.angle, c.cells, c.phase, r.flow_rate, c.flow_rate, r.drift, c.drift
@@ -165,20 +203,20 @@ fn check(cases: &[&Case], walls: WallTreatment) {
 /// Two of the coarse cases, the linear rule's numbers (known misses).
 #[test]
 fn the_linear_rule_on_a_turned_channel_keeps_its_recorded_error() {
-    check(&[&LINEAR[2], &LINEAR[3]], WallTreatment::Interpolated);
+    check(&[&LINEAR[2], &LINEAR[3]], WallTreatment::Interpolated, false);
 }
 
 /// All twelve cases, the linear rule's numbers.
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
 fn the_linear_rule_on_a_turned_channel_keeps_its_recorded_error_everywhere() {
-    check(&LINEAR.iter().collect::<Vec<_>>(), WallTreatment::Interpolated);
+    check(&LINEAR.iter().collect::<Vec<_>>(), WallTreatment::Interpolated, false);
 }
 
 /// The quadratic rule, two coarse cases: the flow rate within 0.6 %.
 #[test]
 fn the_quadratic_rule_on_a_turned_channel_carries_the_flow_rate_within_six_tenths_of_a_percent() {
-    check(&[&QUADRATIC[2], &QUADRATIC[3]], WallTreatment::InterpolatedQuadratic);
+    check(&[&QUADRATIC[2], &QUADRATIC[3]], WallTreatment::InterpolatedQuadratic, false);
 }
 
 /// The quadratic rule on all twelve cases: 0.6 % of the flow rate on 8 cells, 0.16 % on 16.
@@ -189,7 +227,7 @@ fn the_quadratic_rule_on_a_turned_channel_meets_its_bars_everywhere() {
         let bar = if c.cells == 8 { 0.6 } else { 0.16 };
         assert!(c.flow_rate.abs() < bar, "{:?} {} {}: recorded {} beyond the bar {bar}", c.angle, c.cells, c.phase, c.flow_rate);
     }
-    check(&QUADRATIC.iter().collect::<Vec<_>>(), WallTreatment::InterpolatedQuadratic);
+    check(&QUADRATIC.iter().collect::<Vec<_>>(), WallTreatment::InterpolatedQuadratic, false);
 }
 
 /// The quadratic form is Lagrange interpolation: it keeps a constant, reproduces a parabola in
@@ -209,4 +247,20 @@ fn the_quadratic_form_keeps_a_constant_reproduces_a_parabola_and_is_halfway_boun
     }
     assert!((bouzidi_quadratic(0.5, 0.7, 0.1, 0.2, 0.3, 0.4) - 0.7).abs() < 1e-12);
     assert!((bouzidi_quadratic(0.5 - 1e-12, 0.7, 0.1, 0.2, 0.3, 0.4) - 0.7).abs() < 1e-9);
+}
+
+/// The walls' mass correction: the mean density holds (the drift is round-off, against up to 2.7e-2
+/// per 10 000 steps without it) and the flow rate stays where the rule puts it, two coarse cases per rule.
+#[test]
+fn the_mass_correction_holds_the_density_on_a_turned_channel() {
+    check(&[&LINEAR_MASS[2], &LINEAR_MASS[3]], WallTreatment::Interpolated, true);
+    check(&[&QUADRATIC_MASS[2], &QUADRATIC_MASS[3]], WallTreatment::InterpolatedQuadratic, true);
+}
+
+/// All twelve cases with the correction, both rules.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_mass_correction_holds_the_density_everywhere() {
+    check(&LINEAR_MASS.iter().collect::<Vec<_>>(), WallTreatment::Interpolated, true);
+    check(&QUADRATIC_MASS.iter().collect::<Vec<_>>(), WallTreatment::InterpolatedQuadratic, true);
 }
