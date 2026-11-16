@@ -129,6 +129,89 @@ pub fn s_tilde(omega: f64, nu_tilde: f64, nu: f64, d: f64) -> f64 {
     if s_bar >= -C_V2 * omega { omega + s_bar } else { omega + omega * (C_V2 * C_V2 * omega + C_V3 * s_bar) / ((C_V3 - 2.0 * C_V2) * omega - s_bar) }
 }
 
+/// The wall function at the first fluid node (Nichols and Nelson, *Wall function boundary
+/// conditions including heat transfer and compressibility*, AIAA J. 42(6):1107–1114, 2004): its
+/// eddy viscosity is the one of the law the wall itself applies, at the node's y⁺, and its ν̃
+/// the one whose ν̃ f_v1(ν̃/ν) gives that ν_t ([`nu_tilde_for`]). The law's eddy viscosity in
+/// wall units is ν_t⁺ = dy⁺/du⁺ − 1 (the total stress is the wall's, (1 + ν_t⁺) du⁺/dy⁺ = 1).
+///
+/// In the buffer and lower log layer this ν̃ sits 10 to 16 % below SA's own log-layer value
+/// κ u_τ y (y⁺ 30 to 100 on Spalding's law): the law's ν_t⁺ lags κ y⁺ by about κ u⁺
+/// (Spalding's ν_t⁺ = κ y⁺ − κ u⁺ + κ e^{−κB} (κu⁺)³/6). The node then carries the stress the wall
+/// imposes, and SA's transport takes over from the second node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WallLaw {
+    /// Spalding's law (κ 0.41, B 5.5), as Han, Ooka and Kikumoto's on-node bounce applies it.
+    Spalding,
+    /// Musker's profile, as the Musker wall model applies it.
+    Musker,
+}
+
+/// The law's eddy viscosity ν_t⁺ = dy⁺/du⁺ − 1 at `y_plus`, analytically: Spalding's from its
+/// u⁺ (found by bisection, at most [`INVERT_ITERATIONS`] halvings), Musker's the mixing-length ν_t
+/// the Musker wall model's own law applies ([`crate::wall::wall_law`]), so that ν̃ and the wall
+/// cell's collision agree. 0 at y⁺ ≤ 0 or for a y⁺ that is not a number; Spalding's may be ≤ 0 in
+/// the viscous sublayer. An `Err` only if the bisection hits its cap, which takes a y⁺ above about
+/// 1e45.
+pub fn law_eddy_viscosity(law: WallLaw, y_plus: f64) -> crate::Result<f64> {
+    if !(y_plus > 0.0 && y_plus.is_finite()) {
+        return Ok(0.0);
+    }
+    let out = match law {
+        WallLaw::Spalding => {
+            let (k, e) = (crate::wall::BOUNCE_KAPPA, (-crate::wall::BOUNCE_KAPPA * crate::wall::BOUNCE_B).exp());
+            // y⁺(u⁺) = u⁺ + e^{−κB}(e^{κu⁺} − 1 − κu⁺ − (κu⁺)²/2 − (κu⁺)³/6) rises from 0 and is
+            // at least u⁺, so u⁺ lies in [0, y⁺].
+            let y_of = |u: f64| {
+                let x = k * u;
+                u + e * (x.exp() - 1.0 - x - x * x / 2.0 - x * x * x / 6.0)
+            };
+            let u = bisect(0.0, y_plus, |u| y_of(u) < y_plus, "Spalding's u⁺")?;
+            let x = k * u;
+            k * e * (x.exp() - 1.0 - x - x * x / 2.0)
+        }
+        WallLaw::Musker => crate::wall::musker_eddy_viscosity(y_plus),
+    };
+    Ok(if out.is_finite() { out } else { 0.0 })
+}
+
+/// The ν̃ ≥ 0 whose eddy viscosity ν̃ f_v1(ν̃/ν) is `nu_t`: [`WallLaw`]'s first-node ν̃. ν̃ f_v1
+/// rises strictly from 0, so the root is unique, and with χ = ν̃/ν and t = ν_t/ν it lies in
+/// [t, t + c_v1] (f_v1 ≤ 1 below; above, χ f_v1 ≥ χ − c_v1³/χ² ≥ t at χ = t + c_v1). Found by
+/// bisection on χ. 0 where `nu_t` ≤ 0 (the viscous sublayer) or `nu_t`, `nu` is not a usable
+/// number; an `Err` only if the bisection hits its cap.
+pub fn nu_tilde_for(nu_t: f64, nu: f64) -> crate::Result<f64> {
+    let t = nu_t / nu;
+    if !(nu > 0.0 && nu.is_finite() && t > 0.0 && t.is_finite()) {
+        return Ok(0.0);
+    }
+    Ok(bisect(t, t + C_V1, |chi| chi * f_v1(chi) < t, "the wall function's ν̃")? * nu)
+}
+
+/// The most halvings a wall-function bisection takes; one stops once its bracket is below
+/// [`INVERT_TOLERANCE`] relative (about 50 halvings for these brackets).
+pub const INVERT_ITERATIONS: u32 = 200;
+/// The relative width at which a wall-function bisection stops.
+pub const INVERT_TOLERANCE: f64 = 1e-15;
+
+/// The root in [lo, hi] of a rising function, `below(x)` true left of it: the bracket's upper end
+/// once it is narrower than [`INVERT_TOLERANCE`] relative or at f64 resolution; an `Err` naming
+/// `what` after [`INVERT_ITERATIONS`] halvings.
+fn bisect(mut lo: f64, mut hi: f64, below: impl Fn(f64) -> bool, what: &str) -> crate::Result<f64> {
+    for _ in 0..INVERT_ITERATIONS {
+        let mid = 0.5 * (lo + hi);
+        if hi - lo <= INVERT_TOLERANCE * hi.abs() || !(mid > lo && mid < hi) {
+            return Ok(hi);
+        }
+        if below(mid) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Err(crate::Error::Unstable(format!("Spalart–Allmaras: {what} did not converge in {INVERT_ITERATIONS} halvings")))
+}
+
 /// The source terms of a cell, split for a point-implicit update: the rate of ν̃ is
 /// `production − destruction`. Both 0 where an input is not usable or `d` is not above 0.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -368,6 +451,21 @@ impl SaField {
         }
         for ((out, &v), &f) in self.nu_tilde.iter_mut().zip(values).zip(&self.fluid) {
             *out = if f { v } else { 0.0 };
+        }
+        Ok(())
+    }
+
+    /// Fix ν̃ at the given fluid cells, `(cell, ν̃)`: the wall function's first-node values. A
+    /// cell outside the field or not fluid, or a value that is not finite, is refused and nothing
+    /// changes.
+    pub fn impose(&mut self, values: &[(usize, f64)]) -> crate::Result<()> {
+        if let Some((c, v)) = values.iter().find(|(c, v)| !(v.is_finite() && self.fluid.get(*c).copied().unwrap_or(false))) {
+            return Err(crate::Error::Invalid(format!("Spalart–Allmaras: ν̃ {v} at cell {c}, which is not a fluid cell of the field or not finite")));
+        }
+        for &(c, v) in values {
+            if let Some(out) = self.nu_tilde.get_mut(c) {
+                *out = v;
+            }
         }
         Ok(())
     }
@@ -929,6 +1027,79 @@ mod transport_tests {
         let one = run(1);
         assert_eq!(one, run(2));
         assert_eq!(one, run(7));
+    }
+
+    /// The inverse of ν̃ f_v1 returns ν̃ whose ν_t is the target to round-off over eighteen decades
+    /// of ν_t/ν, and 0 for targets that are not positive finite numbers.
+    #[test]
+    fn nu_tilde_for_inverts_the_eddy_viscosity() {
+        for k in -30..=60 {
+            let t = 10f64.powf(k as f64 / 5.0);
+            let v = nu_tilde_for(t * NU, NU).unwrap();
+            let back = nu_t(v, NU);
+            assert!((back / (t * NU) - 1.0).abs() < 1e-13, "ν_t/ν {t}: {back} vs {}", t * NU);
+        }
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(nu_tilde_for(bad, NU).unwrap(), 0.0);
+            assert_eq!(nu_tilde_for(NU, bad).unwrap(), 0.0);
+        }
+        let (mut field, _, _, _) = channel(0.37);
+        assert!(field.impose(&[(24 * 7 + 11, f64::NAN)]).is_err());
+        assert!(field.impose(&[(24 * 7 + 11, 1.0)]).is_err(), "a solid cell of the obstacle");
+        assert!(field.impose(&[(usize::MAX, 1.0)]).is_err());
+        field.impose(&[(0, 0.25)]).unwrap();
+        assert_eq!(field.nu_tilde()[0], 0.25);
+    }
+
+    /// The wall laws' eddy viscosity: Spalding's ν_t⁺ = dy⁺/du⁺ − 1 matches a centred difference
+    /// of its y⁺(u⁺); Musker's is the wall model's wall_law; Spalding's is ≈ 0 deep in the
+    /// sublayer and both rise with y⁺; hostile y⁺ give 0.
+    #[test]
+    fn the_wall_laws_eddy_viscosity() {
+        let (k, b) = (crate::wall::BOUNCE_KAPPA, crate::wall::BOUNCE_B);
+        let y_of = |u: f64| {
+            let x = k * u;
+            u + (-k * b).exp() * (x.exp() - 1.0 - x - x * x / 2.0 - x * x * x / 6.0)
+        };
+        for y_plus in [1.0, 5.0, 11.0, 30.0, 100.0, 1000.0] {
+            let s = law_eddy_viscosity(WallLaw::Spalding, y_plus).unwrap();
+            let u = bisect(0.0, y_plus, |u| y_of(u) < y_plus, "test").unwrap();
+            assert!((y_of(u) / y_plus - 1.0).abs() < 1e-12);
+            let h = 1e-5 * u;
+            let fd = (y_of(u + h) - y_of(u - h)) / (2.0 * h) - 1.0;
+            assert!((s - fd).abs() < 1e-6 * (1.0 + fd.abs()), "Spalding y⁺ {y_plus}: {s} vs {fd}");
+            // Musker's is the wall model's own: wall_law at u_τ = 1, ν = 1 (so y = y⁺).
+            let m = law_eddy_viscosity(WallLaw::Musker, y_plus).unwrap();
+            let own = crate::wall::wall_law(crate::wall::musker(3.0 * y_plus).0, y_plus, 3.0 * y_plus, 1.0).1;
+            assert!((m / own - 1.0).abs() < 1e-9, "Musker y⁺ {y_plus}: {m} vs {own}");
+        }
+        assert!(law_eddy_viscosity(WallLaw::Spalding, 1.0).unwrap().abs() < 1e-3);
+        for bad in [0.0, -3.0, f64::NAN, f64::INFINITY] {
+            for law in [WallLaw::Spalding, WallLaw::Musker] {
+                assert_eq!(law_eddy_viscosity(law, bad).unwrap(), 0.0);
+            }
+        }
+    }
+
+    /// The first node's ν̃ against SA's log-layer value κ u_τ y: frozen from an independent
+    /// evaluation (Spalding κ 0.41, B 5.5; Musker's mixing length as wall.rs writes it, κ 0.384, A⁺ 26), ν̃/(κ u_τ y) − 1
+    /// within ±0.005 of the table at each y⁺.
+    #[test]
+    fn the_first_node_nu_tilde_against_kappa_u_tau_y_is_frozen() {
+        let y = [30.0, 40.0, 50.0, 70.0, 100.0, 200.0, 500.0];
+        let spalding = [-0.1443, -0.1648, -0.1618, -0.1376, -0.1045, -0.0538, -0.0201];
+        let musker = [-0.2458, -0.2580, -0.2402, -0.1892, -0.1458, -0.1284, -0.1288];
+        for (law, table) in [(WallLaw::Spalding, spalding), (WallLaw::Musker, musker)] {
+            for (&y_plus, &want) in y.iter().zip(&table) {
+                // Wall units: ν = 1, u_τ = 1, so y = y⁺ and ν_t = ν_t⁺.
+                let nu_t_law = law_eddy_viscosity(law, y_plus).unwrap();
+                let v = nu_tilde_for(nu_t_law, 1.0).unwrap();
+                assert!((nu_t(v, 1.0) / nu_t_law - 1.0).abs() < 1e-12);
+                let got = v / (KAPPA * y_plus) - 1.0;
+                println!("{law:?} y⁺ {y_plus}: ν_t⁺ {nu_t_law:.4}, ν̃/ν {v:.4}, ν̃/(κ u_τ y) − 1 {got:+.4} (frozen {want:+.4})");
+                assert!((got - want).abs() <= 0.005, "{law:?} y⁺ {y_plus}: {got} vs {want}");
+            }
+        }
     }
 
     /// The on-node wall (Han, Ooka & Kikumoto's boundary node, a full cell from the first fluid

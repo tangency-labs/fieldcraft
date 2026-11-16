@@ -708,6 +708,11 @@ struct SaState {
     substeps: Option<u32>,
     /// Whether the model's sources act ([`Flow::set_sa_model`]; off: ν̃'s transport alone).
     model: bool,
+    /// Under a wall model, the law its wall applies and the wall function's last samples: each
+    /// first fluid node's cell, its distance to the wall and u_τ (lattice units), in cell order
+    /// ([`Flow::wall_friction`]).
+    law: Option<crate::sa::WallLaw>,
+    wall: Vec<(usize, f64, f64)>,
 }
 
 /// Cells per parallel block of the collision and the streaming: about a 256th of the grid, so a
@@ -1341,7 +1346,12 @@ impl Flow {
                 let distance = crate::distance::WallDistance::new(&grid, mask, &surface, periodic, &caps)?;
                 let inflow = sa.inflow_ratio * nu;
                 let field = SaField::new(sides, mask.to_vec(), inflow, inflow)?;
-                Some(SaState { field, distance, vorticity: filled(n, 0.0, "vorticities")?, substeps: None, model: true })
+                let law = if on_node {
+                    Some(crate::sa::WallLaw::Spalding)
+                } else {
+                    (setup.wall_model == Some(WallModel::Musker)).then_some(crate::sa::WallLaw::Musker)
+                };
+                Some(SaState { field, distance, vorticity: filled(n, 0.0, "vorticities")?, substeps: None, model: true, law, wall: Vec::new() })
             }
         };
         open.shrink_to_fit();
@@ -1763,6 +1773,14 @@ impl Flow {
     /// The Spalart–Allmaras field, with that model.
     pub fn spalart_allmaras(&self) -> Option<&SaField> {
         self.sa.as_ref().map(|s| &s.field)
+    }
+
+    /// Under a wall model with the Spalart–Allmaras model, the law the wall applies and the wall
+    /// function's samples of the last step: each first fluid node's cell, its distance to the
+    /// wall and the friction velocity u_τ it read (lattice units), in cell order; its ν̃ was set
+    /// so that ν_t is the law's at y⁺ = y u_τ/ν ([`crate::sa::WallLaw`]).
+    pub fn sa_wall_function(&self) -> (Option<crate::sa::WallLaw>, &[(usize, f64, f64)]) {
+        self.sa.as_ref().map_or((None, &[][..]), |s| (s.law, &s.wall[..]))
     }
 
     /// With the Spalart–Allmaras model, each cell's wall distance it reads (lattice units).
@@ -2383,6 +2401,10 @@ impl Flow {
     /// Vreman's), then one lattice step of ν̃ ([`SaField::advance`]), before the collision reads
     /// its ν_t.
     fn advance_sa(&mut self) -> Result<()> {
+        if self.sa.is_none() {
+            return Ok(());
+        }
+        let wall = self.wall_friction();
         let Some(sa) = &mut self.sa else { return Ok(()) };
         let (grid, periodic, block, steps) = (self.grid, self.periodic, self.block, self.steps_done);
         let fluid = populated_mask(&self.fluid, &self.bulk, self.surface.as_ref());
@@ -2404,7 +2426,46 @@ impl Flow {
             Error::Unstable(m) => Error::Unstable(format!("{m} (at time step {})", steps + 1)),
             other => other,
         })?;
+        // The wall function (Nichols & Nelson 2004): ν̃ at each first fluid node from the law's ν_t, after the
+        // transport so the collision reads it. Not with the sources off (the transport alone).
+        if let Some(law) = sa.law.filter(|_| sa.model) {
+            let mut fixed = Vec::with_capacity(wall.len());
+            for &(c, y, ut) in &wall {
+                let nu_t = nu * crate::sa::law_eddy_viscosity(law, y * ut / nu)?;
+                fixed.push((c, crate::sa::nu_tilde_for(nu_t, nu)?));
+            }
+            sa.field.impose(&fixed)?;
+        }
+        sa.wall = wall;
         Ok(())
+    }
+
+    /// The friction velocity the Spalart–Allmaras wall function reads at each first fluid node,
+    /// `(cell, y, u_τ)` in lattice units, in cell order, one per cell (the larger u_τ where two
+    /// walls share a node); none without a wall model. The one place it comes from:
+    /// - Han, Ooka & Kikumoto's on-node bounce: u_τ = √(|τ|/ρ) from the stress each boundary node
+    ///   applies, sampled this step from its interior node, which is the first fluid node, y = 1;
+    /// - Musker's wall model: the u_τ of its wall law at each modelled wall cell, y its distance.
+    fn wall_friction(&self) -> Vec<(usize, f64, f64)> {
+        let mut out: Vec<(usize, f64, f64)> = if let Some(nodes) = &self.nodes {
+            nodes
+                .nodes()
+                .iter()
+                .map(|w| {
+                    let cell = w.interior as usize;
+                    let tau = w.stress.iter().map(|s| s * s).sum::<f64>().sqrt();
+                    let ut = self.moments(cell).map_or(0.0, |(rho, _)| (tau / rho).sqrt());
+                    (cell, 1.0, if ut.is_finite() { ut } else { 0.0 })
+                })
+                .collect()
+        } else if let Some(walls) = self.walls.as_ref().filter(|_| self.wall_model) {
+            walls.friction_velocities(|cell| self.moments(cell).map_or([0.0; 3], |m| m.1)).collect()
+        } else {
+            Vec::new()
+        };
+        out.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.total_cmp(&a.2)));
+        out.dedup_by_key(|w| w.0);
+        out
     }
 
     /// The collision with Guo forcing (two relaxation times, or recursive regularised), in place,

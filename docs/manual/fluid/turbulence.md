@@ -48,7 +48,7 @@ initial field, 3 by default) instead of a constant:
 |---|---|---|---|
 | `turbulence.type` | `"smagorinsky"`, `"vreman"`, `"spalart_allmaras"` | required | The subgrid model, or the Reynolds-averaged Spalart–Allmaras model. Without `turbulence` the step has no eddy viscosity. |
 | `turbulence.constant` | above 0, at most 0.5 | required | Smagorinsky's constant C. 0.1 to 0.2 is usual; 0.17 is Lilly's value for isotropic turbulence. For `vreman`, the Smagorinsky-equivalent C_s of Vreman's c = 2.5 C_s² (0.17 gives his c = 0.07; Jacob et al. 2018 use 0.18). |
-| `turbulence.inflow_ratio` | at least 0 | 3 | `spalart_allmaras` only: ν̃/ν at the inflows and in the initial field (3 is the value of NASA's Turbulence Modeling Resource). With 0 the model gives no eddy viscosity and the flow equals the model off bit for bit. |
+| `turbulence.inflow_ratio` | at least 0 | 3 | `spalart_allmaras` only: ν̃/ν at the inflows and in the initial field (3 is the value of NASA's Turbulence Modeling Resource). With 0 and no wall model the model gives no eddy viscosity and the flow equals the model off bit for bit. |
 | `turbulence.prandtl` | 0.1 to 10 | 0.9 | Turbulent Prandtl number Pr_t of the turbulent heat diffusivity ν_t / Pr_t (with heat only). 0.85 to 0.9 is usual for air and water. |
 | `turbulence.van_driest` | 1 to 100 | none | Van Driest's A⁺: damps the length scale near no-slip walls. 26 is Van Driest's value. Smagorinsky's model only: Vreman's needs no damping, and the field is refused with it. |
 | `turbulence.wall_model` | `"musker"`, `"spalding_bounce"`, `"spalding_bounce_halfway"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` is Han, Ooka and Kikumoto's wall-function bounce as their eq. 14 states it (2021), on-node: the outermost cell layer at each plane no-slip box face is the wall (the wall plane through its centres, so a channel 2δ wide is 2δ + Δx high), bounces back and sends into the fluid the specular images of its incoming diagonals less the stress of Spalding's law at the interior node one cell above; CPU and GPU, the box periodic along the walls, no obstacles, moving walls or heat. `"spalding_bounce_halfway"` is disabled because its wall-row checkerboard mode grows. Files preserve this selection when loaded, but solves refuse it at setup. Remove `wall_model` for resolved no-slip walls, or explicitly select and validate a supported treatment; the on-node variant changes the wall location. |
@@ -167,8 +167,17 @@ enters every collision through the same explicit-rate route as Vreman's model. E
 exact distance to the nearest no-slip wall (a separable distance transform, Felzenszwalb and
 Huttenlocher 2012; it crosses periodic faces). ν̃ is part of a checkpoint.
 
-The model adds no wall law: walls keep the treatment they have, and without a wall law it needs a
+Without a wall model the model adds no wall law: walls keep the treatment they have, and it needs a
 resolved boundary layer to mean anything. It does not add to a subgrid model, it replaces one.
+
+With a wall model it has a wall function at the first fluid node (Nichols and Nelson 2004): ν̃ there is
+set after the transport so that ν_t = ν̃ f_v1 is the eddy viscosity of the law the wall applies at that
+node's y⁺ = y u_τ/ν, with u_τ the wall's own. For the on-node bounce (`spalding_bounce`) that is
+Spalding's law, ν_t⁺ = dy⁺/du⁺ − 1, with u_τ from the stress the node applies; under `musker` it is
+the mixing-length eddy viscosity of the Musker wall model's own law, so the wall cell's collision
+and ν̃ agree. In the log layer the node's ν̃ sits 13 % or more below κ u_τ y (Spalding's ν_t⁺ lags κ y⁺ by
+about κ u⁺). A run with the Spalart–Allmaras model and a wall model therefore gives other results than
+without the wall function.
 
 Refused, with a message that names the model: interpolated walls and the hybrid collision's
 dynamic σ (both backends); on the GPU also a wall model, on-node walls, heat, fans and porous
@@ -456,6 +465,7 @@ docs/verification.md and summarised in [Large-eddy simulation](les.md).
 - D. B. Spalding. *A single formula for the "law of the wall".* J. Appl. Mech. 28(3):455–458, 1961. doi:[10.1115/1.3641728](https://doi.org/10.1115/1.3641728)
 - P. Moin, J. Kim. *Numerical investigation of turbulent channel flow.* J. Fluid Mech. 118:341–377, 1982. doi:[10.1017/S0022112082001116](https://doi.org/10.1017/S0022112082001116)
 - P.-E. Danielsson. *Euclidean distance mapping.* Comput. Graph. Image Process. 14(3):227–248, 1980. doi:[10.1016/0146-664X(80)90054-4](https://doi.org/10.1016/0146-664X(80)90054-4)
+- R. H. Nichols, C. C. Nelson. *Wall function boundary conditions including heat transfer and compressibility.* AIAA J. 42(6):1157–1164, 2004.
 - M. Han, R. Ooka, H. Kikumoto. *A wall function approach in lattice Boltzmann method: algorithm and validation using turbulent channel flow.* Fluid Dyn. Res. 53:045506, 2021. doi:[10.1088/1873-7005/ac1782](https://doi.org/10.1088/1873-7005/ac1782)
 - A. J. Musker. *Explicit expression for the smooth wall velocity distribution in a turbulent boundary layer.* AIAA J. 17(6):655–657, 1979. doi:[10.2514/3.61193](https://doi.org/10.2514/3.61193)
 - U. Piomelli, E. Balaras. *Wall-layer models for large-eddy simulations.* Annu. Rev. Fluid Mech. 34:349–374, 2002. doi:[10.1146/annurev.fluid.34.082901.144919](https://doi.org/10.1146/annurev.fluid.34.082901.144919)
