@@ -43,6 +43,51 @@ pub const TARGET_LATTICE_VELOCITY: f64 = 0.05;
 pub const AUTO_TAU_MAX: f64 = 1.0;
 /// The largest lattice Mach number `u Δt / (Δx c_s)` of the characteristic velocity.
 pub const MAX_MACH: f64 = 0.3;
+
+/// Whether the cell at `p` in a box of `cells` cells lies in a velocity inlet face's layer and touches two or more
+/// walls (box faces at rest or moving, not periodic): at such a corner an inlet condition and a wall's law meet on one
+/// cell, and the on-node wall-function bounce grows a density mode there that takes the run down. The rule: the cell is
+/// a wall cell (plain bounce-back, no inlet condition, no wall law). A cell with one wall keeps the inlet's rule.
+pub(crate) fn is_inlet_corner(domain: &FluidDomain, cells: [usize; 3], p: [usize; 3]) -> bool {
+    let (mut walls, mut inlet) = (0usize, false);
+    for a in 0..3 {
+        if domain.faces.periodic(a) {
+            continue;
+        }
+        let (Some(&c), Some(&i)) = (cells.get(a), p.get(a)) else { return false };
+        for (at, face) in [(i == 0, BoxFace::of(a, false)), (i + 1 == c, BoxFace::of(a, true))] {
+            if !at {
+                continue;
+            }
+            match domain.faces.get(face) {
+                FaceCondition::Velocity { .. } => inlet = true,
+                FaceCondition::Wall {} | FaceCondition::MovingWall { .. } => walls += 1,
+                _ => {}
+            }
+        }
+    }
+    inlet && walls >= 2
+}
+
+/// How many cells [`is_inlet_corner`] picks in a box of `cells` cells: the cells along its twelve edges.
+pub(crate) fn inlet_corner_count(domain: &FluidDomain, cells: [usize; 3]) -> usize {
+    let mut found = std::collections::BTreeSet::new();
+    for along in 0..3 {
+        let (a, b) = ((along + 1) % 3, (along + 2) % 3);
+        for (ia, ib) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+            for t in 0..cells.get(along).copied().unwrap_or(0) {
+                let mut p = [0usize; 3];
+                p[along] = t;
+                p[a] = if ia == 0 { 0 } else { cells.get(a).copied().unwrap_or(1).saturating_sub(1) };
+                p[b] = if ib == 0 { 0 } else { cells.get(b).copied().unwrap_or(1).saturating_sub(1) };
+                if is_inlet_corner(domain, cells, p) {
+                    found.insert(p);
+                }
+            }
+        }
+    }
+    found.len()
+}
 /// The smallest symmetric relaxation time τ⁺.
 pub const MIN_TAU: f64 = 0.505;
 /// The smallest τ⁺ of the fluid itself with a turbulence model: the eddy viscosity raises each
@@ -1039,6 +1084,15 @@ impl Setup {
         }
         if collision != Collision::Trt && magic_given {
             warnings.push(format!("the two-relaxation-time parameter Λ (`magic`) has no effect with the {} collision", collision.name()));
+        }
+
+        if matches!(wall_model, Some(WallModel::SpaldingBounce)) {
+            let corners = inlet_corner_count(&domain, cells);
+            if corners > 0 {
+                warnings.push(format!(
+                    "{corners} cells in an inlet face's layer touch two walls: they are wall cells (plain bounce-back, no inlet condition, no wall law), because the on-node wall-function bounce is unstable where an inlet meets two walls"
+                ));
+            }
         }
 
         Ok(Setup {
