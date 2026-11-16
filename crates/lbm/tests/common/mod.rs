@@ -548,3 +548,57 @@ pub fn prepare_halfway_diagnostic(model: &Model, obstacles: &[Obstacle]) -> (Set
     let flow = Flow::new(&setup, obstacles).unwrap();
     (setup, flow)
 }
+
+/// A parallelepiped from `origin` along three edge vectors, faces tagged as [`cuboid`]'s; each
+/// triangle turned to face away from the centre.
+pub fn parallelepiped(origin: [f64; 3], e: [[f64; 3]; 3]) -> BoundarySurface {
+    let corner = |k: usize| [0, 1, 2].map(|c| origin[c] + (0..3).map(|a| if k >> a & 1 == 1 { e[a][c] } else { 0.0 }).sum::<f64>());
+    let positions: Vec<[f64; 3]> = (0..8).map(corner).collect();
+    let centre = [0, 1, 2].map(|c| origin[c] + 0.5 * (e[0][c] + e[1][c] + e[2][c]));
+    let mut tris = Vec::new();
+    let mut tags = Vec::new();
+    for axis in 0..3 {
+        let (t1, t2) = ((axis + 1) % 3, (axis + 2) % 3);
+        for side in 0..2u32 {
+            let v = |a: u32, b: u32| ((side as usize) << axis | (a as usize) << t1 | (b as usize) << t2) as u32;
+            tris.push([v(0, 0), v(1, 0), v(1, 1)]);
+            tris.push([v(0, 0), v(1, 1), v(0, 1)]);
+            tags.extend([2 * axis as u32 + side; 2]);
+        }
+    }
+    surface(positions, tris, tags, move |c, _| [c[0] - centre[0], c[1] - centre[1], c[2] - centre[2]])
+}
+
+/// The open plane channel the interpolated-wall tests share: [`OPEN_WIDTH`] cells across on a grid of
+/// [`OPEN_CELLS`] per metre, `nx` cells long, a uniform velocity inlet at the exact mean speed
+/// ([`OPEN_U_LAT`] in lattice units, viscosity [`OPEN_NU_LAT`]) and a pressure outlet, periodic across y and z,
+/// its one wall a slab whose face cuts the cells, run for `steps` steps with the wall treatment `walls`.
+/// Returns the model and its obstacles.
+pub fn open_channel_model(nx: usize, steps: u64, walls: fieldcraft_model::WallTreatment) -> (Model, Vec<Obstacle>) {
+    use fieldcraft_model::{FaceCondition, Outflow, Profile};
+    let dx = 1.0 / OPEN_CELLS as f64;
+    let dt = OPEN_NU_LAT * dx * dx;
+    let u_phys = OPEN_U_LAT * dx / dt;
+    let ny = (OPEN_WIDTH + 4.0).ceil() as usize;
+    let nz = 4usize;
+    let (lx, ly, lz) = (nx as f64 * dx, ny as f64 * dx, nz as f64 * dx);
+    // The wall runs from the channel's width to the box's far face (periodic across y, so the channel's
+    // other side is the face at 0, which lies on a cell face), through inlet and outlet.
+    let obstacles = vec![obstacle("Wall", cuboid([-2.0 * dx, OPEN_WIDTH * dx, -dx], [lx + 2.0 * dx, ly, lz + dx]), &CUBOID_FACES)];
+    let mut d = domain([0.0; 3], [lx, ly, lz], dx);
+    for f in [&mut d.faces.y_min, &mut d.faces.y_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = FaceCondition::Periodic {};
+    }
+    d.faces.x_min = FaceCondition::Velocity { velocity: [u_phys, 0.0, 0.0], profile: Profile::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
+    d.initial_velocity = [u_phys, 0.0, 0.0];
+    d.obstacles = vec!["Wall".into()];
+    let p = with_walls(step(steps as f64 * dt, dt, None), walls);
+    (model(1.0, 1.0, d, p), obstacles)
+}
+
+/// The grid, width, lattice viscosity and exact mean speed of [`open_channel_model`].
+pub const OPEN_CELLS: usize = 8;
+pub const OPEN_WIDTH: f64 = 8.5;
+pub const OPEN_NU_LAT: f64 = 0.05;
+pub const OPEN_U_LAT: f64 = 0.02;
