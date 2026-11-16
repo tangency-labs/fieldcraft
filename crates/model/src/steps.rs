@@ -383,6 +383,20 @@ pub enum WallModel {
     /// the first node is R. H. Nichols, C. C. Nelson, AIAA J. 42(6):1107–1114, 2004). Only with
     /// `spalart_allmaras` turbulence; the walls, edges and corners are `spalding_bounce`'s.
     SpalartAllmarasBounce,
+    /// Han, Ooka and Kikumoto's on-node wall-function bounce ([`WallModel::SpaldingBounce`]) with the
+    /// wall half way between cells instead of through the node centres. Every cell whose centre is
+    /// in the air stays open; the wall nodes are the first solid layer (a solid cell with an open
+    /// face neighbour and a solid cell behind it along the same axis), so the effective wall is the
+    /// face between the last open centre and the node, half a cell from the first open cell, and
+    /// Spalding's law is evaluated there (y = ½ cell) instead of one cell from the node. A wall of
+    /// fewer than three solid centres across has no node layer and keeps plain bounce-back, which
+    /// seals it. Obstacle walls only: a box face that is a wall is refused ("not supported yet"; a
+    /// solid slab in the box is the way to a wall). CPU only for now.
+    SpaldingBounceSurface,
+    /// [`WallModel::SpaldingBounceSurface`] with the Spalart–Allmaras model's own wall law
+    /// ([`WallModel::SpalartAllmarasBounce`]'s) in place of Spalding's. Only with
+    /// `spalart_allmaras` turbulence. CPU only for now.
+    SpalartAllmarasBounceSurface,
     /// Our halfway variant of a wall-function bounce, not Han, Ooka and Kikumoto's scheme: a
     /// plane no-slip box face at rest lies halfway along the links and reflects its populations
     /// specularly (no drag of its own), and after streaming each wall cell gives the face the

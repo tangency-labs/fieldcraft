@@ -962,6 +962,11 @@ impl GpuFlow {
         let mut node_links: Vec<(u32, u32)> = Vec::new();
         if let Some(nodes) = flow.wall_nodes() {
             let links = flow.links();
+            if nodes.distance() != 1.0 {
+                return Err(Error::Invalid(
+                    "not supported yet: the half-way wall (`spalding_bounce_surface`, `spalart_allmaras_bounce_surface`) on the GPU; solve on the CPU (`backend: \"cpu\"`)".into(),
+                ));
+            }
             if nodes.law() != fieldcraft_lbm::sa::WallLaw::Spalding {
                 return Err(Error::Invalid(
                     "not supported yet on the GPU: the Spalart–Allmaras wall law (`wall_model: \"spalart_allmaras_bounce\"`); solve on the CPU (`backend: \"cpu\"`) or use `spalding_bounce`".into(),

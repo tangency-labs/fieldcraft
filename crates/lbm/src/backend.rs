@@ -124,6 +124,11 @@ pub trait Backend {
     fn wall_links(&self) -> Option<crate::flow::WallLinks> {
         None
     }
+
+    /// What the half-way wall made of the obstacles' walls, when the run uses it.
+    fn wall_layer(&self) -> Option<crate::wall_layer::WallLayerReport> {
+        None
+    }
 }
 
 /// Makes a device backend from a prepared flow (its initial state included) and its setup.

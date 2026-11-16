@@ -585,12 +585,12 @@ impl Setup {
                 "wall_model `spalding_bounce_halfway` is disabled because its wall-row checkerboard mode grows; remove `wall_model` for resolved no-slip walls, or explicitly choose and validate another wall treatment. `spalding_bounce` uses a different, on-node wall location".into(),
             ));
         }
-        if turbulence
-            .as_ref()
-            .is_some_and(|t| t.wall_model() == Some(WallModel::SpalartAllmarasBounce) && !matches!(t, Turbulence::SpalartAllmaras { .. }))
-        {
+        if turbulence.as_ref().is_some_and(|t| {
+            matches!(t.wall_model(), Some(WallModel::SpalartAllmarasBounce | WallModel::SpalartAllmarasBounceSurface))
+                && !matches!(t, Turbulence::SpalartAllmaras { .. })
+        }) {
             return Err(Error::Invalid(
-                "wall_model `spalart_allmaras_bounce` is the Spalart–Allmaras model's own wall law: use it with `spalart_allmaras` turbulence, or `spalding_bounce` with a subgrid model".into(),
+                "wall_model `spalart_allmaras_bounce` and `spalart_allmaras_bounce_surface` are the Spalart–Allmaras model's own wall law: use them with `spalart_allmaras` turbulence, or `spalding_bounce` / `spalding_bounce_surface` with a subgrid model".into(),
             ));
         }
         // Interpolated walls replace the bounce-back of the obstacles' links; the wall models and
@@ -1094,7 +1094,15 @@ impl Setup {
             warnings.push(format!("the two-relaxation-time parameter Λ (`magic`) has no effect with the {} collision", collision.name()));
         }
 
-        if matches!(wall_model, Some(WallModel::SpaldingBounce | WallModel::SpalartAllmarasBounce)) {
+        if matches!(
+            wall_model,
+            Some(
+                WallModel::SpaldingBounce
+                    | WallModel::SpalartAllmarasBounce
+                    | WallModel::SpaldingBounceSurface
+                    | WallModel::SpalartAllmarasBounceSurface
+            )
+        ) {
             let corners = inlet_corner_count(&domain, cells);
             if corners > 0 {
                 warnings.push(format!(

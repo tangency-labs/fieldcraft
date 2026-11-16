@@ -680,6 +680,25 @@ fn run_checkpointed(
     if let (Some(clamps), Some(r)) = (flow.viscosity_clamps(), &setup.rheology) {
         warnings.extend(clamps.warning(flow.fluid_cells(), r.tau));
     }
+    if let Some(layer) = flow.wall_layer() {
+        let share = layer.plain_share();
+        if share > crate::wall_layer::PLAIN_SHARE_WARNING {
+            warnings.push(format!(
+                "{:.1} % of the obstacles' wall area ({} of {} wall faces) runs plain bounce-back with no wall law: those walls are fewer than three solid centres across, or lie in the layer of an open face of the box; refine the spacing or thicken them",
+                100.0 * share,
+                layer.plain_faces,
+                layer.faces
+            ));
+        }
+    }
+    if let Some(layer) = flow.wall_layer()
+        && layer.unsealed_share > crate::wall_layer::UNSEALED_WARNING
+    {
+        warnings.push(format!(
+            "{:.2} % of the obstacles' surface area has no cell centre inside it (a wall thinner than the spacing): the flow leaks through it; refine the spacing or thicken the wall",
+            100.0 * layer.unsealed_share
+        ));
+    }
     for body in flow.empty_obstacles() {
         warnings.push(format!("obstacle `{body}` covers no cell centre: it is smaller than the spacing or outside the box"));
     }

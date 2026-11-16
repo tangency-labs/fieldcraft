@@ -378,13 +378,29 @@ pub struct WallNodes {
     nu: f64,
     /// The wall law the stress comes from.
     law: crate::sa::WallLaw,
+    /// The law's distance y of the interior node from the wall, in cells: 1 for a wall through the
+    /// node centres (Han et al.), ½ for the wall half way between the interior node and the node.
+    distance: f64,
 }
 
 impl WallNodes {
     /// `nodes` (sorted here by cell) for a fluid of kinematic viscosity `nu` (lattice units).
     pub fn new(mut nodes: Vec<WallNode>, nu: f64, law: crate::sa::WallLaw) -> WallNodes {
         nodes.sort_by_key(|n| n.cell);
-        WallNodes { nodes, nu, law }
+        WallNodes { nodes, nu, law, distance: 1.0 }
+    }
+
+    /// These nodes with the law evaluated at `distance` cells from the wall (default 1): ½ where
+    /// the wall lies half way between the node and its interior node.
+    #[must_use]
+    pub fn with_distance(mut self, distance: f64) -> WallNodes {
+        self.distance = distance;
+        self
+    }
+
+    /// The law's distance of the interior node from the wall, in cells.
+    pub fn distance(&self) -> f64 {
+        self.distance
     }
 
     /// The wall law the stress comes from: Spalding's (Han et al.), or the Spalart–Allmaras
@@ -420,10 +436,10 @@ impl WallNodes {
 
     /// Before the collision: each node's stress from `moments(cell)`, the density and velocity
     /// (with the half force) of its interior node, the wall law (Spalding's, κ 0.41, B 5.5, or the
-    /// Spalart–Allmaras model's own) at distance 1,
+    /// Spalart–Allmaras model's own) at the interior node's distance from the wall ([`WallNodes::distance`], 1 or ½),
     /// in parallel: each node's is its own. Zero at rest or with a number that is not usable.
     pub fn sample(&mut self, moments: impl Fn(usize) -> Option<(f64, [f64; 3])> + Sync) {
-        let (nu, law) = (self.nu, self.law);
+        let (nu, law, y) = (self.nu, self.law, self.distance);
         parallel::for_each_mut(&mut self.nodes, |_, w| {
             w.stress = [0.0; 3];
             w.wanted = [0.0; 3];
@@ -439,9 +455,9 @@ impl WallNodes {
             }
             let speed = (t[0] * t[0] + t[1] * t[1] + t[2] * t[2]).sqrt();
             let ut = if law == crate::sa::WallLaw::SpalartAllmaras {
-                crate::sa_law::friction_velocity(speed, 1.0, nu)
+                crate::sa_law::friction_velocity(speed, y, nu)
             } else {
-                spalding_friction(speed, 1.0, nu, BOUNCE_KAPPA, BOUNCE_B)
+                spalding_friction(speed, y, nu, BOUNCE_KAPPA, BOUNCE_B)
             };
             let scale = rho * ut * ut / speed;
             if speed > 0.0 && scale.is_finite() {
