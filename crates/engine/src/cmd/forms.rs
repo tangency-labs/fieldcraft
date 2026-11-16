@@ -70,10 +70,8 @@ pub const SET: &[Field] = &[
     )
     .help("Bodies of the design, or their named faces, edges or vertices. Kept by name, so the set survives remeshing.")
     .hint("whole bodies, or their faces, edges or vertices"),
-    labels("nodes", "Nodes", LabelOf::Node).help("Mesh node labels; Use selection takes the picked nodes.").hint("labels: 1, 2, 10-20"),
-    labels("elements", "Elements", LabelOf::Element)
-        .help("Mesh element labels; Use selection takes the picked elements.")
-        .hint("labels: 1, 2, 10-20"),
+    labels("nodes", "Nodes", LabelOf::Node).help("Mesh node labels, typed (1, 2, 10-20) or picked in the view.").hint("none"),
+    labels("elements", "Elements", LabelOf::Element).help("Mesh element labels, typed (1, 2, 10-20) or picked in the view.").hint("none"),
     sides("faces", "Element faces", Side::Face)
         .help(
             "Element faces as element:face (local face number), ranges of elements sharing one: 1-20:3, 25:1. Use selection takes the picked faces.",
@@ -2383,7 +2381,7 @@ pub const CENTRE: &[Field] = &[
         ],
     )
     .help("Faces or edges (a hole's faces or rim give its centre), or one vertex."),
-    labels("nodes", "Nodes", LabelOf::Node).help("Mesh node labels: their mean.").hint("labels: 1, 2, 10-20"),
+    labels("nodes", "Nodes", LabelOf::Node).help("Mesh node labels: their mean.").hint("none"),
 ];
 pub const DATUM_POINT: &[Field] = &[
     NAME,
@@ -2832,7 +2830,7 @@ const PROBE_WALLS: usize = 100;
 
 pub const SOLVE_PROBE: &[Field] = &[
     SOLVED.req(),
-    labels("nodes", "Nodes", LabelOf::Node).help("Node labels to read.").hint("labels: 1, 2, 10-20"),
+    labels("nodes", "Nodes", LabelOf::Node).help("Node labels to read.").hint("none"),
     reference("set", "Set", C::Set).help("A set whose nodes to read."),
     points("at", "Points", D::Length, 10_000).help("Points to read at the nearest nodes."),
     int("mode", "Mode", 1, 1_000_000).help("The mode to read, for frequency and buckling steps."),
