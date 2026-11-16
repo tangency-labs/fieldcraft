@@ -627,6 +627,17 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
         let scale = rho * ut * ut / speed;
         if speed > 0.0 && scale < 1e30 { stress = scale * t; }
     }
+    if ON_NODE {
+        // The node's side row (`node_side`): a node with no Han link along its normal samples
+        // nothing; the law's request is kept beside the stress, and a node that is not flat
+        // carries only the axes whose pair n ± e_b is Han's (fieldcraft_lbm::bounce::carries).
+        let flags = bitcast<u32>(walls[node_side(k)].w);
+        if (flags & NODE_SAMPLED) == 0u { stress = vec3<f32>(0.0); }
+        walls[node_side(k) + 1u] = vec4<f32>(stress, 0.0);
+        if (flags & NODE_FLAT) == 0u {
+            stress = stress * vec3<f32>(vec3<u32>(flags >> 2u, flags >> 3u, flags >> 4u) & vec3<u32>(1u));
+        }
+    }
     walls[4u * k + 2u] = vec4<f32>(stress, 0.0);
     walls[4u * k + 3u] = vec4<f32>(stress, walls[4u * k + 3u].w);
 }
@@ -649,6 +660,10 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
 fn node_bounce(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     let k = cell_of(lid, wg);
     if !ON_NODE || k >= params.wall.x { return; }
+    if (bitcast<u32>(walls[node_side(k)].w) & NODE_FLAT) == 0u {
+        node_links(k);
+        return;
+    }
     let normal = walls[4u * k].xyz;
     let interior = bitcast<u32>(walls[4u * k + 1u].w);
     let stress = walls[4u * k + 2u].xyz;
@@ -768,6 +783,78 @@ fn node_bounce(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
     f[post_index(pc + 1u, cell, xyz)] = fq[pc];
     f[post_index(pd, cell, xyz)] = fq[pd + 1u];
     f[post_index(pd + 1u, cell, xyz)] = fq[pd];
+    walls[4u * k + 3u] = vec4<f32>(taken, walls[4u * k + 3u].w);
+}
+
+// A boundary node's side row in `walls`, after the four rows of every node (native.rs, from
+// fieldcraft_lbm::bounce::roles): its Han links (x), its links to the fluid as bits (y), its cell (z),
+// its flags (w), then the stress the law asked for (xyz).
+const NODE_FLAT: u32 = 1u;
+const NODE_SAMPLED: u32 = 2u;
+
+fn node_side(k: u32) -> u32 {
+    return 4u * params.wall.x + 2u * k;
+}
+
+// Boundary node k when it is not a plane wall's (an obstacle's edge or corner, a node beside a
+// junction cell): eq. 14 link pair by link pair, one statement per population, with no loop that
+// tests c_q (the GB10 driver miscompiles it; see `fd_neighbour`).
+fn node_links(k: u32) {
+    let side = walls[node_side(k)];
+    let han = bitcast<u32>(side.x);
+    let to_fluid = bitcast<u32>(side.y);
+    let cell = bitcast<u32>(side.z);
+    let normal = walls[4u * k].xyz;
+    let axis = select(select(2u, 1u, normal.y != 0.0), 0u, normal.x != 0.0);
+    let s = walls[4u * k + 2u].xyz;
+    var xyz = vec3<i32>(0);
+    if AA_MODE && params.phase.x == 1u { xyz = coords(cell); }
+    var fq: array<f32, 19>;
+    for (var q = 0u; q < Q; q = q + 1u) {
+        fq[q] = population(q, cell, xyz);
+    }
+    var out: array<f32, 19>;
+    out[0] = fq[0];
+    out[1u] = select(fq[2u], fq[select(select(1u, 1u, axis == 1u), 2u, axis == 0u)] - 0.5 * dot(vec3<f32>(1.0, 0.0, 0.0), s), (han & 2u) != 0u);
+    out[2u] = select(fq[1u], fq[select(select(2u, 2u, axis == 1u), 1u, axis == 0u)] - 0.5 * dot(vec3<f32>(-1.0, 0.0, 0.0), s), (han & 4u) != 0u);
+    out[3u] = select(fq[4u], fq[select(select(3u, 4u, axis == 1u), 3u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, 1.0, 0.0), s), (han & 8u) != 0u);
+    out[4u] = select(fq[3u], fq[select(select(4u, 3u, axis == 1u), 4u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, -1.0, 0.0), s), (han & 16u) != 0u);
+    out[5u] = select(fq[6u], fq[select(select(6u, 5u, axis == 1u), 5u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, 0.0, 1.0), s), (han & 32u) != 0u);
+    out[6u] = select(fq[5u], fq[select(select(5u, 6u, axis == 1u), 6u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, 0.0, -1.0), s), (han & 64u) != 0u);
+    out[7u] = select(fq[8u], fq[select(select(7u, 9u, axis == 1u), 10u, axis == 0u)] - 0.5 * dot(vec3<f32>(1.0, 1.0, 0.0), s), (han & 128u) != 0u);
+    out[8u] = select(fq[7u], fq[select(select(8u, 10u, axis == 1u), 9u, axis == 0u)] - 0.5 * dot(vec3<f32>(-1.0, -1.0, 0.0), s), (han & 256u) != 0u);
+    out[9u] = select(fq[10u], fq[select(select(9u, 7u, axis == 1u), 8u, axis == 0u)] - 0.5 * dot(vec3<f32>(1.0, -1.0, 0.0), s), (han & 512u) != 0u);
+    out[10u] = select(fq[9u], fq[select(select(10u, 8u, axis == 1u), 7u, axis == 0u)] - 0.5 * dot(vec3<f32>(-1.0, 1.0, 0.0), s), (han & 1024u) != 0u);
+    out[11u] = select(fq[12u], fq[select(select(13u, 11u, axis == 1u), 14u, axis == 0u)] - 0.5 * dot(vec3<f32>(1.0, 0.0, 1.0), s), (han & 2048u) != 0u);
+    out[12u] = select(fq[11u], fq[select(select(14u, 12u, axis == 1u), 13u, axis == 0u)] - 0.5 * dot(vec3<f32>(-1.0, 0.0, -1.0), s), (han & 4096u) != 0u);
+    out[13u] = select(fq[14u], fq[select(select(11u, 13u, axis == 1u), 12u, axis == 0u)] - 0.5 * dot(vec3<f32>(1.0, 0.0, -1.0), s), (han & 8192u) != 0u);
+    out[14u] = select(fq[13u], fq[select(select(12u, 14u, axis == 1u), 11u, axis == 0u)] - 0.5 * dot(vec3<f32>(-1.0, 0.0, 1.0), s), (han & 16384u) != 0u);
+    out[15u] = select(fq[16u], fq[select(select(17u, 18u, axis == 1u), 15u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, 1.0, 1.0), s), (han & 32768u) != 0u);
+    out[16u] = select(fq[15u], fq[select(select(18u, 17u, axis == 1u), 16u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, -1.0, -1.0), s), (han & 65536u) != 0u);
+    out[17u] = select(fq[18u], fq[select(select(15u, 16u, axis == 1u), 17u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, 1.0, -1.0), s), (han & 131072u) != 0u);
+    out[18u] = select(fq[17u], fq[select(select(16u, 15u, axis == 1u), 18u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, -1.0, 1.0), s), (han & 262144u) != 0u);
+    var taken = vec3<f32>(0.0);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(1.0, 0.0, 0.0) * (fq[2u] + out[1u]), (to_fluid & 2u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(-1.0, 0.0, 0.0) * (fq[1u] + out[2u]), (to_fluid & 4u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, 1.0, 0.0) * (fq[4u] + out[3u]), (to_fluid & 8u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, -1.0, 0.0) * (fq[3u] + out[4u]), (to_fluid & 16u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, 0.0, 1.0) * (fq[6u] + out[5u]), (to_fluid & 32u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, 0.0, -1.0) * (fq[5u] + out[6u]), (to_fluid & 64u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(1.0, 1.0, 0.0) * (fq[8u] + out[7u]), (to_fluid & 128u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(-1.0, -1.0, 0.0) * (fq[7u] + out[8u]), (to_fluid & 256u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(1.0, -1.0, 0.0) * (fq[10u] + out[9u]), (to_fluid & 512u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(-1.0, 1.0, 0.0) * (fq[9u] + out[10u]), (to_fluid & 1024u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(1.0, 0.0, 1.0) * (fq[12u] + out[11u]), (to_fluid & 2048u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(-1.0, 0.0, -1.0) * (fq[11u] + out[12u]), (to_fluid & 4096u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(1.0, 0.0, -1.0) * (fq[14u] + out[13u]), (to_fluid & 8192u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(-1.0, 0.0, 1.0) * (fq[13u] + out[14u]), (to_fluid & 16384u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, 1.0, 1.0) * (fq[16u] + out[15u]), (to_fluid & 32768u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, -1.0, -1.0) * (fq[15u] + out[16u]), (to_fluid & 65536u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, 1.0, -1.0) * (fq[18u] + out[17u]), (to_fluid & 131072u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, -1.0, 1.0) * (fq[17u] + out[18u]), (to_fluid & 262144u) != 0u);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        f[post_index(q, cell, xyz)] = out[q];
+    }
     walls[4u * k + 3u] = vec4<f32>(taken, walls[4u * k + 3u].w);
 }
 
@@ -2114,8 +2201,12 @@ fn wall_forces(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
     if !(WALL_MODEL || WALL_BOUNCE || ON_NODE) || k >= params.wall.x { return; }
     let row = walls[4u * k + 3u];
     let l = bitcast<u32>(row.w);
-    if l >= params.links { return; }
-    contrib[l] = vec4<f32>(contrib[l].xyz + row.xyz, contrib[l].w);
+    if l < params.links {
+        contrib[l] = vec4<f32>(contrib[l].xyz + row.xyz, contrib[l].w);
+    } else if ON_NODE && l < arrayLength(&contrib) {
+        // A boundary node's own slot after the links (one per node off a plane box face).
+        contrib[l] = vec4<f32>(row.xyz, 0.0);
+    }
 }
 
 // One workgroup per group: the sum of its links' contributions.

@@ -12,6 +12,8 @@
 
 #[path = "../../lbm/tests/common/mod.rs"]
 mod common;
+#[path = "verification/han.rs"]
+mod han;
 #[path = "../../lbm/tests/support/wall_balance.rs"]
 mod wall_balance;
 #[path = "verification/zones.rs"]
