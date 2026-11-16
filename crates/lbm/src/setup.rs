@@ -585,6 +585,14 @@ impl Setup {
                 "wall_model `spalding_bounce_halfway` is disabled because its wall-row checkerboard mode grows; remove `wall_model` for resolved no-slip walls, or explicitly choose and validate another wall treatment. `spalding_bounce` uses a different, on-node wall location".into(),
             ));
         }
+        if turbulence
+            .as_ref()
+            .is_some_and(|t| t.wall_model() == Some(WallModel::SpalartAllmarasBounce) && !matches!(t, Turbulence::SpalartAllmaras { .. }))
+        {
+            return Err(Error::Invalid(
+                "wall_model `spalart_allmaras_bounce` is the Spalart–Allmaras model's own wall law: use it with `spalart_allmaras` turbulence, or `spalding_bounce` with a subgrid model".into(),
+            ));
+        }
         // Interpolated walls replace the bounce-back of the obstacles' links; the wall models and
         // the free surface rebuild or reflect those populations their own way.
         if *walls == WallTreatment::Interpolated {
@@ -1086,7 +1094,7 @@ impl Setup {
             warnings.push(format!("the two-relaxation-time parameter Λ (`magic`) has no effect with the {} collision", collision.name()));
         }
 
-        if matches!(wall_model, Some(WallModel::SpaldingBounce)) {
+        if matches!(wall_model, Some(WallModel::SpaldingBounce | WallModel::SpalartAllmarasBounce)) {
             let corners = inlet_corner_count(&domain, cells);
             if corners > 0 {
                 warnings.push(format!(

@@ -892,7 +892,7 @@ impl Flow {
         let mut corner_cells: Vec<usize> = Vec::new();
         let mut inlet_corners = InletCornerReport::default();
         let mut inlet_rescale = [1.0f64; 6];
-        if matches!(setup.wall_model, Some(WallModel::SpaldingBounce)) {
+        if matches!(setup.wall_model, Some(WallModel::SpaldingBounce | WallModel::SpalartAllmarasBounce)) {
             for face in BoxFace::ALL {
                 let profile = match *domain.faces.get(face) {
                     FaceCondition::Velocity { profile, .. } => profile,
@@ -1033,7 +1033,12 @@ impl Flow {
         };
 
         // Han et al.'s on-node wall ([`crate::bounce`]): a fluid cell next to a wall is a boundary node.
-        let on_node = setup.wall_model == Some(WallModel::SpaldingBounce);
+        let on_node = matches!(setup.wall_model, Some(WallModel::SpaldingBounce | WallModel::SpalartAllmarasBounce));
+        let node_law = if setup.wall_model == Some(WallModel::SpalartAllmarasBounce) {
+            crate::sa::WallLaw::SpalartAllmaras
+        } else {
+            crate::sa::WallLaw::Spalding
+        };
         let mut node_list: Vec<WallNode> = Vec::new();
         let mut bulk = Vec::new();
         // The open-face cells on a wall's node row (a junction, below), which lie on the wall.
@@ -1586,11 +1591,7 @@ impl Flow {
                 let distance = crate::distance::WallDistance::new(&grid, mask, &surface, periodic, &caps)?;
                 let inflow = sa.inflow_ratio * nu;
                 let field = SaField::new(sides, mask.to_vec(), inflow, inflow)?;
-                let law = if on_node {
-                    Some(crate::sa::WallLaw::Spalding)
-                } else {
-                    (setup.wall_model == Some(WallModel::Musker)).then_some(crate::sa::WallLaw::Musker)
-                };
+                let law = if on_node { Some(node_law) } else { (setup.wall_model == Some(WallModel::Musker)).then_some(crate::sa::WallLaw::Musker) };
                 Some(SaState { field, distance, vorticity: filled(n, 0.0, "vorticities")?, substeps: None, model: true, law, wall: Vec::new() })
             }
         };
@@ -1616,7 +1617,7 @@ impl Flow {
             walls,
             wall_model: setup.wall_model == Some(WallModel::Musker),
             wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounceHalfway),
-            nodes: on_node.then(|| WallNodes::new(node_list, nu)),
+            nodes: on_node.then(|| WallNodes::new(node_list, nu, node_law)),
             inlet_corners,
             bulk,
             rheology: setup.rheology,
@@ -2677,6 +2678,11 @@ impl Flow {
         if let Some(law) = sa.law.filter(|_| sa.model) {
             let mut fixed = Vec::with_capacity(wall.len());
             for &(c, y, ut) in &wall {
+                if law == crate::sa::WallLaw::SpalartAllmaras {
+                    let v = crate::sa::KAPPA * ut * y;
+                    fixed.push((c, if v.is_finite() { v } else { 0.0 }));
+                    continue;
+                }
                 let nu_t = nu * crate::sa::law_eddy_viscosity(law, y * ut / nu)?;
                 fixed.push((c, crate::sa::nu_tilde_for(nu_t, nu)?));
             }
