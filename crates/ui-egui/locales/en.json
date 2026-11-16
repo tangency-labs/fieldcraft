@@ -109,5 +109,15 @@
   "settings.status_bar": "Status bar",
   "settings.status_bar_hint": "Show the model's size, the projection and the graphics device along the window's bottom",
   "settings.updates_skipped_none": "No version is skipped. Skip, on the notice that offers an update, skips that version.",
-  "settings.updates_skipped_version": "FieldCraft {version}"
+  "settings.updates_skipped_version": "FieldCraft {version}",
+  "links.donate_label": "Donate",
+  "links.donate_tip": "Support FieldCraft's development with a donation on Ko-fi",
+  "links.donate_hide_tip": "Hide the Donate button",
+  "links.donate_name": "Donate",
+  "links.donate_hide_name": "Hide the Donate button",
+  "links.discord_label": "Discord",
+  "links.discord_tip": "Talk with other users and the developers on Discord",
+  "links.discord_hide_tip": "Hide the Discord button",
+  "links.discord_name": "Discord",
+  "links.discord_hide_name": "Hide the Discord button"
 }

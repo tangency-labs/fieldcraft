@@ -327,6 +327,9 @@ pub struct Prefs {
     /// Where History docks.
     #[serde(deserialize_with = "known_or_default")]
     pub history_dock: crate::shell::HistoryDock,
+    /// The title bar shows the Donate and the Discord pills ([`crate::links`]).
+    pub show_donate_button: bool,
+    pub show_discord_button: bool,
 }
 
 /// A preference as saved, or its default when this version cannot read it (a value a newer
@@ -353,6 +356,8 @@ impl Default for Prefs {
             browser_eye_left: false,
             status_bar: false,
             history_dock: crate::shell::HistoryDock::default(),
+            show_donate_button: true,
+            show_discord_button: true,
         }
     }
 }
