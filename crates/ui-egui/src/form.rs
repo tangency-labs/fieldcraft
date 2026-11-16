@@ -994,9 +994,11 @@ impl Form<'_> {
         let r = c.requirement();
         let text = match r.provider().ends_with(".create") {
             true => format!("Create {}…", c.label()),
-            false => format!("{}…", fieldcraft_engine::catalogue::entry_of(r.provider()).map_or(r.provider(), |e| e.label)),
+            false => format!("{}…", crate::command_label(r.provider())),
         };
-        if kit::button(ui, text, kit::Button::Normal).backing_on_hover_text(format!("{} ({})", r.place(), r.provider())).clicked() {
+        // Where its command is on the ribbon, by its label: never the command's id.
+        let tip = format!("{}: {}", crate::command_label(r.provider()), r.place());
+        if kit::button(ui, text, kit::Button::Normal).backing_on_hover_text(tip).clicked() {
             self.out.create = Some((c, path.to_string()));
         }
     }
