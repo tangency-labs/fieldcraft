@@ -191,8 +191,10 @@ for bin in FieldCraft fieldcraft-cli; do
   test -x "$M_APP/Contents/MacOS/$bin"
   for arch in "${WANT[@]}"; do lipo "$M_APP/Contents/MacOS/$bin" -verify_arch "$arch"; done
   codesign --verify --strict --verbose=2 "$M_APP/Contents/MacOS/$bin"
-  "$M_APP/Contents/MacOS/$bin" --version
 done
+# Both binaries report the version they were packaged as (a nightly's suffix included).
+test "$("$M_APP/Contents/MacOS/FieldCraft" --version)" = "fieldcraft $VERSION"
+test "$("$M_APP/Contents/MacOS/fieldcraft-cli" --version)" = "fieldcraft-cli $VERSION"
 codesign --verify --strict --deep --verbose=2 "$M_APP"
 "$M_APP/Contents/MacOS/fieldcraft-cli" commands >/dev/null
 hdiutil_retry detach "$MNT" >/dev/null
@@ -217,7 +219,7 @@ ditto -c -k --keepParent "$CLI_DIR" "$CLI_ZIP"
 # A bare Mach-O can't carry a stapled ticket; Gatekeeper looks the notarization up online.
 if [ "$NOTARIZE" = 1 ]; then notarize "$CLI_ZIP"; fi
 
-"$CLI_DIR/fieldcraft-cli" --version
+test "$("$CLI_DIR/fieldcraft-cli" --version)" = "fieldcraft-cli $VERSION"
 if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "signing=$SIGNING" >>"$GITHUB_OUTPUT"; fi
 echo "==> done (signing: $SIGNING)"
 ls -lh "$DMG" "$CLI_ZIP"

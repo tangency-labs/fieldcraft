@@ -84,8 +84,9 @@ pub use scene::Style;
 /// The viewport height symbols are sized for before the viewport is first drawn (points).
 const DEFAULT_VIEW_HEIGHT: f64 = 800.0;
 
-/// The version shown in Help and over the control channel.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The version shown in Help, by `fieldcraft --version` and over the control channel: the one the
+/// build was packaged as (a nightly's carries its suffix), [`fieldcraft_update::VERSION`].
+pub const VERSION: &str = fieldcraft_update::VERSION;
 
 /// View settings: what is shown and how, and which menu or search is open. `ui.set` changes any
 /// of them by name.

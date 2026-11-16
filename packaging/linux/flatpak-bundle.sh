@@ -70,7 +70,7 @@ if [ "$TEST" = 1 ]; then
   flatpak install --user -y --noninteractive --reinstall "$OUT"
   flatpak info --user "$APP_ID"
   test "$(flatpak run --command=fieldcraft-cli "$APP_ID" --version)" = "fieldcraft-cli $VERSION"
-  flatpak run "$APP_ID" --version
+  test "$(flatpak run "$APP_ID" --version)" = "fieldcraft $VERSION"
   flatpak run --command=sh "$APP_ID" -c "ls /app/share/applications /app/share/metainfo /app/share/icons/hicolor/256x256/apps /app/share/doc/fieldcraft"
 fi
 echo "==> done"

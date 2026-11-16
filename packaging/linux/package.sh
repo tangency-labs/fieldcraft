@@ -125,6 +125,8 @@ if has appimage; then
   echo "wrote $OUT"
 fi
 
-"$STAGE/bin/fieldcraft-cli" --version
+# Both binaries report the version they were packaged as (a nightly's suffix included).
+test "$("$STAGE/bin/fieldcraft" --version)" = "fieldcraft $VERSION"
+test "$("$STAGE/bin/fieldcraft-cli" --version)" = "fieldcraft-cli $VERSION"
 echo "==> done"
 ls -lh "$DIST"
