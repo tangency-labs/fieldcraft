@@ -30,8 +30,8 @@ use fieldcraft_mesh::surface::BoundarySurface;
 use fieldcraft_model::fluid_zones::DEFAULT_FAN_RELAXATION;
 use fieldcraft_model::units::kelvin_above;
 use fieldcraft_model::{
-    BoxFace, Collision, Directional, FaceCondition, FluidDomain, HrrSigma, Model, Procedure, Resistance, SurfaceCondition, TemperatureDependent,
-    ThermalCondition, Turbulence, WallModel, WallTreatment,
+    BoxFace, Collision, Directional, FaceCondition, FluidDomain, HrrSigma, Model, Outflow, Procedure, Resistance, SurfaceCondition,
+    TemperatureDependent, ThermalCondition, Turbulence, WallModel, WallTreatment,
 };
 
 use crate::rheology::{Rheology, ViscosityTable, shear_rate_at_stress};
@@ -1167,6 +1167,21 @@ impl Setup {
         {
             warnings.push(format!(
                 "τ = {smallest_tau:.4} is below {MIN_TAU}, where the two-relaxation-time velocity inlet is not stable: a uniform inflow has no eddy viscosity to raise it; a finer spacing or a longer time step is safer"
+            ));
+        }
+        // Under MRT a velocity inlet below MIN_TAU with a uniform pressure outlet can carry a bounded
+        // plane stress wave (#1005): the deviatoric normal stress crosses the box and reflects off the
+        // outlet, and MRT relaxes it at about ω = 2, so it damps only with the bulk. Measured on
+        // 4-cell and 16-cell boxes, its growth vanishes at τ⁺ 0.5048 and near 0.5015; the convective
+        // outlet does not carry it.
+        if smallest_tau < MIN_TAU
+            && collision == Collision::Mrt
+            && domain.free_surface.is_none()
+            && BoxFace::ALL.iter().any(|f| matches!(domain.faces.get(*f), FaceCondition::Velocity { .. }))
+            && BoxFace::ALL.iter().any(|f| matches!(domain.faces.get(*f), FaceCondition::Pressure { outflow: Outflow::Uniform, .. }))
+        {
+            warnings.push(format!(
+                "τ = {smallest_tau:.4} is below {MIN_TAU}: with a velocity inlet and a uniform pressure outlet, a bounded plane stress wave can appear and persist under the MRT collision; the convective outflow (`outflow: \"convective\"`) on the pressure face avoids it, or a finer spacing or a longer time step"
             ));
         }
         if smallest_tau < REGULARIZED_TAU_LIMIT && collision.is_regularized() {
