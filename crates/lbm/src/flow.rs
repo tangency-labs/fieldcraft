@@ -3016,6 +3016,7 @@ impl Flow {
     fn open_boundaries(&mut self) {
         let s = self.stride;
         let regularized = self.collision.is_regularized();
+        let mrt = self.collision == Collision::Mrt;
         let mut outlets = std::mem::take(&mut self.outlets);
         let [nx, ny, _] = self.grid.cells;
         outlets.convect(&self.open, &View { flow: self, f: &self.g }, [1, nx, nx * ny]);
@@ -3063,8 +3064,10 @@ impl Flow {
                                 *x += w * shift;
                             }
                         }
-                        (Target::Convective(rho), Action::Hold) => zou_he(p, 1, 0, axis, sign, a_half, crate::outlet::backflow(rho), regularized),
-                        (target, _) => zou_he(p, 1, 0, axis, sign, a_half, target, regularized),
+                        (Target::Convective(rho), Action::Hold) => {
+                            zou_he(p, 1, 0, axis, sign, a_half, crate::outlet::backflow(rho), regularized, false)
+                        }
+                        (target, _) => zou_he(p, 1, 0, axis, sign, a_half, target, regularized, mrt),
                     }
                     if let Target::Velocity(u) = oc.target {
                         inlets.apply(k, p, std::array::from_fn(|a| u[a] - a_half[a]));
@@ -3128,7 +3131,7 @@ impl Populations for View<'_> {
 /// density and that normal velocity: the fallback when a pressure cell has no inner fluid cell,
 /// and a convective outlet's cell where the flow comes back in ([`crate::outlet::backflow`]).
 #[allow(clippy::too_many_arguments)]
-fn zou_he(g: &mut [f64], s: usize, cell: usize, axis: usize, sign: f64, a_half: [f64; 3], target: Target, regularized: bool) {
+fn zou_he(g: &mut [f64], s: usize, cell: usize, axis: usize, sign: f64, a_half: [f64; 3], target: Target, regularized: bool, project: bool) {
     let ci = |q: usize| f64::from(C[q][axis]);
     let at = |g: &[f64], q: usize| g.get(q * s + cell).copied().unwrap_or(0.0);
     // Tangential (c_n = 0) and outgoing (c_n = −s, known) sums.
@@ -3178,6 +3181,36 @@ fn zou_he(g: &mut [f64], s: usize, cell: usize, axis: usize, sign: f64, a_half: 
         for q in (1..Q).filter(|q| ci(*q) * sign > 0.0 && C[*q][t] != 0) {
             if let Some(x) = g.get_mut(q * s + cell) {
                 *x -= 0.5 * m * f64::from(C[q][t]);
+            }
+        }
+    }
+    // A velocity inlet under a collision that relaxes the raw non-equilibrium (`project`): keep only
+    // its second-order, hydrodynamic part (Latt et al. 2008, regularised boundary conditions),
+    // f_q = f_q^eq + w_q / (2 c_s^4) (c_q c_q - c_s^2 I) : Pi^neq, as the regularised collisions do.
+    if project && matches!(target, Target::Velocity(_)) {
+        let mut pi = [[0.0f64; 3]; 3];
+        for q in 0..Q {
+            let v = at(g, q);
+            for a in 0..3 {
+                for b in 0..3 {
+                    pi[a][b] += v * f64::from(C[q][a]) * f64::from(C[q][b]);
+                }
+            }
+        }
+        for a in 0..3 {
+            for b in 0..3 {
+                pi[a][b] -= rho * bare[a] * bare[b] + if a == b { rho * crate::lattice::CS2 } else { 0.0 };
+            }
+        }
+        for q in 0..Q {
+            let mut contracted = 0.0;
+            for a in 0..3 {
+                for b in 0..3 {
+                    contracted += (f64::from(C[q][a]) * f64::from(C[q][b]) - if a == b { crate::lattice::CS2 } else { 0.0 }) * pi[a][b];
+                }
+            }
+            if let Some(x) = g.get_mut(q * s + cell) {
+                *x = equilibrium(q, rho, bare) + W[q] * contracted / (2.0 * crate::lattice::CS2 * crate::lattice::CS2);
             }
         }
     }

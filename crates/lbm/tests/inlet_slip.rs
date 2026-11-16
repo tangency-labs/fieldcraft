@@ -115,6 +115,36 @@ fn a_trt_velocity_inlet_below_the_floor_is_warned_about() {
     assert!(!warned(setup(0.5005, Collision::Hrr, true)));
 }
 
+/// The MRT velocity inlet below the floor, with a uniform pressure outlet, can carry a plane
+/// stress wave (#1005): the setup says so for that configuration only.
+#[test]
+fn an_mrt_velocity_inlet_with_a_uniform_outlet_below_the_floor_is_warned_about() {
+    use common::*;
+    use fieldcraft_lbm::{Limits, Setup};
+    use fieldcraft_model::{FaceCondition, Outflow, Procedure, Profile, Turbulence};
+    let setup = |tau: f64, collision: Collision, inlet: bool, outflow: Outflow| {
+        let mut d = domain([0.0; 3], [8.0; 3], 1.0);
+        if inlet {
+            d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
+            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow, sigma: None };
+        } else {
+            d.faces.x_min = FaceCondition::Periodic {};
+            d.faces.x_max = FaceCondition::Periodic {};
+        }
+        let mut p = collide(10.0, 1.0, None, collision);
+        if let Procedure::Fluid { turbulence, .. } = &mut p {
+            *turbulence = Some(Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: None });
+        }
+        Setup::new(&model(1.0, (tau - 0.5) / 3.0, d, p), None, &[], &Limits::default()).unwrap().warnings
+    };
+    let warned = |w: Vec<String>| w.iter().any(|w| w.contains("plane stress wave"));
+    assert!(warned(setup(0.5001, Collision::Mrt, true, Outflow::Uniform)));
+    assert!(!warned(setup(0.5001, Collision::Mrt, true, Outflow::Convective)));
+    assert!(!warned(setup(0.51, Collision::Mrt, true, Outflow::Uniform)));
+    assert!(!warned(setup(0.5001, Collision::Mrt, false, Outflow::Uniform)));
+    assert!(!warned(setup(0.5001, Collision::Trt, true, Outflow::Uniform)));
+}
+
 /// Mass balance of the corrected inlet in a walled duct at steady state: the total mass stays put
 /// and the mass entering through the inlet plane crosses every interior plane. The density
 /// correction is high-passed along the face, so it adds no net mass

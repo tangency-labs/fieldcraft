@@ -2284,6 +2284,42 @@ fn zou_he(o: u32, kind: u32, cell: u32, axis: u32, sign: f32, xyz: vec3<i32>, ap
             }
         }
     }
+    // A velocity inlet under MRT keeps only the hydrodynamic part of its non-equilibrium
+    // (fieldcraft_lbm::flow::zou_he, `project`): Latt et al. 2008's regularised closure,
+    // f_q = f_q^eq + w_q / (2 c_s⁴) (c_q c_q − c_s² I) : Π^neq. The populations are deviations from
+    // the weights, so Σ f c c = Σ h c c + I/3 and Π^neq = Σ h c c − ρ u u − (ρ − 1) I/3.
+    if MRT && kind == 0u && closure {
+        var pi: array<f32, 9>;
+        for (var q = 0u; q < Q; q = q + 1u) {
+            let c = vec3<f32>(c_of(q));
+            let v = streamed(q, cell, xyz);
+            for (var a = 0u; a < 3u; a = a + 1u) {
+                for (var b = 0u; b < 3u; b = b + 1u) {
+                    pi[3u * a + b] = pi[3u * a + b] + v * c[a] * c[b];
+                }
+            }
+        }
+        for (var a = 0u; a < 3u; a = a + 1u) {
+            for (var b = 0u; b < 3u; b = b + 1u) {
+                var shift = 0.0;
+                if a == b { shift = (rho - 1.0) / 3.0; }
+                pi[3u * a + b] = pi[3u * a + b] - rho * bare[a] * bare[b] - shift;
+            }
+        }
+        let trace = pi[0] + pi[4] + pi[8];
+        let uu = dot(bare, bare);
+        for (var q = 0u; q < Q; q = q + 1u) {
+            let c = vec3<f32>(c_of(q));
+            var contracted = -trace / 3.0;
+            for (var a = 0u; a < 3u; a = a + 1u) {
+                for (var b = 0u; b < 3u; b = b + 1u) {
+                    contracted = contracted + c[a] * c[b] * pi[3u * a + b];
+                }
+            }
+            let cu = dot(c, bare);
+            store_streamed(q, cell, xyz, w_of(q) * ((rho - 1.0) + rho * (3.0 * cu + 4.5 * cu * cu - 1.5 * uu) + 4.5 * contracted));
+        }
+    }
 }
 
 // Whether bounce link `lu` interpolates (INTERPOLATED).
