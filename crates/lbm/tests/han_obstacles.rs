@@ -354,3 +354,82 @@ fn junctions_keep_one_rule_per_cell() {
         }
     }
 }
+
+/// The open-face cells where Han's wall meets the inlet and the outlet: a plain 2D duct (plug
+/// velocity inlet, walls on both sides, a uniform or convective pressure outlet, τ 0.6), `steps`
+/// steps of `collision`, with Han's on-node wall (`han`) or halfway walls. Each junction cell's
+/// largest |ρ − 1| and speed over the run (inlet floor, inlet roof, outlet floor, outlet roof).
+fn duct_junctions(collision: Collision, outflow: fieldcraft_model::Outflow, han: bool, steps: u64) -> Vec<(f64, f64)> {
+    let (n, u_lat) = (16usize, 0.05);
+    let dx = 1.0 / n as f64;
+    let dt = u_lat * dx;
+    let nu = (0.6 - 0.5) / 3.0 * dx * dx / dt;
+    let mut d = domain([0.0; 3], [4.0, 1.0, dx], dx);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [1.0, 0.0, 0.0], profile: Default::default() };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow, sigma: None };
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    d.initial_velocity = [1.0, 0.0, 0.0];
+    let mut p = collide(steps as f64 * dt, dt, None, collision);
+    if let Procedure::Fluid { turbulence: t, sigma, .. } = &mut p {
+        *t = Some(Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: han.then_some(WallModel::SpaldingBounce) });
+        if collision == Collision::Hrr {
+            *sigma = Some(HrrSigma::Value(0.99));
+        }
+    }
+    let (_, mut flow) = prepare(&model(1.0, nu, d, p), &[]);
+    let [nx, ny, _] = flow.grid().cells;
+    let cells: Vec<usize> = [(0, 0), (0, ny - 1), (nx - 1, 0), (nx - 1, ny - 1)].iter().map(|&(i, j)| flow.grid().index([i, j, 0])).collect();
+    let mut worst = vec![(0.0f64, 0.0f64); cells.len()];
+    for _ in 0..steps {
+        flow.step().unwrap();
+        for (w, &c) in worst.iter_mut().zip(&cells) {
+            let (rho, u) = flow.moments(c).unwrap();
+            w.0 = w.0.max((rho - 1.0).abs());
+            w.1 = w.1.max(u.iter().map(|v| v * v).sum::<f64>().sqrt() / u_lat);
+        }
+    }
+    worst
+}
+
+/// [`duct_junctions`] on Han's wall against halfway walls, for each outflow and collision: every
+/// junction cell's |ρ − 1| and speed within 10 % (plus round-off) of the halfway duct's, or the
+/// failures.
+fn junctions_against_halfway(outflows: &[fieldcraft_model::Outflow], collisions: &[Collision], steps: u64) -> Vec<String> {
+    let names = ["inlet floor", "inlet roof", "outlet floor", "outlet roof"];
+    let mut wrong = Vec::new();
+    for &outflow in outflows {
+        for &collision in collisions {
+            let (halfway, han) = (duct_junctions(collision, outflow, false, steps), duct_junctions(collision, outflow, true, steps));
+            for ((name, h), w) in names.iter().zip(&halfway).zip(&han) {
+                println!("{outflow:?} {collision:?} {name}: |ρ − 1| {:.3e} (halfway {:.3e}), |u|/U {:.3} (halfway {:.3})", w.0, h.0, w.1, h.1);
+                if !(w.0 <= 1.1 * h.0 + 1e-4 && w.1 <= 1.1 * h.1 + 1e-2) {
+                    wrong.push(format!("{outflow:?} {collision:?} {name}: |ρ − 1| {:.3e} vs {:.3e}, |u|/U {:.3} vs {:.3}", w.0, h.0, w.1, h.1));
+                }
+            }
+        }
+    }
+    wrong
+}
+
+/// Where Han's wall meets the inlet and the outlet, the junction cells are no worse than with
+/// halfway walls: the plain duct of [`duct_junctions`], TRT with a uniform outlet, 300 steps (the
+/// heavy test below runs every collision and outflow for 2000).
+#[test]
+fn han_junction_cells_are_no_worse_than_halfway_walls() {
+    let wrong = junctions_against_halfway(&[fieldcraft_model::Outflow::Uniform], &[Collision::Trt], 300);
+    assert!(wrong.is_empty(), "junction cells worse on Han's wall:\n{}", wrong.join("\n"));
+}
+
+/// [`han_junction_cells_are_no_worse_than_halfway_walls`] on TRT, MRT and HRR (σ 0.99), with a
+/// uniform and a convective outlet, 2000 steps each.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn han_junction_cells_are_no_worse_than_halfway_walls_on_every_collision() {
+    let wrong = junctions_against_halfway(
+        &[fieldcraft_model::Outflow::Uniform, fieldcraft_model::Outflow::Convective],
+        &[Collision::Trt, Collision::Mrt, Collision::Hrr],
+        2000,
+    );
+    assert!(wrong.is_empty(), "junction cells worse on Han's wall:\n{}", wrong.join("\n"));
+}
