@@ -580,6 +580,64 @@ mod tests {
         assert_eq!(solidcraft_ui_text::format("ui.viewport_status_clear", &[("name", "Mesh")]), "Clear Mesh");
     }
 
+    /// The `ui.…` message ids `solidcraft-ui-kit` reads: each `"ui.…"` literal in its sources at
+    /// the revision Cargo.lock pins (found through `cargo metadata`), outside its tests (its
+    /// `*_tests.rs` files and each file's `#[cfg(test)]` module, which ends the file).
+    fn kit_message_ids() -> std::collections::BTreeSet<String> {
+        let out = std::process::Command::new(env!("CARGO"))
+            .args(["metadata", "--format-version", "1", "--offline", "--manifest-path", concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")])
+            .output()
+            .expect("cargo metadata runs");
+        assert!(out.status.success(), "cargo metadata: {}", String::from_utf8_lossy(&out.stderr));
+        let metadata: serde_json::Value = serde_json::from_slice(&out.stdout).expect("cargo metadata is JSON");
+        // The kit's widgets and the theme's settings (colour vision) both read FieldCraft's catalogue.
+        let mut dirs: Vec<std::path::PathBuf> = ["solidcraft-ui-kit", "solidcraft-theme"]
+            .into_iter()
+            .map(|crate_name| {
+                let manifest = metadata["packages"]
+                    .as_array()
+                    .and_then(|p| p.iter().find(|p| p["name"] == crate_name))
+                    .and_then(|p| p["manifest_path"].as_str())
+                    .unwrap_or_else(|| panic!("{crate_name} is a dependency"));
+                std::path::Path::new(manifest).with_file_name("src")
+            })
+            .collect();
+        let mut ids = std::collections::BTreeSet::new();
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).expect("the kit's sources read") {
+                let path = entry.expect("a directory entry").path();
+                if path.is_dir() {
+                    dirs.push(path);
+                    continue;
+                }
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                if !name.ends_with(".rs") || name.ends_with("_tests.rs") || name == "tests.rs" {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).expect("a kit source reads");
+                let code = source.split("#[cfg(test)]").next().unwrap_or_default();
+                for (at, _) in code.match_indices("\"ui.") {
+                    let id: String = code[at + 1..].chars().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.')).collect();
+                    if code[at + 1 + id.len()..].starts_with('"') {
+                        ids.insert(id);
+                    }
+                }
+            }
+        }
+        ids
+    }
+
+    /// Every message id the kit and the theme read has FieldCraft's English in `locales/en.json`:
+    /// an id with none reads as itself (`ui.history_back` on a button's tooltip).
+    #[test]
+    fn every_kit_message_id_has_english() {
+        let english: serde_json::Map<String, serde_json::Value> = serde_json::from_str(include_str!("../locales/en.json")).expect("en.json is JSON");
+        let ids = kit_message_ids();
+        assert!(!ids.is_empty(), "no message id found in the kit's sources");
+        let missing: Vec<&String> = ids.iter().filter(|id| !english.contains_key(id.as_str())).collect();
+        assert!(missing.is_empty(), "kit message ids without English in locales/en.json: {missing:?}");
+    }
+
     /// The label font is used only once the context has it; before that, the default font.
     #[test]
     fn the_label_font_falls_back_until_it_is_installed() {
