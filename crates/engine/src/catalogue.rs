@@ -195,10 +195,10 @@ impl Capability {
         }
     }
 
-    /// The hover text: label, tip and command, or when it comes.
+    /// The hover text: label and tip, or when it comes.
     pub fn tooltip(&self) -> String {
         match (self.command(), self.milestone()) {
-            (Some(command), _) => format!("{}\n{}\n{command}", self.label, self.tip),
+            (Some(_), _) => format!("{}\n{}", self.label, self.tip),
             (None, m) => format!("{} — coming soon ({})\n{}", self.label, m.unwrap_or("later"), self.tip),
         }
     }

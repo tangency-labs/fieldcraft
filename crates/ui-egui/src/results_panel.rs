@@ -526,15 +526,12 @@ fn rows(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) {
         kit::divider(ui, "fc_results_reactions");
         ui.horizontal(|ui| {
             if kit::button(ui, "Reaction sums", kit::Button::Normal)
-                .backing_on_hover_text("Reaction force and moment per boundary-condition set (results.reactions)")
+                .backing_on_hover_text("Reaction force and moment per boundary-condition set")
                 .clicked()
             {
                 run.push(("results.reactions", json!({"step": plot.view.step})));
             }
-            if kit::button(ui, "Export CSV…", kit::Button::Normal)
-                .backing_on_hover_text("Write the reaction sums to a CSV file (results.export.csv)")
-                .clicked()
-            {
+            if kit::button(ui, "Export CSV…", kit::Button::Normal).backing_on_hover_text("Write the reaction sums to a CSV file").clicked() {
                 export = Some(json!({"what": "reactions", "step": plot.view.step}));
             }
         });
@@ -586,7 +583,10 @@ fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Val
         ui.add_enabled_ui(!views.is_empty(), |ui| {
             kit::bounded_dropdown_menu(ui, "fc_results_views", shown, ui.available_width(), |ui| {
                 for v in views {
-                    if ui.selectable_label(current == Some(v.name.as_str()), &v.name).backing_on_hover_text("Show this view (view.restore)").clicked()
+                    if ui
+                        .selectable_label(current == Some(v.name.as_str()), &v.name)
+                        .backing_on_hover_text("Show this view: its camera and results display")
+                        .clicked()
                     {
                         run.push(("view.restore", json!({"name": v.name})));
                     }
@@ -595,7 +595,7 @@ fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Val
         });
     });
     kit::button(ui, "Save View…", kit::Button::Normal)
-        .backing_on_hover_text("Keep the camera and this results display as a named view, saved with the model (view.save)")
+        .backing_on_hover_text("Keep the camera and this results display as a named view, saved with the model")
         .clicked()
 }
 
@@ -705,7 +705,7 @@ fn flow_rows(plot: &Plot, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)
         if let Some(sl) = &view.streamlines {
             if sl.seeds.is_some() {
                 // Given seeds (or a line of them): their number; `count` does not change them.
-                kit::text(ui, &format!("{} seeds", flow.seeds), kit::Text::Cell).backing_on_hover_text("The seeds given to results.streamlines");
+                kit::text(ui, &format!("{} seeds", flow.seeds), kit::Text::Cell).backing_on_hover_text("The seeds the streamlines were given");
             } else {
                 let mut count = sl.count;
                 let field = kit::whole_number_field(ui, &mut count, 1..=fieldcraft_engine::flow::MAX_STREAMLINES, " seeds");
@@ -732,19 +732,16 @@ fn probed(app: &ModelApp, plot: &Plot, ui: &mut egui::Ui) -> Option<Value> {
     for (what, value) in &p.rows {
         kit::row(ui, what, |ui| kit::copy_cell(ui, value, &format!("{what}: {value}"), false, "Copy the value"));
     }
-    kit::button(ui, "Export CSV…", kit::Button::Normal)
-        .backing_on_hover_text("Write the node's results to a CSV file (results.export.csv)")
-        .clicked()
-        .then(|| {
-            let mut params = json!({"what": "probe", "step": p.step, "nodes": [p.node]});
-            if matches!(plot.result.kind(), Kind::Frequency(_)) {
-                params["mode"] = json!(p.mode);
-            }
-            if let Some(f) = p.frame {
-                params["frame"] = json!(f);
-            }
-            params
-        })
+    kit::button(ui, "Export CSV…", kit::Button::Normal).backing_on_hover_text("Write the node's results to a CSV file").clicked().then(|| {
+        let mut params = json!({"what": "probe", "step": p.step, "nodes": [p.node]});
+        if matches!(plot.result.kind(), Kind::Frequency(_)) {
+            params["mode"] = json!(p.mode);
+        }
+        if let Some(f) = p.frame {
+            params["frame"] = json!(f);
+        }
+        params
+    })
 }
 
 /// An explicit step: a frame slider (the deformed shape and contours follow it) and the energy
@@ -1069,10 +1066,7 @@ fn xy_section(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens, ru
         let at = |v: &[f64]| v.get(i).map_or("—".into(), |x| number(*x));
         kit::status_line(ui, &format!("{x_label} {}: {}", at(&xs), at(&ys)), kit::StatusTone::Dim);
     }
-    kit::button(ui, "Export CSV…", kit::Button::Normal)
-        .backing_on_hover_text("Write the series to a CSV file (results.xy)")
-        .clicked()
-        .then_some(params)
+    kit::button(ui, "Export CSV…", kit::Button::Normal).backing_on_hover_text("Write the series to a CSV file").clicked().then_some(params)
 }
 
 impl ModelApp {

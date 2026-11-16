@@ -83,55 +83,98 @@ fn activity(app: &ModelApp, target: &Target) -> Vec<(String, bool)> {
     }
 }
 
+/// The hover text of `action` on `target`, in words: what the entry does, never a command id.
+/// `None` for an entry the menu never shows for `target`.
+pub fn tip(target: &Target, action: &Action) -> Option<String> {
+    let noun = match target {
+        Target::Body(_) => "body".to_string(),
+        Target::Surface(_) => "surface".to_string(),
+        Target::Def(def, _) => def.label().to_lowercase(),
+        Target::Seed(_) => "seed".to_string(),
+        Target::View(_) => Saved::View.label().to_lowercase(),
+        Target::Render(_) => Saved::Render.label().to_lowercase(),
+        Target::RigidWall { .. } => "rigid wall".to_string(),
+    };
+    let tip = match (action, target) {
+        (Action::Edit, Target::Body(_) | Target::Surface(_) | Target::View(_)) => return None,
+        (Action::Edit, Target::Render(_)) => format!("Change this {noun} in its form: saving replaces it"),
+        (Action::Edit, _) => format!("Change this {noun} in its form"),
+        (Action::Apply, Target::Def(..)) => format!("Apply this {noun} to the mesh, in its form"),
+        (Action::Rename, Target::Def(..)) => format!("Rename this {noun}: every definition that refers to it follows"),
+        (Action::Suppress(true), Target::Def(..)) => format!("Keep this {noun}, but leave it out of the model"),
+        (Action::Suppress(false), Target::Def(..)) => format!("Bring this {noun} back into the model"),
+        (Action::Restore, Target::View(_)) => "Show the model as this view saved it".to_string(),
+        (Action::Hide, _) => format!("Hide this {noun} in the viewport"),
+        (Action::Show, _) => format!("Show this {noun} in the viewport"),
+        (Action::Isolate, _) => format!("Show only this {noun}"),
+        (Action::ShowAll, _) => "Show everything that is hidden".to_string(),
+        (Action::Active { step, .. }, Target::Def(..)) => format!("Apply this {noun} in step {step}, or leave it out of that step"),
+        (Action::Delete, Target::Body(_) | Target::Surface(_)) => return None,
+        (Action::Delete, Target::Def(..)) => format!("Delete this {noun}: asks first, listing what uses it (Delete key)"),
+        (Action::Delete, Target::View(_) | Target::Render(_)) => format!("Delete this {noun}: asks first"),
+        (Action::Delete, Target::Seed(_) | Target::RigidWall { .. }) => format!("Delete this {noun} (undo brings it back)"),
+        (Action::Apply | Action::Rename | Action::Suppress(_) | Action::Restore | Action::Active { .. }, _) => return None,
+    };
+    Some(tip)
+}
+
+/// The hover text of `action` on `target` when the menu shows it disabled, in words; `None`
+/// when the menu never disables it. Edit… is disabled for a kind that cannot be edited, and
+/// for a rigid wall its step no longer has.
+pub fn disabled_tip(target: &Target, action: &Action) -> Option<&'static str> {
+    match (action, target) {
+        (Action::Edit, Target::Def(..)) => Some("Not editable: delete it and make it again"),
+        (Action::Edit, Target::RigidWall { .. }) => Some("Its step no longer has this rigid wall"),
+        _ => None,
+    }
+}
+
 /// Draw the menu's entries for `target`; the entry clicked.
 pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action> {
     let mut chosen = None;
-    let mut entry = |ui: &mut egui::Ui, enabled: bool, label: &str, tip: &str, action: Action| {
+    let mut entry = |ui: &mut egui::Ui, enabled: bool, label: &str, action: Action| {
         let mut row = kit::MenuItem::new(label, label, "");
         row.enabled = enabled;
-        if row.show(ui).backing_on_hover_text(tip).clicked() {
+        let mut response = row.show(ui);
+        if enabled {
+            if let Some(hover) = tip(target, &action) {
+                response = response.backing_on_hover_text(hover);
+            }
+        } else if let Some(hover) = disabled_tip(target, &action) {
+            response = response.backing_on_disabled_hover_text(hover);
+        }
+        if response.clicked() {
             chosen = Some(action);
         }
     };
     if let Target::Def(def, name) = target {
-        let edit = def.edit_command(&app.session.model, name);
-        let tip = edit.clone().unwrap_or_else(|| "Not editable: delete it and make it again".to_string());
-        entry(ui, edit.is_some(), "Edit…", &tip, Action::Edit);
-        if let Some((command, _)) = def.apply(&app.session.model, name) {
-            entry(ui, true, "Apply…", command, Action::Apply);
+        entry(ui, def.edit_command(&app.session.model, name).is_some(), "Edit…", Action::Edit);
+        if def.apply(&app.session.model, name).is_some() {
+            entry(ui, true, "Apply…", Action::Apply);
         }
         if def.rename_kind().is_some() {
-            entry(ui, true, "Rename…", "model.rename: every definition that refers to it follows", Action::Rename);
+            entry(ui, true, "Rename…", Action::Rename);
         }
-        if let Some((command, suppressed)) = suppression(app, *def, name) {
-            let (label, tip) = if suppressed {
-                ("Unsuppress", format!("{command} {{\"suppressed\": false}}: back in the model"))
-            } else {
-                ("Suppress", format!("{command}: keep it, but leave it out of the model"))
-            };
-            entry(ui, true, label, &tip, Action::Suppress(!suppressed));
+        if let Some((_, suppressed)) = suppression(app, *def, name) {
+            entry(ui, true, if suppressed { "Unsuppress" } else { "Suppress" }, Action::Suppress(!suppressed));
         }
     }
     match target {
-        Target::Seed(on) => entry(ui, true, "Edit…", seed_command(on), Action::Edit),
-        Target::View(_) => entry(ui, true, "Restore", "view.restore: show it", Action::Restore),
-        Target::Render(_) => entry(ui, true, "Edit…", "results.render.save: replaces it", Action::Edit),
-        Target::RigidWall { step, index } => {
-            let found = rigid_wall_params(app, step, *index).is_some();
-            entry(ui, found, "Edit…", "interaction.rigid_wall.edit", Action::Edit);
-        }
+        Target::Seed(_) | Target::Render(_) => entry(ui, true, "Edit…", Action::Edit),
+        Target::View(_) => entry(ui, true, "Restore", Action::Restore),
+        Target::RigidWall { step, index } => entry(ui, rigid_wall_params(app, step, *index).is_some(), "Edit…", Action::Edit),
         Target::Def(..) | Target::Body(_) | Target::Surface(_) => {}
     }
     if let Some(item) = target.item() {
         if app.session.shows(item.kind, &item.name) {
-            entry(ui, true, "Hide", "view.hide", Action::Hide);
+            entry(ui, true, "Hide", Action::Hide);
         } else {
-            entry(ui, true, "Show", "view.show", Action::Show);
+            entry(ui, true, "Show", Action::Show);
         }
-        entry(ui, true, "Isolate", "view.isolate: show only this", Action::Isolate);
+        entry(ui, true, "Isolate", Action::Isolate);
     }
     if !app.session.view.is_empty() {
-        entry(ui, true, "Show All", "view.show_all", Action::ShowAll);
+        entry(ui, true, "Show All", Action::ShowAll);
     }
     let steps = activity(app, target);
     if !steps.is_empty() {
@@ -141,7 +184,12 @@ pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action
             kit::scope(ui, |ui| {
                 for (step, on) in steps {
                     let mut checked = on;
-                    if kit::checkbox(ui, &step, &mut checked).backing_on_hover_text("model.step.activate").changed() {
+                    let action = Action::Active { step: step.clone(), active: !on };
+                    let mut response = kit::checkbox(ui, &step, &mut checked);
+                    if let Some(hover) = tip(target, &action) {
+                        response = response.backing_on_hover_text(hover);
+                    }
+                    if response.changed() {
                         chosen = Some(Action::Active { step, active: checked });
                         ui.close();
                     }
@@ -149,22 +197,14 @@ pub fn show(app: &ModelApp, ui: &mut egui::Ui, target: &Target) -> Option<Action
             });
         });
     }
-    let delete = |ui: &mut egui::Ui, label: &str, tip: &str| {
+    if let Some(hover) = tip(target, &Action::Delete) {
         kit::Menu::separator(ui);
+        let label = if matches!(target, Target::Seed(_) | Target::RigidWall { .. }) { "Delete" } else { "Delete…" };
         let mut row = kit::MenuItem::new("delete", label, "");
         row.danger = true;
-        row.show(ui).backing_on_hover_text(tip).clicked()
-    };
-    let deleted = match target {
-        Target::Def(def, _) => delete(ui, "Delete…", &format!("{} (Delete key)", def.command("delete"))),
-        Target::Seed(_) => delete(ui, "Delete", "mesh.seed.clear (undo brings it back)"),
-        Target::View(_) => delete(ui, "Delete…", Saved::View.command()),
-        Target::Render(_) => delete(ui, "Delete…", Saved::Render.command()),
-        Target::RigidWall { .. } => delete(ui, "Delete", "interaction.rigid_wall.delete (undo brings it back)"),
-        Target::Body(_) | Target::Surface(_) => false,
-    };
-    if deleted {
-        chosen = Some(Action::Delete);
+        if row.show(ui).backing_on_hover_text(hover).clicked() {
+            chosen = Some(Action::Delete);
+        }
     }
     if chosen.is_some() {
         ui.close();
@@ -484,6 +524,186 @@ mod tests {
 
     use super::*;
     use crate::viewport;
+
+    /// Every hover text the item menu and the viewport menu show says what the entry does in
+    /// words: none names a command id (owner's rule: no command ids as UI text).
+    #[test]
+    fn hover_texts_name_no_command_id() {
+        let ids: Vec<&str> = fieldcraft_engine::commands().iter().map(|c| c.id).collect();
+        let on = |entity| fieldcraft_model::GeometryRef { body: "Plate".into(), entity };
+        let targets = Def::ALL.iter().map(|d| Target::Def(*d, "A".into())).chain([
+            Target::Body("Plate".into()),
+            Target::Surface("Skin".into()),
+            Target::Seed(on(fieldcraft_model::Entity::Edge("E1".into()))),
+            Target::Seed(on(fieldcraft_model::Entity::Face("F1".into()))),
+            Target::View("Front".into()),
+            Target::Render("Stress".into()),
+            Target::RigidWall { step: "Crash".into(), index: 0 },
+        ]);
+        let actions = [
+            Action::Edit,
+            Action::Rename,
+            Action::Suppress(true),
+            Action::Suppress(false),
+            Action::Hide,
+            Action::Show,
+            Action::Isolate,
+            Action::ShowAll,
+            Action::Active { step: "Load".into(), active: true },
+            Action::Restore,
+            Action::Apply,
+            Action::Delete,
+        ];
+        let mut texts = vec![viewport::CREATE_SET_TIP.to_string()];
+        for target in targets {
+            texts.extend(actions.iter().filter_map(|a| tip(&target, a)));
+            texts.extend(actions.iter().filter_map(|a| disabled_tip(&target, a)).map(str::to_string));
+        }
+        let named: Vec<(&str, &String)> = texts.iter().flat_map(|t| ids.iter().filter(|id| t.contains(**id)).map(move |id| (*id, t))).collect();
+        assert!(named.is_empty(), "{named:?}");
+        // Each Def and every target that can be deleted has a delete entry.
+        assert!(Def::ALL.iter().all(|d| tip(&Target::Def(*d, "A".into()), &Action::Delete).is_some()));
+    }
+
+    /// The window a hover test draws, tall enough for the whole results panel.
+    const SCREEN: egui::Vec2 = egui::vec2(1400.0, 1000.0);
+
+    /// One frame of the whole window with `events`, with AccessKit on: every hover text the
+    /// frame drew, as the descriptions the kit gives each widget's accessibility node, and the
+    /// centre of each node by its label (what a test clicks). A hover the kit does not describe
+    /// is not seen: one shown only while disabled, or on a widget with no node (`kit::text`).
+    fn hover_frame(app: &mut ModelApp, ctx: &egui::Context, events: Vec<egui::Event>) -> (Vec<String>, Vec<(String, egui::Pos2)>) {
+        ctx.enable_accesskit();
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, SCREEN)), events, ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+        let nodes = out.platform_output.accesskit_update.iter().flat_map(|u| u.nodes.iter().map(|(_, n)| n));
+        let (mut hovers, mut labels) = (Vec::new(), Vec::new());
+        for node in nodes {
+            hovers.extend(node.description().map(str::to_string));
+            if let (Some(label), Some(b)) = (node.label().or(node.value()), node.bounds()) {
+                let ppp = f64::from(ctx.pixels_per_point());
+                labels.push((label.to_string(), egui::pos2(((b.x0 + b.x1) / 2.0 / ppp) as f32, ((b.y0 + b.y1) / 2.0 / ppp) as f32)));
+            }
+        }
+        (hovers, labels)
+    }
+
+    /// A click with `button` at `at`: the press, then the release a frame later.
+    fn click(at: egui::Pos2, button: egui::PointerButton) -> [Vec<egui::Event>; 2] {
+        let press = |pressed| egui::Event::PointerButton { pos: at, button, pressed, modifiers: egui::Modifiers::NONE };
+        [vec![egui::Event::PointerMoved(at), press(true)], vec![press(false)]]
+    }
+
+    /// Draws `app` a few frames, then for each of `clicks` (a layout region, a label, a button)
+    /// clicks with the button on the widget with that label in that region and draws on; every
+    /// hover text drawn.
+    fn hovers_drawn(app: &mut ModelApp, ctx: &egui::Context, clicks: &[(&str, &str, egui::PointerButton)]) -> Vec<String> {
+        let mut hovers = Vec::new();
+        let mut labels = Vec::new();
+        for _ in 0..3 {
+            let (h, l) = hover_frame(app, ctx, Vec::new());
+            hovers.extend(h);
+            labels = l;
+        }
+        for (region, label, button) in clicks {
+            let area = app.layout.get(*region).copied().unwrap_or_else(|| panic!("{region} not drawn"));
+            let at = labels
+                .iter()
+                .find(|(l, at)| l == label && area.contains(*at))
+                .map(|(_, at)| *at)
+                .unwrap_or_else(|| panic!("{label} not drawn in {region}: {labels:?}"));
+            for events in click(at, *button).into_iter().chain([Vec::new(), Vec::new()]) {
+                let (h, l) = hover_frame(app, ctx, events);
+                hovers.extend(h);
+                labels = l;
+            }
+        }
+        hovers
+    }
+
+    /// Every hover text the window draws says what its widget does in words: none names a
+    /// command id (owner's rule: no command ids as UI text). Read from drawn frames (each
+    /// widget's hover text is its accessibility description), across the browser, its item
+    /// menu, the results panel with reactions, a probed node, the XY plot and
+    /// streamlines, and the Help menu, so a new hover that names an id fails here.
+    #[test]
+    fn no_drawn_hover_names_a_command_id() {
+        let ids: Vec<&str> = fieldcraft_engine::commands().iter().map(|c| c.id).collect();
+        let mut hovers = Vec::new();
+        // A solved static model in a copy that updates itself: reactions, a probed node, a saved
+        // view, the Help menu, and a boundary condition's item menu.
+        let ctx = egui::Context::default();
+        let (_tx, events) = crate::inbox::channel();
+        let mut app = ModelApp::new(Session::default()).with_updates(crate::updates::UpdateHost {
+            unsupported: None,
+            automatic: false,
+            start: Box::new(|_| {}),
+            events,
+            now: Box::new(|| 0),
+            open_file: Box::new(|_| Ok(())),
+        });
+        app.open_sample("cantilever");
+        app.wait_loaded();
+        app.run("solve.run", json!({})).unwrap();
+        app.run("view.save", json!({"name": "Front"})).unwrap();
+        app.probe_node(1).unwrap();
+        app.ui.menu = Some("help".into());
+        hovers.extend(hovers_drawn(
+            &mut app,
+            &ctx,
+            &[("browser", "Loads & BCs", egui::PointerButton::Primary), ("browser", "Clamp", egui::PointerButton::Secondary)],
+        ));
+        // An XY plot of an explicit step.
+        let ctx = egui::Context::default();
+        let mut app = ModelApp::new(Session::default());
+        app.open_sample("impact");
+        app.wait_loaded();
+        app.run("solve.run", json!({})).unwrap();
+        app.start("results.xy").unwrap();
+        hovers.extend(hovers_drawn(&mut app, &ctx, &[]));
+        // Streamlines from given seeds through a duct's flow.
+        let ctx = egui::Context::default();
+        let mut app = ModelApp::new(Session::default());
+        app.run_script(&json!([
+            {"command": "model.material.create", "params": {"name": "Oil", "density": 1.0, "fluid": {"type": "newtonian", "viscosity": 0.1}}},
+            {"command": "model.fluid_domain.create", "params": {"name": "Duct", "material": "Oil", "min": [0, 0, 0], "max": [2, 1, 0.125], "spacing": 0.125,
+                "faces": {"x_min": {"type": "velocity", "velocity": [0.1, 0, 0]}, "x_max": {"type": "pressure", "pressure": 0}}}},
+            {"command": "model.step.create", "params": {"name": "Flow", "procedure": {"type": "fluid", "domain": "Duct", "steps": 20, "frames": 2}}},
+        ]))
+        .unwrap();
+        app.run("solve.run", json!({})).unwrap();
+        app.run("results.streamlines", json!({"seeds": [[0.5, 0.5, 0.0625]]})).unwrap();
+        hovers.extend(hovers_drawn(&mut app, &ctx, &[]));
+        // A form whose reference field offers to create what it needs (New Section's Material
+        // with no material yet): the Create button's hover.
+        let ctx = egui::Context::default();
+        let mut app = ModelApp::new(Session::default());
+        app.open_form("model.section.create", json!({}));
+        hovers.extend(hovers_drawn(&mut app, &ctx, &[]));
+
+        let named: Vec<(&str, &String)> = hovers.iter().flat_map(|t| ids.iter().filter(|id| t.contains(**id)).map(move |id| (*id, t))).collect();
+        assert!(named.is_empty(), "{named:?}");
+        // Nor is one a bare message id (a kit message the catalogue lacks reads as its id).
+        let id_like = |t: &str| t.contains('.') && t.split('.').all(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
+        let bare: Vec<&String> = hovers.iter().filter(|t| id_like(t)).collect();
+        assert!(bare.is_empty(), "{bare:?}");
+        // Each scene drew what it is here for.
+        for reached in [
+            "Write the reaction sums to a CSV file",
+            "Write the node's results to a CSV file",
+            "Ask GitHub Releases whether a newer FieldCraft is published",
+            "Rename this boundary condition: every definition that refers to it follows",
+            "Write the series to a CSV file",
+            "Streamlines from the inlet",
+            "New Material: Properties › Material",
+        ] {
+            assert!(hovers.iter().any(|h| h.starts_with(reached)), "{reached} not drawn: {hovers:?}");
+        }
+    }
 
     /// The plate design open in an app with a datum plane `Mid` cutting it (partition `Half`)
     /// and a datum point `P`, framed in an 800 × 600 viewport.

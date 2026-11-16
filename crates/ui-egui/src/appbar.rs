@@ -400,7 +400,7 @@ fn help_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
     );
     let (mut check, mut reinstall) = (false, false);
     if app.updates_available() {
-        check = row(ui, "help.check_updates", "Check for Updates", "Ask GitHub Releases whether a newer FieldCraft is published (app.update.check)");
+        check = row(ui, "help.check_updates", "Check for Updates", "Ask GitHub Releases whether a newer FieldCraft is published");
         reinstall =
             row(ui, "help.reinstall", "Reinstall FieldCraft…", "Download this version again, verify it and swap it in, to repair a damaged install");
     }

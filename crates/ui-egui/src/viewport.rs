@@ -392,6 +392,9 @@ pub(crate) fn menu_target(app: &mut ModelApp, at: Pos2) -> Option<Target> {
     partition_at(app, at).map(|name| Target::Def(Def::Partition, name))
 }
 
+/// The hover text of the viewport menu's Create set from selection….
+pub(crate) const CREATE_SET_TIP: &str = "Make a set whose members are the selection";
+
 fn context_menu(app: &mut ModelApp, response: &egui::Response) {
     if response.secondary_clicked() {
         app.viewport.menu_target = response.interact_pointer_pos().and_then(|at| menu_target(app, at));
@@ -407,9 +410,7 @@ fn context_menu(app: &mut ModelApp, response: &egui::Response) {
             kit::Menu::separator(ui);
         }
         let has = !app.pick.selection.is_empty();
-        if crate::frame::menu_row(ui, "selection.create_set", "Create set from selection…", None, has)
-            .backing_on_hover_text("model.set.create with the selection as members")
-            .clicked()
+        if crate::frame::menu_row(ui, "selection.create_set", "Create set from selection…", None, has).backing_on_hover_text(CREATE_SET_TIP).clicked()
         {
             let _ = app.create_set_from_selection();
             ui.close();
