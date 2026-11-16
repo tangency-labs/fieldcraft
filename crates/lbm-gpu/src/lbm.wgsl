@@ -123,6 +123,9 @@ override DYNAMIC: bool = false;
 override ZONES: bool = false;
 // The Spalart–Allmaras model (fieldcraft_lbm::sa): ν̃'s passes and its ν_t in the collision; likewise.
 override SA: bool = false;
+// The model's own constant-stress wall law (fieldcraft_lbm::sa_law) in place of Spalding's, for the
+// on-node wall: `sa_law_friction` and ν̃ = κ u_τ y at the first fluid node.
+override SA_LAW: bool = false;
 // The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
 // outlet's convection speed.
 override MAX_SPEED: f32 = 0.5;
@@ -642,7 +645,8 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
         let rel = u - b.xyz;
         let t = rel - dot(rel, a.xyz) * a.xyz;
         let speed = length(t);
-        let ut = spalding_root(speed, a.w, params.smag.w, 0.41, 5.5);
+        var ut = 0.0;
+        if SA_LAW { ut = sa_law_friction(speed, a.w, params.smag.w); } else { ut = spalding_root(speed, a.w, params.smag.w, 0.41, 5.5); }
         let scale = rho * ut * ut / speed;
         if speed > 0.0 && scale < 1e30 { stress = scale * t; }
     }
@@ -1452,6 +1456,41 @@ fn sa_wall_row(j: u32) -> u32 {
     return 6u * params.wall.x + 3u * j;
 }
 
+// The model's own wall law's table (fieldcraft_lbm::sa_law::segments, from native.rs) after the wall
+// function's rows: a header row (the segment count, as bits, in x), then one row per segment
+// k = 1, 2, …: [y⁺_k u⁺_k, y⁺_(k−1), s, b] with u⁺ = b + s y⁺ inside it, the nodes growing by
+// SA_LAW_RATIO from 10⁻³ (the first segment starts at 0 and ends there).
+const SA_LAW_RATIO: f32 = 1.002;
+const SA_LAW_FIRST: f32 = 0.001;
+
+fn sa_law_friction(speed: f32, y: f32, nu: f32) -> f32 {
+    let re = speed * y / nu;
+    if !(re > 0.0) || re > 1e30 || !(y > 0.0) { return 0.0; }
+    let base = 6u * params.wall.x + 3u * params.sa_wall.x;
+    let count = bitcast<u32>(walls[base].x);
+    var yp = sqrt(re);
+    if re > SA_LAW_FIRST * SA_LAW_FIRST && count > 0u {
+        // The first segment whose largest Reynolds number is above re.
+        var lo = 0u;
+        var hi = count;
+        for (var i = 0u; i < 16u && lo < hi; i = i + 1u) {
+            let mid = (lo + hi) / 2u;
+            if walls[base + 1u + mid].x <= re { lo = mid + 1u; } else { hi = mid; }
+        }
+        if lo >= count {
+            yp = walls[base + count].y * SA_LAW_RATIO;
+        } else {
+            let seg = walls[base + 1u + lo];
+            let disc = sqrt(max(seg.w * seg.w + 4.0 * seg.z * re, 0.0));
+            if seg.w >= 0.0 { yp = 2.0 * re / (seg.w + disc); } else { yp = (disc - seg.w) / (2.0 * seg.z); }
+            yp = clamp(yp, seg.y, select(seg.y * SA_LAW_RATIO, SA_LAW_FIRST, seg.y == 0.0));
+        }
+    }
+    let ut = nu * yp / y;
+    if ut == ut && ut < 1e30 { return ut; }
+    return 0.0;
+}
+
 // Σ_{k ≥ m} x^k / k! for m = 3 or 4, to k = 9 below x = ½, from exp above.
 fn sa_exp_tail(x: f32, m: u32) -> f32 {
     if x < 0.5 {
@@ -1518,7 +1557,9 @@ fn sa_wall_function(@builtin(local_invocation_index) lid: u32, @builtin(workgrou
     let nu = params.smag.w;
     var ut = 0.0;
     if rho > 0.0 && tau < 1e30 { ut = sqrt(tau / rho); }
-    let v = sa_nu_tilde_for(nu * sa_spalding_nu_t(ut / nu), nu);
+    // The model's own law has ν̃ = κ u_τ y exactly (y = 1 here); Spalding's ν_t⁺ is inverted.
+    var v = SA_KAPPA * ut;
+    if !SA_LAW { v = sa_nu_tilde_for(nu * sa_spalding_nu_t(ut / nu), nu); }
     nu_tilde[cell] = v;
     moments[cell] = vec4<f32>(moments[cell].xyz, sa_nu_t(v, nu));
     walls[base + 2u] = vec4<f32>(ut, v, 0.0, 0.0);

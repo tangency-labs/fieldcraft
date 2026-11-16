@@ -318,9 +318,27 @@ fn on_han() -> Turbulence {
     sa(3.0, Some(WallModel::SpaldingBounce))
 }
 
+/// The same wall with the model's own constant-stress wall law (`spalart_allmaras_bounce`).
+fn on_han_sa_law() -> Turbulence {
+    sa(3.0, Some(WallModel::SpalartAllmarasBounce))
+}
+
+thread_local! {
+    /// Whether the cases below run the model's own wall law instead of Spalding's.
+    static OWN_LAW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `body` with the cases on the model's own wall law.
+fn with_own_law<T>(body: impl FnOnce() -> T) -> T {
+    OWN_LAW.with(|c| c.set(true));
+    let out = body();
+    OWN_LAW.with(|c| c.set(false));
+    out
+}
+
 /// `p` with the model on Han's wall, and the hybrid collision's σ 0.99 when it is the hybrid one.
 fn han_procedure(p: Procedure, collision: Collision) -> Procedure {
-    let mut p = with(p, on_han());
+    let mut p = with(p, if OWN_LAW.with(|c| c.get()) { on_han_sa_law() } else { on_han() });
     if let Procedure::Fluid { sigma, .. } = &mut p
         && collision == Collision::Hrr
     {
@@ -516,6 +534,61 @@ fn the_model_on_han_s_wall_follows_the_cpu() {
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
 fn the_model_on_han_s_wall_follows_the_cpu_for_2000_steps() {
     the_model_on_han_s_wall_follows_the_cpu_cases(2000.0);
+}
+
+/// The model on Han's wall with its own constant-stress law, GPU against CPU (the same cases as
+/// above, and the table in f32 on the device): the forced channel with box-face walls and with
+/// obstacle slabs, on both collisions, 2000 steps at τ − ½ 1.2e-4 where the friction velocity
+/// asked for runs from the sublayer through the buffer layer; the junction duct on the hybrid
+/// collision at both τ; the block on a floor (rows of several nodes) for 400 steps.
+fn the_model_s_own_wall_law_follows_the_cpu_cases(steps: f64) {
+    let mut failed = Vec::new();
+    with_own_law(|| {
+        for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+            for slabs in [false, true] {
+                for collision in [Collision::Hrr, Collision::Mrt] {
+                    let (setup, flow) = han_channel(slabs, collision, 1.2e-4, steps);
+                    assert_eq!(flow.wall_nodes().map(|n| n.law()), Some(fieldcraft_lbm::sa::WallLaw::SpalartAllmaras));
+                    let Some(r) = han_parity(flow, setup.steps, streaming) else { return };
+                    let walls = if slabs { "obstacle slabs" } else { "box faces" };
+                    let what = format!("SA own wall law, channel ({walls}), {collision:?}, {streaming:?}, τ − ½ 1.2e-4, {steps} steps");
+                    assert_eq!(r.rows, 144);
+                    if !han_check(&what, &r) {
+                        failed.push(what);
+                    }
+                }
+            }
+            for (collision, tau_half) in [(Collision::Hrr, 1.2e-4), (Collision::Hrr, 0.1)] {
+                let (setup, flow) = han_junction_duct(collision, tau_half, steps);
+                let Some(r) = han_parity(flow, setup.steps, streaming) else { return };
+                let what = format!("SA own wall law, junction duct, {collision:?}, {streaming:?}, τ − ½ {tau_half}, {steps} steps");
+                assert_eq!(r.rows, 124);
+                if !han_check(&what, &r) {
+                    failed.push(what);
+                }
+            }
+            let (setup, flow) = han_floor_block(Collision::Hrr, 1.2e-4, 400.0);
+            let Some(r) = han_parity(flow, setup.steps, streaming) else { return };
+            let what = format!("SA own wall law, block on a floor, Hrr, {streaming:?}, τ − ½ 1.2e-4, 400 steps");
+            assert_eq!(r.rows, 1072);
+            if !han_check(&what, &r) {
+                failed.push(what);
+            }
+        }
+    });
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+#[test]
+fn the_model_s_own_wall_law_follows_the_cpu() {
+    the_model_s_own_wall_law_follows_the_cpu_cases(300.0);
+}
+
+/// [`the_model_s_own_wall_law_follows_the_cpu`] over 2000 steps.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_model_s_own_wall_law_follows_the_cpu_for_2000_steps() {
+    the_model_s_own_wall_law_follows_the_cpu_cases(2000.0);
 }
 
 /// The block on a channel floor `steps` steps, GPU against CPU, at τ − ½ 1.2e-4 on the hybrid
