@@ -627,7 +627,11 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
     if !(WALL_BOUNCE || ON_NODE) || k >= params.wall.x { return; }
     let a = walls[4u * k];
     let b = walls[4u * k + 1u];
-    let cell = bitcast<u32>(b.w);
+    // The cell the law reads: the interior node, or on the half-way wall the second open cell (the
+    // third row's w, kept by this kernel's write below; zero for the other wall functions).
+    let read = bitcast<u32>(walls[4u * k + 2u].w);
+    var cell = bitcast<u32>(b.w);
+    if ON_NODE { cell = read; }
     var xyz = vec3<i32>(0);
     if AA_MODE && params.phase.x == 1u { xyz = coords(cell); }
     var drho = 0.0;
@@ -661,7 +665,7 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
             stress = stress * vec3<f32>(vec3<u32>(flags >> 2u, flags >> 3u, flags >> 4u) & vec3<u32>(1u));
         }
     }
-    walls[4u * k + 2u] = vec4<f32>(stress, 0.0);
+    walls[4u * k + 2u] = vec4<f32>(stress, walls[4u * k + 2u].w);
     walls[4u * k + 3u] = vec4<f32>(stress, walls[4u * k + 3u].w);
 }
 
@@ -1557,12 +1561,12 @@ fn sa_wall_function(@builtin(local_invocation_index) lid: u32, @builtin(workgrou
     let nu = params.smag.w;
     var ut = 0.0;
     if rho > 0.0 && tau < 1e30 { ut = sqrt(tau / rho); }
-    // The model's own law has ν̃ = κ u_τ y exactly (y = 1 here); Spalding's ν_t⁺ is inverted.
-    var v = SA_KAPPA * ut;
-    if !SA_LAW { v = sa_nu_tilde_for(nu * sa_spalding_nu_t(ut / nu), nu); }
+    let y = walls[base + 2u].z;
+    var v = SA_KAPPA * ut * y;
+    if !SA_LAW { v = sa_nu_tilde_for(nu * sa_spalding_nu_t(y * ut / nu), nu); }
     nu_tilde[cell] = v;
     moments[cell] = vec4<f32>(moments[cell].xyz, sa_nu_t(v, nu));
-    walls[base + 2u] = vec4<f32>(ut, v, 0.0, 0.0);
+    walls[base + 2u] = vec4<f32>(ut, v, y, 0.0);
 }
 
 // The rate of an explicit eddy viscosity, τ̄ = 3 (ν + ν_t) + ½.

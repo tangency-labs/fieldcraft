@@ -536,6 +536,124 @@ fn the_model_on_han_s_wall_follows_the_cpu_for_2000_steps() {
     the_model_on_han_s_wall_follows_the_cpu_cases(2000.0);
 }
 
+/// The forced channel on the half-way wall: [`han_channel`]'s box (4 cells per half-height, 12 × 8 × 6
+/// open cells, periodic in x and z) between two obstacle slabs two cells thick, periodic in y too,
+/// with `wall` (`spalding_bounce_surface` or `spalart_allmaras_bounce_surface`). Every node is flat
+/// (72 per wall); the law reads the second open cell off each wall (y = 1½) and ν̃ is imposed at
+/// the first two.
+fn half_way_channel(wall: WallModel, collision: Collision, tau_half: f64, steps: f64) -> (Setup, Flow) {
+    let (n, ub) = (4usize, 15.7);
+    let dx = 1.0 / n as f64;
+    let (lx, lz) = (12.0 * dx, 6.0 * dx);
+    let mut d = domain([0.0, -2.0 * dx, 0.0], [lx, 2.0 + 2.0 * dx, lz], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.y_min, &mut d.faces.y_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    let obstacles = vec![
+        obstacle("Floor", cuboid([-1.0, -2.0 * dx, -1.0], [lx + 1.0, 0.0, lz + 1.0]), &CUBOID_FACES),
+        obstacle("Roof", cuboid([-1.0, 2.0, -1.0], [lx + 1.0, 2.0 + 2.0 * dx, lz + 1.0]), &CUBOID_FACES),
+    ];
+    d.obstacles = obstacles.iter().map(|o| o.body.clone()).collect();
+    d.acceleration = [1.0, 0.0, 0.0];
+    let dt = 0.1 * dx / ub;
+    let nu = tau_half / 3.0 * dx * dx / dt;
+    let mut p = with(collide(steps * dt, dt, None, collision), sa(3.0, Some(wall)));
+    if let Procedure::Fluid { sigma, .. } = &mut p
+        && collision == Collision::Hrr
+    {
+        *sigma = Some(HrrSigma::Value(0.99));
+    }
+    let (setup, mut flow) = prepare(&model(1.0, nu, d, p), &obstacles);
+    let grid = *flow.grid();
+    let to_lattice = 1.0 / setup.velocity_scale();
+    flow.set_equilibrium(|cell| {
+        let [_, y, _] = grid.centre(cell);
+        let eta = y - 1.0;
+        (1.0, [1.15 * ub * (1.0 - eta.abs().min(1.0).powi(8)) * to_lattice, 0.0, 0.0])
+    });
+    (setup, flow)
+}
+
+/// The half-way wall (law at the second open cell, ν̃ at the first two), GPU against CPU: the forced
+/// channel between slabs with the model's own law and with Spalding's, on both collisions and both
+/// streamings, 2000 steps at τ − ½ 1.2e-4, and at τ 0.6 with the multiple-relaxation-time collision.
+fn the_half_way_wall_follows_the_cpu_cases(steps: f64) {
+    let mut failed = Vec::new();
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        for wall in [WallModel::SpalartAllmarasBounceSurface, WallModel::SpaldingBounceSurface] {
+            for (collision, tau_half) in [(Collision::Hrr, 1.2e-4), (Collision::Mrt, 1.2e-4), (Collision::Mrt, 0.1)] {
+                let (setup, flow) = half_way_channel(wall, collision, tau_half, steps);
+                assert_eq!(node_counts(&flow), [144, 144, 144]);
+                assert!(flow.wall_nodes().is_some_and(|n| n.second_cell() && n.nodes().iter().all(|w| w.sample_cell != w.interior)));
+                // Half the steps in, the fields agree to 2e-6 of the largest speed (f32 at τ − ½ 1.2e-4).
+                let early = han_parity(half_way_channel(wall, collision, tau_half, steps / 2.0).1, (steps / 2.0) as u64, streaming);
+                let Some(r) = han_parity(flow, setup.steps, streaming) else { return };
+                let what = format!("half-way wall {wall:?}, {collision:?}, {streaming:?}, τ − ½ {tau_half}, {steps} steps");
+                if let Some(e) = early {
+                    println!("{what}: first {} steps: velocity {:.2e}, density {:.2e}", steps / 2.0, e.du, e.drho);
+                    if e.du > 2e-6 || e.drho > 1e-6 {
+                        failed.push(format!("{what}: pointwise at half the steps {:.2e} / {:.2e}", e.du, e.drho));
+                    }
+                }
+                assert_eq!(r.rows, 144);
+                if !han_check(&what, &r) {
+                    failed.push(what);
+                }
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+#[test]
+fn the_half_way_wall_follows_the_cpu() {
+    the_half_way_wall_follows_the_cpu_cases(300.0);
+}
+
+/// [`the_half_way_wall_follows_the_cpu`] over 2000 steps.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_half_way_wall_follows_the_cpu_for_2000_steps() {
+    the_half_way_wall_follows_the_cpu_cases(2000.0);
+}
+
+/// A passage two cells wide between two slabs: each wall node's second open cell is the opposite
+/// wall's first, and the device sets every cell's ν̃ once from the law at y = ½ as the CPU does
+/// (lattice viscosity 0.05, a mean speed of 0.02).
+#[test]
+fn a_two_cell_passage_follows_the_cpu() {
+    let dx = 0.5;
+    let span = 4.0 * dx;
+    let mut d = domain([0.0, -2.0 * dx, 0.0], [span, 1.0 + 2.0 * dx, span], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.y_min, &mut d.faces.y_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    let obstacles = vec![
+        obstacle("Floor", cuboid([-1.0, -2.0 * dx, -1.0], [span + 1.0, 0.0, span + 1.0]), &CUBOID_FACES),
+        obstacle("Roof", cuboid([-1.0, 1.0, -1.0], [span + 1.0, 1.0 + 2.0 * dx, span + 1.0]), &CUBOID_FACES),
+    ];
+    d.obstacles = obstacles.iter().map(|o| o.body.clone()).collect();
+    let dt = 0.05 * dx * dx;
+    d.acceleration = [12.0 * 0.02 * dx / dt, 0.0, 0.0];
+    let p = with(collide(100.0 * dt, dt, None, Collision::Mrt), sa(3.0, Some(WallModel::SpalartAllmarasBounceSurface)));
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let (_, flow) = prepare(&model(1.0, 1.0, d.clone(), p.clone()), &obstacles);
+        let Some(r) = han_parity(flow, 100, streaming) else { return };
+        assert!(han_check(&format!("two-cell passage, {streaming:?}"), &r));
+    }
+}
+
+/// The device reports what the half-way wall made of the obstacles' walls as the CPU does, so the
+/// solve's warnings (narrow passages, unsealed surface) are the same on both backends.
+#[test]
+fn the_gpu_reports_the_half_way_walls_layer() {
+    let (_, flow) = half_way_channel(WallModel::SpaldingBounceSurface, Collision::Mrt, 0.1, 10.0);
+    let Some(gpu) = gpu(&flow, Streaming::InPlace) else { return };
+    let want = Backend::wall_layer(&flow);
+    assert!(want.is_some_and(|l| l.nodes == 144));
+    assert_eq!(Backend::wall_layer(&gpu.flow), want);
+}
+
 /// The model on Han's wall with its own constant-stress law, GPU against CPU (the same cases as
 /// above, and the table in f32 on the device): the forced channel with box-face walls and with
 /// obstacle slabs, on both collisions, 2000 steps at τ − ½ 1.2e-4 where the friction velocity

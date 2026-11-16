@@ -392,7 +392,7 @@ pub enum WallModel {
     /// sits in the buffer layer), at y = ½ where a node has no second open cell. A wall of
     /// fewer than three solid centres across has no node layer and keeps plain bounce-back, which
     /// seals it. Obstacle walls only: a box face that is a wall is refused ("not supported yet"; a
-    /// solid slab in the box is the way to a wall). CPU only for now.
+    /// solid slab in the box is the way to a wall).
     SpaldingBounceSurface,
     /// [`WallModel::SpaldingBounceSurface`] with the Spalart–Allmaras model's own wall law
     /// ([`WallModel::SpalartAllmarasBounce`]'s) in place of Spalding's, with ν̃ = κ u_τ y imposed at

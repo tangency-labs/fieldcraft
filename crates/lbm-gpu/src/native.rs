@@ -241,6 +241,8 @@ pub struct GpuFlow {
     fluid_cells: usize,
     groups: Vec<Group>,
     empty_obstacles: Vec<String>,
+    /// What the half-way wall made of the obstacles' walls (the flow's report), for the solve's warnings.
+    wall_layer: Option<fieldcraft_lbm::wall_layer::WallLayerReport>,
     /// With interpolated walls, how the obstacles' links bounce back (the flow's).
     wall_links: Option<fieldcraft_lbm::WallLinks>,
     steps_done: u64,
@@ -1015,11 +1017,6 @@ impl GpuFlow {
         let mut node_slots = 0u32;
         if let Some(nodes) = flow.wall_nodes() {
             let links = flow.links();
-            if nodes.distance() != 1.0 {
-                return Err(Error::Invalid(
-                    "not supported yet: the half-way wall (`spalding_bounce_surface`, `spalart_allmaras_bounce_surface`) on the GPU; solve on the CPU (`backend: \"cpu\"`)".into(),
-                ));
-            }
             for w in nodes.nodes() {
                 let (cell, axis) = (w.cell as usize, usize::from(w.axis).min(2));
                 let mut normal = [0i32; 3];
@@ -1050,10 +1047,11 @@ impl GpuFlow {
                 let (han, to_fluid, flags) = node_roles(w);
                 node_sides.extend([f32::from_bits(han), f32::from_bits(to_fluid), f32::from_bits(w.cell), f32::from_bits(flags)]);
                 node_sides.extend([0.0; 4]);
+                let read = if nodes.second_cell() { w.sample_cell } else { w.interior };
                 wall_rows.extend(normal.map(|v| v as f32));
-                wall_rows.push(1.0);
+                wall_rows.push(nodes.law_distance(w) as f32);
                 wall_rows.extend([0.0, 0.0, 0.0, f32::from_bits(w.interior)]);
-                wall_rows.extend([0.0; 4]);
+                wall_rows.extend([0.0, 0.0, 0.0, f32::from_bits(read)]);
                 wall_rows.extend([0.0, 0.0, 0.0, f32::from_bits(link)]);
                 node_links.push((w.group, link));
             }
@@ -1305,27 +1303,45 @@ impl GpuFlow {
         let les = [fixed_sigma as f32, flow.vreman() as f32, l_max, 0.0];
         let periodic = flow.periodic().map(u32::from);
         let mut sa_wall_rows = 0u32;
+        let mut sa_wall_total = 0u32;
         if sa_faces.is_some() && on_node {
-            let mut by_cell: std::collections::BTreeMap<u32, Vec<u32>> = std::collections::BTreeMap::new();
-            for (k, w) in flow.wall_nodes().map_or(&[][..], |n| n.nodes()).iter().enumerate() {
-                if w.sampled() {
-                    by_cell.entry(w.interior).or_default().push(k as u32);
+            let nodes = flow.wall_nodes().map_or(&[][..], |n| n.nodes());
+            let second = flow.wall_nodes().is_some_and(|n| n.second_cell());
+            let mut passes: Vec<std::collections::BTreeMap<u32, (f32, Vec<u32>)>> = vec![std::collections::BTreeMap::new(); 1 + usize::from(second)];
+            for (k, w) in nodes.iter().enumerate() {
+                if !w.sampled() {
+                    continue;
+                }
+                if let (Some(first), Some(n)) = (passes.first_mut(), flow.wall_nodes()) {
+                    first.entry(w.interior).or_insert_with(|| (n.distance() as f32, Vec::new())).1.push(k as u32);
+                }
+                if second
+                    && w.sample_cell != w.interior
+                    && let (Some(extra), Some(n)) = (passes.get_mut(1), flow.wall_nodes())
+                {
+                    extra.entry(w.sample_cell).or_insert_with(|| (n.law_distance(w) as f32, Vec::new())).1.push(k as u32);
                 }
             }
-            for (cell, nodes) in &by_cell {
-                if nodes.len() > 6 {
-                    return Err(Error::Invalid(format!("cell {cell} is the first fluid node of {} boundary nodes (at most 6)", nodes.len())));
+            for (pass, by_cell) in passes.iter().enumerate() {
+                for (cell, (y, nodes)) in by_cell {
+                    if nodes.len() > 6 {
+                        return Err(Error::Invalid(format!("cell {cell} is the first fluid node of {} boundary nodes (at most 6)", nodes.len())));
+                    }
+                    let mut row = [0u32; 8];
+                    row[0] = *cell;
+                    row[1] = nodes.len() as u32;
+                    for (slot, k) in row.iter_mut().skip(2).zip(nodes) {
+                        *slot = *k;
+                    }
+                    wall_rows.extend(row.map(f32::from_bits));
+                    wall_rows.extend([0.0, 0.0, *y, 0.0]);
                 }
-                let mut row = [0u32; 8];
-                row[0] = *cell;
-                row[1] = nodes.len() as u32;
-                for (slot, k) in row.iter_mut().skip(2).zip(nodes) {
-                    *slot = *k;
+                let n = u32::try_from(by_cell.len()).map_err(|_| Error::Limit("too many first fluid nodes for the GPU solver".into()))?;
+                if pass == 0 {
+                    sa_wall_rows = n;
                 }
-                wall_rows.extend(row.map(f32::from_bits));
-                wall_rows.extend([0.0; 4]);
+                sa_wall_total = sa_wall_total.saturating_add(n);
             }
-            sa_wall_rows = u32::try_from(by_cell.len()).map_err(|_| Error::Limit("too many first fluid nodes for the GPU solver".into()))?;
         }
         let sa_law = sa_faces.is_some() && on_node && flow.wall_nodes().is_some_and(|n| n.law() == fieldcraft_lbm::sa::WallLaw::SpalartAllmaras);
         if sa_law {
@@ -1346,7 +1362,7 @@ impl GpuFlow {
             bytes.extend_from_slice(&bytes_f32(&les));
             bytes.extend_from_slice(&bytes_u32(&[periodic[0], periodic[1], periodic[2], 0]));
             bytes.extend_from_slice(&bytes_u32(&[sa_faces.unwrap_or(0), (sa_inflow as f32).to_bits(), 1.0f32.to_bits(), 1]));
-            bytes.extend_from_slice(&bytes_u32(&[sa_wall_rows, 0, 0, 0]));
+            bytes.extend_from_slice(&bytes_u32(&[sa_wall_total, 0, 0, 0]));
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("lbm params"),
                 contents: &bytes,
@@ -1551,6 +1567,7 @@ impl GpuFlow {
             fluid,
             groups: flow.groups().to_vec(),
             empty_obstacles: flow.empty_obstacles().to_vec(),
+            wall_layer: fieldcraft_lbm::backend::Backend::wall_layer(flow),
             wall_links: flow.wall_links(),
             steps_done: 0,
             diagnostic_acceleration: flow.acceleration().map(|a| f64::from(a as f32)),
@@ -1572,7 +1589,7 @@ impl GpuFlow {
             sa: sa_faces.map(|_| SaDevice { nu_tilde, substeps: None, fixed: false }),
             sa_cells: sa_faces.map(|_| sa_cell),
             sa_wall_rows,
-            sa_wall_groups: if sa_wall_rows > 0 { Some(groups(sa_wall_rows as usize)?) } else { None },
+            sa_wall_groups: if sa_wall_total > 0 { Some(groups(sa_wall_total as usize)?) } else { None },
         })
     }
 
@@ -1625,7 +1642,14 @@ impl GpuFlow {
         }
         let base = (WALL_ROW + 8) * self.wall_count;
         let rows = self.read_f32(&self.walls, base + 12 * self.sa_wall_rows as usize)?;
-        Ok(rows.get(base..).unwrap_or_default().as_chunks::<12>().0.iter().map(|r| (r[0].to_bits() as usize, 1.0, f64::from(r[8]))).collect())
+        Ok(rows
+            .get(base..)
+            .unwrap_or_default()
+            .as_chunks::<12>()
+            .0
+            .iter()
+            .map(|r| (r[0].to_bits() as usize, f64::from(r[10]), f64::from(r[8])))
+            .collect())
     }
 
     /// With the Spalart–Allmaras model, the sub-steps per lattice step the next chunk takes (none
@@ -2174,6 +2198,10 @@ impl Backend for GpuFlow {
 
     fn wall_links(&self) -> Option<fieldcraft_lbm::WallLinks> {
         self.wall_links
+    }
+
+    fn wall_layer(&self) -> Option<fieldcraft_lbm::wall_layer::WallLayerReport> {
+        self.wall_layer
     }
 
     fn conducting(&self) -> &[Vec<u32>] {
