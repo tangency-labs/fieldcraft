@@ -68,6 +68,9 @@ pub struct Outcome {
     pub touched: Vec<String>,
     /// The body whose row in a list of bodies is under the pointer (the viewport highlights it).
     pub hover_body: Option<String>,
+    /// Values a widget could not show (a script's value of another shape), worded read-only.
+    #[cfg(test)]
+    pub unshown: usize,
 }
 
 struct Form<'a> {
@@ -76,7 +79,24 @@ struct Form<'a> {
     /// Each field's problem, by path, phrased with its label ([`messages`]).
     problems: BTreeMap<String, String>,
     names: BTreeMap<&'static str, Vec<String>>,
+    /// The objects being drawn, outermost first: each one's fields, and its value as its drawing
+    /// began. A topology name finds its body in the innermost one with its body field
+    /// ([`Form::body_of`]), wherever the name itself is drawn (a list element, a row).
+    scopes: Vec<(&'static [Field], Map<String, Value>)>,
+    /// The body field and the body a Pick took for a topology name whose form named none: the
+    /// innermost object with that field writes it as its drawing ends ([`Form::fields`]).
+    picked_body: Option<(&'static str, String)>,
     out: Outcome,
+}
+
+/// The body a [`Kind::Topology`] name belongs to ([`Form::body_of`]).
+enum Body {
+    /// The form has no field for it: Pick takes the entity of any body.
+    Any,
+    /// Its field (this key) is empty: Pick takes the entity of any body and fills the field.
+    Unset(&'static str),
+    /// Pick takes only an entity of this body.
+    Named(String),
 }
 
 /// The form's look; `label_width` is the label column ([`label_column`]), `unit_gutter` the room
@@ -145,6 +165,7 @@ fn unit_gutter(ui: &Ui, fields: &[Field], units: &DisplaySystem, depth: usize) -
             Kind::Group(inner) | Kind::Rows { fields: inner, .. } | Kind::NameOr { fields: inner, .. } => unit_gutter(ui, inner, units, depth + 1),
             Kind::Either(options) => unit_gutter(ui, options, units, depth + 1),
             Kind::List { item, .. } => unit_gutter(ui, std::slice::from_ref(item), units, depth + 1),
+            Kind::Seq(items) => unit_gutter(ui, items, units, depth + 1),
             Kind::NameOrValue { name, value } => unit_gutter(ui, &[*name, *value], units, depth + 1),
             _ => fields::unit_width(ui, f.unit_label(units).as_deref()),
         };
@@ -174,6 +195,11 @@ fn each_label(fields: &[Field], units: &DisplaySystem, depth: usize, out: &mut d
             Kind::Group(inner) | Kind::Rows { fields: inner, .. } => each_label(inner, units, depth + 1, out),
             // Each element's row is the item's own.
             Kind::List { item, .. } => each_label(std::slice::from_ref(item), units, depth + 1, out),
+            // Its heading, then each entry's row.
+            Kind::Seq(items) => {
+                out(f.label, f.required, help);
+                each_label(items, units, depth + 1, out);
+            }
             // The choice's row, then the chosen side's.
             Kind::NameOrValue { name, value } => {
                 out(f.label, f.required, help);
@@ -189,7 +215,15 @@ pub fn show(ui: &mut Ui, t: &Tokens, cx: &Context, fields: &'static [Field], par
     let problems = cx.problems.iter().cloned().collect();
     let label_width = label_column(ui, fields, cx.units, ui.available_width());
     let gutter = unit_gutter(ui, fields, cx.units, 0);
-    let mut f = Form { cx, style: style(t, label_width, gutter), problems, names: BTreeMap::new(), out: Outcome::default() };
+    let mut f = Form {
+        cx,
+        style: style(t, label_width, gutter),
+        problems,
+        names: BTreeMap::new(),
+        scopes: Vec::new(),
+        picked_body: None,
+        out: Outcome::default(),
+    };
     ui.spacing_mut().item_spacing.y = 3.0;
     f.fields(ui, fields, fields, params, "", 0);
     f.out
@@ -217,10 +251,37 @@ impl Form<'_> {
         Id::unique(("fc_form", self.cx.salt, path))
     }
 
-    /// A value the fields cannot show: it stays as it is, editable in the JSON view.
-    fn json_only(&self, ui: &mut Ui) {
-        ui.label(RichText::new("set in JSON").size(solidcraft_theme::Tokens::get().font_caption).color(self.style.dim))
-            .backing_on_hover_text("Edit it in the JSON view");
+    /// A value its widget cannot show (a script's value of another shape): worded read-only, and
+    /// Reset, which clears it (`Null`: the field's default).
+    fn unshown(&mut self, ui: &mut Ui, value: &Value) -> Option<Value> {
+        #[cfg(test)]
+        {
+            self.out.unshown += 1;
+        }
+        let k = solidcraft_theme::Tokens::get();
+        let words = crate::context::value_text(value);
+        let reset = ui
+            .horizontal_wrapped(|ui| {
+                ui.label(RichText::new(words).size(k.font_caption).color(self.style.dim))
+                    .backing_on_hover_text("A value of another shape (from a script); Reset starts the field again");
+                kit::button(ui, "Reset", kit::Button::Small).backing_on_hover_text("Clear it: the field takes its default").clicked()
+            })
+            .inner;
+        reset.then_some(Value::Null)
+    }
+
+    /// `f`'s value `value` drawn by its own widget ([`Form::field`]) at `path`: how a field
+    /// inside another (a side of a choice, an element of a list) is drawn. Returns its new value
+    /// when edited (`Null`: removed).
+    fn slot(&mut self, ui: &mut Ui, f: &Field, value: Option<&Value>, path: &str, depth: usize) -> Option<Value> {
+        let element = Field { key: "", ..*f };
+        let mut slot: Map<String, Value> = value.map(|v| (String::new(), v.clone())).into_iter().collect();
+        let before = self.out.changed;
+        self.out.changed = false;
+        self.field(ui, &element, &mut slot, path, depth + 1);
+        let changed = self.out.changed;
+        self.out.changed |= before;
+        changed.then(|| slot.remove("").unwrap_or(Value::Null))
     }
 
     fn names(&mut self, c: Collection) -> &[String] {
@@ -228,11 +289,22 @@ impl Form<'_> {
     }
 
     /// The fields of one object. `common` are the fields beside a flattened variant (kept when it
-    /// switches).
-    fn fields(&mut self, ui: &mut Ui, fields: &[Field], common: &[Field], obj: &mut Map<String, Value>, prefix: &str, depth: usize) {
+    /// switches). A body a Pick took for a topology name drawn within, whose body field is one of
+    /// `fields`, is written once they are drawn.
+    fn fields(&mut self, ui: &mut Ui, fields: &'static [Field], common: &[Field], obj: &mut Map<String, Value>, prefix: &str, depth: usize) {
         if depth > MAX_DEPTH {
             return;
         }
+        self.scopes.push((fields, obj.clone()));
+        self.each_field(ui, fields, common, obj, prefix, depth);
+        self.scopes.pop();
+        if let Some((key, body)) = self.picked_body.take_if(|(key, _)| fields.iter().any(|f| f.key == *key)) {
+            obj.insert(key.into(), json!(body));
+            self.touch(&join(prefix, key));
+        }
+    }
+
+    fn each_field(&mut self, ui: &mut Ui, fields: &'static [Field], common: &[Field], obj: &mut Map<String, Value>, prefix: &str, depth: usize) {
         for f in fields {
             if let Kind::Variants { tag, variants } = f.kind
                 && f.key.is_empty()
@@ -269,7 +341,8 @@ impl Form<'_> {
             Kind::Group(_) | Kind::Variants { .. } | Kind::Rows { .. } => self.section(ui, f, obj, &path, depth),
             Kind::NameOr { name, object, fields } => self.name_or(ui, f, name, object, fields, obj, &path, depth),
             Kind::List { item, max } => self.list(ui, f, item, max, obj, &path, depth),
-            Kind::NameOrValue { name, value } => self.name_or_value(ui, f, name, value, obj, &path),
+            Kind::Seq(items) => self.seq(ui, f, items, obj, &path, depth),
+            Kind::NameOrValue { name, value } => self.name_or_value(ui, f, name, value, obj, &path, depth),
             Kind::Topology { entity, body_key } => self.topology(ui, f, entity, body_key, obj, &path),
             _ => {
                 let value = obj.get(f.key).cloned();
@@ -366,15 +439,23 @@ impl Form<'_> {
                     None => Some(Value::Null),
                 })
             }
-            // Edited as JSON until their own widgets land.
-            Kind::Json | Kind::List { .. } | Kind::NameOrValue { .. } | Kind::Seq(_) => self.json(ui, id, value, f.hint),
-            Kind::Labels(of) => self.labels(ui, id, value, of, f.hint),
+            // What the schema does not describe has no widget: worded, with Reset.
+            Kind::Json => value.filter(|v| !v.is_null()).and_then(|v| self.unshown(ui, v)),
+            Kind::Labels(of) => self.labels(ui, id, value, f, of),
             Kind::Sides(side) => self.sides(ui, id, value, side, f.hint),
             Kind::Points { columns, max, .. } => self.points(ui, id, value, f, columns, max),
             Kind::Multi(options) => self.multi(ui, value, options),
             Kind::NumberOrAuto { .. } => self.number_or_auto(ui, id, value, f),
             Kind::PerAxis { labels, .. } => self.per_axis(ui, id, value, f, labels),
-            Kind::Unit | Kind::Group(_) | Kind::Variants { .. } | Kind::Rows { .. } | Kind::NameOr { .. } => None,
+            // Drawn by `field` over rows of their own, never as one row.
+            Kind::Unit
+            | Kind::Group(_)
+            | Kind::Variants { .. }
+            | Kind::Rows { .. }
+            | Kind::NameOr { .. }
+            | Kind::List { .. }
+            | Kind::Seq(_)
+            | Kind::NameOrValue { .. } => None,
         }
     }
 
@@ -384,10 +465,7 @@ impl Form<'_> {
         let Some((key, value)) = inner.into_iter().next() else { return };
         let Some(option) = options.iter().find(|o| o.key == key) else { return };
         let sub = join(path, &key);
-        let style = self.style;
-        let help = option.help_text(self.cx.units);
-        let new = fields::row(ui, &style, option.label, false, &help, |ui| self.scalar(ui, option, Some(&value), &sub));
-        if let Some(new) = new {
+        if let Some(new) = self.slot(ui, option, Some(&value), &sub, 0) {
             obj.insert(f.key.into(), json!({key: new}));
             self.touch(path);
         }
@@ -395,9 +473,8 @@ impl Form<'_> {
 
     fn number(&mut self, ui: &mut Ui, id: Id, value: Option<&Value>, hint: &str, integer: bool, width: f32) -> Option<Value> {
         let current = value.and_then(Value::as_f64);
-        if value.is_some_and(|v| !v.is_null() && current.is_none()) {
-            self.json_only(ui);
-            return None;
+        if let Some(v) = value.filter(|v| !v.is_null() && current.is_none()) {
+            return self.unshown(ui, v);
         }
         match fields::number(ui, id, current, hint, integer, width) {
             NumberEdit::Set(Some(x)) if integer => Some(json!(x as i64)),
@@ -427,10 +504,7 @@ impl Form<'_> {
     ) -> Option<Value> {
         let current: Vec<Value> = match value {
             Some(Value::Array(a)) if a.len() == labels.len() => a.clone(),
-            Some(v) if !v.is_null() => {
-                self.json_only(ui);
-                return None;
-            }
+            Some(v) if !v.is_null() => return self.unshown(ui, v),
             // Empty slots show their placeholder (x, y, z), not a 0 nobody typed.
             _ => vec![Value::Null; labels.len()],
         };
@@ -487,10 +561,7 @@ impl Form<'_> {
         let mut slots: Vec<Value> = match value {
             None | Some(Value::Null) => Vec::new(),
             Some(Value::Array(a)) if a.len() <= labels.len() => a.clone(),
-            Some(_) => {
-                self.json_only(ui);
-                return None;
-            }
+            Some(v) => return self.unshown(ui, v),
         };
         slots.resize(labels.len(), Value::Null);
         let gap = 3.0;
@@ -704,9 +775,7 @@ impl Form<'_> {
             });
         } else {
             let value = obj.get(f.key).cloned();
-            let help = name.help_text(self.cx.units);
-            let new = fields::row(ui, &style, name.label, false, &help, |ui| self.scalar(ui, name, value.as_ref(), path));
-            if let Some(new) = new {
+            if let Some(new) = self.slot(ui, name, value.as_ref(), path, depth) {
                 match new {
                     Value::Null => obj.remove(f.key),
                     v => obj.insert(f.key.into(), v),
@@ -723,8 +792,12 @@ impl Form<'_> {
         let mut list = match obj.get(f.key) {
             None | Some(Value::Null) => Vec::new(),
             Some(Value::Array(a)) if a.len() <= MAX_ROWS => a.clone(),
-            Some(_) => {
-                fields::row(ui, &self.style, f.label, f.required, &f.help_text(self.cx.units), |ui| self.json_only(ui));
+            Some(v) => {
+                let (style, v) = (self.style, v.clone());
+                if fields::row(ui, &style, f.label, f.required, &f.help_text(self.cx.units), |ui| self.unshown(ui, &v)).is_some() {
+                    obj.remove(f.key);
+                    self.touch(path);
+                }
                 return;
             }
         };
@@ -733,8 +806,6 @@ impl Form<'_> {
         if !help.is_empty() {
             heading.backing_on_hover_text(help);
         }
-        // The item's key is unused: each element is drawn as the item at `path/i`.
-        let element = Field { key: "", ..*item };
         let (mut changed, mut remove) = (false, None);
         ui.horizontal(|ui| {
             ui.add_space(INDENT);
@@ -746,15 +817,11 @@ impl Form<'_> {
                             remove = Some(i);
                         }
                     });
-                    let mut slot = Map::from_iter([(String::new(), v.clone())]);
-                    let before = self.out.changed;
-                    self.out.changed = false;
-                    self.field(ui, &element, &mut slot, &format!("{path}/{i}"), depth + 1);
-                    if self.out.changed {
-                        *v = slot.remove("").unwrap_or(Value::Null);
+                    // The item's key is unused: each element is drawn as the item at `path/i`.
+                    if let Some(new) = self.slot(ui, item, Some(&*v), &format!("{path}/{i}"), depth) {
+                        *v = new;
                         changed = true;
                     }
-                    self.out.changed |= before;
                 }
                 if list.len() < max.min(MAX_ROWS) && kit::button(ui, "+ Add", kit::Button::Small).clicked() {
                     let start = schema::prefill(&[Field { key: "v", required: true, ..*item }], &json!({}));
@@ -777,10 +844,66 @@ impl Form<'_> {
         }
     }
 
+    /// A [`Kind::Seq`]: its label, then each entry's own widget, indented (a block face: its
+    /// block, then the face). The list is written once every entry has a value; until then the
+    /// entries given are kept with the form's widgets, and the field stays empty.
+    #[allow(clippy::too_many_arguments)]
+    fn seq(&mut self, ui: &mut Ui, f: &Field, items: &'static [Field], obj: &mut Map<String, Value>, path: &str, depth: usize) {
+        let partial = self.cx.salt.with(("seq", path));
+        let current = match obj.get(f.key) {
+            None | Some(Value::Null) => {
+                ui.data(|d| d.get_temp::<Vec<Value>>(partial)).filter(|p| p.len() == items.len()).unwrap_or_else(|| vec![Value::Null; items.len()])
+            }
+            Some(Value::Array(a)) if a.len() == items.len() => a.clone(),
+            Some(v) => {
+                let (style, v) = (self.style, v.clone());
+                if fields::row(ui, &style, f.label, f.required, &f.help_text(self.cx.units), |ui| self.unshown(ui, &v)).is_some() {
+                    obj.remove(f.key);
+                    self.touch(path);
+                }
+                return;
+            }
+        };
+        let help = f.help_text(self.cx.units);
+        let heading = ui.label(RichText::new(f.label).font(crate::theme::label_font(ui.ctx(), solidcraft_theme::Tokens::get().font_label)));
+        if !help.is_empty() {
+            heading.backing_on_hover_text(help);
+        }
+        let mut next = current.clone();
+        ui.horizontal(|ui| {
+            ui.add_space(INDENT);
+            ui.vertical(|ui| {
+                for (i, (item, v)) in items.iter().zip(next.iter_mut()).enumerate() {
+                    let shown = (!v.is_null()).then(|| v.clone());
+                    if let Some(new) = self.slot(ui, item, shown.as_ref(), &format!("{path}/{i}"), depth) {
+                        *v = new;
+                    }
+                }
+            });
+        });
+        if next != current {
+            let whole = next.iter().all(|v| !v.is_null());
+            if whole {
+                obj.insert(f.key.into(), Value::Array(next.clone()));
+            } else {
+                obj.remove(f.key);
+            }
+            ui.data_mut(|d| {
+                if whole || next.iter().all(Value::is_null) {
+                    d.remove::<Vec<Value>>(partial);
+                } else {
+                    d.insert_temp(partial, next);
+                }
+            });
+            self.touch(path);
+        }
+    }
+
     /// A [`Kind::NameOrValue`]: a choice between the name and the value, then the chosen one's
     /// widget. A bare string is the name, anything else the value; an empty field keeps the side
     /// last chosen.
-    fn name_or_value(&mut self, ui: &mut Ui, f: &Field, name: &Field, value: &Field, obj: &mut Map<String, Value>, path: &str) {
+    #[allow(clippy::too_many_arguments)]
+    fn name_or_value(&mut self, ui: &mut Ui, f: &Field, name: &Field, value: &Field, obj: &mut Map<String, Value>, path: &str, depth: usize) {
         let id = self.id(path);
         let current = obj.get(f.key).filter(|v| !v.is_null()).cloned();
         let on_value = match &current {
@@ -802,9 +925,7 @@ impl Form<'_> {
             return;
         }
         let side = if on_value { value } else { name };
-        let help = side.help_text(self.cx.units);
-        let new = fields::row(ui, &style, side.label, false, &help, |ui| self.scalar(ui, side, current.as_ref(), path));
-        if let Some(new) = new {
+        if let Some(new) = self.slot(ui, side, current.as_ref(), path, depth) {
             match new {
                 Value::Null => obj.remove(f.key),
                 v => obj.insert(f.key.into(), v),
@@ -813,33 +934,51 @@ impl Form<'_> {
         }
     }
 
+    /// The body a topology name's `body_key` field names: that field of the innermost object being
+    /// drawn that has one, so a name drawn inside a list or a row takes its form's body.
+    fn body_of(&self, body_key: &'static str) -> Body {
+        if body_key.is_empty() {
+            return Body::Any;
+        }
+        match self.scopes.iter().rev().find(|(fields, _)| fields.iter().any(|f| f.key == body_key)) {
+            None => Body::Any,
+            Some((_, obj)) => match obj.get(body_key).and_then(Value::as_str).filter(|b| !b.is_empty()) {
+                Some(b) => Body::Named(b.to_string()),
+                None => Body::Unset(body_key),
+            },
+        }
+    }
+
     /// A [`Kind::Topology`] name: its text, and Pick, which takes the one selected face, edge or
-    /// vertex ([`crate::selection::topology_name`]) of the body `body_key` names, or with its
-    /// body when that is empty.
-    fn topology(&mut self, ui: &mut Ui, f: &Field, entity: schema::Side3, body_key: &str, obj: &mut Map<String, Value>, path: &str) {
+    /// vertex ([`topology_pick`]) of its form's body ([`Form::body_of`]), and fills that body
+    /// when it is empty. A disabled Pick says why on hover.
+    fn topology(&mut self, ui: &mut Ui, f: &Field, entity: schema::Side3, body_key: &'static str, obj: &mut Map<String, Value>, path: &str) {
         let id = self.id(path);
-        let body = obj.get(body_key).and_then(Value::as_str).filter(|b| !b.is_empty()).map(str::to_string);
-        let found = self.cx.selection.and_then(|s| crate::selection::topology_name(s, entity.label(), body.as_deref()));
+        let body = self.body_of(body_key);
+        let named = match &body {
+            Body::Named(b) => Some(b.as_str()),
+            Body::Any | Body::Unset(_) => None,
+        };
+        let found = topology_pick(self.cx.selection, entity, named);
         let mut text = obj.get(f.key).and_then(Value::as_str).unwrap_or_default().to_string();
         let style = self.style;
         let help = f.help_text(self.cx.units);
         let tip = format!("The one {} selected in the view", entity.label());
+        let refused = found.as_ref().err().cloned().unwrap_or_default();
         let (typed, pick) = fields::row(ui, &style, f.label, f.required, &help, |ui| {
             let font = egui::TextStyle::Button.resolve(ui.style());
             let button = crate::elide::width(ui, "Pick", &font) + 2.0 * ui.spacing().button_padding.x + ui.spacing().item_spacing.x;
             let typed = fields::text(ui, id, &mut text, f.hint, (fill(ui, &style) - button).max(FIELD_MIN));
-            let pick = kit::button(ui, "Pick", kit::Button::Enabled(found.is_some()))
+            let pick = kit::button(ui, "Pick", kit::Button::Enabled(found.is_ok()))
                 .backing_on_hover_text(&tip)
-                .backing_on_disabled_hover_text(&tip)
+                .backing_on_disabled_hover_text(&refused)
                 .clicked();
             (typed, pick)
         });
-        if pick && let Some((b, n)) = found {
+        if pick && let Ok((b, n)) = found {
             obj.insert(f.key.into(), json!(n));
-            if body.is_none() {
-                obj.insert(body_key.into(), json!(b));
-                let parent = path.rsplit_once('/').map_or("", |(p, _)| p);
-                self.touch(&join(parent, body_key));
+            if let Body::Unset(key) = body {
+                self.picked_body = Some((key, b));
             }
             self.touch(path);
         } else if typed {
@@ -864,23 +1003,61 @@ impl Form<'_> {
         }
     }
 
-    /// A list of node or element labels typed as numbers and ranges (`1-5, 8`), kept while it
-    /// does not parse; Use selection takes the labels picked in the viewport.
-    fn labels(&mut self, ui: &mut Ui, id: Id, value: Option<&Value>, of: schema::LabelOf, hint: &str) -> Option<Value> {
+    /// A list of node or element labels: a choice of what it holds, then that. An optional
+    /// field's first choice is what leaving it empty means (its hint: "All" elements); Selection
+    /// follows the labels picked in the viewport; Labels are typed as numbers and ranges
+    /// (`1-5, 8`), kept while they do not parse, and Use selection copies the picked ones in.
+    fn labels(&mut self, ui: &mut Ui, id: Id, value: Option<&Value>, f: &Field, of: schema::LabelOf) -> Option<Value> {
+        ui.vertical(|ui| self.labels_in(ui, id, value, f, of)).inner
+    }
+
+    fn labels_in(&mut self, ui: &mut Ui, id: Id, value: Option<&Value>, f: &Field, of: schema::LabelOf) -> Option<Value> {
         let current: Option<Vec<u64>> = match value {
             None | Some(Value::Null) => Some(Vec::new()),
             Some(v) => v.as_array().and_then(|a| a.iter().map(Value::as_u64).collect()),
         };
-        let Some(current) = current else {
-            self.json_only(ui);
-            return None;
-        };
-        let shown = fields::format_labels(&current);
-        let mut text = ui.data(|d| d.get_temp::<(String, String)>(id)).filter(|(_, over)| *over == shown).map_or_else(|| shown.clone(), |(t, _)| t);
+        let Some(current) = current else { return value.and_then(|v| self.unshown(ui, v)) };
         let picked = match of {
             schema::LabelOf::Node => self.cx.picked.nodes.clone(),
             schema::LabelOf::Element => self.cx.picked.elements.clone(),
         };
+        let as_value = |l: &[u64]| if l.is_empty() { Value::Null } else { json!(l) };
+        // The choices: what empty means (an optional field), the selection, typed labels.
+        let empty = (!f.required).then(|| capitalised(if f.hint.is_empty() { "none" } else { f.hint }));
+        let mut choices: Vec<&str> = empty.iter().map(String::as_str).collect();
+        choices.extend([SELECTION, TYPED]);
+        let remembered = ui.data(|d| d.get_temp::<usize>(id.with("mode"))).filter(|&m| m < choices.len());
+        let typed_at = choices.len() - 1;
+        let mode = remembered.unwrap_or(if current.is_empty() && empty.is_some() { 0 } else { typed_at });
+        let mut out = None;
+        let width = fill(ui, &self.style);
+        if let Some(m) = fields::combo(ui, id.with("choice"), choices.get(mode).copied().unwrap_or(TYPED), &choices, width).filter(|&m| m != mode) {
+            ui.data_mut(|d| d.insert_temp(id.with("mode"), m));
+            match choices.get(m).copied() {
+                Some(SELECTION) => out = Some(as_value(&picked)),
+                Some(TYPED) => {}
+                _ => out = Some(Value::Null),
+            }
+            return out;
+        }
+        match choices.get(mode).copied() {
+            Some(SELECTION) => {
+                let n = picked.len();
+                let note = format!("{n} {}{} picked in the view (Select: {}s)", of.label(), if n == 1 { "" } else { "s" }, of.label());
+                fields::note(ui, &Style { label_width: 0.0, ..self.style }, &note, self.style.dim);
+                (picked != current).then(|| as_value(&picked))
+            }
+            Some(TYPED) => self.typed_labels(ui, id, &current, &picked, of, if f.required { f.hint } else { "" }),
+            _ => None,
+        }
+    }
+
+    /// Labels typed as numbers and ranges, and Use selection; `hint` (or `1, 2, 10-20`) shows
+    /// while empty.
+    fn typed_labels(&mut self, ui: &mut Ui, id: Id, current: &[u64], picked: &[u64], of: schema::LabelOf, hint: &str) -> Option<Value> {
+        let hint = if hint.is_empty() { LABELS_HINT } else { hint };
+        let shown = fields::format_labels(current);
+        let mut text = ui.data(|d| d.get_temp::<(String, String)>(id)).filter(|(_, over)| *over == shown).map_or_else(|| shown.clone(), |(t, _)| t);
         let mut out = None;
         ui.vertical(|ui| {
             let bad = fields::parse_labels(&text, schema::MAX_LABELS).is_none();
@@ -899,7 +1076,7 @@ impl Form<'_> {
                 .backing_on_disabled_hover_text(&tip)
                 .clicked()
             {
-                text = fields::format_labels(&picked);
+                text = fields::format_labels(picked);
                 out = Some(json!(picked));
             }
         });
@@ -918,10 +1095,7 @@ impl Form<'_> {
             None | Some(Value::Null) => Some(Vec::new()),
             Some(v) => v.as_array().and_then(|a| a.iter().map(|x| Some((x.get("element")?.as_u64()?, x.get(key)?.as_u64()?))).collect()),
         };
-        let Some(current) = current else {
-            self.json_only(ui);
-            return None;
-        };
+        let Some(current) = current else { return value.and_then(|v| self.unshown(ui, v)) };
         let to_value =
             |l: &[(u64, u64)]| if l.is_empty() { Value::Null } else { Value::Array(l.iter().map(|(e, s)| json!({"element": e, key: s})).collect()) };
         let shown = fields::format_sides(&current);
@@ -962,16 +1136,9 @@ impl Form<'_> {
     fn points(&mut self, ui: &mut Ui, id: Id, value: Option<&Value>, f: &Field, columns: &[&str], max: usize) -> Option<Value> {
         let current: Vec<Value> = match value {
             None | Some(Value::Null) => Vec::new(),
-            Some(Value::Array(a)) if a.iter().all(Value::is_array) => a.clone(),
-            Some(_) => {
-                self.json_only(ui);
-                return None;
-            }
+            Some(Value::Array(a)) if a.iter().all(Value::is_array) && a.len() <= MAX_ROWS => a.clone(),
+            Some(v) => return self.unshown(ui, v),
         };
-        if current.len() > MAX_ROWS {
-            self.json_only(ui);
-            return None;
-        }
         let mut next = current.clone();
         let (mut changed, mut remove) = (false, None);
         // One line per row: the columns' names head the table once, the cells share the width
@@ -1097,29 +1264,6 @@ impl Form<'_> {
         out
     }
 
-    /// A JSON value typed as text: kept while it does not parse.
-    /// Empty, it shows `hint` (the expected format) greyed.
-    fn json(&mut self, ui: &mut Ui, id: Id, value: Option<&Value>, hint: &str) -> Option<Value> {
-        let shown = value.map(Value::to_string).unwrap_or_default();
-        let mut text = ui.data(|d| d.get_temp::<(String, String)>(id)).filter(|(_, over)| *over == shown).map_or_else(|| shown.clone(), |(t, _)| t);
-        let bad = !text.trim().is_empty() && serde_json::from_str::<Value>(&text).is_err();
-        if bad {
-            self.out.invalid += 1;
-        }
-        let r = fields::checked_text(ui, id, &mut text, hint, bad, fill(ui, &self.style));
-        let mut out = None;
-        if r.changed() {
-            if text.trim().is_empty() {
-                out = Some(Value::Null);
-            } else if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                out = Some(v);
-            }
-        }
-        let over = out.as_ref().map_or(shown, |v| if v.is_null() { String::new() } else { v.to_string() });
-        ui.data_mut(|d| d.insert_temp(id, (text, over)));
-        out
-    }
-
     /// A group, a keyed variant or a list of rows: a sub-heading (with a checkbox when optional),
     /// then its fields, indented.
     fn section(&mut self, ui: &mut Ui, f: &Field, obj: &mut Map<String, Value>, path: &str, depth: usize) {
@@ -1161,7 +1305,12 @@ impl Form<'_> {
                 }
                 Kind::Variants { tag, variants } => {
                     let Some(Value::Object(child)) = obj.get_mut(f.key) else {
-                        self.json_only(ui);
+                        if let Some(v) = obj.get(f.key).cloned()
+                            && self.unshown(ui, &v).is_some()
+                        {
+                            obj.remove(f.key);
+                            self.touch(path);
+                        }
                         return;
                     };
                     let current = child.get(tag).and_then(Value::as_str).map(str::to_string);
@@ -1183,9 +1332,14 @@ impl Form<'_> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn rows(&mut self, ui: &mut Ui, fields: &[Field], max: usize, obj: &mut Map<String, Value>, key: &str, path: &str, depth: usize) {
+    fn rows(&mut self, ui: &mut Ui, fields: &'static [Field], max: usize, obj: &mut Map<String, Value>, key: &str, path: &str, depth: usize) {
         let Some(Value::Array(list)) = obj.get_mut(key) else {
-            self.json_only(ui);
+            if let Some(v) = obj.get(key).cloned()
+                && self.unshown(ui, &v).is_some()
+            {
+                obj.remove(key);
+                self.touch(path);
+            }
             return;
         };
         let mut remove = None;
@@ -1209,6 +1363,33 @@ impl Form<'_> {
             self.touch(path);
         }
     }
+}
+
+/// What Pick takes for a topology name: the body and name of the one `entity` selected, of
+/// `body` when the form names one; otherwise why it takes nothing.
+fn topology_pick(selection: Option<&crate::selection::Selection>, entity: schema::Side3, body: Option<&str>) -> Result<(String, String), String> {
+    let kind = entity.label();
+    let one = |body| selection.and_then(|s| crate::selection::topology_name(s, kind, body));
+    match (one(body), body) {
+        (Some(found), _) => Ok(found),
+        (None, Some(body)) => match one(None) {
+            Some((other, name)) => Err(format!("{name} is a {kind} of {other}; this takes a {kind} of {body}")),
+            None => Err(format!("Select one {kind} of {body} in the view")),
+        },
+        (None, None) => Err(format!("Select one {kind} in the view")),
+    }
+}
+
+/// A label list's choice of the labels picked in the viewport, and of labels typed.
+const SELECTION: &str = "Selection";
+const TYPED: &str = "Labels";
+/// What a label list's text shows while empty.
+const LABELS_HINT: &str = "1, 2, 10-20";
+
+/// `s` with its first letter upper-cased: a hint ("all") as a choice ("All").
+fn capitalised(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
 }
 
 /// A vector component's caption: axis names upper-cased ("x" → "X"), others as they are ("E1").
@@ -1245,8 +1426,8 @@ fn plural(label: &str) -> String {
 }
 
 /// Fill each empty required reference that has one obvious candidate, `pick(collection)` (the
-/// browser's selection, or a collection's only item). The form starts with it, so the fields and
-/// the JSON view agree. Returns whether anything was filled.
+/// browser's selection, or a collection's only item): the form starts with it filled in.
+/// Returns whether anything was filled.
 pub fn preselect(fields: &[Field], obj: &mut Map<String, Value>, pick: &dyn Fn(Collection) -> Option<String>) -> bool {
     preselect_in(fields, obj, pick, 0)
 }
@@ -1288,7 +1469,7 @@ fn preselect_in(fields: &[Field], obj: &mut Map<String, Value>, pick: &dyn Fn(Co
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use egui::Color32;
 
     use super::*;
@@ -1336,6 +1517,338 @@ mod tests {
                 assert_eq!(params, before, "{}", c.id);
             }
         }
+    }
+
+    /// Which alternative each choice point of a form (a [`Kind::Variants`], a [`Kind::Either`], the
+    /// two sides of a [`Kind::NameOr`] or [`Kind::NameOrValue`]) takes in the next example, by the
+    /// point's path: each takes its alternatives in turn, then the first.
+    #[derive(Default)]
+    struct Cover {
+        next: BTreeMap<String, usize>,
+        /// Whether the example being built took an alternative no earlier one took.
+        fresh: bool,
+        /// The shapes the example being built holds: each kind of field, and which side of a
+        /// choice point it took ([`kind_name`] and the `Kind:side` names).
+        shapes: BTreeSet<&'static str>,
+    }
+
+    /// A kind's name, for the shapes an example holds. Every kind is named, so a new one is a
+    /// shape the representative examples must draw.
+    fn kind_name(kind: &Kind) -> &'static str {
+        match kind {
+            Kind::Number { .. } => "Number",
+            Kind::Integer { .. } => "Integer",
+            Kind::Text => "Text",
+            Kind::Path { .. } => "Path",
+            Kind::Bool => "Bool",
+            Kind::Choice(_) => "Choice",
+            Kind::Vector { .. } => "Vector",
+            Kind::Ref(_) => "Ref",
+            Kind::RefList(_) => "RefList",
+            Kind::RefChoices(..) => "RefChoices",
+            Kind::Group(_) => "Group",
+            Kind::Variants { .. } => "Variants",
+            Kind::Either(_) => "Either",
+            Kind::Unit => "Unit",
+            Kind::Rows { .. } => "Rows",
+            Kind::Labels(_) => "Labels",
+            Kind::Points { .. } => "Points",
+            Kind::Multi(_) => "Multi",
+            Kind::NumberOrAuto { .. } => "NumberOrAuto",
+            Kind::PerAxis { .. } => "PerAxis",
+            Kind::Tuple { .. } => "Tuple",
+            Kind::NameOr { .. } => "NameOr",
+            Kind::RefText(_) => "RefText",
+            Kind::Sides(_) => "Sides",
+            Kind::List { .. } => "List",
+            Kind::NameOrValue { .. } => "NameOrValue",
+            Kind::Topology { .. } => "Topology",
+            Kind::Seq(_) => "Seq",
+            Kind::Json => "Json",
+        }
+    }
+
+    impl Cover {
+        fn pick(&mut self, path: &str, alternatives: usize) -> usize {
+            let next = self.next.entry(path.to_owned()).or_default();
+            if *next >= alternatives {
+                return 0;
+            }
+            self.fresh = true;
+            *next += 1;
+            *next - 1
+        }
+    }
+
+    /// The name the form tests offer for an item of `c`.
+    fn name_of(c: Collection) -> String {
+        format!("{}1", c.label())
+    }
+
+    /// A valid value of every kind of field, as a script may give it, so every widget is drawn
+    /// with something in it; `cover` chooses the alternatives.
+    fn example(f: &Field, path: &str, depth: usize, cover: &mut Cover) -> Value {
+        if depth > MAX_DEPTH {
+            return Value::Null;
+        }
+        cover.shapes.insert(kind_name(&f.kind));
+        match f.kind {
+            Kind::Number { min, max, .. } => json!(match (min, max) {
+                (Some(a), Some(b)) => (a + b) / 2.0,
+                (Some(a), None) => a + 1.0,
+                (None, Some(b)) => b - 1.0,
+                (None, None) => 1.0,
+            }),
+            Kind::Integer { min, max } => json!(min.max(1).min(max)),
+            Kind::Text | Kind::Path { .. } | Kind::Topology { .. } => json!("x"),
+            Kind::Ref(c) => json!(name_of(c)),
+            Kind::Bool => json!(true),
+            Kind::Choice(options) => options.first().map_or(Value::Null, |(v, _)| json!(v)),
+            Kind::Vector { labels, .. } => json!(vec![1.0; labels.len()]),
+            Kind::Tuple { labels, .. } => json!(vec![1; labels.len()]),
+            Kind::PerAxis { .. } => json!(1.0),
+            Kind::NumberOrAuto { .. } => json!("auto"),
+            Kind::RefList(c) => json!([name_of(c)]),
+            Kind::RefChoices(c, options) => options.first().map_or(Value::Null, |(v, _)| json!({name_of(c): v})),
+            Kind::RefText(c) => json!({name_of(c): "y"}),
+            Kind::Group(fields) => Value::Object(fields_example(fields, path, depth + 1, cover)),
+            Kind::NameOr { name, fields, .. } => match cover.pick(path, 2) {
+                0 => {
+                    cover.shapes.insert("NameOr:object");
+                    Value::Object(fields_example(fields, path, depth + 1, cover))
+                }
+                _ => {
+                    cover.shapes.insert("NameOr:name");
+                    example(name, &format!("{path}/name"), depth + 1, cover)
+                }
+            },
+            Kind::Variants { tag, variants } => {
+                let Some(v) = variants.get(cover.pick(path, variants.len())) else { return Value::Null };
+                let mut o = fields_example(v.fields, &format!("{path}/{}", v.tag), depth + 1, cover);
+                o.insert(tag.into(), json!(v.tag));
+                Value::Object(o)
+            }
+            Kind::Either(options) => {
+                let Some(o) = options.get(cover.pick(path, options.len())) else { return Value::Null };
+                match o.kind {
+                    Kind::Unit => {
+                        cover.shapes.insert("Either:unit");
+                        json!(o.key)
+                    }
+                    _ => {
+                        cover.shapes.insert("Either:value");
+                        json!({o.key: example(o, &format!("{path}/{}", o.key), depth + 1, cover)})
+                    }
+                }
+            }
+            Kind::Unit => json!(f.key),
+            Kind::Rows { fields, .. } => json!([fields_example(fields, &format!("{path}/0"), depth + 1, cover)]),
+            Kind::Labels(_) => json!([1, 2]),
+            Kind::Sides(side) => json!([{"element": 1, side.key(): 1}]),
+            Kind::Points { columns, .. } => json!([vec![1.0; columns.len()]]),
+            Kind::Multi(options) => options.first().map_or(Value::Null, |(o, _)| json!([schema::multi_value(o)])),
+            Kind::List { item, .. } => json!([example(item, &format!("{path}/0"), depth + 1, cover)]),
+            Kind::NameOrValue { name, value } => match cover.pick(path, 2) {
+                0 => {
+                    cover.shapes.insert("NameOrValue:value");
+                    example(value, &format!("{path}/value"), depth + 1, cover)
+                }
+                _ => {
+                    cover.shapes.insert("NameOrValue:name");
+                    example(name, &format!("{path}/name"), depth + 1, cover)
+                }
+            },
+            Kind::Seq(items) => {
+                json!(items.iter().enumerate().map(|(i, item)| example(item, &format!("{path}/{i}"), depth + 1, cover)).collect::<Vec<_>>())
+            }
+            Kind::Json => json!({"a": 1}),
+        }
+    }
+
+    /// A value for every field of `fields` under `path` (`depth` levels down).
+    fn fields_example(fields: &[Field], path: &str, depth: usize, cover: &mut Cover) -> Map<String, Value> {
+        let mut o = Map::new();
+        for f in fields {
+            match f.kind {
+                // The variant's fields sit in the parent object, beside the tag.
+                Kind::Variants { tag, variants } if f.key.is_empty() => {
+                    cover.shapes.insert("Variants:inline");
+                    let at = format!("{path}/{tag}");
+                    if let Some(v) = variants.get(cover.pick(&at, variants.len())) {
+                        o.insert(tag.into(), json!(v.tag));
+                        o.extend(fields_example(v.fields, &format!("{at}/{}", v.tag), depth + 1, cover));
+                    }
+                }
+                _ => {
+                    o.insert(f.key.into(), example(f, &format!("{path}/{}", f.key), depth, cover));
+                }
+            }
+        }
+        o
+    }
+
+    /// Values for a form that, between them, take every alternative of every choice point (each
+    /// variant, each option, both sides of a name-or), so every kind of field it can show is
+    /// drawn holding a value. Each example takes at least one alternative no earlier one took,
+    /// and a form has finitely many, so the walk ends.
+    pub(crate) fn examples(fields: &[Field]) -> Vec<Map<String, Value>> {
+        shaped_examples(fields).into_iter().map(|(example, _)| example).collect()
+    }
+
+    /// [`examples`], each with the shapes it holds.
+    fn shaped_examples(fields: &[Field]) -> Vec<(Map<String, Value>, BTreeSet<&'static str>)> {
+        let mut cover = Cover::default();
+        let first = fields_example(fields, "", 0, &mut cover);
+        let mut all = vec![(first, std::mem::take(&mut cover.shapes))];
+        loop {
+            cover.fresh = false;
+            let next = fields_example(fields, "", 0, &mut cover);
+            let shapes = std::mem::take(&mut cover.shapes);
+            if !cover.fresh {
+                return all;
+            }
+            all.push((next, shapes));
+        }
+    }
+
+    /// Few examples, over all commands' forms, that between them hold every shape any example
+    /// holds: each kind of field, both sides of every name-or, unit and valued Either options,
+    /// and inline variants. The trunk's no-JSON tests draw these; the heavy ones draw every
+    /// example of every form.
+    pub(crate) fn representatives() -> Vec<(&'static fieldcraft_engine::CommandSpec, Map<String, Value>)> {
+        let mut seen = BTreeSet::new();
+        let mut out = Vec::new();
+        for c in fieldcraft_engine::commands() {
+            let Some(form) = c.form else { continue };
+            for (example, shapes) in shaped_examples(form) {
+                if !shapes.is_subset(&seen) {
+                    seen.extend(shapes);
+                    out.push((c, example));
+                }
+            }
+        }
+        out
+    }
+
+    /// The representatives hold every shape any example of any form holds.
+    #[test]
+    fn the_representatives_hold_every_shape() {
+        let every: BTreeSet<&str> =
+            fieldcraft_engine::commands().iter().filter_map(|c| c.form).flat_map(shaped_examples).flat_map(|(_, shapes)| shapes).collect();
+        let mut held = BTreeSet::new();
+        let forms: BTreeMap<&str, &[Field]> = fieldcraft_engine::commands().iter().filter_map(|c| c.form.map(|f| (c.id, f))).collect();
+        for (c, example) in representatives() {
+            let shapes = shaped_examples(forms.get(c.id).copied().unwrap_or_default());
+            held.extend(shapes.into_iter().filter(|(e, _)| *e == example).flat_map(|(_, s)| s));
+        }
+        assert_eq!(held, every);
+        for shape in [
+            "Seq",
+            "NameOr:name",
+            "NameOr:object",
+            "NameOrValue:name",
+            "NameOrValue:value",
+            "Either:unit",
+            "Either:value",
+            "Variants",
+            "Variants:inline",
+        ] {
+            assert!(every.contains(shape), "some form holds {shape}");
+        }
+    }
+
+    /// ux1 J2: every field of every command's form, holding a value, is drawn by a widget of its
+    /// kind: never as JSON text, never "set in JSON".
+    #[test]
+    fn every_field_has_a_widget() {
+        let ctx = egui::Context::default();
+        let names = |c: Collection| vec![name_of(c)];
+        let (mut missing, mut invalid) = (Vec::new(), Vec::new());
+        for c in fieldcraft_engine::commands() {
+            let Some(form) = c.form else { continue };
+            for mut params in examples(form) {
+                let problems = messages(form, &params);
+                if !problems.is_empty() {
+                    invalid.push(format!("{} {}: {problems:?}", c.id, Value::Object(params.clone())));
+                }
+                let mut outcome = Outcome::default();
+                let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let touched = BTreeSet::new();
+                    let cx = Context {
+                        units: &mm(),
+                        names: &names,
+                        salt: Id::unique(c.id),
+                        touched: &touched,
+                        attempted: false,
+                        refused: None,
+                        problems: &[],
+                        picked: Picked::default(),
+                        selection: None,
+                    };
+                    ui.vertical(|ui| {
+                        ui.set_max_width(crate::context::inner_width());
+                        outcome = show(ui, &Tokens::get(false), &cx, form, &mut params);
+                    });
+                });
+                let json_text = out.shapes.iter().any(|c| matches!(&c.shape, egui::Shape::Text(t) if t.galley.text().contains(['{', '[', '"'])));
+                out.textures_delta.clear();
+                if outcome.unshown > 0 || json_text {
+                    missing.push(format!(
+                        "{} {} ({} unshown{})",
+                        c.id,
+                        Value::Object(params),
+                        outcome.unshown,
+                        if json_text { ", JSON text" } else { "" }
+                    ));
+                }
+            }
+        }
+        assert!(invalid.is_empty(), "examples the form refuses:\n{}", invalid.join("\n"));
+        assert!(missing.is_empty(), "{missing:#?}");
+    }
+
+    /// A camera's distance must be above zero: the form refuses 0, as `view.save` and
+    /// `view.image.save` do, and takes any length above it.
+    #[test]
+    fn a_camera_distance_of_zero_is_refused() {
+        for id in ["view.save", "view.image.save"] {
+            let form = fieldcraft_engine::find_command(id).and_then(|c| c.form).unwrap();
+            let at = |distance: f64| {
+                let p = json!({"name": "V", "path": "v.png", "camera": {"yaw": 0, "pitch": 0, "distance": distance}});
+                messages(form, &p.as_object().cloned().unwrap_or_default()).into_iter().map(|(path, _)| path).collect::<Vec<_>>()
+            };
+            assert_eq!(at(0.0), ["camera/distance"], "{id}");
+            assert!(at(1e-6).is_empty() && at(300.0).is_empty(), "{id}: {:?} {:?}", at(1e-6), at(300.0));
+        }
+    }
+
+    /// ux1 J2: a script's value a widget cannot show (text where a number goes, an object for a
+    /// point) is worded read-only with Reset, which clears it to the default; never JSON.
+    #[test]
+    fn a_value_no_widget_shows_is_worded_with_reset() {
+        let (_, changed, texts) = edit(WALLS, json!({"walls": {"x": 1}}), None, None);
+        assert!(!changed && texts.iter().any(|t| t == "Reset") && !texts.iter().any(|t| t.contains(['{', '"'])), "{texts:?}");
+        let (after, changed, _) = edit(WALLS, json!({"walls": {"x": 1}}), None, Some("Reset"));
+        assert!(changed && after.get("walls").is_none(), "{after}");
+        const POINT: &[Field] = &[schema::xyz("at", "At", schema::Dim::Length)];
+        let (_, _, texts) = edit(POINT, json!({"at": {"x": [1, 2]}}), None, None);
+        assert!(texts.iter().any(|t| t == "Reset") && !texts.iter().any(|t| t.contains(['{', '[', '"'])), "{texts:?}");
+        let (after, changed, _) = edit(POINT, json!({"at": "here"}), None, Some("Reset"));
+        assert!(changed && after.get("at").is_none(), "{after}");
+    }
+
+    /// ux1 J2: an optional label list is a choice first: what leaving it empty means (mesh.quality's
+    /// "All" elements), the selection, or typed labels; no text box asks for the word "all".
+    #[test]
+    fn a_label_list_is_a_choice_of_all_selection_or_labels() {
+        let all = drawn("mesh.quality", &mm(), json!({}));
+        let lines: Vec<&str> = all.lines().collect();
+        assert!(lines.contains(&"All") && !lines.contains(&"all") && !lines.contains(&"1, 2, 10-20"), "{all}");
+        let typed = drawn("mesh.quality", &mm(), json!({"elements": [1, 2, 3, 9]}));
+        assert!(typed.lines().any(|l| l == "Labels") && typed.contains("1-3, 9"), "{typed}");
+        // A required list has no empty choice: its labels, with the field's own hint.
+        let element = drawn("mesh.element.add", &mm(), json!({}));
+        assert!(element.lines().any(|l| l == "Labels") && element.contains("labels in order"), "{element}");
     }
 
     /// Every form's labels show whole, wrapped at most onto two lines, with their marks inside
@@ -1495,6 +2008,40 @@ mod tests {
         assert!(draw(&touched, false, None).contains("Material: choose a material"));
         let refused = draw(&none, false, Some(("name", "Material: names no material")));
         assert!(refused.contains("Material: names no material") && !refused.contains("choose a material"), "{refused}");
+    }
+
+    /// A [`Kind::Seq`] waits for every entry: the entries given so far stay with the form's
+    /// widgets (shown), and the field stays out of the parameters until the list is whole.
+    #[test]
+    fn a_seq_waits_for_every_entry() {
+        const ENTRIES: &[Field] = &[schema::int("", "Block", 0, 9), schema::int("", "Face", 1, 6)];
+        const FORM: &[Field] = &[schema::seq("from", "From", ENTRIES)];
+        let ctx = egui::Context::default();
+        let salt = Id::unique("t");
+        // The block chosen, the face not yet: as the widgets leave it after a first entry.
+        ctx.data_mut(|d| d.insert_temp(salt.with(("seq", "from")), vec![json!(7), Value::Null]));
+        let mut params = Map::new();
+        let names = |_: Collection| Vec::new();
+        let touched = BTreeSet::new();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let cx = Context {
+                units: &mm(),
+                names: &names,
+                salt,
+                touched: &touched,
+                attempted: false,
+                refused: None,
+                problems: &[],
+                picked: Picked::default(),
+                selection: None,
+            };
+            show(ui, &Tokens::get(false), &cx, FORM, &mut params);
+        });
+        out.textures_delta.clear();
+        let texts: Vec<String> =
+            out.shapes.iter().filter_map(|c| if let egui::Shape::Text(t) = &c.shape { Some(t.galley.text().to_string()) } else { None }).collect();
+        assert!(texts.iter().any(|t| t == "7"), "the block given is shown: {texts:?}");
+        assert!(!params.contains_key("from"), "no half list in the parameters: {params:?}");
     }
 
     /// The text a form draws, with `units`.
@@ -1786,6 +2333,46 @@ mod tests {
         assert!(!changed && after.get("face").is_none(), "a face of another body: {after}");
         let (after, changed, _) = edit(FACE, json!({}), None, Some("Pick"));
         assert!(!changed && after.get("face").is_none(), "{after}");
+    }
+
+    /// A topology name drawn inside another field (mesh.hex.project's Fixed faces, a face
+    /// target's Body faces) takes its body from the form: Pick refuses a face of another body and
+    /// writes nothing, takes a face of the form's body, and with no body named also fills the
+    /// form's Body (review no-JSON 1).
+    #[test]
+    fn a_nested_topology_name_is_picked_from_the_forms_body() {
+        use crate::selection::{Item, Mode, Selection};
+        let form = fieldcraft_engine::find_command("mesh.hex.project").and_then(|c| c.form).expect("mesh.hex.project has a form");
+        let selected = |body: &str| {
+            let mut sel = Selection::default();
+            sel.apply([Item::Geometry(fieldcraft_model::GeometryRef::face(body, "F3").unwrap())], Mode::Replace);
+            sel
+        };
+        let (plate, ball) = (selected("Plate"), selected("Ball"));
+        for start in [json!({"body": "Ball", "fixed": ["F1"]}), json!({"body": "Ball", "faces": [{"to": ["F1"]}]})] {
+            let (after, changed, _) = edit(form, start.clone(), Some(&plate), Some("Pick"));
+            assert!(!changed && after == start, "a face of Plate in a form on Ball: {after}");
+        }
+        let (after, changed, _) = edit(form, json!({"body": "Ball", "fixed": ["F1"]}), Some(&ball), Some("Pick"));
+        assert!(changed && after["fixed"] == json!(["F3"]) && after["body"] == "Ball", "{after}");
+        let (after, changed, _) = edit(form, json!({"body": "Ball", "faces": [{"to": ["F1"]}]}), Some(&ball), Some("Pick"));
+        assert!(changed && after["faces"][0]["to"] == json!(["F3"]) && after["body"] == "Ball", "{after}");
+        let (after, changed, _) = edit(form, json!({"fixed": ["F1"]}), Some(&plate), Some("Pick"));
+        assert!(changed && after["fixed"] == json!(["F3"]) && after["body"] == "Plate", "the form's Body takes the face's: {after}");
+    }
+
+    /// A Pick that takes nothing says why: the selected face is of another body, or no one face
+    /// is selected.
+    #[test]
+    fn a_refused_pick_says_why() {
+        use crate::selection::{Item, Mode, Selection};
+        let mut sel = Selection::default();
+        sel.apply([Item::Geometry(fieldcraft_model::GeometryRef::face("Plate", "F3").unwrap())], Mode::Replace);
+        let face = schema::Side3::Face;
+        assert_eq!(topology_pick(Some(&sel), face, Some("Ball")), Err("F3 is a face of Plate; this takes a face of Ball".to_string()));
+        assert_eq!(topology_pick(None, face, Some("Ball")), Err("Select one face of Ball in the view".to_string()));
+        assert_eq!(topology_pick(None, face, None), Err("Select one face in the view".to_string()));
+        assert_eq!(topology_pick(Some(&sel), face, None), Ok(("Plate".to_string(), "F3".to_string())));
     }
 
     fn mm() -> DisplaySystem {

@@ -470,22 +470,57 @@ fn property_grid(ui: &mut egui::Ui, id: &str, rows: &[(String, String)]) {
     });
 }
 
-/// A field's value as short text: numbers and strings as they are, long lists as their length
-/// and first items, other lists and objects as compact JSON (long ones shortened).
+/// A field's value as short words, never JSON: numbers as [`crate::describe::quantity`], strings
+/// as they are, lists as their items (a list of lists as its rows in parentheses; a list of
+/// objects, or one nested too deep, as its count), objects as `key value` pairs; long text is
+/// shortened.
 pub(crate) fn value_text(v: &Value) -> String {
     const MAX: usize = 160;
-    /// Lists longer than this show their length and first items.
-    const LIST: usize = 12;
+    let s = words(v, 0);
+    // An object's text starts with its first key: a sentence.
     let s = match v {
-        Value::String(s) => s.clone(),
-        Value::Null => "—".into(),
-        Value::Array(a) if a.len() > LIST => {
-            let first: Vec<String> = a.iter().take(LIST).map(Value::to_string).collect();
-            format!("{} items: {}, …", a.len(), first.join(", "))
+        Value::Object(_) => {
+            let mut c = s.chars();
+            c.next().map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
         }
-        other => other.to_string(),
+        _ => s,
     };
     if s.chars().count() > MAX { format!("{}…", s.chars().take(MAX).collect::<String>()) } else { s }
+}
+
+/// Lists longer than this show their length and first items.
+const LIST: usize = 12;
+/// Nesting worded at most; a deeper list or object is given by its count.
+const DEPTH: usize = 2;
+
+fn words(v: &Value, depth: usize) -> String {
+    let count = |n: usize, word: &str| if n == 1 { format!("1 {word}") } else { format!("{n} {word}s") };
+    // A nested list or object is bracketed by parentheses, so its commas stay its own.
+    let nested = |x: &Value| match x {
+        Value::Array(a) if !a.is_empty() && depth + 1 < DEPTH && !a.iter().any(Value::is_object) => format!("({})", words(x, depth + 1)),
+        Value::Object(o) if !o.is_empty() && depth + 1 < DEPTH => format!("({})", words(x, depth + 1)),
+        _ => words(x, depth + 1),
+    };
+    match v {
+        Value::Null => "—".into(),
+        Value::Bool(b) => (if *b { "yes" } else { "no" }).into(),
+        Value::Number(n) => n.as_f64().map_or_else(|| n.to_string(), crate::describe::quantity),
+        Value::String(s) => s.clone(),
+        Value::Array(a) if a.is_empty() => "none".into(),
+        Value::Array(a) if depth >= DEPTH || a.iter().any(Value::is_object) => count(a.len(), "item"),
+        Value::Array(a) => {
+            let first: Vec<String> = a.iter().take(LIST).map(nested).collect();
+            if a.len() > LIST { format!("{} items: {}, …", a.len(), first.join(", ")) } else { first.join(", ") }
+        }
+        Value::Object(o) if o.is_empty() => "none".into(),
+        Value::Object(o) if depth >= DEPTH => count(o.len(), "field"),
+        // Pairs are split by semicolons, so only an object value needs its parentheses.
+        Value::Object(o) => o
+            .iter()
+            .map(|(k, x)| format!("{} {}", k.replace('_', " "), if x.is_object() { nested(x) } else { words(x, depth + 1) }))
+            .collect::<Vec<_>>()
+            .join("; "),
+    }
 }
 
 #[cfg(test)]
@@ -579,10 +614,24 @@ mod tests {
         assert!(lefts.iter().all(|l| (l - lefts[0]).abs() < 0.5), "{lefts:?}");
     }
 
+    /// Lists and objects read as words, never as JSON.
+    #[test]
+    fn values_are_worded() {
+        assert_eq!(value_text(&json!([1, 2])), "1, 2");
+        assert_eq!(value_text(&json!(true)), "yes");
+        assert_eq!(value_text(&json!([])), "none");
+        assert_eq!(value_text(&json!({"yaw": 30, "pitch_angle": -20})), "Pitch angle −20; yaw 30");
+        assert_eq!(value_text(&json!([[0, 0, 1], [1, 0, 0]])), "(0, 0, 1), (1, 0, 0)");
+        assert_eq!(value_text(&json!([{"a": 1}, {"a": 2}])), "2 items");
+        assert_eq!(value_text(&json!({"to": {"x": 1}, "names": ["A", "B"]})), "Names A, B; to (x 1)");
+        for v in [json!({"a": {"b": {"c": {"d": [1, {"e": null}]}}}}), json!([[[1]]]), json!({"s": "x"})] {
+            let text = value_text(&v);
+            assert!(!text.contains(['{', '}', '[', ']', '"']), "{v} → {text}");
+        }
+    }
     #[test]
     fn long_values_are_shortened() {
         assert_eq!(value_text(&json!("Steel")), "Steel");
-        assert_eq!(value_text(&json!([1, 2])), "[1,2]");
         assert_eq!(value_text(&Value::Null), "—");
         let long = json!((0..500).collect::<Vec<_>>());
         assert!(value_text(&long).starts_with("500 items: 0, 1, 2"));
