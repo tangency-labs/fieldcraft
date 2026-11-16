@@ -9,11 +9,14 @@
 //! opens its menu ([`crate::menu`]: edit, hide, isolate, active in step, delete).
 //!
 //! The tree also shows where the model is in the analysis workflow
-//! ([`fieldcraft_engine::progress`]): each top-level node that is a setup stage carries a mark in
-//! one column at the tree's left edge, so the state of every stage reads down one line (✓ done,
-//! → the next stage, ⚠ when its command cannot run yet), with the reason and the place in its hover, and a node that still lacks what its
-//! stage needs shows a ghost row ("＋ Add material…") that starts the providing command. Optional
-//! stages (seeds and partitions) carry no mark.
+//! ([`fieldcraft_engine::progress`]), as far as it has been reached: a node shows once it holds
+//! items or the workflow reaches its stage (every stage before it, in the checklist's order, done),
+//! so an empty model shows Geometry alone and the setup grows as it is made ([`reached`],
+//! [`shown`]). Each shown node that is a setup stage carries a mark in one column at the tree's
+//! left edge (✓ done, → the next stage, ⚠ when its command cannot run yet), with the reason and
+//! the place in its hover, and a node that still lacks what its stage needs shows a ghost row
+//! ("＋ Add material…") that starts the providing command. Optional stages (seeds and partitions)
+//! carry no mark. Hidden nodes' commands stay on the ribbon and in the command search.
 //!
 //! Rows are the kit's tree rows (`solidcraft_ui_kit::tree_row`), as SolidCraft's browser draws
 //! them; the setup marks' column at their left, the motion arrow on a moving boundary condition's
@@ -113,6 +116,80 @@ pub fn ghost_region(stage: Stage) -> &'static str {
     }
 }
 
+/// The stages the tree shows, in the checklist's order: those the workflow has reached (each
+/// whose earlier stages are done, out of date or optional, up to and including the first one
+/// still to do) and those that already have content ([`has_content`]: done out of order, as a
+/// script may define things in any order, or results kept after an earlier stage was undone). A
+/// stage behind one still to do, with nothing of its own, is ahead of time: it has no mark and no
+/// ghost row.
+fn reached(app: &ModelApp, stages: &[StageState]) -> Vec<StageState> {
+    let mut open = true;
+    stages
+        .iter()
+        .filter(|s| {
+            let done = matches!(s.status, Status::Done | Status::Outdated);
+            let keep = open || done || has_content(app, s.stage);
+            open &= done || s.status == Status::Optional;
+            keep
+        })
+        .cloned()
+        .collect()
+}
+
+/// Whether the tree already lists something of `stage`: its node's items of the stage's kind.
+fn has_content(app: &ModelApp, stage: Stage) -> bool {
+    let m = &app.session.model;
+    let listed = |kind: Def| !kind.names(m).is_empty();
+    match stage {
+        Stage::Geometry => holds(app, "geometry"),
+        Stage::Prepare => !m.seeds().is_empty(),
+        Stage::Mesh => holds(app, "mesh"),
+        Stage::Material => listed(Def::Material),
+        Stage::Sets => listed(Def::Set),
+        Stage::Section => listed(Def::Section),
+        Stage::BoundaryConditions => listed(Def::BoundaryCondition),
+        Stage::Loads => listed(Def::Load),
+        Stage::Step => listed(Def::Step),
+        // Solving and showing results both act on what Results lists.
+        Stage::Solve | Stage::Results => holds(app, "results"),
+    }
+}
+
+/// Whether `node` holds anything the tree lists under it.
+fn holds(app: &ModelApp, node: &str) -> bool {
+    let m = &app.session.model;
+    match node {
+        "geometry" => app.session.design.is_some() || !app.session.surfaces.is_empty() || !geometry_items(m).is_empty(),
+        "mesh" => !m.nodes().is_empty() || !m.seeds().is_empty() || !mesh_items(m).is_empty(),
+        "results" => app.session.result_steps().next().is_some() || !saved_items(app).is_empty(),
+        key => GROUPS.iter().find(|(k, ..)| *k == key).is_some_and(|(_, _, kinds)| !group_items(m, key, kinds).is_empty()),
+    }
+}
+
+/// Whether the tree draws `node`: once it holds items, or once the workflow reaches one of its
+/// stages that the model needs (`reached` from [`reached`]); Interactions and Fluid Domains,
+/// which no model needs, once a step exists.
+fn shown(app: &ModelApp, reached: &[StageState], node: &str) -> bool {
+    let own = node_stages(node);
+    holds(app, node)
+        || if own.is_empty() {
+            !app.session.model.steps().is_empty()
+        } else {
+            reached.iter().any(|s| own.contains(&s.stage) && s.status != Status::Optional)
+        }
+}
+
+/// A shown node's mark and hover, from all of its stages (`stages` the whole checklist, `reached`
+/// what [`reached`] keeps of it): the most pressing reached stage still to do; done only when
+/// every stage the model needs is done, so no mark while one is still ahead of time (Loads & BCs
+/// holding a load while its boundary condition waits for the material).
+fn mark(stages: &[StageState], reached: &[StageState], node: &str) -> Option<(Status, String)> {
+    let own = node_stages(node);
+    let state = node_state(reached, node)?;
+    let ahead = stages.iter().any(|s| own.contains(&s.stage) && s.status != Status::Optional && !reached.iter().any(|r| r.stage == s.stage));
+    (!(ahead && matches!(state.0, Status::Done | Status::Optional))).then_some(state)
+}
+
 /// The stages of `node` still to do: each shows a ghost row, except a blocked one behind an
 /// earlier stage of the same node still to do (Results offers Solve, not Show results, until a
 /// solve).
@@ -129,20 +206,31 @@ fn ghosts<'s>(stages: &'s [StageState], node: &str) -> Vec<&'s StageState> {
     out
 }
 
-/// Each top-level node's setup state for `ui.inspect`: `[{node, state, tip, add: [{stage,
-/// label, command, status}]}]`; `state` is null for nodes that are no setup stage.
+/// Each top-level node as the tree draws it, for `ui.inspect`: `[{node, shown, state, tip, add:
+/// [{stage, label, command, status}]}]`. `shown` is whether the tree draws the node ([`shown`]);
+/// `state` and `tip` are its drawn mark and hover ([`mark`]: null without a mark, for a node
+/// that is no setup stage or not drawn), and `add` its drawn ghost rows (none when not drawn).
 pub fn describe(app: &mut ModelApp) -> Value {
     let stages = app.setup_stages();
+    let reached = reached(app, &stages);
     Value::Array(
         NODES
             .iter()
             .map(|(node, _)| {
-                let state = node_state(&stages, node);
-                let add: Vec<Value> = ghosts(&stages, node)
+                let shown = shown(app, &reached, node);
+                let state = if shown { mark(&stages, &reached, node) } else { None };
+                let drawn = if shown { ghosts(&reached, node) } else { Vec::new() };
+                let add: Vec<Value> = drawn
                     .into_iter()
                     .map(|s| json!({"stage": s.stage, "label": ghost_label(s.stage), "command": s.command, "status": s.status}))
                     .collect();
-                json!({"node": node, "state": state.as_ref().map(|(st, _)| st), "tip": state.map(|(_, tip)| tip), "add": add})
+                json!({
+                    "node": node,
+                    "shown": shown,
+                    "state": state.as_ref().map(|(st, _)| st),
+                    "tip": state.map(|(_, tip)| tip),
+                    "add": add,
+                })
             })
             .collect(),
     )
@@ -703,7 +791,9 @@ struct Row<'a> {
     note: Option<String>,
     selected: bool,
     dim: bool,
-    /// The setup state mark in the left column (top-level nodes).
+    /// The top-level node the row is (`browser:node:<node>` in the kit's registry).
+    node: Option<&'a str>,
+    /// The setup state mark in the left column (top-level nodes; `browser:mark:<node>:<status>`).
     mark: Option<Status>,
     /// The hover text (a setup state's reason and place).
     tip: Option<String>,
@@ -746,6 +836,12 @@ fn draw_row(app: &mut ModelApp, ui: &mut egui::Ui, id: egui::Id, row: &Row) -> R
                 && ui.is_rect_visible(column)
             {
                 paint_mark(ui.painter(), Rect::from_center_size(column.center() + vec2(1.0, 0.0), Vec2::splat(9.0)), status, &t);
+                if let Some(node) = row.node {
+                    solidcraft_ui_registry::publish_handle(&format!("browser:mark:{node}:{}", json_name(&status)), column.center());
+                }
+            }
+            if let Some(node) = row.node {
+                solidcraft_ui_registry::publish_handle(&format!("browser:node:{node}"), column.center());
             }
             kit::tree_row(ui, id, &kit_row)
         })
@@ -962,7 +1058,7 @@ pub(crate) fn panel_bounds(available: Rect, width: f32, gap: f32) -> Rect {
 /// The browser: a card at the top left of the viewport, as SolidCraft's, laid out by the kit's
 /// shared `Container`. It hugs its rows up to the space above History, folds to its
 /// header, is as wide as the user dragged it, and is translucent over the view when the user
-/// chose so. The viewport is drawn under it and keeps the space beside and below it.
+/// chose so. The viewport is drawn under it and keeps the space beside it.
 pub fn browser(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
     let mut acts: Vec<Act> = Vec::new();
@@ -1268,8 +1364,9 @@ fn ghost_rows(app: &mut ModelApp, ui: &mut egui::Ui, stages: &[StageState], node
 
 fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
     let t = Tokens::get(app.ui.dark);
-    let stages = app.setup_stages();
-    let state = |node: &str| node_state(&stages, node).map_or((None, None), |(st, tip)| (Some(st), Some(tip)));
+    let checklist = app.setup_stages();
+    let stages = reached(app, &checklist);
+    let state = |node: &str| mark(&checklist, &stages, node).map_or((None, None), |(st, tip)| (Some(st), Some(tip)));
     let open = |app: &ModelApp, key: &str| app.tree_open.contains(key);
     let name = app.model_name();
     let dirty = app.session.is_dirty();
@@ -1280,152 +1377,162 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
         &Row { icon: Some("ui.views"), label: &name, note: dirty.then(|| "unsaved".into()), ..Default::default() },
     );
     // Geometry.
-    let design = app.session.design.clone();
-    let surfaces: Vec<String> = app.session.surfaces.iter().map(|s| s.name.clone()).collect();
-    let bodies = design.as_ref().map_or(0, |d| d.bodies.len());
-    let (mark, tip) = state("geometry");
-    let r = draw_row(
-        app,
-        ui,
-        egui::Id::unique("fc_row_geometry"),
-        &Row {
-            depth: 1,
-            fold: Some(open(app, "geometry")),
-            eye: Some(app.ui.show_geometry),
-            icon: Some("geometry.open"),
-            label: "Geometry",
-            note: Some(format!("{}", bodies + surfaces.len())),
-            mark,
-            tip,
-            ..Default::default()
-        },
-    );
-    if r.eye {
-        app.ui.show_geometry = !app.ui.show_geometry;
-    } else if r.fold || r.clicked {
-        acts.push(Act::Fold("geometry".into()));
-    }
-    if open(app, "geometry") {
-        if let Some(d) = &design {
-            let label = d.name.clone();
-            draw_row(
-                app,
-                ui,
-                egui::Id::unique("fc_row_design"),
-                &Row { depth: 2, icon: Some("geometry.open"), label: &label, note: Some(format!("{bodies} bodies")), ..Default::default() },
-            );
-            for (i, b) in d.bodies.iter().enumerate() {
-                let row = Row { depth: 3, icon: Some("geometry.bodies"), label: &b.name, ..Default::default() };
-                item_row(app, ui, egui::Id::unique(("fc_row_body", i)), row, Target::Body(b.name.clone()), acts);
-            }
-        }
-        for (i, s) in surfaces.iter().enumerate() {
-            let row = Row { depth: 2, icon: Some("geometry.import.mesh"), label: s, ..Default::default() };
-            item_row(app, ui, egui::Id::unique(("fc_row_surface", i)), row, Target::Surface(s.clone()), acts);
-        }
-        for item in geometry_items(&app.session.model) {
-            item.draw(app, ui, 2, acts);
-        }
-    }
-    ghost_rows(app, ui, &stages, "geometry", acts);
-    // Mesh.
-    let (nodes, elements) = (app.session.model.nodes().len(), app.session.model.elements().len());
-    let (mark, tip) = state("mesh");
-    let r = draw_row(
-        app,
-        ui,
-        egui::Id::unique("fc_row_mesh"),
-        &Row {
-            depth: 1,
-            fold: Some(open(app, "mesh")),
-            eye: Some(app.ui.show_mesh),
-            icon: Some("mesh.tet.generate"),
-            label: "Mesh",
-            note: Some(format!("{elements}")),
-            mark,
-            tip,
-            ..Default::default()
-        },
-    );
-    if r.eye {
-        app.ui.show_mesh = !app.ui.show_mesh;
-    } else if r.fold {
-        acts.push(Act::Fold("mesh".into()));
-    } else if r.clicked {
-        // A click shows how the mesh was made (#343) and opens the node; again, deselects it.
-        if app.selected_mesh {
-            app.selected_mesh = false;
-        } else {
-            app.select_mesh();
-        }
-        if !open(app, "mesh") {
-            acts.push(Act::Fold("mesh".into()));
-        }
-    }
-    if open(app, "mesh") {
+    if shown(app, &stages, "geometry") {
+        let design = app.session.design.clone();
+        let surfaces: Vec<String> = app.session.surfaces.iter().map(|s| s.name.clone()).collect();
+        let bodies = design.as_ref().map_or(0, |d| d.bodies.len());
+        let (mark, tip) = state("geometry");
         let r = draw_row(
             app,
             ui,
-            egui::Id::unique("fc_row_nodes"),
+            egui::Id::unique("fc_row_geometry"),
             &Row {
-                depth: 2,
-                eye: Some(app.ui.show_nodes),
-                icon: Some("mesh.node.add"),
-                label: "Nodes",
-                note: Some(format!("{nodes}")),
+                depth: 1,
+                fold: Some(open(app, "geometry")),
+                eye: Some(app.ui.show_geometry),
+                icon: Some("geometry.open"),
+                label: "Geometry",
+                node: Some("geometry"),
+                note: Some(format!("{}", bodies + surfaces.len())),
+                mark,
+                tip,
                 ..Default::default()
             },
         );
         if r.eye {
-            app.ui.show_nodes = !app.ui.show_nodes;
+            app.ui.show_geometry = !app.ui.show_geometry;
+        } else if r.fold || r.clicked {
+            acts.push(Act::Fold("geometry".into()));
         }
-        let revision = app.session.revision();
-        if app.element_counts.as_ref().is_none_or(|(r, _)| *r != revision) {
-            app.element_counts = Some((revision, app.session.model.element_counts()));
+        if open(app, "geometry") {
+            if let Some(d) = &design {
+                let label = d.name.clone();
+                draw_row(
+                    app,
+                    ui,
+                    egui::Id::unique("fc_row_design"),
+                    &Row { depth: 2, icon: Some("geometry.open"), label: &label, note: Some(format!("{bodies} bodies")), ..Default::default() },
+                );
+                for (i, b) in d.bodies.iter().enumerate() {
+                    let row = Row { depth: 3, icon: Some("geometry.bodies"), label: &b.name, ..Default::default() };
+                    item_row(app, ui, egui::Id::unique(("fc_row_body", i)), row, Target::Body(b.name.clone()), acts);
+                }
+            }
+            for (i, s) in surfaces.iter().enumerate() {
+                let row = Row { depth: 2, icon: Some("geometry.import.mesh"), label: s, ..Default::default() };
+                item_row(app, ui, egui::Id::unique(("fc_row_surface", i)), row, Target::Surface(s.clone()), acts);
+            }
+            for item in geometry_items(&app.session.model) {
+                item.draw(app, ui, 2, acts);
+            }
         }
-        for (kind, n) in app.element_counts.as_ref().map(|(_, c)| c.clone()).unwrap_or_default() {
-            draw_row(
-                app,
-                ui,
-                egui::Id::unique(("fc_row_kind", kind.name())),
-                &Row { depth: 2, swatch: Some(t.element(kind)), label: kind.name(), note: Some(format!("{n}")), ..Default::default() },
-            );
+        ghost_rows(app, ui, &stages, "geometry", acts);
+    }
+    // Mesh.
+    if shown(app, &stages, "mesh") {
+        let (nodes, elements) = (app.session.model.nodes().len(), app.session.model.elements().len());
+        let (mark, tip) = state("mesh");
+        let r = draw_row(
+            app,
+            ui,
+            egui::Id::unique("fc_row_mesh"),
+            &Row {
+                depth: 1,
+                fold: Some(open(app, "mesh")),
+                eye: Some(app.ui.show_mesh),
+                icon: Some("mesh.tet.generate"),
+                label: "Mesh",
+                node: Some("mesh"),
+                note: Some(format!("{elements}")),
+                mark,
+                tip,
+                ..Default::default()
+            },
+        );
+        if r.eye {
+            app.ui.show_mesh = !app.ui.show_mesh;
+        } else if r.fold {
+            acts.push(Act::Fold("mesh".into()));
+        } else if r.clicked {
+            // A click shows how the mesh was made (#343) and opens the node; again, deselects it.
+            if app.selected_mesh {
+                app.selected_mesh = false;
+            } else {
+                app.select_mesh();
+            }
+            if !open(app, "mesh") {
+                acts.push(Act::Fold("mesh".into()));
+            }
         }
-        // Seeds on edges and faces: a click selects the seed (its properties on the right) and its
-        // edge or face in the viewport; a double click or the menu edits or deletes it.
-        let seeds: Vec<(fieldcraft_model::GeometryRef, String)> = app.session.model.seeds().iter().map(|s| (s.on.clone(), seed_note(s))).collect();
-        if !seeds.is_empty() {
+        if open(app, "mesh") {
             let r = draw_row(
                 app,
                 ui,
-                egui::Id::unique("fc_row_seeds"),
+                egui::Id::unique("fc_row_nodes"),
                 &Row {
                     depth: 2,
-                    fold: Some(open(app, "seeds")),
-                    icon: Some("mesh.seed.edge"),
-                    label: "Seeds",
-                    note: Some(format!("{}", seeds.len())),
+                    eye: Some(app.ui.show_nodes),
+                    icon: Some("mesh.node.add"),
+                    label: "Nodes",
+                    note: Some(format!("{nodes}")),
                     ..Default::default()
                 },
             );
-            if r.fold || r.clicked {
-                acts.push(Act::Fold("seeds".into()));
+            if r.eye {
+                app.ui.show_nodes = !app.ui.show_nodes;
             }
-            if open(app, "seeds") {
-                for (i, (edge, note)) in seeds.into_iter().enumerate() {
-                    let label = format!("{} · {}", edge.body, edge.entity.name().unwrap_or_default());
-                    let row = Row { depth: 3, icon: Some("mesh.seed.edge"), label: &label, note: Some(note), ..Default::default() };
-                    item_row(app, ui, egui::Id::unique(("fc_row_seed", i)), row, Target::Seed(edge), acts);
+            let revision = app.session.revision();
+            if app.element_counts.as_ref().is_none_or(|(r, _)| *r != revision) {
+                app.element_counts = Some((revision, app.session.model.element_counts()));
+            }
+            for (kind, n) in app.element_counts.as_ref().map(|(_, c)| c.clone()).unwrap_or_default() {
+                draw_row(
+                    app,
+                    ui,
+                    egui::Id::unique(("fc_row_kind", kind.name())),
+                    &Row { depth: 2, swatch: Some(t.element(kind)), label: kind.name(), note: Some(format!("{n}")), ..Default::default() },
+                );
+            }
+            // Seeds on edges and faces: a click selects the seed (its properties on the right) and its
+            // edge or face in the viewport; a double click or the menu edits or deletes it.
+            let seeds: Vec<(fieldcraft_model::GeometryRef, String)> =
+                app.session.model.seeds().iter().map(|s| (s.on.clone(), seed_note(s))).collect();
+            if !seeds.is_empty() {
+                let r = draw_row(
+                    app,
+                    ui,
+                    egui::Id::unique("fc_row_seeds"),
+                    &Row {
+                        depth: 2,
+                        fold: Some(open(app, "seeds")),
+                        icon: Some("mesh.seed.edge"),
+                        label: "Seeds",
+                        note: Some(format!("{}", seeds.len())),
+                        ..Default::default()
+                    },
+                );
+                if r.fold || r.clicked {
+                    acts.push(Act::Fold("seeds".into()));
+                }
+                if open(app, "seeds") {
+                    for (i, (edge, note)) in seeds.into_iter().enumerate() {
+                        let label = format!("{} · {}", edge.body, edge.entity.name().unwrap_or_default());
+                        let row = Row { depth: 3, icon: Some("mesh.seed.edge"), label: &label, note: Some(note), ..Default::default() };
+                        item_row(app, ui, egui::Id::unique(("fc_row_seed", i)), row, Target::Seed(edge), acts);
+                    }
                 }
             }
+            for item in mesh_items(&app.session.model) {
+                item.draw(app, ui, 2, acts);
+            }
         }
-        for item in mesh_items(&app.session.model) {
-            item.draw(app, ui, 2, acts);
-        }
+        ghost_rows(app, ui, &stages, "mesh", acts);
     }
-    ghost_rows(app, ui, &stages, "mesh", acts);
     // Definitions.
     for (key, label, kinds) in GROUPS {
+        if !shown(app, &stages, key) {
+            continue;
+        }
         let items = group_items(&app.session.model, key, kinds);
         let icon = kinds.first().map(|k| k.icon());
         let eye = eye_flag(&mut app.ui, key).map(|v| *v);
@@ -1440,6 +1547,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
                 eye,
                 icon,
                 label,
+                node: Some(key),
                 note: Some(format!("{}", items.len())),
                 dim: items.is_empty(),
                 mark,
@@ -1462,47 +1570,50 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
         ghost_rows(app, ui, &stages, key, acts);
     }
     // Results.
-    let steps: Vec<(String, bool)> = app.session.result_steps().map(|(n, c)| (n.to_string(), c)).collect();
-    let shown = app.session.results_view.as_ref().map(|v| v.step.clone());
-    let (mark, tip) = state("results");
-    let r = draw_row(
-        app,
-        ui,
-        egui::Id::unique("fc_row_results"),
-        &Row {
-            depth: 1,
-            fold: Some(open(app, "results")),
-            icon: Some("results.contour"),
-            label: "Results",
-            note: Some(format!("{}", steps.len())),
-            dim: steps.is_empty(),
-            mark,
-            tip,
-            ..Default::default()
-        },
-    );
-    if r.fold || r.clicked {
-        acts.push(Act::Fold("results".into()));
-    }
-    if open(app, "results") {
-        for (step, current) in steps {
-            let label = if current { step.clone() } else { format!("{step} (stale)") };
-            let selected = shown.as_deref() == Some(step.as_str());
-            let r = draw_row(
-                app,
-                ui,
-                egui::Id::unique(("fc_row_result", &step)),
-                &Row { depth: 2, icon: Some("results.deformed"), label: &label, selected, dim: !current, ..Default::default() },
-            );
-            if r.clicked {
-                acts.push(Act::ShowResult(step));
+    if shown(app, &stages, "results") {
+        let steps: Vec<(String, bool)> = app.session.result_steps().map(|(n, c)| (n.to_string(), c)).collect();
+        let displayed = app.session.results_view.as_ref().map(|v| v.step.clone());
+        let (mark, tip) = state("results");
+        let r = draw_row(
+            app,
+            ui,
+            egui::Id::unique("fc_row_results"),
+            &Row {
+                depth: 1,
+                fold: Some(open(app, "results")),
+                icon: Some("results.contour"),
+                label: "Results",
+                node: Some("results"),
+                note: Some(format!("{}", steps.len())),
+                dim: steps.is_empty(),
+                mark,
+                tip,
+                ..Default::default()
+            },
+        );
+        if r.fold || r.clicked {
+            acts.push(Act::Fold("results".into()));
+        }
+        if open(app, "results") {
+            for (step, current) in steps {
+                let label = if current { step.clone() } else { format!("{step} (stale)") };
+                let selected = displayed.as_deref() == Some(step.as_str());
+                let r = draw_row(
+                    app,
+                    ui,
+                    egui::Id::unique(("fc_row_result", &step)),
+                    &Row { depth: 2, icon: Some("results.deformed"), label: &label, selected, dim: !current, ..Default::default() },
+                );
+                if r.clicked {
+                    acts.push(Act::ShowResult(step));
+                }
+            }
+            for item in saved_items(app) {
+                item.draw(app, ui, 2, acts);
             }
         }
-        for item in saved_items(app) {
-            item.draw(app, ui, 2, acts);
-        }
+        ghost_rows(app, ui, &stages, "results", acts);
     }
-    ghost_rows(app, ui, &stages, "results", acts);
 }
 
 #[cfg(test)]
@@ -1692,7 +1803,162 @@ pub(crate) mod tests {
         app.run("solve.run", json!({})).unwrap();
         assert!(marks(&mut app).iter().all(|(_, st, add)| matches!(st, None | Some(Done)) && add.is_empty()), "{:?}", marks(&mut app));
         let v = describe(&mut app);
-        assert_eq!(v[2], json!({"node": "sets", "state": "done", "tip": "Done", "add": []}));
+        assert_eq!(v[2], json!({"node": "sets", "shown": true, "state": "done", "tip": "Done", "add": []}));
+    }
+
+    /// The nodes `ui.inspect` reports as drawn.
+    fn shown_nodes(app: &mut ModelApp) -> Vec<String> {
+        let v = describe(app);
+        v.as_array().into_iter().flatten().filter(|n| n["shown"] == json!(true)).filter_map(|n| n["node"].as_str().map(str::to_string)).collect()
+    }
+
+    /// The ghost rows a drawn frame placed (`browser/add/<stage>`).
+    fn drawn_ghosts(app: &mut ModelApp) -> Vec<&'static str> {
+        let ctx = egui::Context::default();
+        settle(app, &ctx, vec2(1400.0, 1400.0));
+        let mut out: Vec<&'static str> = app.layout.keys().copied().filter(|k| k.starts_with("browser/add/")).collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Open the plate design, written to `test`'s own scratch folder (removed once read), so tests
+    /// running side by side never remove each other's.
+    fn open_plate(app: &mut ModelApp, test: &str) {
+        let dir = std::env::temp_dir().join(format!("fieldcraft-browser-plate-{test}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let design = dir.join("plate.solidcraft");
+        std::fs::write(&design, fieldcraft_geometry::sample::plate_design(&fieldcraft_geometry::sample::Plate::default()).unwrap()).unwrap();
+        app.run("geometry.open", json!({"path": design.to_string_lossy()})).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Tet-mesh the open design's first body.
+    fn mesh_plate(app: &mut ModelApp) {
+        let body = app.session.design.as_ref().unwrap().bodies[0].name.clone();
+        app.run("mesh.tet.generate", json!({"body": body, "tolerance": 2.0})).unwrap();
+    }
+
+    /// What a drawn frame shows of the top-level nodes, as the frame published it in the kit's
+    /// registry: each node drawn (`browser:node:<node>`), with the mark painted beside it
+    /// (`browser:mark:<node>:<status>`), if any.
+    fn drawn_marks(app: &mut ModelApp) -> Vec<(String, Option<String>)> {
+        let ctx = egui::Context::default();
+        settle(app, &ctx, vec2(1400.0, 1400.0));
+        let marks = solidcraft_ui_registry::handles("browser:mark:");
+        solidcraft_ui_registry::handles("browser:node:")
+            .into_iter()
+            .map(|(handle, _)| {
+                let node = handle.trim_start_matches("browser:node:").to_string();
+                let prefix = format!("browser:mark:{node}:");
+                let mark = marks.iter().find_map(|(m, _)| m.strip_prefix(prefix.as_str()).map(str::to_string));
+                (node, mark)
+            })
+            .collect()
+    }
+
+    /// `ui.inspect`'s `browser` reports the tree as the last frame drew it: the nodes drawn, the
+    /// mark beside each, and as `add` exactly the ghost rows drawn (each at its
+    /// `browser/add/<stage>` region); a node not drawn reports no state and no ghost rows.
+    fn inspect_matches_frame(app: &mut ModelApp) {
+        let drawn = drawn_marks(app);
+        let mut ghosts: Vec<String> = app.layout.keys().filter(|k| k.starts_with("browser/add/")).map(|k| k.to_string()).collect();
+        ghosts.sort_unstable();
+        let v = describe(app);
+        let mut adds: Vec<String> = Vec::new();
+        for n in v.as_array().into_iter().flatten() {
+            let node = n["node"].as_str().unwrap_or_default();
+            let mark = drawn.iter().find(|(d, _)| d == node).map(|(_, m)| m.clone());
+            assert_eq!(n["shown"].as_bool(), Some(mark.is_some()), "{node} drawn: {drawn:?} {n}");
+            assert_eq!(n["state"].as_str().map(str::to_string), mark.flatten(), "{node}'s mark: {drawn:?} {n}");
+            for a in n["add"].as_array().into_iter().flatten() {
+                adds.push(format!("browser/add/{}", a["stage"].as_str().unwrap_or_default()));
+            }
+        }
+        adds.sort_unstable();
+        assert_eq!(adds, ghosts, "ui.inspect's ghost rows are the drawn ones: {v}");
+    }
+
+    /// The tree shows the setup as it is reached (owner, 2026-11-15: "They should appear as we
+    /// set them"): an empty model shows Geometry and its ghost row only, without a row of
+    /// warnings; opening a design brings Mesh, meshing brings the material; an opened sample
+    /// shows every node it holds. `ui.inspect` reports each state as drawn.
+    #[test]
+    fn nodes_appear_as_the_setup_reaches_them() {
+        let mut app = ModelApp::new(Session::default());
+        assert_eq!(drawn_ghosts(&mut app), ["browser/add/geometry"]);
+        assert_eq!(shown_nodes(&mut app), ["geometry"]);
+        assert_eq!(drawn_marks(&mut app), [("geometry".to_string(), Some("next".to_string()))]);
+        inspect_matches_frame(&mut app);
+
+        open_plate(&mut app, "nodes_appear_as_the_setup_reaches_them");
+        assert_eq!(shown_nodes(&mut app), ["geometry", "mesh"]);
+        assert_eq!(drawn_ghosts(&mut app), ["browser/add/mesh"]);
+        inspect_matches_frame(&mut app);
+
+        mesh_plate(&mut app);
+        assert_eq!(shown_nodes(&mut app), ["geometry", "mesh", "materials"]);
+        assert_eq!(drawn_ghosts(&mut app), ["browser/add/material"]);
+        let marks = drawn_marks(&mut app);
+        assert!(marks.iter().all(|(_, st)| st.as_deref() != Some("blocked")), "{marks:?}");
+        inspect_matches_frame(&mut app);
+
+        // With a material, Sets is next (a section needs one): it shows with its ghost row.
+        app.run("model.material.create", json!({"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}})).unwrap();
+        assert_eq!(shown_nodes(&mut app), ["geometry", "mesh", "sets", "materials"]);
+        assert_eq!(drawn_ghosts(&mut app), ["browser/add/sets"]);
+        inspect_matches_frame(&mut app);
+
+        let mut app = ModelApp::new(Session::default());
+        app.run_script(&fieldcraft_engine::sample::cantilever()).unwrap();
+        assert_eq!(shown_nodes(&mut app), NODES.map(|(n, _)| n));
+        assert_eq!(drawn_ghosts(&mut app), ["browser/add/solve"]);
+        inspect_matches_frame(&mut app);
+    }
+
+    /// A stage with content is reached whatever comes before it (review of B1): a solved
+    /// cantilever whose section was deleted after the solve keeps its results, so Results shows
+    /// its "Show results…" row beside the section still to add.
+    #[test]
+    fn a_stage_with_content_is_reached() {
+        let mut app = ModelApp::new(Session::default());
+        app.run_script(&fieldcraft_engine::sample::cantilever()).unwrap();
+        app.run("solve.run", json!({})).unwrap();
+        app.run("results.clear", json!({})).unwrap();
+        app.run("model.section.delete", json!({"name": "Beam"})).unwrap();
+        assert!(app.session.result_steps().next().is_some(), "the solve's results stay");
+        assert_eq!(drawn_ghosts(&mut app), ["browser/add/results", "browser/add/section"]);
+        let v = describe(&mut app);
+        let results = v.as_array().into_iter().flatten().find(|n| n["node"] == "results").cloned().unwrap_or_default();
+        assert_eq!(results["add"][0]["label"], "Show results…", "{results}");
+        inspect_matches_frame(&mut app);
+    }
+
+    /// A node is ✓ only when each of its stages is done (review of B1): the cantilever with its
+    /// load in a step but no material, section or boundary condition holds a load, so Loads & BCs
+    /// shows, but its boundary condition is still ahead of the material: no mark, no ghost row,
+    /// and `ui.inspect` says the same.
+    #[test]
+    fn a_node_is_done_only_when_all_its_stages_are() {
+        let skip = ["model.material.create", "model.section.create", "model.boundary_condition.create", "model.step.create"];
+        let mut script: Vec<Value> = fieldcraft_engine::sample::cantilever()
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| !skip.contains(&c["command"].as_str().unwrap_or_default()))
+            .cloned()
+            .collect();
+        script.push(json!({"command": "model.step.create", "params": {"name": "Load", "procedure": {"type": "static"}, "loads": ["Push"]}}));
+        let mut app = ModelApp::new(Session::default());
+        app.run_script(&Value::Array(script)).unwrap();
+        let stage = |app: &ModelApp, st: Stage| app.session.progress().into_iter().find(|s| s.stage == st).map(|s| s.status);
+        assert_eq!((stage(&app, Stage::BoundaryConditions), stage(&app, Stage::Loads)), (Some(Todo), Some(Done)));
+        let v = describe(&mut app);
+        let loads = v.as_array().into_iter().flatten().find(|n| n["node"] == "loads").cloned().unwrap_or_default();
+        assert_eq!((&loads["shown"], &loads["state"], &loads["add"]), (&json!(true), &Value::Null, &json!([])), "{loads}");
+        let marks = drawn_marks(&mut app);
+        assert_eq!(marks.iter().find(|(n, _)| n == "loads"), Some(&("loads".to_string(), None)), "{marks:?}");
+        assert_eq!(marks.iter().find(|(n, _)| n == "materials"), Some(&("materials".to_string(), Some("next".to_string()))), "{marks:?}");
+        inspect_matches_frame(&mut app);
     }
 
     /// A prescribed displacement and a temperature read apart from a support in the tree (#354,
