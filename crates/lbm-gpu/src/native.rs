@@ -275,6 +275,30 @@ struct SaDevice {
     fixed: bool,
 }
 
+/// A boundary node's side row (lbm.wgsl `node_side`): its Han links, its links to the fluid (one bit
+/// per direction) and its flags (flat, sampled, the stress axes).
+fn node_roles(w: &fieldcraft_lbm::bounce::WallNode) -> (u32, u32, u32) {
+    use fieldcraft_lbm::bounce::{Role, carries};
+    let (mut han, mut to_fluid) = (0u32, 0u32);
+    for (q, role) in w.roles.iter().enumerate().skip(1) {
+        let bit = 1u32 << q;
+        if *role == Role::Han {
+            han |= bit;
+        }
+        if matches!(role, Role::Han | Role::Edge) {
+            to_fluid |= bit;
+        }
+    }
+    let (axis, inward) = (usize::from(w.axis), i32::from(w.inward));
+    let mut flags = u32::from(w.flat) | (u32::from(w.sampled()) << 1);
+    for b in 0..3 {
+        if carries(&w.roles, axis, inward, b) {
+            flags |= 1 << (2 + b);
+        }
+    }
+    (han, to_fluid, flags)
+}
+
 /// The Spalart–Allmaras sub-steps per lattice step, at most (`fieldcraft_lbm::sa::MAX_SUBSTEPS`).
 const SA_MAX_SUBSTEPS: u32 = fieldcraft_lbm::sa::MAX_SUBSTEPS;
 /// The margin of the next chunk's count over the largest coefficient sum of the last.
@@ -956,10 +980,14 @@ impl GpuFlow {
             }
         }
         // Han et al.'s on-node bounce instead: its boundary nodes in `walls` (lbm.wgsl,
-        // `node_bounce`), their flags NODE, and for each the link of its box face's group that
-        // carries what the node took from the fluid (its link from outside the box along the
-        // normal, an open placeholder with no exchange of its own).
+        // `node_bounce`), their flags NODE, and for each where what it took from the fluid goes:
+        // on a plane box face, the link of its face's group from outside the box along the normal
+        // (an open placeholder with no exchange of its own); anywhere else, a slot of its own
+        // after the links. After the nodes' four rows, a side row pair per node (`node_side`):
+        // its roles from the CPU (`bounce::roles`) as bit masks, its cell and flags.
         let mut node_links: Vec<(u32, u32)> = Vec::new();
+        let mut node_sides: Vec<f32> = Vec::new();
+        let mut node_slots = 0u32;
         if let Some(nodes) = flow.wall_nodes() {
             let links = flow.links();
             if nodes.distance() != 1.0 {
@@ -972,12 +1000,6 @@ impl GpuFlow {
                     "not supported yet on the GPU: the Spalart–Allmaras wall law (`wall_model: \"spalart_allmaras_bounce\"`); solve on the CPU (`backend: \"cpu\"`) or use `spalding_bounce`".into(),
                 ));
             }
-            if let Some(w) = nodes.nodes().iter().find(|w| !w.flat || w.group as usize >= BoxFace::ALL.len()) {
-                return Err(Error::Invalid(format!(
-                    "not supported yet on the GPU: Han et al.'s on-node wall (`spalding_bounce`) at an obstacle wall, an edge or a corner (boundary node {}); run on the CPU",
-                    w.cell
-                )));
-            }
             for w in nodes.nodes() {
                 let (cell, axis) = (w.cell as usize, usize::from(w.axis).min(2));
                 let mut normal = [0i32; 3];
@@ -987,14 +1009,27 @@ impl GpuFlow {
                     *u = NODE;
                 }
                 let first = links.partition_point(|l| (l.cell as usize) < cell);
-                let link = links
+                let open = links
                     .get(first..)
                     .unwrap_or_default()
                     .iter()
                     .take_while(|l| l.cell as usize == cell)
                     .position(|l| usize::from(l.q) == q && matches!(l.rule, Rule::Open))
-                    .and_then(|i| u32::try_from(first + i).ok())
-                    .ok_or_else(|| Error::Invalid(format!("boundary node {cell} has no link from outside the box")))?;
+                    .and_then(|i| u32::try_from(first + i).ok());
+                let link = match open.filter(|_| w.flat && (w.group as usize) < BoxFace::ALL.len()) {
+                    Some(l) => l,
+                    None => {
+                        let slot = u32::try_from(links.len())
+                            .ok()
+                            .and_then(|l| l.checked_add(node_slots))
+                            .ok_or_else(|| Error::Limit("too many links and boundary nodes for the GPU solver".into()))?;
+                        node_slots += 1;
+                        slot
+                    }
+                };
+                let (han, to_fluid, flags) = node_roles(w);
+                node_sides.extend([f32::from_bits(han), f32::from_bits(to_fluid), f32::from_bits(w.cell), f32::from_bits(flags)]);
+                node_sides.extend([0.0; 4]);
                 wall_rows.extend(normal.map(|v| v as f32));
                 wall_rows.push(1.0);
                 wall_rows.extend([0.0, 0.0, 0.0, f32::from_bits(w.interior)]);
@@ -1005,6 +1040,8 @@ impl GpuFlow {
         }
         let on_node = !node_links.is_empty();
         let wall_count = wall_rows.len() / WALL_ROW;
+        wall_rows.extend_from_slice(&node_sides);
+        drop(node_sides);
 
         // The links, by cell, and the ones with a force by group.
         let links = flow.links();
@@ -1066,11 +1103,22 @@ impl GpuFlow {
         }
         // The boundary nodes' links: the weights' share of what a node takes is −⅓ n (the
         // populations arriving from the fluid, −n/6, less those sent back, n/6).
-        for (&(group, l), w) in node_links.iter().zip(flow.wall_nodes().map_or(&[][..], |n| n.nodes())) {
+        // On any other node, −2 Σ w_q c_q over its links to the fluid.
+        for (&(group, l), node) in node_links.iter().zip(flow.wall_nodes().map_or(&[][..], |n| n.nodes())) {
             by_group.push((group, l));
             if let Some(g) = weight_forces.get_mut(group as usize) {
-                let axis = usize::from(w.axis).min(2);
-                g[axis] -= f64::from(w.inward.signum()) / 3.0;
+                if node.flat {
+                    let axis = usize::from(node.axis).min(2);
+                    g[axis] -= f64::from(node.inward.signum()) / 3.0;
+                } else {
+                    for (q, role) in node.roles.iter().enumerate() {
+                        if matches!(role, fieldcraft_lbm::bounce::Role::Han | fieldcraft_lbm::bounce::Role::Edge) {
+                            for (a, x) in g.iter_mut().enumerate() {
+                                *x -= 2.0 * w(q as u32) * c(q as u32)[a];
+                            }
+                        }
+                    }
+                }
             }
         }
         by_group.sort();
@@ -1309,7 +1357,7 @@ impl GpuFlow {
             }
             _ => (empty("lbm sa nu_tilde", 16), empty("lbm sa rates", 16), empty("lbm sa cells", 16)),
         };
-        let contrib = empty("lbm link forces", 16 * links.len() as u64);
+        let contrib = empty("lbm link forces", 16 * (links.len() as u64 + u64::from(node_slots)));
         let by_group = storage("lbm links by group", &bytes_u32(&by_group));
         let group_start = storage("lbm group start", &bytes_u32(&group_start));
         let forces = empty("lbm forces", 16 * group_count as u64);
@@ -2081,6 +2129,46 @@ mod tests {
         assert!(r.kernels.iter().all(|(_, b)| !b.is_empty()));
         println!("the busiest kernel binds {} storage buffers", r.storage_buffers);
         assert!((1..=8).contains(&r.storage_buffers), "{}", r.storage_buffers);
+    }
+
+    /// A boundary node's side row holds the CPU's roles exactly: bit q of the Han mask is a Han
+    /// link, of the fluid mask a Han or Edge link (what `on_links` counts in the momentum the node
+    /// takes), and the flags say flat, sampled and the axes it carries, for every normal (and
+    /// none, a concave corner) and a spread of neighbourhoods.
+    #[test]
+    fn a_node_s_side_row_packs_the_cpu_s_roles() {
+        use fieldcraft_lbm::bounce::{Neighbour, Role, WallNode, carries, roles};
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut checked = 0;
+        for normal in [None, Some((0, 1)), Some((0, -1)), Some((1, 1)), Some((1, -1)), Some((2, 1)), Some((2, -1))] {
+            for pattern in 0..64 {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                let kinds: [Neighbour; Q] = std::array::from_fn(|q| match (seed >> (2 * q)) & 3 {
+                    _ if pattern == 0 => Neighbour::Fluid,
+                    0 | 1 => Neighbour::Fluid,
+                    2 => Neighbour::Node,
+                    _ => Neighbour::Wall,
+                });
+                let r = roles(normal, |q| kinds[q]);
+                let (axis, inward) = normal.unwrap_or((1, 1));
+                let w = WallNode::new(7, 9, axis as u8, inward as i8, 0, r);
+                let (han, to_fluid, flags) = node_roles(&w);
+                for (q, role) in r.iter().enumerate().skip(1) {
+                    assert_eq!(han >> q & 1 == 1, *role == Role::Han, "{normal:?} {pattern} q {q}");
+                    assert_eq!(to_fluid >> q & 1 == 1, matches!(role, Role::Han | Role::Edge), "{normal:?} {pattern} q {q}");
+                }
+                assert_eq!(han & 1, 0);
+                assert_eq!(flags & 1 == 1, w.flat);
+                assert_eq!(flags >> 1 & 1 == 1, w.sampled());
+                for b in 0..3 {
+                    assert_eq!(flags >> (2 + b) & 1 == 1, carries(&r, axis, inward, b), "{normal:?} {pattern} axis {b}");
+                }
+                checked += 1;
+            }
+        }
+        println!("{checked} neighbourhoods packed as the CPU's roles");
     }
 
     /// An adapter that allows fewer is refused before anything is built, saying what to do.
