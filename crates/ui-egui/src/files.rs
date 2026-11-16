@@ -23,7 +23,6 @@ use std::task::{Context, Poll, Waker};
 use fieldcraft_model::progress::Progress;
 
 use fieldcraft_engine::Session;
-use fieldcraft_engine::catalogue::Workspace;
 use serde_json::{Value, json};
 use solidcraft_ui_kit as kit;
 
@@ -1150,11 +1149,6 @@ impl ModelApp {
         let old = std::mem::replace(&mut self.session, session);
         off_thread("fieldcraft drop".into(), move || drop(old));
         self.model_changed();
-        // A model without results has nothing for the Results workspace (every tool there would
-        // be greyed): it comes up where its work is, the geometry and mesh or the definitions.
-        if self.ui.workspace == Workspace::Results && self.session.result_steps().next().is_none() {
-            self.ui.select_workspace(if self.session.model.elements().is_empty() { Workspace::Prepare } else { Workspace::Model });
-        }
         self.prebuilt = Some(*o.prebuilt);
         if let Some(p) = &o.recent {
             self.recent.add(p);
@@ -1744,6 +1738,8 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
 pub(crate) mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
+
+    use fieldcraft_engine::catalogue::Workspace;
 
     use super::*;
 

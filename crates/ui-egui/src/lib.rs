@@ -32,6 +32,7 @@ pub mod capture;
 pub mod context;
 pub mod control;
 pub mod describe;
+mod document;
 pub mod elide;
 pub mod feature_graph;
 pub mod fields;
@@ -659,7 +660,7 @@ impl ModelApp {
             custom_titlebar: false,
             integrated_titlebar: false,
             palette_text: String::new(),
-            tree_open: ["mesh", "results"].into_iter().map(str::to_string).collect(),
+            tree_open: document::TREE_OPEN.into_iter().map(str::to_string).collect(),
             timeline_open: Default::default(),
             selected: None,
             selected_seed: None,
@@ -2184,22 +2185,9 @@ impl ModelApp {
     fn frame_new_document(&mut self) {
         if self.framed_document != Some(self.session.opened()) {
             if self.framed_document.is_some() {
-                self.selected = None;
-                self.selected_seed = None;
-                self.selected_mesh = false;
-                self.reply = None;
-                // Picks are by name, and the names of another document are other things.
-                if !self.pick.selection.is_empty() {
-                    self.pick.selection.clear();
-                    self.pick.generation = self.pick.generation.wrapping_add(1);
-                }
+                self.document_replaced();
             }
             self.framed_document = Some(self.session.opened());
-            // The probe and the reaction sums were of the old document's results.
-            self.probe = None;
-            self.reactions = None;
-            self.xy = None;
-            self.path_editor = None;
             self.reframe = framing::Reframe::merge(self.reframe, framing::Reframe::Home);
         }
     }
