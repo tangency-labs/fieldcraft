@@ -77,7 +77,8 @@
 // as written. All its reads are post-collision values the gather takes before the scatter writes.
 // Its momentum exchange is Galilean invariant (Y. Wen et al., JCP 266:161, 2014), with the
 // group's wall velocity. `link_f` then holds per link its moving-wall term [0, L), its q
-// [L, 2L) and per group its wall velocity (4 floats each) from 2L.
+// [L, 2L) and per group its wall velocity (4 floats each) from 2L. With QUADRATIC, `link_u`
+// holds after its L links each link's third node, four to an entry (`link_u[L + l / 4][l % 4]`).
 //
 // Han, Ooka and Kikumoto's on-node wall-function bounce (fieldcraft_lbm::bounce, `ON_NODE`): the
 // outermost cell layer at each wall face is boundary nodes, the wall through their centres. They
@@ -114,6 +115,9 @@ override WALL_BOUNCE: bool = false;
 override ON_NODE: bool = false;
 // Interpolated walls; likewise.
 override INTERPOLATED: bool = false;
+// Some interpolated links take the quadratic form (`link_u` then holds each link's third node
+// after the links); likewise.
+override QUADRATIC: bool = false;
 // The hybrid recursive regularised collision (fieldcraft_lbm::hrr, with REGULARIZED): its σ in
 // `params.les.x`; likewise.
 override HRR: bool = false;
@@ -145,6 +149,9 @@ const RESET: u32 = 0x1000000u;
 // Set in a bounce link's first word when it interpolates where the surface crosses it (with
 // INTERPOLATED; its second word is the next fluid cell away from the wall).
 const INTERP: u32 = 0x2000000u;
+// Set with INTERP when the link takes the quadratic form (with QUADRATIC; fieldcraft_lbm::flow::
+// bouzidi_quadratic): `link_u[L + l / 4][l % 4]` is the cell two links further from the wall.
+const QUAD: u32 = 0x4000000u;
 
 struct Params {
     n: u32,
@@ -2334,6 +2341,14 @@ fn interpolated_back(l: u32, lu: vec4<u32>, q: u32, cell: u32) -> f32 {
     let frac = link_f[params.links + l];
     let out = post(opp(q), cell);
     let du = link_f[l];
+    if QUADRATIC && (lu.x & QUAD) != 0u {
+        // Lagrange interpolation on three nodes in line (walls at rest: no moving-wall term).
+        if frac < 0.5 {
+            let next2 = link_u[params.links + l / 4u][l % 4u];
+            return frac * (1.0 + 2.0 * frac) * out + (1.0 - 4.0 * frac * frac) * post(opp(q), lu.y) - frac * (1.0 - 2.0 * frac) * post(opp(q), next2);
+        }
+        return out / (frac * (2.0 * frac + 1.0)) + (2.0 * frac - 1.0) / frac * post(q, cell) - (2.0 * frac - 1.0) / (2.0 * frac + 1.0) * post(q, lu.y);
+    }
     if frac < 0.5 {
         return 2.0 * frac * out + (1.0 - 2.0 * frac) * post(opp(q), lu.y) + du;
     }

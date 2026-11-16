@@ -26,6 +26,8 @@ const KIND_OPEN: u32 = 3;
 const RESET: u32 = 1 << 24;
 /// Marks a bounce link that interpolates where the obstacle's surface crosses it (see lbm.wgsl).
 const INTERP: u32 = 1 << 25;
+/// Marks an interpolated link that takes the quadratic form (see lbm.wgsl).
+const QUAD: u32 = 1 << 26;
 /// Floats per open cell in the outlet buffer (see lbm.wgsl).
 const OUTLET: usize = fieldcraft_lbm::memory::DEVICE_OUTLET_WORDS;
 /// The flag word of a boundary node of the on-node wall-function bounce: it streams, but it is not
@@ -691,6 +693,8 @@ struct Variant {
     interpolated: bool,
     /// The Spalart–Allmaras model.
     sa: bool,
+    /// Some of them take the quadratic form.
+    quadratic: bool,
 }
 
 /// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
@@ -746,6 +750,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("INTERPOLATED", if variant.interpolated { 1.0 } else { 0.0 }),
                     ("SA", if variant.sa { 1.0 } else { 0.0 }),
                     ("SA_MAX_SUBSTEPS", f64::from(SA_MAX_SUBSTEPS)),
+                    ("QUADRATIC", if variant.quadratic { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
                 ..Default::default()
@@ -1074,15 +1079,17 @@ impl GpuFlow {
 
         // The links, by cell, and the ones with a force by group.
         let links = flow.links();
-        let mut link_u = reserved(4 * links.len(), "links")?;
         // With interpolated walls, also each link's fraction and each group's wall velocity
         // (lbm.wgsl, `link_f`).
         let interpolations = flow.interpolations();
         let interpolated = !interpolations.is_empty();
-        if interpolations.iter().any(|i| i.quadratic) {
-            return Err(Error::Invalid("not supported yet: `walls: \"interpolated_quadratic\"` on the GPU; use `walls: \"interpolated\"`".into()));
-        }
+        let quadratic = interpolations.iter().any(|i| i.quadratic);
+        // Four words per link, then with quadratic links each one's third node, four to an entry
+        // (lbm.wgsl, `link_u`).
+        let next2_words = if quadratic { links.len().div_ceil(4) * 4 } else { 0 };
+        let mut link_u = reserved(4 * links.len() + next2_words, "links")?;
         let mut link_q = reserved(if interpolated { links.len() } else { 0 }, "link fractions")?;
+        let mut link_next2 = reserved(next2_words, "link third nodes")?;
         let mut link_f = reserved(if interpolated { 2 * links.len() + 4 * flow.groups().len() } else { links.len() }, "links")?;
         let mut by_group: Vec<(u32, u32)> = reserved(links.len(), "links by group")?;
         let group_count = flow.groups().len();
@@ -1105,6 +1112,13 @@ impl GpuFlow {
             if interpolated {
                 link_q.push(frac as f32);
             }
+            let (quad, next2) = match link.rule {
+                Rule::Interpolated { slot, .. } => interpolations.get(slot as usize).map_or((false, 0), |i| (i.quadratic, i.next2)),
+                _ => (false, 0),
+            };
+            if quadratic {
+                link_next2.push(next2);
+            }
             // What the weights add to the link's exchange (see `link_forces`).
             let weight = match link.rule {
                 // The interpolated exchange's weights cancel in out − back, as the halfway one's.
@@ -1122,7 +1136,8 @@ impl GpuFlow {
             }
             let reset = if thermal.is_some_and(|t| t.resets(link.cell)) { RESET } else { 0 };
             let interp = if matches!(link.rule, Rule::Interpolated { .. }) { INTERP } else { 0 };
-            link_u.extend_from_slice(&[u32::from(link.q) | (kind << 8) | (q2 << 16) | reset | interp, from, group, link.cell]);
+            let quad = if quad { QUAD } else { 0 };
+            link_u.extend_from_slice(&[u32::from(link.q) | (kind << 8) | (q2 << 16) | reset | interp | quad, from, group, link.cell]);
             link_f.push(du as f32);
         }
         if interpolated {
@@ -1365,6 +1380,8 @@ impl GpuFlow {
             Ok(())
         };
         upload(&pops[0], Q, &|q| fieldcraft_lbm::lattice::W.get(q).copied().unwrap_or(0.0), &|q, cell| flow.population(q, cell))?;
+        link_next2.resize(next2_words, 0);
+        link_u.extend_from_slice(&link_next2);
         let link_u = storage("lbm links", &bytes_u32(&link_u));
         let link_f = storage("lbm link du", &bytes_f32(&link_f));
         let open_u = storage("lbm open cells", &bytes_u32(&open_u));
@@ -1438,6 +1455,7 @@ impl GpuFlow {
             zones: zones.zones > 0,
             interpolated,
             sa: sa_faces.is_some(),
+            quadratic,
         })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
