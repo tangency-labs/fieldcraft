@@ -488,6 +488,9 @@ pub struct ModelApp {
     /// Input injected by the control channel, fed to egui one pointer event per frame.
     pub synthetic: Vec<egui::Event>,
     synthetic_mods: egui::Modifiers,
+    /// This frame's input holds events the control channel injected: what they click opens no
+    /// browser ([`ModelApp::open_link`]).
+    driven: bool,
     /// Files dropped on the window by the control channel (`ui.drop`): the next frame takes them
     /// with the window system's drops.
     pub synthetic_drops: Vec<String>,
@@ -636,6 +639,7 @@ impl ModelApp {
             styled: None,
             synthetic: Vec::new(),
             synthetic_mods: egui::Modifiers::default(),
+            driven: false,
             synthetic_drops: Vec::new(),
             control_rx: None,
             shots: Vec::new(),
@@ -2420,6 +2424,7 @@ impl ModelApp {
     /// began (the OS may keep that release from the app, X11; see the kit's window chrome).
     pub fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         titlebar::release_press_taken_by_os(ctx, raw);
+        self.driven = !self.synthetic.is_empty();
         let Some(first) = self.synthetic.first() else { return };
         let n = match first {
             egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } | egui::Event::MouseWheel { .. } => 1,

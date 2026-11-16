@@ -126,7 +126,13 @@ impl ModelApp {
         r
     }
 
+    /// Open `url` in the browser through the host's opener. A click the control channel sent, or
+    /// a script or agent's request, opens nothing: the status names the link instead.
     pub(crate) fn open_link(&mut self, ctx: &egui::Context, url: &str) {
+        if self.driven || self.session.origin.is_some_and(Origin::automated) {
+            self.set_status(format!("{url} opens in the browser only from a click in the window"), false);
+            return;
+        }
         match &self.services.open_url {
             Some(open) => {
                 if let Err(e) = open(url) {
