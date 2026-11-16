@@ -1,7 +1,8 @@
 //! The application bar: the window's title bar, drawn by the kit's application bar
 //! (`solidcraft_ui_kit::app_bar`) as SolidCraft's is: FieldCraft's mark and name, Home (the
 //! start page), File and its actions (save, undo, redo), a quick-access button (the theme), the
-//! model's document tab, Solve, Settings, Help, Report a bug and the version. The command search
+//! model's document tab, Solve, Settings, Help, the community pills (Donate, Discord:
+//! [`crate::links`]), Report a bug and the version. The command search
 //! is at the end of the ribbon's tab row, SolidCraft's default place for it ([`crate::toolbar`]).
 //! The kit's window chrome (`solidcraft_ui_kit::window_chrome`, [`crate::titlebar`]) makes its
 //! empty space move the window and draws the caption buttons on Windows and Linux; macOS keeps
@@ -36,7 +37,7 @@ const HANDLES: app_bar::Handles<'static> = app_bar::Handles {
     separator: "app_bar:separator:",
     search: "ribbon:search",
     report: "app_bar:report",
-    pill: "app_bar:pill:",
+    pill: crate::links::PILL_PREFIX,
     settings: "app_bar:settings",
     version: "app_bar:version",
 };
@@ -86,6 +87,10 @@ fn fullscreen(ctx: &egui::Context) -> bool {
 fn release_notes() -> String {
     format!("https://github.com/tangency-labs/fieldcraft/releases/tag/v{}", crate::VERSION)
 }
+
+/// The name the kit's bar reads the offer span's drawn width under (`app_bar::show`, SolidCraft's
+/// Update pill's handle): FieldCraft publishes Solve and its Update pill's room there.
+const KIT_OFFER: &str = "titlebar:update";
 
 /// Solve's label and icon: the kit's primary icon-label action.
 const SOLVE: &str = "Solve";
@@ -139,13 +144,18 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
             tip: "Report a bug: draft a GitHub issue with the version, the OS and the last error; nothing is sent until you submit it",
             icon_only: false,
         },
-        pills: Vec::new(),
+        pills: crate::links::pills(&app.prefs, r.width() >= app_bar::PILL_LABEL_MIN),
         search: false,
         search_shortcut: None,
         assistant: false,
         version: Some(app_bar::Version { text: &version, url: &url }),
         handles: HANDLES,
     };
+    // What the bar drew in the kit's offer span last frame (Solve, the Update pill), where the kit
+    // reads it, so it puts the link pills left of it as it does SolidCraft's Update pill.
+    if app.offer_drawn > 0.0 {
+        solidcraft_ui_registry::publish_rect(KIT_OFFER, Rect::from_min_size(pos2(r.left(), r.top()), vec2(app.offer_drawn, r.height())));
+    }
     let out = app_bar::show(ui, &data, r, content);
     // The kit's buttons, where it published them this frame (`ui.inspect`'s layout).
     for region in
@@ -153,6 +163,13 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
     {
         if let Some(rect) = solidcraft_ui_registry::rect_of(region) {
             app.place(region, rect);
+        }
+    }
+    for link in crate::links::LINKS {
+        for region in [link.region, link.hide_region] {
+            if let Some(rect) = solidcraft_ui_registry::rect_of(region) {
+                app.place(region, rect);
+            }
         }
     }
     for action in &out.actions {
@@ -178,8 +195,14 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
             BarAction::Help { .. } => app.toggle_menu("help"),
             BarAction::Report => app.report_bug(None),
             BarAction::Version => ui.ctx().open_url(egui::OpenUrl::new_tab(&url)),
-            // The bar shows no Plugins button and no pills (`plugins: None`, no `pills`).
-            BarAction::Plugins { .. } | BarAction::Pill { .. } | BarAction::HidePill { .. } => {}
+            BarAction::Pill { id } => {
+                if let Some(link) = crate::links::by_id(id) {
+                    app.open_link(ui.ctx(), link.url);
+                }
+            }
+            BarAction::HidePill { id } => app.hide_link(id),
+            // The bar shows no Plugins button (`plugins: None`).
+            BarAction::Plugins { .. } => {}
         }
     }
     let cy = r.center().y;
@@ -203,13 +226,18 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
     // Solve: right-aligned where the kit leaves room for an offer pill, before the right cluster.
     let solve_w = kit::icon_label_width(ui, if out.offer_labeled { SOLVE } else { "" }, Some(SOLVE_ICON), true);
     let solve = Rect::from_center_size(pos2(offer.right() - solve_w / 2.0, cy), vec2(solve_w, k.control_height));
-    let tabs_end = if offer.width() >= solve_w {
+    let drawn_left = if offer.width() >= solve_w {
         solve_button(app, ui, solve, out.offer_labeled);
         app.place("app_bar:solve", solve);
-        solve.left() - 8.0
+        solve.left()
     } else {
-        out.controls_left - 8.0
+        offer.right()
     };
+    // Room the offer span's contents take from its right end, with the gap the kit keeps before
+    // the pills (it adds its own `+ 4`); none when nothing is drawn there.
+    app.offer_drawn = if drawn_left < out.offer.right() { out.offer.right() - drawn_left } else { 0.0 };
+    // The document tab ends before the pills, or before Solve when there are none.
+    let tabs_end = drawn_left.min(out.controls_left) - 8.0;
     document_tab(app, ui, r, out.tabs_start, tabs_end);
     let help_at = solidcraft_ui_registry::rect_of("app_bar:help").unwrap_or(r);
     crate::frame::menu(app, ui, "file", out.file, crate::files::file_menu);
@@ -546,6 +574,127 @@ mod tests {
         let solve = m.get("app_bar:solve").copied().unwrap_or_else(|| panic!("Solve not drawn"));
         let k = solidcraft_theme::Tokens::get();
         assert!((solve.height() - k.control_height).abs() < 0.5, "{solve:?}");
+    }
+
+    /// One frame of the bar in a 1400 × 600 window with `events`, after the control channel's
+    /// synthetic input as the desktop app feeds it; the layout and the kit's registry hold only
+    /// this frame's regions, as [`ModelApp::ui`] leaves them.
+    fn frame(app: &mut ModelApp, ctx: &egui::Context, events: Vec<egui::Event>) -> egui::FullOutput {
+        let mut raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, 600.0))), events, ..Default::default() };
+        app.raw_input_hook(ctx, &mut raw);
+        app.layout.clear();
+        solidcraft_ui_registry::clear_handles();
+        let mut out = ctx.run_ui(raw, |ui| app_bar(app, ui));
+        out.textures_delta.clear();
+        out
+    }
+
+    /// A click of the primary button at `at`, as the window system sends it.
+    fn click(app: &mut ModelApp, ctx: &egui::Context, at: egui::Pos2) -> egui::FullOutput {
+        frame(app, ctx, vec![egui::Event::PointerMoved(at)]);
+        let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        frame(app, ctx, vec![egui::Event::PointerMoved(at), button(true), button(false)])
+    }
+
+    fn region(app: &ModelApp, k: &str) -> Rect {
+        app.layout.get(k).copied().unwrap_or_else(|| panic!("{k} not drawn"))
+    }
+
+    /// Preferences kept in memory, as a host's store keeps them on disk.
+    fn memory_store(saved: &std::rc::Rc<std::cell::RefCell<Option<Vec<u8>>>>) -> crate::files::PrefsStore {
+        let (read, write) = (saved.clone(), saved.clone());
+        crate::files::PrefsStore {
+            load: Box::new(move || read.borrow().clone()),
+            save: Box::new(move |bytes| {
+                *write.borrow_mut() = Some(bytes.to_vec());
+                Ok(())
+            }),
+        }
+    }
+
+    /// Donate, then Discord, sit after the document tab and before Solve and Report a bug, as
+    /// SolidCraft's sit before its Update pill, each a capsule in its service's own colour (the kit's `app_bar::brand`), and `ui.inspect`'s layout names them.
+    #[test]
+    fn the_community_pills_sit_before_report_a_bug_in_their_own_colours() {
+        let mut app = ModelApp::new(Session::default());
+        let ctx = egui::Context::default();
+        frame(&mut app, &ctx, Vec::new());
+        let out = frame(&mut app, &ctx, Vec::new());
+        let (tab, donate, discord) = (region(&app, "document_tab"), region(&app, "app_bar:donate"), region(&app, "app_bar:discord"));
+        let (solve, report) = (region(&app, "app_bar:solve"), region(&app, "app_bar:report"));
+        for (a, b) in [(tab, donate), (donate, discord), (discord, solve), (solve, report)] {
+            assert!(a.right() <= b.left(), "{a:?} before {b:?}: tab {tab:?} donate {donate:?} discord {discord:?} solve {solve:?} report {report:?}");
+        }
+        for (pill, fill) in [(donate, app_bar::brand::KOFI), (discord, app_bar::brand::DISCORD)] {
+            let painted = out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.fill == fill && r.rect.contains_rect(pill)));
+            assert!(painted, "{pill:?} is not filled with {fill:?}");
+        }
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let crate::control::Outcome::Done(reply) = crate::control::handle(&mut app, &ctx, &crate::ControlRequest::new("ui.inspect", json!({}), tx))
+        else {
+            panic!("ui.inspect replies at once")
+        };
+        for k in ["app_bar:donate", "app_bar:discord"] {
+            assert!(reply["result"]["layout"][k].is_array(), "{k} not in ui.inspect's layout");
+        }
+    }
+
+    /// The × on a pill hides that pill alone, and the window remembers it in its preferences: the
+    /// next window does not show it either.
+    #[test]
+    fn hiding_a_pill_hides_only_it_and_is_remembered() {
+        let saved = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let services = || crate::files::Services { prefs: Some(memory_store(&saved)), ..Default::default() };
+        let mut app = ModelApp::new(Session::default()).with_services(services());
+        let ctx = egui::Context::default();
+        frame(&mut app, &ctx, Vec::new());
+        frame(&mut app, &ctx, Vec::new());
+        let hide = region(&app, "app_bar:donate:hide").center();
+        click(&mut app, &ctx, hide);
+        frame(&mut app, &ctx, Vec::new());
+        assert!(!app.layout.contains_key("app_bar:donate") && app.layout.contains_key("app_bar:discord"));
+        let prefs = serde_json::to_value(app.prefs()).unwrap_or_default();
+        assert_eq!((prefs["show_donate_button"].as_bool(), prefs["show_discord_button"].as_bool()), (Some(false), Some(true)), "{prefs}");
+        let mut next = ModelApp::new(Session::default()).with_services(services());
+        let ctx = egui::Context::default();
+        frame(&mut next, &ctx, Vec::new());
+        frame(&mut next, &ctx, Vec::new());
+        assert!(!next.layout.contains_key("app_bar:donate") && next.layout.contains_key("app_bar:discord"));
+    }
+
+    /// A click on a pill opens its page through the host's URL opener; the same click sent over
+    /// the control channel opens nothing.
+    #[test]
+    fn a_click_opens_the_page_and_a_control_channel_click_does_not() {
+        let opened = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let log = opened.clone();
+        let services = crate::files::Services {
+            open_url: Some(Box::new(move |url| {
+                log.borrow_mut().push(url.to_string());
+                Ok(())
+            })),
+            ..Default::default()
+        };
+        let mut app = ModelApp::new(Session::default()).with_services(services);
+        let ctx = egui::Context::default();
+        frame(&mut app, &ctx, Vec::new());
+        frame(&mut app, &ctx, Vec::new());
+        for k in ["app_bar:donate", "app_bar:discord"] {
+            let at = region(&app, k).center();
+            click(&mut app, &ctx, at);
+        }
+        assert_eq!(*opened.borrow(), ["https://ko-fi.com/jyviko", "https://discord.gg/FtU4NQNVDH"]);
+        for k in ["app_bar:donate", "app_bar:discord"] {
+            let at = region(&app, k).center();
+            let (tx, _rx) = std::sync::mpsc::channel();
+            crate::control::handle(&mut app, &ctx, &crate::ControlRequest::new("ui.click", json!({"x": at.x, "y": at.y}), tx));
+            while !app.synthetic.is_empty() {
+                let out = frame(&mut app, &ctx, Vec::new());
+                assert!(!out.platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::OpenUrl(_))), "{k}");
+            }
+            frame(&mut app, &ctx, Vec::new());
+        }
+        assert_eq!(opened.borrow().len(), 2, "{:?}", opened.borrow());
     }
 
     /// The Help menu fits a laptop window (1280 × 800): every row, down to the version, can be
