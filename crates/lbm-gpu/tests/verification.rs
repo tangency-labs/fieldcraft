@@ -329,6 +329,28 @@ fn interpolated_walls_match_the_cpu_fields_and_forces() {
     }
 }
 
+/// The sphere with quadratic interpolated walls (three nodes in line where the cell and the two
+/// behind it are fluid, linear elsewhere), at rest: the GPU's fields and skin force against the
+/// CPU's within the crate's tolerances, every collision and layout. A moving wall keeps the
+/// linear form on both, so only walls at rest are checked here.
+#[test]
+fn quadratic_interpolated_walls_match_the_cpu_fields_and_forces() {
+    for (collision, streaming) in cases() {
+        let (setup, flow) = sphere_flow(collision, WallTreatment::InterpolatedQuadratic, None);
+        let links = flow.wall_links().unwrap();
+        assert!(links.interpolated > 0 && links.halfway() == 0 && links.quadratic > 0, "{links:?}");
+        let fractions = flow.interpolations();
+        assert!(fractions.iter().any(|i| i.quadratic && i.q < 0.5) && fractions.iter().any(|i| i.quadratic && i.q > 0.5));
+        let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+        assert_eq!(Backend::wall_links(&*gpu), Some(links));
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let (fc, fg, dforce) = skin_forces(&mut cpu, &mut gpu);
+        println!("{collision:?} quadratic sphere: CPU/GPU velocity {du:.2e}, density {drho:.2e}; force CPU {fc:?} GPU {fg:?} ({dforce:.2e})");
+        assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
+        assert!(dforce < 5e-5, "{dforce}");
+    }
+}
+
 /// Halfway walls, the default, stay halfway on the GPU: no link interpolates, and the sphere's
 /// GPU drag is the CPU's halfway drag within the tolerance, which interpolated walls move by
 /// far more than it (so the check tells the two apart).

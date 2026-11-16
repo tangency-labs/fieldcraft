@@ -66,7 +66,7 @@ Where the obstacle walls lie is set on the fluid step, beside the collision: `wa
 |---|---|---|
 | `"halfway"` | Halfway between the fluid cell and the solid one: a staircase of cell faces. Mass conservative. | Bodies whose faces lie on cell faces (boxes aligned with the grid), and flows where a fraction of a cell in wall position does not matter. |
 | `"interpolated"` | Where the obstacle's surface crosses each link (below). Not mass conservative. | Curved bodies (cylinders, spheres, pipes, fins) and bodies that do not sit on the grid, when drag, pressure drop or the velocity near the wall matter on a grid you can afford. Keep τ⁺ at 1 or below (the automatic time step does). |
-| `"interpolated_quadratic"` | The same crossings, with the quadratic form below where the flow has three nodes in line. Not mass conservative. CPU only. | The same bodies when the wall is turned against the grid and the flow rate or wall shear matters: a channel at 26.57° or 45° to the grid carries its Poiseuille flow rate within 0.6 % on 8 cells across (the linear form misses by up to 1.6 %). |
+| `"interpolated_quadratic"` | The same crossings, with the quadratic form below where the flow has three nodes in line. Not mass conservative. On the CPU and the GPU. | The same bodies when the wall is turned against the grid and the flow rate or wall shear matters: a channel at 26.57° or 45° to the grid carries its Poiseuille flow rate within 0.6 % on 8 cells across (the linear form misses by up to 1.6 %). |
 
 The box's own faces are halfway with either setting: they lie halfway along their links already.
 Interpolated walls are refused with a wall model (`turbulence.wall_model`) and with a free surface,
