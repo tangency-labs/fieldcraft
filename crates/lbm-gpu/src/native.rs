@@ -746,7 +746,7 @@ impl GpuFlow {
         }
         let zones = crate::zones::append(flow, &mut fluid_u32)?;
         let Some((adapter, tier)) = select::adapter(policy).map_err(gpu_error)? else {
-            return Err(Error::Backend(format!("{}=cpu: no GPU device; solve with `backend: \"cpu\"`", select::ENV)));
+            return Err(Error::NoDevice);
         };
         let info = adapter.get_info();
         if let Some(progress) = fieldcraft_model::progress::current()
