@@ -110,7 +110,10 @@ pub enum Error {
     /// The run diverged.
     #[error("unstable: {0}")]
     Unstable(String),
-    /// A device backend could not be selected, created or stepped.
+    /// Adapter selection returned no device (including when the policy forces CPU).
+    #[error("backend error: no GPU device; solve with `backend: \"cpu\"`")]
+    NoDevice,
+    /// A device backend failed to select, create or step a device.
     #[error("backend error: {0}")]
     Backend(String),
     #[error(transparent)]
