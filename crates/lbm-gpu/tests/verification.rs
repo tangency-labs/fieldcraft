@@ -24,7 +24,7 @@ use common::*;
 use fieldcraft_gpu::select::{Policy, gpu_required};
 use fieldcraft_lbm::backend::Backend;
 use fieldcraft_lbm::statistics::Blocks;
-use fieldcraft_lbm::{Flow, Setup};
+use fieldcraft_lbm::{Error, Flow, Setup};
 use fieldcraft_lbm_gpu::{GpuFlow, Options, Streaming};
 use fieldcraft_model::{
     BoxFace, Collision, Directional, FaceCondition, Fluid, FluidDomain, FluidThermal, GeometryRef, HrrSigma, Material, Model, Outflow, Procedure,
@@ -72,7 +72,7 @@ fn gpu(flow: &Flow, streaming: Streaming) -> Option<Gpu> {
         }
         Err(e) if gpu_required() => panic!("a GPU is required: {e}"),
         // Only a missing device skips: a shader that does not compile is a failure anywhere.
-        Err(e) if e.to_string().contains("no GPU device") => {
+        Err(e @ Error::NoDevice) => {
             println!("skipping: {e}");
             None
         }
@@ -646,7 +646,7 @@ fn concurrent_solves_on_the_shared_device_read_back() {
                 scope.spawn(|| {
                     let mut g = match GpuFlow::with_options(&flow, policy, Options { streaming: Streaming::InPlace, profile: false }) {
                         Ok(g) => g,
-                        Err(e) if !gpu_required() && e.to_string().contains("no GPU device") => return None,
+                        Err(Error::NoDevice) if !gpu_required() => return None,
                         Err(e) => return Some(Err(e.to_string())),
                     };
                     Some((0..40).try_for_each(|_| {

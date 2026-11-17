@@ -3,7 +3,7 @@
 mod common;
 
 use fieldcraft_gpu::select::{Policy, gpu_required};
-use fieldcraft_lbm::{Limits, Setup};
+use fieldcraft_lbm::{Error, Limits, Setup};
 use fieldcraft_lbm_gpu::{GpuFlow, Options};
 
 #[test]
@@ -14,7 +14,7 @@ fn the_passive_conducting_cylinder_matches_the_cpu_during_startup() {
     let mut cpu = fieldcraft_lbm::Flow::new(&setup, &obstacles).unwrap();
     let mut gpu = match GpuFlow::with_options(&cpu, Policy::from_env().unwrap(), Options::default()) {
         Ok(gpu) => gpu,
-        Err(e) if !gpu_required() && e.to_string().contains("no GPU device") => {
+        Err(e @ Error::NoDevice) if !gpu_required() => {
             println!("skipping: {e}");
             return;
         }
