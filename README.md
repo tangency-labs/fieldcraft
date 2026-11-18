@@ -1,5 +1,12 @@
 # FieldCraft
 
+[![Download for macOS](https://img.shields.io/badge/macOS%20%28Apple%20silicon%29-Download-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/tangency-labs/fieldcraft/releases/latest)
+[![Download for Windows](https://img.shields.io/badge/Windows-Download-0078D6?style=for-the-badge)](https://github.com/tangency-labs/fieldcraft/releases/latest)
+[![Download for Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/tangency-labs/fieldcraft/releases/latest)
+[![Try it in your browser](https://img.shields.io/badge/Browser-Try%20it-2ea44f?style=for-the-badge&logo=webassembly&logoColor=white)](https://tangency-labs.github.io/fieldcraft/app/)
+[![Documentation](https://img.shields.io/badge/Docs-Read-4b5563?style=for-the-badge&logo=mdbook&logoColor=white)](https://tangency-labs.github.io/fieldcraft/)
+[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/jyviko)
+
 An open-source, clean-room CAE application in pure Rust: from a parametric SolidCraft part to a
 verified finite element analysis, with tetrahedral and hexahedral meshing, its own implicit,
 explicit, thermal and lattice Boltzmann solvers, and decks for Abaqus, Nastran and LS-DYNA. The
@@ -28,14 +35,7 @@ theory with shear 0.177 mm).
 
 ## Download
 
-[![Download for macOS](https://img.shields.io/badge/macOS-Download-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/tangency-labs/fieldcraft/releases/latest)
-[![Download for Windows](https://img.shields.io/badge/Windows-Download-0078D6?style=for-the-badge)](https://github.com/tangency-labs/fieldcraft/releases/latest)
-[![Download for Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/tangency-labs/fieldcraft/releases/latest)
-[![Try it in your browser](https://img.shields.io/badge/Browser-Try%20it-2ea44f?style=for-the-badge&logo=webassembly&logoColor=white)](https://tangency-labs.github.io/fieldcraft/app/)
-[![Documentation](https://img.shields.io/badge/Docs-Read-4b5563?style=for-the-badge&logo=mdbook&logoColor=white)](https://tangency-labs.github.io/fieldcraft/)
-[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/jyviko)
-
-- **macOS:** open the `.dmg` and drag FieldCraft into Applications (Apple silicon and Intel).
+- **macOS:** open the `.dmg` and drag FieldCraft into Applications (Apple silicon).
 - **Windows:** unzip and run `fieldcraft.exe`.
 - **Linux:** the `.AppImage` (allow it to run as a program), or the `.tar.gz`.
 - **Browser:** [try it at tangency-labs.github.io/fieldcraft/app](https://tangency-labs.github.io/fieldcraft/app/), no install.
