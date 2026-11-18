@@ -674,6 +674,9 @@ fn outputs_never_replace_a_model_or_a_design() {
     std::fs::write(&design, b"{\n  \"format\": \"solidcraft/21\",\n  \"features\": []\n}").unwrap();
     let named_design = dir.join("empty.SolidCraft");
     std::fs::write(&named_design, b"").unwrap();
+    // Newer SolidCraft saves designs as `.sc`, not always JSON: known by the name alone.
+    let sc_design = dir.join("bracket.SC");
+    std::fs::write(&sc_design, b"").unwrap();
     let named_model = dir.join("blank.FIELDCRAFT");
     std::fs::write(&named_model, b"").unwrap();
     for (path, kind) in [
@@ -682,6 +685,7 @@ fn outputs_never_replace_a_model_or_a_design() {
         (&named_model, "FieldCraft model"),
         (&design, "SolidCraft design"),
         (&named_design, "SolidCraft design"),
+        (&sc_design, "SolidCraft design"),
     ] {
         assert_eq!(protected_kind(path), Some(kind), "{}", path.display());
         let before = std::fs::read(path).unwrap();

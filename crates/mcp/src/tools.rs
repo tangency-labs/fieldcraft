@@ -165,7 +165,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "open",
             "Open a file",
             "Open by extension: a .fieldcraft model (file.open: replaces the model; its design and meshes open again), a \
-             SolidCraft design .solidcraft (geometry.open: its bodies become the geometry; `model` \"keep\", the default, \
+             SolidCraft design .sc or .solidcraft (geometry.open: its bodies become the geometry; `model` \"keep\", the default, \
              keeps the mesh and definitions for a reopen after an edit, \"new\" starts a new model; the reply's `related` \
              and `stale` say what no longer resolves on another part) or a face-tagged .3mf mesh (geometry.import.mesh: \
              added as a surface).",
@@ -507,14 +507,14 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
             let ext = Path::new(path).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
             let command = match ext.as_deref() {
                 Some("fieldcraft") => "file.open",
-                Some("solidcraft") => "geometry.open",
+                Some("sc" | "solidcraft") => "geometry.open",
                 Some("3mf") => "geometry.import.mesh",
-                _ => return Err("open: a .fieldcraft model, a .solidcraft design or a .3mf mesh".into()),
+                _ => return Err("open: a .fieldcraft model, a .sc or .solidcraft design or a .3mf mesh".into()),
             };
             let mut params = json!({"path": path});
             if let Some(model) = a.get("model").filter(|m| !m.is_null()) {
                 if command != "geometry.open" {
-                    return Err("open: `model` applies to a .solidcraft design only".into());
+                    return Err("open: `model` applies to a .sc or .solidcraft design only".into());
                 }
                 params["model"] = model.clone();
             }
