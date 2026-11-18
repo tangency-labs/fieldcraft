@@ -33,6 +33,7 @@ theory with shear 0.177 mm).
 [![Download for Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/tangency-labs/fieldcraft/releases/latest)
 [![Try it in your browser](https://img.shields.io/badge/Browser-Try%20it-2ea44f?style=for-the-badge&logo=webassembly&logoColor=white)](https://tangency-labs.github.io/fieldcraft/app/)
 [![Documentation](https://img.shields.io/badge/Docs-Read-4b5563?style=for-the-badge&logo=mdbook&logoColor=white)](https://tangency-labs.github.io/fieldcraft/)
+[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/jyviko)
 
 - **macOS:** open the `.dmg` and drag FieldCraft into Applications (Apple silicon and Intel).
 - **Windows:** unzip and run `fieldcraft.exe`.
@@ -168,6 +169,8 @@ you review and submit yourself, with your session or model attached only if you 
 [![CI powered by Blacksmith](docs/sponsors/blacksmith-ci-powered.png)](https://www.blacksmith.sh)
 
 FieldCraft's continuous integration runs on [Blacksmith](https://www.blacksmith.sh), which sponsors its CI minutes.
+
+You can support FieldCraft's development on [Ko-fi](https://ko-fi.com/jyviko).
 
 ## Disclaimer
 
