@@ -1,7 +1,9 @@
 //! Open-face transport from saved fields, for checking cooling and exchanger runs.
 //!
 //! Each cell contributes `|u · n| Δx²`. Mass uses the fluid's reference density (the
-//! incompressible convention), not a density reconstructed from rounded gauge pressures.
+//! incompressible convention), not a density reconstructed from rounded gauge pressures; a
+//! compressible result's frames carry each cell's density, and mass, mixed temperatures and heat
+//! then weigh each cell by `ρ |u · n| Δx²`.
 //! Inflow and outflow are integrated separately, so recirculation never cancels a mixed
 //! temperature. These are advective sensible-heat rates, not a complete energy balance:
 //! conduction through the port, storage, wall heat and sources are separate terms.
@@ -64,7 +66,11 @@ pub struct FaceMean {
 #[derive(Default)]
 struct Integral {
     flow: f64,
+    /// Σ w |q|: the flow weighed by the cell's density when the frame has one (compressible),
+    /// else by 1.
+    weight: f64,
     pressure: f64,
+    /// Σ w |q| T.
     temperature: f64,
 }
 
@@ -72,14 +78,16 @@ impl Integral {
     /// The stream, its temperatures (with heat, `thermal`) above `reference` (kelvin) and its
     /// heat above the mixed inflow temperature `inlet` (also above `reference`), when there is
     /// inflow.
-    fn stream(&self, props: Option<PortProperties>, reference: f64, thermal: bool, inlet: Option<f64>) -> Stream {
-        let mass_flow = props.map(|p| p.density * self.flow);
-        let heat = |p: PortProperties| Some(p.density * p.specific_heat? * (self.temperature - inlet? * self.flow));
+    /// `compressible`: the weights are mass flows (each cell's own density).
+    fn stream(&self, props: Option<PortProperties>, reference: f64, thermal: bool, inlet: Option<f64>, compressible: bool) -> Stream {
+        let mass_flow = if compressible { Some(self.weight) } else { props.map(|p| p.density * self.flow) };
+        let scale = |p: PortProperties| if compressible { 1.0 } else { p.density };
+        let heat = |p: PortProperties| Some(scale(p) * p.specific_heat? * (self.temperature - inlet? * self.weight));
         Stream {
             volume_flow: self.flow,
             mass_flow,
             pressure: (self.flow > 0.0).then(|| self.pressure / self.flow),
-            temperature: (thermal && self.flow > 0.0).then(|| reference + self.temperature / self.flow),
+            temperature: (thermal && self.weight > 0.0).then(|| reference + self.temperature / self.weight),
             sensible_heat: props.and_then(heat),
         }
     }
@@ -106,7 +114,13 @@ impl FluidResult {
             return Err(Error::Invalid("port integration needs a nonempty grid".into()));
         };
         let thermal = !f.temperature.is_empty();
-        if self.solid.len() != n || f.velocity.len() != n || f.pressure.len() != n || (thermal && f.temperature.len() != n) {
+        let compressible = !f.density.is_empty();
+        if self.solid.len() != n
+            || f.velocity.len() != n
+            || f.pressure.len() != n
+            || (thermal && f.temperature.len() != n)
+            || (compressible && f.density.len() != n)
+        {
             return Err(Error::Invalid("port integration needs complete saved cell fields".into()));
         }
         if !(self.grid.spacing > 0.0 && self.grid.spacing.is_finite() && self.temperature_reference.is_finite())
@@ -156,11 +170,16 @@ impl FluidResult {
                     for (sum, v) in velocity_sum.iter_mut().zip(u) {
                         *sum += v * cell_area;
                     }
+                    let rho = if compressible { f.density.get(c).copied().map_or(f64::NAN, f64::from) } else { 1.0 };
+                    if !(rho.is_finite() && rho >= 0.0) {
+                        return Err(Error::Invalid(format!("a saved density that is not finite and non-negative on {}", face.name())));
+                    }
                     let q = sign * u[axis] * cell_area;
                     let integral = if q < 0.0 { &mut incoming } else { &mut outgoing };
                     integral.flow += q.abs();
+                    integral.weight += q.abs() * rho;
                     integral.pressure += q.abs() * p;
-                    integral.temperature += q.abs() * t;
+                    integral.temperature += q.abs() * rho * t;
                 }
             }
             let mean = (area > 0.0).then(|| FaceMean {
@@ -174,12 +193,12 @@ impl FluidResult {
             faces.push((face, area, mean, incoming, outgoing));
         }
         // The mixed inflow temperature over every open face, above the reference.
-        let (q_in, t_in) = faces.iter().fold((0.0, 0.0), |(q, t), (_, _, _, i, _)| (q + i.flow, t + i.temperature));
+        let (q_in, t_in) = faces.iter().fold((0.0, 0.0), |(q, t), (_, _, _, i, _)| (q + i.weight, t + i.temperature));
         let inlet = (thermal && q_in > 0.0).then(|| t_in / q_in);
         let mut ports = Vec::with_capacity(faces.len());
         for (face, area, mean, incoming, outgoing) in faces {
-            let inflow = incoming.stream(self.port_properties, self.temperature_reference, thermal, inlet);
-            let outflow = outgoing.stream(self.port_properties, self.temperature_reference, thermal, inlet);
+            let inflow = incoming.stream(self.port_properties, self.temperature_reference, thermal, inlet, compressible);
+            let outflow = outgoing.stream(self.port_properties, self.temperature_reference, thermal, inlet, compressible);
             if ![area, inflow.volume_flow, outflow.volume_flow].iter().all(|v| v.is_finite())
                 || [inflow, outflow]
                     .iter()

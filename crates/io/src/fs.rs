@@ -138,6 +138,11 @@ mod browser {
         FILES.with(|f| f.borrow().list(dir))
     }
 
+    /// Folders are implied by the files' paths and not listed.
+    pub fn list_dirs(_dir: &Path) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
     /// Files in memory keep no modification time.
     pub fn modified(_path: &Path) -> Option<u64> {
         None
@@ -403,6 +408,18 @@ mod disk {
             .flatten()
             .take(1_000_000)
             .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+            .map(|e| e.path())
+            .collect()
+    }
+
+    /// The folders directly in `dir` (at most a million).
+    pub fn list_dirs(dir: &Path) -> Vec<PathBuf> {
+        fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .take(1_000_000)
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .map(|e| e.path())
             .collect()
     }

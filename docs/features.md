@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-97 ready, 27 coming soon.
+99 ready, 27 coming soon.
 
 ## Geometry
 
@@ -137,6 +137,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Decks | Abaqus Input — Write an Abaqus input file (.inp) | ready | `deck.write {"format":"abaqus"}` |
 | Decks | Nastran Deck — Write Nastran bulk data (SOL 101, 103) | ready | `deck.write {"format":"nastran"}` |
 | Decks | LS-DYNA Deck — Write an LS-DYNA keyword file | ready | `deck.write {"format":"lsdyna"}` |
+| Decks | OpenFOAM Case — Write a fluid step as an OpenFOAM case directory (snappyHexMesh + pimpleFoam LES) with an Allrun script | ready | `deck.openfoam` |
 | Decks | Read Deck — Read an Abaqus input deck's model data: mesh, sets, materials and sections; unread keywords are listed, not kept | ready | `deck.read` |
 | Implicit | Static — Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling and heat transfer in the drop-down | ready | `solve.static`, `solve.nonlinear`, `solve.buckle`, `solve.heat` |
 | Implicit | Frequency — Natural frequencies and mode shapes of a frequency step | ready | `solve.frequency` |
@@ -151,6 +152,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 |---|---|---|---|
 | Display | Deformed — The deformed shape of a solved step, to scale | ready | `results.deformed`, `results.clear` |
 | Display | Contours — Contours of displacement and stress, with a legend | ready | `results.contour` |
+| Display | OpenFOAM Results — Read an OpenFOAM case's results back as its fluid step's results | ready | `results.openfoam` |
 | Display | Mode Shapes — Mode shapes and frequencies of a frequency step | ready | `results.modes` |
 | Display | Animate — Animate the deformed shape, a mode or an explicit step's frames | ready | `results.animate`, `results.frame` |
 | Query | Probe — Displacement, rotation, reaction and stress at nodes, element section forces, a mode shape, or an explicit field frame (or click the model) | ready | `solve.probe`, `solve.history` |

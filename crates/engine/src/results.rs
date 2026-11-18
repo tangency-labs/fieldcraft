@@ -860,7 +860,12 @@ pub fn fluid_ports(r: &FluidResult, frame: usize, display: &DisplaySystem) -> Va
         })
         .collect();
     let net_volume: f64 = ports.iter().map(|p| p.outflow.volume_flow - p.inflow.volume_flow).sum();
-    let net_mass = r.port_properties.map(|p| p.density * net_volume);
+    let compressible = r.frames.get(frame).is_some_and(|f| !f.density.is_empty());
+    let net_mass = if compressible {
+        ports.iter().try_fold(0.0, |sum, p| Some(sum + p.outflow.mass_flow? - p.inflow.mass_flow?))
+    } else {
+        r.port_properties.map(|p| p.density * net_volume)
+    };
     let net_heat = ports.iter().try_fold(0.0, |sum, p| Some(sum + p.outflow.sensible_heat? - p.inflow.sensible_heat?));
     let units: serde_json::Map<String, Value> =
         [Quantity::Area, Quantity::VolumeFlow, Quantity::MassFlow, Quantity::Temperature, Quantity::Pressure, Quantity::Power, Quantity::Velocity]
@@ -875,7 +880,7 @@ pub fn fluid_ports(r: &FluidResult, frame: usize, display: &DisplaySystem) -> Va
         "positive": "outward",
         "units": units,
         "heat_reference": fieldcraft_lbm::ports::inlet_temperature(&ports).map(|t| value(Quantity::Temperature, t)),
-        "mass_convention": "reference density (incompressible)",
+        "mass_convention": if compressible { "each cell's density (compressible)" } else { "reference density (incompressible)" },
         "heat_convention": "advective sensible heat relative to heat_reference, the mixed temperature of all the inflow; excludes port conduction, storage, wall heat and sources",
         "source": "saved boundary-layer cell fields; separate inflow and outflow, flow-weighted temperature and static gauge pressure; area_mean over every fluid cell of the face, stagnant ones included (null for a blocked face)",
     })

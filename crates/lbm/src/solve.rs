@@ -36,6 +36,10 @@ pub struct Frame {
     /// otherwise).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fill: Vec<f32>,
+    /// The density of every cell (kg/m³) when the flow is compressible (results read from a
+    /// compressible solver; empty otherwise: the fluid's reference density holds).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub density: Vec<f32>,
     /// The total fluid mass (density times volume): with a free surface the liquid's.
     pub mass: f64,
 }
@@ -223,6 +227,10 @@ pub struct FluidResult {
     pub solid: Vec<bool>,
     /// Per box face (in [`fieldcraft_model::BoxFace::ALL`] order): an inlet or outlet.
     pub open_faces: [bool; 6],
+    /// Per box face (same order): a symmetry plane (slip), such as the cut faces of a half or
+    /// quarter model.
+    #[serde(default)]
+    pub symmetry_faces: [bool; 6],
     /// The initial field and `frames` more, evenly spaced to the end.
     pub frames: Vec<Frame>,
     pub history_times: Vec<f64>,
@@ -429,7 +437,7 @@ fn frame(setup: &Setup, flow: &mut dyn Backend, step: u64, validity: &mut crate:
         }
     }
     let mass = flow.mass()? * setup.density * setup.grid.spacing.powi(3);
-    Ok(Frame { time: step as f64 * setup.time_step, step, velocity, pressure, temperature, fill, mass })
+    Ok(Frame { time: step as f64 * setup.time_step, step, velocity, pressure, temperature, fill, density: Vec::new(), mass })
 }
 
 /// Run a prepared flow (fresh from [`Flow::new`], possibly with its own initial state, on any
@@ -717,6 +725,7 @@ fn run_checkpointed(
     let open_faces = fieldcraft_model::BoxFace::ALL.map(|f| {
         matches!(setup.domain.faces.get(f), fieldcraft_model::FaceCondition::Velocity { .. } | fieldcraft_model::FaceCondition::Pressure { .. })
     });
+    let symmetry_faces = fieldcraft_model::BoxFace::ALL.map(|f| matches!(setup.domain.faces.get(f), fieldcraft_model::FaceCondition::Slip {}));
     let solids = setup
         .thermal
         .iter()
@@ -746,6 +755,7 @@ fn run_checkpointed(
         grid: setup.grid,
         solid,
         open_faces,
+        symmetry_faces,
         frames: out_frames,
         history_times,
         forces,

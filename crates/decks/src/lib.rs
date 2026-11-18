@@ -16,6 +16,7 @@
 pub mod abaqus;
 pub mod lsdyna;
 pub mod nastran;
+pub mod openfoam;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -36,6 +37,9 @@ pub enum Error {
     /// Invalid or unsupported input data, at its original one-based physical line.
     #[error("Abaqus input line {line}: {message}")]
     Parse { line: usize, message: String },
+    /// A file of another program that cannot be read (named, with the format).
+    #[error("{format}: {message}")]
+    Read { format: &'static str, message: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

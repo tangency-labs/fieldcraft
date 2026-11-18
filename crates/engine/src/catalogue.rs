@@ -713,6 +713,13 @@ pub static CATALOGUE: &[Capability] = &[
     deck("deck.write.nastran", "Nastran Deck", "nastran", "Write Nastran bulk data (SOL 101, 103)"),
     deck("deck.write.lsdyna", "LS-DYNA Deck", "lsdyna", "Write an LS-DYNA keyword file"),
     ready(
+        "deck.openfoam",
+        "OpenFOAM Case",
+        Solve,
+        "Decks",
+        "Write a fluid step as an OpenFOAM case directory (snappyHexMesh + pimpleFoam LES) with an Allrun script",
+    ),
+    ready(
         "deck.read",
         "Read Deck",
         Solve,
@@ -748,6 +755,7 @@ pub static CATALOGUE: &[Capability] = &[
     // ---- Results ----
     ready_more("results.deformed", "Deformed", Results, "Display", "The deformed shape of a solved step, to scale", &["results.clear"]),
     ready("results.contour", "Contours", Results, "Display", "Contours of displacement and stress, with a legend"),
+    ready("results.openfoam", "OpenFOAM Results", Results, "Display", "Read an OpenFOAM case's results back as its fluid step's results"),
     ready("results.modes", "Mode Shapes", Results, "Display", "Mode shapes and frequencies of a frequency step"),
     ready_more(
         "results.animate",

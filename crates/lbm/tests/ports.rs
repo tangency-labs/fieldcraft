@@ -247,3 +247,37 @@ fn a_solved_heated_flow_s_ports_carry_its_inflow_and_its_heat() {
     assert!((rise * rho * cp * q_in / power - 1.0).abs() < 0.02, "outlet rise {rise}");
     assert!((carried / power - 1.0).abs() < 0.02, "{carried} carried vs {power} generated");
 }
+
+/// A compressible result's frames carry each cell's density: mass flows, mixed temperatures and
+/// heat weigh each cell by ρ |u · n| Δx², not by the reference density.
+#[test]
+fn compressible_frames_weigh_each_cell_by_its_own_density() {
+    let mut r = saved();
+    let f = r.frames.last_mut().unwrap();
+    // x_max cells 1, 3, 5, 7: out at 1 and 3 with densities 1 and 4, in at 5.
+    f.velocity[1][0] = 1.0;
+    f.velocity[3][0] = 1.0;
+    f.velocity[5][0] = -2.0;
+    f.temperature[1] = 10.0;
+    f.temperature[3] = 30.0;
+    f.temperature[5] = 40.0;
+    f.density = vec![1.0; f.velocity.len()];
+    f.density[3] = 4.0;
+    f.density[5] = 3.0;
+    let ports = r.ports(r.frames.len() - 1).unwrap();
+    let p = &ports[1];
+    close(p.outflow.volume_flow, 2.0);
+    close(p.outflow.mass_flow.unwrap(), 5.0);
+    close(p.inflow.mass_flow.unwrap(), 6.0);
+    // (1·10 + 4·30) / 5: mass weighted, not volume weighted (20).
+    close(p.outflow.temperature.unwrap(), 273.15 + 26.0);
+    close(inlet_temperature(&ports).unwrap(), 273.15 + 40.0);
+    // c Σ ṁ (T − 40) = 5 (1 (10 − 40) + 4 (30 − 40)) = −350: no reference density.
+    close(p.outflow.sensible_heat.unwrap(), -350.0);
+    let mut bad = r.clone();
+    bad.frames.last_mut().unwrap().density.pop();
+    assert!(bad.ports(bad.frames.len() - 1).is_err());
+    bad = r.clone();
+    bad.frames.last_mut().unwrap().density[1] = f32::NAN;
+    assert!(bad.ports(bad.frames.len() - 1).is_err());
+}

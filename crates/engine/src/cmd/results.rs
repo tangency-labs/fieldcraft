@@ -94,7 +94,7 @@ pub const EXPORT_CSV: CommandSpec = CommandSpec {
 pub const SLICE: CommandSpec = CommandSpec {
     id: "results.slice",
     label: "Flow Slice",
-    params: r#"{"step": "Flow", "field": "velocity" | "pressure" | "temperature", "axis": "x" | "y" | "z" | "none", "position": 20 | "auto", "frame": 10} — shows a fluid step's field (velocity magnitude, gauge pressure or temperature when its frames carry heat, banded with the legend as results.contour sets it) on a slice through the domain normal to `axis`, at `position` along it (inside the domain; "auto" or left out with a new axis: the domain's middle); "none" hides the slice; `frame` from 0 (left out: the one shown, at first the last); what is left out stays as shown. A fluid step is first shown with velocity on a slice through the middle, normal to the horizontal axis across the flow. The reply's `contour.range` (and the legend's Max/Min) is the max over interior fluid cells; the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer"#,
+    params: r#"{"step": "Flow", "field": "velocity" | "pressure" | "temperature", "axis": "x" | "y" | "z" | "none", "position": 20 | "auto", "frame": 10} — shows a fluid step's field (velocity magnitude, gauge pressure or temperature when its frames carry heat, banded with the legend as results.contour sets it) on a slice through the domain normal to `axis`, at `position` along it (inside the domain; "auto" or left out with a new axis: the symmetry plane along it (a slip face, such as the cut of a half or quarter model), else the domain's middle); "none" hides the slice; `frame` from 0 (left out: the one shown, at first the last); what is left out stays as shown. A fluid step is first shown with velocity on a slice normal to the horizontal axis across the flow, on its symmetry plane or through the middle. The reply's `contour.range` (and the legend's Max/Min) is the max over interior fluid cells; the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer"#,
     form: Some(super::forms::SLICE),
     kind: CommandKind::Session,
     requires: &[Requirement::Result],
@@ -444,7 +444,7 @@ fn slice(s: &mut Session, p: &Value) -> Result<Value> {
         Some("none") => Some(None),
         Some(a) => Some(Some(Axis::parse(a).ok_or_else(|| EngineError::invalid("axis", "must be x, y, z or none"))?)),
     };
-    // Some(None): the domain's middle.
+    // Some(None): automatic (the symmetry plane along the axis, else the middle).
     let position = match p.get("position").filter(|v| !v.is_null()) {
         None => None,
         Some(Value::String(a)) if a == "auto" => Some(None),
@@ -456,7 +456,7 @@ fn slice(s: &mut Session, p: &Value) -> Result<Value> {
     let slice = match axis {
         Some(None) => None,
         Some(Some(a)) => {
-            // A new axis starts at the middle; the same one keeps its position.
+            // A new axis starts automatic (symmetry plane or middle); the same one keeps its position.
             let kept = shown.slice.as_ref().filter(|s| s.axis == a).and_then(|s| s.position);
             Some(SliceView { axis: a, position: position.unwrap_or(kept) })
         }

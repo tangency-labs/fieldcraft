@@ -13,7 +13,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session, StepResult, 
 pub const MEASURE: CommandSpec = CommandSpec {
     id: "results.fluid.measure",
     label: "Fluid Measurements",
-    params: r#"{"step": "Flow", "frame": 10, "from": "x_min", "to": "x_max"} — read-only measurements of one saved fluid frame (default the last): every open box face's fluid area, area-mean static gauge pressure, temperature and velocity, separate inflow/outflow volume and reference-density mass rates, mass-flow-weighted temperatures and advective sensible heat relative to the mixed inflow temperature; every recorded box/obstacle wall's heat rate, positive into the wall, interpolated at the frame time without extrapolation. Optional `from` and `to` give their area-mean static pressure difference. Returns `rows` with face/body, quantity, value and unit, and the same table as `csv` including step/frame/time. Null means unavailable; a blocked face has no mean. Instantaneous saved-frame measurements, not time averages or a validation verdict; no port conduction, arbitrary surfaces, exchanger effectiveness or complete energy balance yet. Stale results are refused"#,
+    params: r#"{"step": "Flow", "frame": 10, "from": "x_min", "to": "x_max"} — read-only measurements of one saved fluid frame (default the last): every open box face's fluid area, area-mean static gauge pressure, temperature and velocity, separate inflow/outflow volume and mass rates (reference density; compressible results: each cell's own), mass-flow-weighted temperatures and advective sensible heat relative to the mixed inflow temperature; every recorded box/obstacle wall's heat rate, positive into the wall, interpolated at the frame time without extrapolation. Optional `from` and `to` give their area-mean static pressure difference. Returns `rows` with face/body, quantity, value and unit, and the same table as `csv` including step/frame/time. Null means unavailable; a blocked face has no mean. Instantaneous saved-frame measurements, not time averages or a validation verdict; no port conduction, arbitrary surfaces, exchanger effectiveness or complete energy balance yet. Stale results are refused"#,
     form: Some(super::forms::FLUID_MEASURE),
     kind: CommandKind::Session,
     requires: &[Requirement::Result],
@@ -111,7 +111,7 @@ fn measure(s: &mut Session, p: &Value) -> Result<Value> {
         "pressure_unit": unit_of(Q::Pressure, display),
         "conventions": {
             "face_means": "fluid cells on the saved open boundary layer; area-weighted pressure, temperature and velocity",
-            "flow": "separate nonnegative inflow and outflow; reference-density mass flow; mass-flow-weighted temperatures",
+            "flow": "separate nonnegative inflow and outflow; mass flow at the reference density (compressible results: each cell's own); mass-flow-weighted temperatures",
             "sensible_heat": "advective sensible heat relative to heat_reference (mixed inflow temperature); excludes port conduction",
             "wall_heat_rate": "positive into the wall; recorded thermal exchange, separate from port advection",
             "scope": "measurements only; no time averaging or complete energy balance"
