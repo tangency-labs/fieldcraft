@@ -182,3 +182,142 @@ Each phase lands as reviewed pull requests with its tests and its verification c
 4. First-order only for the first release, or first and second order together?
 5. Which first application drives the priorities: filters and waveguide components (ports and
    S-parameters first) or antennas (PML and far field first)?
+
+## 8. Notes on phase 1 from the phases 2–4 side
+
+What the edge elements, ports and eigen step will ask of phase 1, written before it starts so the
+layout and the factor do not have to be reopened later. Each note is argued from the theory cited
+and from the code as it is on `develop`; the decisions stay the owner's.
+
+In short, four things change what phase 1 builds:
+
+1. The layout hands an element its vertices' **sort order**, not a sign per entity (§8.1).
+2. The matrix pattern and the ordering work on **entities** (nodes, edges, faces), not on nodes
+   (§8.2).
+3. `Symbolic` gives up the matrix values it holds, and `inertia()` stays on the real scalar only
+   (§8.3).
+4. The layout can give the **discrete gradient** (each node's edges with orientation), for the
+   null space of the eigen step and as a test of the numbering (§8.2, §8.4).
+
+The rest is detail for whoever implements them.
+
+### 8.1 Orientation: sort the element's vertices, and a sign is not enough for faces
+
+§3.1 gives each local edge a sign ±1 against the global edge and says face unknowns "use the same
+rule". For edges that is right. For the second-order face functions it is not sufficient:
+
+- A face with sorted vertices i < j < k carries two functions, λᵢ w_jk and λⱼ w_ki, with
+  w_ab = λ_a ∇λ_b − λ_b ∇λ_a (Webb 1999). The third cyclic one is dependent on them:
+  λᵢ w_jk + λⱼ w_ki + λₖ w_ij = 0. An element that sees the face in another vertex order
+  therefore holds a pair that is a **2 × 2 combination** of the global pair, not ±1 times it.
+  An example: a face with global vertices 3, 7, 9 has the global functions λ₃ w₇₉ and λ₇ w₉₃.
+  A tetrahedron that lists the face as 7, 9, 3 and takes "the first two" in its own order gets
+  λ₇ w₉₃ and λ₉ w₃₇. The first is the second global function; the second is neither global
+  function nor its negative, it is −(λ₃ w₇₉ + λ₇ w₉₃). No choice of two signs joins the two
+  tetrahedra.
+- The second function of an edge, ∇(λ_a λ_b), is symmetric in a and b: it takes **no** sign,
+  while the Whitney function of the same edge does.
+
+The simplest way to make both come out right is to build the edge-element basis on the element's
+vertices **sorted by global label**: every local edge then runs low to high, every local face is
+its sorted triple, the element's functions are the global ones, and assembly needs no signs and
+no 2 × 2 blocks. The costs are small and local to the element:
+
+- the sorted tetrahedron may be left-handed, so gradients take the signed Jacobian determinant
+  and volumes its magnitude;
+- `ElementKind::edges()` cannot be the local edge table (Tet4 lists (2, 0)); the EM element keeps
+  its own table over the sorted corners;
+- the 2 × 2 combination is still needed in one place, periodic boundaries (Later), where a face
+  is tied to an image whose vertex order the mesh does not control.
+
+So the layout should hand an element its vertices' sort permutation (or the entities in sorted
+order) rather than a sign per entity. The tests §3.1 names (a constant-curl field reproduced,
+tangential continuity across a shared face) should run at second order on a face shared by two
+tets that see it in different vertex orders, which is where a sign-only rule fails.
+
+### 8.2 What the layout should carry
+
+- **Global edge and face tables** of the tetrahedra. The analysis mesh has none today (only the
+  meshers do), so phase 1 creates them; sorted vertex labels as §3.1 says.
+- **Functions per entity, by kind.** Edge: one (order 1) or two (order 2); face: none or two. The
+  layout should say which slot of an edge is the Whitney function and which the gradient: the
+  null space (§8.4) and the Hiptmair–Xu preconditioner (Later) both split the space that way.
+  Sizing the layout for order 2 from the start costs nothing at order 1 (open question 4).
+- **Boundary lookup by face.** PEC, ports and absorbing boundaries are given on element faces
+  (`ElementFace`); each needs its global face and that face's three edges. An edge is held when
+  **a face that contains it** is PEC. Today's boundary conditions resolve to node sets, and a
+  node-based rule ("both end nodes are on the wall") is wrong: an interior edge that spans a
+  corner between two walls has both nodes on PEC and is not itself on it.
+- **The discrete gradient**: for each node, its edges with orientation (φ_b − φ_a on edge a → b),
+  and at order 2 one column per edge gradient function. This is the matrix G of §8.4; it is also
+  the cheapest strong test of the numbering, because K G = 0 to rounding (curl grad = 0) fails for
+  any orientation or incidence error.
+- **Nodal and edge unknowns in one system.** The port-mode problem of §3.4 on a general
+  cross-section has transverse edge unknowns and a nodal longitudinal one on the same triangles
+  (J.-F. Lee, D.-K. Sun, Z. J. Cendes, *Full-wave analysis of dielectric waveguides using
+  tangential vector finite elements*, IEEE Trans. Microwave Theory Tech. 39(8):1262–1271, 1991).
+  This supports the proposal of one entity-keyed layout (open question 1).
+- **Entities without unknowns, and unknowns on part of the mesh**: held (PEC) edges and faces,
+  and regions that carry no field.
+- **Pattern and ordering by entity.** §2 says the ordering is reused unchanged with the edge
+  midpoint. Today `ordering::fill_reducing_order` orders **nodes** (`analysis::pattern` passes
+  `mesh.xyz` and the `NodeGraph`), and `Csr` is built from node blocks. Phase 1 therefore
+  generalises the graph from nodes to entities (two entities adjacent when an element holds
+  both), with a point per entity: the edge midpoint, the face centroid. An entity's unknowns stay
+  contiguous, as a node's are now.
+
+### 8.3 The complex-symmetric factor
+
+- **Transpose, never conjugate, everywhere**: not only in L D Lᵀ but in every inner product the
+  generic code forms (the solves, iterative refinement's residual, the reduction Tᵀ A T). A test
+  on a matrix whose symmetric and Hermitian parts differ catches a stray conjugate; a real test
+  matrix cannot.
+- **Pivot comparisons on the modulus**, the 2 × 2 test included.
+- **Inertia is a real-scalar notion.** Sylvester's law does not hold for a complex-symmetric
+  matrix, so `inertia()` belongs to the `f64` instance only and the scalar trait should not
+  promise it.
+- **Keep the pivot tolerance relative to the row**, as `PIVOT_TOLERANCE` is now. EM meshes are
+  strongly graded (toward conductor edges, in thin substrates), element matrices then differ by
+  many orders of magnitude, and a threshold against the whole matrix's norm misjudges every small
+  element's pivots (the reason for equilibration: A. van der Sluis, *Condition numbers and
+  equilibration of matrices*, Numer. Math. 14:14–23, 1969).
+- **`Symbolic` holds values today** (`a: Lower`, the permuted matrix). "The symbolic phase is
+  shared unchanged" (§3.2) needs those moved out of it, or `Symbolic` made generic too.
+- **Later, not phase 1:** periodic boundaries with a phase reduce to Tᴴ A T, which is not
+  complex-symmetric, so they will need another factor (Hermitian LDLᴴ or LU) and complex
+  coefficients in `constraints::Row`.
+
+### 8.4 The eigen step and the null space (open question 3)
+
+My answer to open question 3 is yes, from the first cavity case, for two reasons.
+
+- **The null space is large and sits at the other end of the shifted spectrum.** Its dimension
+  is the number of free nodes (plus the free edges at order 2), about a seventh of the unknowns
+  of a first-order tetrahedral mesh. Under the shift σ > 0 all of it maps to θ = −1/σ, of the
+  same magnitude as the wanted θ = 1/(k² − σ) of the modes near the shift, and with multiplicity
+  in the thousands. A block Lanczos with full reorthogonalisation keeps finding further copies of
+  a multiple extreme eigenvalue, so the basis fills with gradients as more modes or modes farther
+  above the shift are asked for. Keeping every iterate M-orthogonal to the gradients,
+  x ← x − G (Gᵀ M G)⁻¹ Gᵀ M x, removes them (P. Arbenz, R. Geus, *Multilevel preconditioned
+  iterative eigensolvers for Maxwell eigenvalue problems*, Appl. Numer. Math. 54(2):107–121,
+  2005); Gᵀ M G is a sparse, positive definite nodal matrix, factored once by the Cholesky factor
+  FieldCraft has. It fits `eigen::Operator` as a projection after `solve`.
+- **The Sturm count needs the null space's exact dimension.** The inertia of K − σM counts the
+  null space among the eigenvalues below σ, so "how many modes lie below a frequency" (§3.3) is
+  the negative count minus dim ker. With PEC walls the kernel is spanned by the gradients of the
+  free nodes' functions, the edge gradients of the free edges at order 2, and **one more for each
+  separate conductor beyond the first** (the potential that is constant on that conductor: the
+  sum of its nodes' gradients). A cavity with a conductor that touches no wall (a floating
+  post, a centre conductor held by a dielectric) has one of these. G should hold them as
+  columns, or the count is off by the number of extra conductors and those fields return as
+  modes at k = 0.
+
+The frequency step today factors with Cholesky and a zero or negative shift; the cavity step is
+the first to use Lanczos on an LDLᵀ factor with a positive shift (buckling factors that way
+already), so `Eigenpairs.negative` will hold the modes below the shift and must not be discarded.
+
+### 8.5 Results
+
+Not phase 1: the normal field jumps at a material interface, so EM field results will be
+element-nodal rather than one averaged value per node. Worth leaving room for where the result
+types gain complex values.
