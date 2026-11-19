@@ -12,7 +12,7 @@ use solidcraft_ui_kit::app_bar;
 use crate::ModelApp;
 use crate::files::Prefs;
 
-pub const DONATE_URL: &str = "https://ko-fi.com/jyviko";
+pub const DONATE_URL: &str = "https://ko-fi.com/jyviko/tiers";
 pub const DISCORD_URL: &str = "https://discord.gg/FtU4NQNVDH";
 
 /// One link and its pill.

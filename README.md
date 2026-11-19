@@ -26,7 +26,7 @@
   <a href="https://tangency-labs.github.io/fieldcraft/app/">Try it in the browser</a> ·
   <a href="https://github.com/tangency-labs/fieldcraft/releases/latest">Releases</a> ·
   <a href="ROADMAP.md">Roadmap</a> ·
-  <a href="https://ko-fi.com/jyviko">Support</a>
+  <a href="https://ko-fi.com/jyviko/tiers">Support</a>
 </p>
 
 <p align="center">
@@ -195,7 +195,7 @@ you review and submit yourself, with your session or model attached only if you 
 
 FieldCraft's continuous integration runs on [Blacksmith](https://www.blacksmith.sh), which sponsors its CI minutes.
 
-You can support FieldCraft's development on [Ko-fi](https://ko-fi.com/jyviko).
+You can support FieldCraft's development with a [Ko-fi membership](https://ko-fi.com/jyviko/tiers) or a one-time tip.
 
 ## Disclaimer
 

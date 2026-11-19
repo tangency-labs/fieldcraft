@@ -111,7 +111,7 @@
   "settings.updates_skipped_none": "No version is skipped. Skip, on the notice that offers an update, skips that version.",
   "settings.updates_skipped_version": "FieldCraft {version}",
   "links.donate_label": "Donate",
-  "links.donate_tip": "Support FieldCraft's development with a donation on Ko-fi",
+  "links.donate_tip": "Support FieldCraft's development with a Ko-fi membership or a tip",
   "links.donate_hide_tip": "Hide the Donate button",
   "links.donate_name": "Donate",
   "links.donate_hide_name": "Hide the Donate button",
