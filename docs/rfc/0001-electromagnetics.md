@@ -35,8 +35,8 @@ Theory: J.-M. Jin, *The Finite Element Method in Electromagnetics*, 3rd ed., Wil
 |---|---|---|
 | Unknowns (`fem::dof`) | Nodal only: a `DofKind` per node, numbered node by node in label order | Needs unknowns on **edges** (and on faces at second order) |
 | Matrix (`solver::sparse::Csr`) | `f64` values | Needs complex values |
-| Direct solvers (`solver::cholesky`, `solver::ldlt`) | Supernodal Cholesky and LDLᵀ with bounded Bunch–Kaufman pivoting, multithreaded, fixed operation order | Reused: LDLᵀ for indefinite real systems as is; its numeric kernels made generic for complex-symmetric |
-| Ordering (`solver::ordering`) | Geometric nested dissection on a coordinate per unknown | Reused unchanged: an edge unknown takes its edge midpoint |
+| Direct solvers (`solver::cholesky`, `solver::ldlt`) | Supernodal Cholesky and LDLᵀ with bounded Bunch–Kaufman pivoting, multithreaded, fixed operation order | Reused: LDLᵀ for indefinite real systems as is; its numeric kernels made generic for complex-symmetric, and `Symbolic` gives up the matrix values it holds (§8.3) |
+| Ordering (`solver::ordering`) | Geometric nested dissection on a coordinate per unknown | Generalised from nodes to entities (nodes, edges, faces), with a point per entity: the edge midpoint, the face centroid (§8.2) |
 | Eigen (`solver::eigen`) | Shifted block Lanczos, K φ = λ M φ, M inner product, full reorthogonalization | Reused unchanged for cavity modes and for port modes |
 | Constraints (`solver::constraints`) | Prescribed values and linear constraint rows, eliminated from the system | PEC (tangential **E** = 0) is a prescribed value on boundary edges; periodic boundaries are constraint rows |
 | Geometry map (`fem::basis`) | Isoparametric map, Jacobians on every tet family | Reused for the covariant Piola map of edge elements |
@@ -54,9 +54,10 @@ Extend `DofLayout` so a degree of freedom belongs to a **mesh entity**: a node (
 a face. Edges and faces are numbered after the nodes, in a fixed order derived from sorted vertex
 labels, so the same mesh always gives the same numbering (the determinism rule).
 
-- **Orientation:** an edge runs from its lower to its higher global vertex label; an element's
-  local edge takes sign ±1 against it. Face DOFs of second-order elements use the same rule on the
-  sorted vertex triple. Sign conventions are the main source of silent errors in edge elements, so
+- **Orientation:** an edge runs from its lower to its higher global vertex label, and a face is its
+  sorted vertex triple. Each element builds its basis on its vertices sorted by global label, so
+  its functions are the global ones and assembly needs no signs; a sign per entity is not enough
+  for the second-order face functions (§8.1). Sign conventions are the main source of silent errors in edge elements, so
   they get their own unit tests (a constant curl field reproduced exactly, the tangential
   continuity across shared faces).
 - **Elements:** Nédélec first kind on tetrahedra (J.-C. Nédélec, *Mixed finite elements in ℝ³*,
@@ -72,7 +73,8 @@ is one layout, because constraints, results and the control channel then see a s
 
 Make `Csr`, assembly and the LDLᵀ numeric phase generic over a scalar trait implemented for `f64`
 and a complex type. The symbolic phase (elimination tree, supernodes, column counts) depends only
-on the pattern and is shared unchanged.
+on the pattern and is shared once `Symbolic` no longer holds the matrix values (§8.3). `inertia()`
+stays on the `f64` instance: it has no meaning for a complex-symmetric matrix.
 
 - Complex-symmetric factorization uses the transpose, not the conjugate transpose:
   A = L D Lᵀ with the same bounded Bunch–Kaufman pivot search on |aᵢⱼ|.
@@ -84,15 +86,16 @@ on the pattern and is shared unchanged.
 
 A cavity step reuses `solver::eigen` as it is. The curl–curl operator has a large null space
 (every gradient field has k² = 0). With a shift σ between 0 and the first cutoff, K − σM is
-indefinite, so the step factors it with LDLᵀ. The null-space modes map to θ = −1/σ, away from the
-wanted largest θ. The LDLᵀ inertia (a Sturm count) confirms how many modes lie below a frequency.
-
-**Open:** whether to also remove the null space explicitly (a discrete-gradient projection,
-Monk 2003 §13) for robustness on large models.
+indefinite, so the step factors it with LDLᵀ. The null-space modes map to θ = −1/σ, which outranks
+every mode above 2σ, so the step keeps every Lanczos iterate M-orthogonal to the discrete gradients
+from the first cavity case (§8.4). The LDLᵀ inertia (a Sturm count) gives how many modes lie below
+a frequency once the null space's dimension is subtracted, one more for each separate conductor
+beyond the first (§8.4).
 
 ### 3.4 Ports, boundaries and sources
 
-- **PEC and PMC:** prescribed tangential **E** (PEC) and the natural condition (PMC).
+- **PEC and PMC:** prescribed tangential **E** (PEC) and the natural condition (PMC). An edge is
+  held when a PEC face contains it, never because both its end nodes lie on PEC (§8.2).
 - **Waveguide ports:** a 2D eigenproblem on the port face (edge elements on triangles, the same
   Lanczos) gives the modal fields and propagation constants. A modal boundary condition excites
   and absorbs them (Jin 2014, ch. 8).
@@ -178,7 +181,8 @@ Each phase lands as reviewed pull requests with its tests and its verification c
 
 1. One entity-keyed `DofLayout`, or a separate edge layout (§3.1)?
 2. `num-complex` or our own complex type (§3.2)?
-3. Explicit null-space projection in the eigen step (§3.3)?
+3. ~~Explicit null-space projection in the eigen step (§3.3)?~~ Decided: yes, from the first cavity
+   case (§8.4).
 4. First-order only for the first release, or first and second order together?
 5. Which first application drives the priorities: filters and waveguide components (ports and
    S-parameters first) or antennas (PML and far field first)?
