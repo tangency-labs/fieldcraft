@@ -683,7 +683,7 @@ mod tests {
             let at = region(&app, k).center();
             click(&mut app, &ctx, at);
         }
-        assert_eq!(*opened.borrow(), ["https://ko-fi.com/jyviko", "https://discord.gg/FtU4NQNVDH"]);
+        assert_eq!(*opened.borrow(), ["https://ko-fi.com/jyviko/tiers", "https://discord.gg/FtU4NQNVDH"]);
         for k in ["app_bar:donate", "app_bar:discord"] {
             let at = region(&app, k).center();
             let (tx, _rx) = std::sync::mpsc::channel();
