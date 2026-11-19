@@ -1,17 +1,41 @@
-# FieldCraft
+<p align="center">
+  <img src="assets/app-icon/icon.png" width="96" height="96" alt="FieldCraft" />
+</p>
 
-[![Latest release](https://img.shields.io/github/v/release/tangency-labs/fieldcraft?style=for-the-badge&label=Latest&color=0e7c86)](https://github.com/tangency-labs/fieldcraft/releases/latest)
-[![Download for macOS](https://img.shields.io/badge/macOS%20%28Apple%20silicon%29-Download-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/tangency-labs/fieldcraft/releases/latest)
-[![Download for Windows](https://img.shields.io/badge/Windows-Download-0078D6?style=for-the-badge)](https://github.com/tangency-labs/fieldcraft/releases/latest)
-[![Download for Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/tangency-labs/fieldcraft/releases/latest)
-[![Try it in your browser](https://img.shields.io/badge/Browser-Try%20it-2ea44f?style=for-the-badge&logo=webassembly&logoColor=white)](https://tangency-labs.github.io/fieldcraft/app/)
-[![Documentation](https://img.shields.io/badge/Docs-Read-4b5563?style=for-the-badge&logo=mdbook&logoColor=white)](https://tangency-labs.github.io/fieldcraft/)
-[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/jyviko)
+<h1 align="center">FieldCraft</h1>
 
-An open-source, clean-room CAE application in pure Rust: from a parametric SolidCraft part to a
-verified finite element analysis, with tetrahedral and hexahedral meshing, its own implicit,
-explicit, thermal and lattice Boltzmann solvers, and decks for Abaqus, Nastran and LS-DYNA. The
-desktop app, the command line and AI agents (over MCP) drive the same commands.
+<p align="center">
+  <strong>An open-source, clean-room CAE application in pure Rust.</strong><br />
+  From a parametric SolidCraft part to a verified finite element analysis, with tetrahedral and
+  hexahedral meshing, its own implicit, explicit, thermal and lattice Boltzmann solvers, and
+  decks for Abaqus, Nastran and LS-DYNA. The desktop app, the command line and AI agents (over
+  MCP) drive the same commands.
+</p>
+
+<div align="center">
+
+[![Download for Windows][badge-windows]][windows-zip]
+[![Download for macOS][badge-macos]][macos-dmg]
+[![Download for Linux][badge-linux]][linux-appimage]
+[![Try it in your browser][badge-web]][web-app]
+
+</div>
+
+<p align="center">
+  <a href="https://tangency-labs.github.io/fieldcraft/">Documentation</a> ·
+  <a href="https://tangency-labs.github.io/fieldcraft/app/">Try it in the browser</a> ·
+  <a href="https://github.com/tangency-labs/fieldcraft/releases/latest">Releases</a> ·
+  <a href="ROADMAP.md">Roadmap</a> ·
+  <a href="https://ko-fi.com/jyviko">Support</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/tangency-labs/fieldcraft/actions/workflows/ci.yml?query=branch%3Adevelop"><img src="https://github.com/tangency-labs/fieldcraft/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
+  <a href="https://github.com/tangency-labs/fieldcraft/releases/latest"><img src="https://img.shields.io/github/v/release/tangency-labs/fieldcraft?label=release" alt="Latest release" /></a>
+  <a href="https://github.com/tangency-labs/fieldcraft/releases"><img src="https://img.shields.io/github/downloads/tangency-labs/fieldcraft/total?label=downloads" alt="Downloads" /></a>
+  <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue" alt="Licence" /></a>
+  <a href="https://github.com/tangency-labs/fieldcraft/stargazers"><img src="https://img.shields.io/github/stars/tangency-labs/fieldcraft?style=flat" alt="Stars" /></a>
+</p>
 
 **Status:** early but working end to end — open a part, mesh it, define the analysis, solve,
 see the results — with a nonlinear implicit solver (large deformation, plasticity, rubber) now
@@ -36,9 +60,9 @@ theory with shear 0.177 mm).
 
 ## Download
 
-- **macOS:** open the `.dmg` and drag FieldCraft into Applications (Apple silicon).
-- **Windows:** unzip and run `fieldcraft.exe`.
-- **Linux:** the `.AppImage` (allow it to run as a program), or the `.tar.gz`.
+- **macOS:** [fieldcraft-0.8.1-macos-aarch64.dmg][macos-dmg]: open it and drag FieldCraft into Applications (Apple silicon).
+- **Windows:** [fieldcraft-0.8.1-windows-x64.zip][windows-zip]: unzip and run `fieldcraft.exe`.
+- **Linux:** the [AppImage][linux-appimage] (allow it to run as a program), the [.tar.gz][linux-tar], the [.deb][linux-deb] or the [.rpm][linux-rpm].
 - **Browser:** [try it at tangency-labs.github.io/fieldcraft/app](https://tangency-labs.github.io/fieldcraft/app/), no install.
 - **Nightly:** the [nightly pre-releases](https://github.com/tangency-labs/fieldcraft/releases?q=nightly&expanded=true) build `develop` each night it has moved and passed CI ([docs/updates.md](docs/updates.md#nightly-builds)).
 - **Command line:** `fieldcraft-cli` ships in every package; AI agents connect to it over MCP
@@ -188,3 +212,15 @@ THIRD-PARTY-LICENSES.txt, which every release package carries (`cargo xtask lice
 FieldCraft is an independent project, not affiliated with, sponsored or endorsed by Dassault
 Systèmes, MSC Software, Siemens or Ansys. Abaqus, Nastran, MSC Nastran, Simcenter Nastran and
 LS-DYNA are trademarks of their owners and are named only to describe file compatibility.
+
+[badge-windows]: https://img.shields.io/badge/Windows-Download-0078D6?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0yIDJoOS41djkuNUgyek0xMi41IDJIMjJ2OS41aC05LjV6TTIgMTIuNWg5LjVWMjJIMnpNMTIuNSAxMi41SDIyVjIyaC05LjV6Ii8%2BPC9zdmc%2B
+[badge-macos]: https://img.shields.io/badge/macOS-Download-333333?style=for-the-badge&logo=apple&logoColor=white
+[badge-linux]: https://img.shields.io/badge/Linux-AppImage-E95420?style=for-the-badge&logo=linux&logoColor=white
+[badge-web]: https://img.shields.io/badge/Web-Try_in_browser-2EA44F?style=for-the-badge&logo=webassembly&logoColor=white
+[windows-zip]: https://github.com/tangency-labs/fieldcraft/releases/download/v0.8.1/fieldcraft-0.8.1-windows-x64.zip
+[macos-dmg]: https://github.com/tangency-labs/fieldcraft/releases/download/v0.8.1/fieldcraft-0.8.1-macos-aarch64.dmg
+[linux-appimage]: https://github.com/tangency-labs/fieldcraft/releases/download/v0.8.1/fieldcraft-0.8.1-linux-x86_64.AppImage
+[linux-tar]: https://github.com/tangency-labs/fieldcraft/releases/download/v0.8.1/fieldcraft-0.8.1-linux-x86_64.tar.gz
+[linux-deb]: https://github.com/tangency-labs/fieldcraft/releases/download/v0.8.1/fieldcraft_0.8.1_amd64.deb
+[linux-rpm]: https://github.com/tangency-labs/fieldcraft/releases/download/v0.8.1/fieldcraft-0.8.1.x86_64.rpm
+[web-app]: https://tangency-labs.github.io/fieldcraft/app/

@@ -500,6 +500,19 @@ jobs:
       # The same file every package carries, attached to the release on its own.
       - name: Generate THIRD-PARTY-LICENSES.txt
         run: cargo xtask licences && cp THIRD-PARTY-LICENSES.txt artifacts/
+      - name: Version-less copies for permanent download links
+        # The README links to releases/latest/download/<name>, which must not change between
+        # releases: fieldcraft-<version>-windows-x64.zip is also uploaded as
+        # fieldcraft-windows-x64.zip, and so on for the main packages. A published release is
+        # immutable, so the copies are made here and go up with the rest.
+        working-directory: artifacts
+        run: |
+          cp -- "fieldcraft-$VERSION-windows-x64.zip" fieldcraft-windows-x64.zip
+          cp -- "fieldcraft-$VERSION-macos-aarch64.dmg" fieldcraft-macos-aarch64.dmg
+          cp -- "fieldcraft-$VERSION-linux-x86_64.AppImage" fieldcraft-linux-x86_64.AppImage
+          cp -- "fieldcraft-$VERSION-linux-x86_64.tar.gz" fieldcraft-linux-x86_64.tar.gz
+          cp -- "fieldcraft-$VERSION.x86_64.rpm" fieldcraft-linux-x86_64.rpm
+          cp -- "fieldcraft_${VERSION}_amd64.deb" fieldcraft-linux-x86_64.deb
       - name: Check the set and write the checksums
         run: |
           for f in "fieldcraft-$VERSION-macos-aarch64.dmg" "fieldcraft-cli-$VERSION-macos-aarch64.zip" \
