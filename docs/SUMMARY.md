@@ -63,6 +63,7 @@
 - [Units inventory](units-inventory.md)
 - [Releasing](releasing.md)
 - [Libraries and licences](adr/0001-libraries.md)
+- [RFC 0001: High-frequency electromagnetics](rfc/0001-electromagnetics.md)
 
 # Literature
 
