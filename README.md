@@ -1,5 +1,6 @@
 # FieldCraft
 
+[![Latest release](https://img.shields.io/github/v/release/tangency-labs/fieldcraft?style=for-the-badge&label=Latest&color=0e7c86)](https://github.com/tangency-labs/fieldcraft/releases/latest)
 [![Download for macOS](https://img.shields.io/badge/macOS%20%28Apple%20silicon%29-Download-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/tangency-labs/fieldcraft/releases/latest)
 [![Download for Windows](https://img.shields.io/badge/Windows-Download-0078D6?style=for-the-badge)](https://github.com/tangency-labs/fieldcraft/releases/latest)
 [![Download for Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/tangency-labs/fieldcraft/releases/latest)
