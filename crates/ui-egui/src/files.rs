@@ -314,6 +314,8 @@ pub struct Prefs {
     pub update_skip: String,
     /// The units numbers are shown and typed in, for a model without its own (docs/units.md).
     pub units: fieldcraft_model::DisplaySystem,
+    /// Interface language preference (`system`, `en`, `he`).
+    pub language: String,
     /// The browser card's width, in points.
     pub browser_width: f32,
     /// The browser card folded to its header.
@@ -350,6 +352,7 @@ impl Default for Prefs {
             update_checked_at: 0,
             update_skip: String::new(),
             units: fieldcraft_model::DisplaySystem::default(),
+            language: crate::i18n::ENGLISH.into(),
             browser_width: crate::browser::WIDTH,
             browser_collapsed: false,
             browser_float: false,
@@ -365,7 +368,9 @@ impl Default for Prefs {
 impl Prefs {
     /// The preferences kept in `store` (unreadable or malformed ones give the defaults).
     pub fn load(store: Option<&PrefsStore>) -> Prefs {
-        store.and_then(|s| (s.load)()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        let mut prefs: Prefs = store.and_then(|s| (s.load)()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        prefs.language = crate::i18n::validate_preference(&prefs.language).unwrap_or_else(|_| crate::i18n::ENGLISH.into());
+        prefs
     }
 
     /// Write them to `store`; a failure is logged (the preferences stay for this run).

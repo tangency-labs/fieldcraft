@@ -2,12 +2,44 @@
 //! `MASTERS`, sorted by id (`src/icons.rs`): in SolidCraft's colour roles and on the kit's square.
 
 use std::fmt::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+const HEBREW_FONT_NAME: &str = "NotoSansHebrew-Regular.ttf";
+
+fn absolutize(path: &Path) -> PathBuf {
+    if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().map(|cwd| cwd.join(path)).unwrap_or_else(|_| path.to_path_buf()) }
+}
+
+fn emit_hebrew_craft_font() {
+    println!("cargo::rustc-check-cfg=cfg(has_hebrew_craft_font)");
+    println!("cargo::rerun-if-env-changed=CRAFT_FONTS_DIR");
+    let Ok(dir) = std::env::var("CRAFT_FONTS_DIR") else {
+        return;
+    };
+    let dir = dir.trim();
+    if dir.is_empty() {
+        return;
+    }
+    let abs_dir = absolutize(Path::new(dir));
+    println!("cargo::rerun-if-changed={}", abs_dir.display());
+    let sub_dir = abs_dir.join("fonts/noto-sans-hebrew");
+    if sub_dir.is_dir() {
+        println!("cargo::rerun-if-changed={}", sub_dir.display());
+    }
+    let candidates = [abs_dir.join(HEBREW_FONT_NAME), sub_dir.join(HEBREW_FONT_NAME)];
+    if let Some(found) = candidates.into_iter().find(|p| p.is_file()) {
+        let abs = std::fs::canonicalize(&found).unwrap_or(found);
+        println!("cargo::rerun-if-changed={}", abs.display());
+        println!("cargo::rustc-env=HEBREW_CRAFT_FONT_PATH={}", abs.display());
+        println!("cargo::rustc-cfg=has_hebrew_craft_font");
+    }
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The target this crate is built for, so its tests can ask `cargo metadata` for that
     // platform's packages only (theme.rs `kit_message_ids`).
     println!("cargo:rustc-env=FIELDCRAFT_BUILD_TARGET={}", std::env::var("TARGET")?);
+    emit_hebrew_craft_font();
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
     let dir = manifest.join("../../assets/icons");
     println!("cargo:rerun-if-changed={}", dir.display());
