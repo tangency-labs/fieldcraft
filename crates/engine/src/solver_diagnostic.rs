@@ -40,7 +40,7 @@ fn solver_failure(e: &EngineError) -> bool {
         EngineError::Context { source, .. } => solver_failure(source),
         EngineError::Solver(S::NotConverged(_) | S::Singular(_) | S::Internal(_) | S::Element { .. })
         | EngineError::Explicit(E::Unstable(_))
-        | EngineError::Fluid(F::Unstable(_) | F::Backend(_)) => true,
+        | EngineError::Fluid(F::Unstable(_) | F::Backend(_) | F::NoDevice) => true,
         _ => false,
     }
 }
@@ -114,6 +114,7 @@ mod tests {
     #[test]
     fn backend_failures_are_classified_by_type_not_message() {
         assert!(solver_failure(&EngineError::Fluid(fieldcraft_lbm::Error::Backend("adapter unavailable".into()))));
+        assert!(solver_failure(&EngineError::Fluid(fieldcraft_lbm::Error::NoDevice)));
         assert!(!solver_failure(&EngineError::Fluid(fieldcraft_lbm::Error::Invalid("GPU: invalid input".into()))));
         assert!(!solver_failure(&EngineError::Fluid(fieldcraft_lbm::Error::Invalid("no GPU backend is available input".into()))));
     }
