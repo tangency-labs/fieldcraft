@@ -135,6 +135,29 @@ pub fn selectable_languages() -> Vec<LanguageChoice> {
     choices
 }
 
+/// Build the Settings language dropdown choices and initial selection index for `saved_pref`.
+///
+/// When `saved_pref` normalizes to Hebrew on a build without Hebrew fonts, append a distinct
+/// entry so opening Settings unchanged preserves `"he"` while picking English saves `"en"`.
+pub fn language_choices_for(saved_pref: &str) -> (Vec<LanguageChoice>, usize) {
+    language_choices_with(selectable_languages(), saved_pref)
+}
+
+fn language_choices_with(mut choices: Vec<LanguageChoice>, saved_pref: &str) -> (Vec<LanguageChoice>, usize) {
+    let current = validate_preference(saved_pref).unwrap_or_else(|_| ENGLISH.into());
+    if let Some(idx) = choices.iter().position(|c| c.pref == current) {
+        return (choices, idx);
+    }
+    if current == HEBREW {
+        // ASCII label on font-less builds because Hebrew glyphs are absent from the embedded font.
+        let idx = choices.len();
+        choices.push(LanguageChoice { pref: HEBREW, label: "Hebrew (unavailable in this build)".into() });
+        return (choices, idx);
+    }
+    let idx = choices.iter().position(|c| c.pref == ENGLISH).unwrap_or(0);
+    (choices, idx)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeSet, HashMap};
@@ -222,5 +245,27 @@ mod tests {
             assert!(choices.iter().any(|c| c.pref == HEBREW));
         }
         assert!(!is_rtl());
+    }
+
+    #[test]
+    fn unavailable_hebrew_preference_stays_distinct_from_english() {
+        let fontless_choices =
+            vec![LanguageChoice { pref: SYSTEM, label: "System".into() }, LanguageChoice { pref: ENGLISH, label: "English".into() }];
+        let (choices, initial) = language_choices_with(fontless_choices, "iw-IL");
+        assert_eq!(choices.len(), 3);
+        assert_eq!(initial, 2);
+        assert_eq!(choices[initial].pref, HEBREW);
+        let en_idx = choices.iter().position(|c| c.pref == ENGLISH).expect("English choice");
+        assert_ne!(initial, en_idx);
+
+        let desktop_choices = vec![
+            LanguageChoice { pref: SYSTEM, label: "System".into() },
+            LanguageChoice { pref: ENGLISH, label: "English".into() },
+            LanguageChoice { pref: HEBREW, label: "עברית".into() },
+        ];
+        let (choices, initial) = language_choices_with(desktop_choices, "he");
+        assert_eq!(choices.len(), 3);
+        assert_eq!(initial, 2);
+        assert_eq!(choices[initial].pref, HEBREW);
     }
 }

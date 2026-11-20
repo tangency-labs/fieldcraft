@@ -352,11 +352,8 @@ fn general(ui: &mut egui::Ui, app: &mut ModelApp) {
             note(ui, "settings.history_dock_hint");
         });
         kit::settings_section(ui, "language", tr("settings.language"), |ui| {
-            let choices = crate::i18n::selectable_languages();
+            let (choices, initial) = crate::i18n::language_choices_for(&app.prefs.language);
             let labels: Vec<&str> = choices.iter().map(|c| c.label.as_str()).collect();
-            let current = crate::i18n::validate_preference(&app.prefs.language).unwrap_or_else(|_| crate::i18n::ENGLISH.into());
-            let initial =
-                choices.iter().position(|c| c.pref == current).or_else(|| choices.iter().position(|c| c.pref == crate::i18n::ENGLISH)).unwrap_or(0);
             let mut selected = initial;
             kit::row(ui, tr("settings.language"), |ui| {
                 kit::dropdown(ui, "fc_settings_language", &mut selected, &labels).backing_on_hover_text(tr("settings.language_hint"))
