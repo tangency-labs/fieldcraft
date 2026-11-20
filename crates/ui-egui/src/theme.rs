@@ -502,7 +502,65 @@ static ENGLISH_SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(||
 });
 static ENGLISH: std::sync::LazyLock<solidcraft_ui_text::Catalog> =
     std::sync::LazyLock::new(|| solidcraft_ui_text::Catalog::new("en", "English", ENGLISH_SOURCE.as_str()));
-static MESSAGES: std::sync::LazyLock<[&'static solidcraft_ui_text::Catalog; 1]> = std::sync::LazyLock::new(|| [&*ENGLISH]);
+static HEBREW_SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let mut messages: serde_json::Map<String, serde_json::Value> = serde_json::from_str(include_str!("../locales/he.json")).unwrap_or_default();
+    for w in fieldcraft_engine::catalogue::Workspace::ALL {
+        let (about, tabs) = crate::toolbar::workspace_ids(w);
+        messages.entry(about).or_insert_with(|| w.about().into());
+        messages.entry(tabs).or_insert_with(|| w.tabs().iter().map(|t| t.label()).collect::<Vec<_>>().join(" · ").into());
+    }
+    serde_json::Value::Object(messages).to_string()
+});
+static HEBREW: std::sync::LazyLock<solidcraft_ui_text::Catalog> =
+    std::sync::LazyLock::new(|| solidcraft_ui_text::Catalog::new("he", "עברית", HEBREW_SOURCE.as_str()));
+static MESSAGES: std::sync::LazyLock<[&'static solidcraft_ui_text::Catalog; 2]> = std::sync::LazyLock::new(|| [&*ENGLISH, &*HEBREW]);
+
+fn append_hebrew_fallback(fonts: &mut egui::FontDefinitions, name: &str) {
+    for family in type_face::sans_families().into_iter().chain(std::iter::once(egui::FontFamily::Monospace)) {
+        let list = fonts.families.entry(family).or_default();
+        if !list.iter().any(|existing| existing == name) {
+            if let Some(pos) = list.iter().position(|existing| existing == type_face::SYMBOL_FALLBACK) {
+                list.insert(pos, name.to_owned());
+            } else {
+                list.push(name.to_owned());
+            }
+        }
+    }
+}
+
+/// Register bundled (`CRAFT_FONTS_DIR`) or desktop system Hebrew fallback fonts without committing
+/// binary font assets.
+fn install_hebrew_fallback_fonts(fonts: &mut egui::FontDefinitions) {
+    #[cfg(has_hebrew_craft_font)]
+    {
+        const BUNDLED_HEBREW: &str = "noto-sans-hebrew";
+        let bytes = include_bytes!(env!("HEBREW_CRAFT_FONT_PATH"));
+        fonts.font_data.insert(BUNDLED_HEBREW.to_owned(), std::sync::Arc::new(egui::FontData::from_static(bytes)));
+        append_hebrew_fallback(fonts, BUNDLED_HEBREW);
+        return;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        const CANDIDATES: [(&str, &str); 8] = [
+            ("arial-hebrew", "/System/Library/Fonts/Supplemental/Arial Hebrew.ttf"),
+            ("sf-hebrew", "/System/Library/Fonts/SFHebrew.ttf"),
+            ("arial-hebrew-local", "/Library/Fonts/Arial Hebrew.ttf"),
+            ("noto-sans-hebrew", "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf"),
+            ("noto-sans-hebrew-arch", "/usr/share/fonts/noto/NotoSansHebrew-Regular.ttf"),
+            ("dejavu-sans", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+            ("arial", "C:\\Windows\\Fonts\\arial.ttf"),
+            ("segoe-ui", "C:\\Windows\\Fonts\\segoeui.ttf"),
+        ];
+        for (name, path) in CANDIDATES {
+            if let Ok(bytes) = std::fs::read(path) {
+                fonts.font_data.insert(name.to_owned(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+                append_hebrew_fallback(fonts, name);
+                break;
+            }
+        }
+    }
+}
 
 /// SolidCraft's look installed into the kit, once per process: FieldCraft's icon set (SolidCraft's
 /// with ours, [`crate::icons::SET`]), SolidCraft's code-drawn glyphs and its built-in themes, and
@@ -516,14 +574,17 @@ pub fn install_look() {
 
 /// Style the context for the dark or light theme: SolidCraft's look installed in the kit, with
 /// FieldCraft's tokens (its teal accent on SolidCraft's chrome) and teal icon accents; the kit's
-/// visuals from them, and SolidCraft's interface faces (IBM Plex). egui draws selected labels'
-/// text and links in the accent's ink, which reads on the selection fill and on panels.
+/// visuals from them, and SolidCraft's interface faces (IBM Plex) plus Hebrew font fallback. egui
+/// draws selected labels' text and links in the accent's ink, which reads on the selection fill and
+/// on panels.
 pub fn apply(ctx: &egui::Context, dark: bool) {
     install_look();
     kit_theme::set_dark(dark);
     kit_theme::set_custom(Some(kit_theme::Custom { dark, tokens: kit(dark) }));
     kit_icons::set_theme_palette(Some((dark, icon_palette(dark))));
-    solidcraft_look::fonts::install(ctx);
+    let mut fonts = solidcraft_look::fonts::definitions();
+    install_hebrew_fallback_fonts(&mut fonts);
+    solidcraft_look::fonts::apply(ctx, fonts);
     kit_theme::apply(ctx);
     let (k, ink) = (kit(dark), Tokens::get(dark).accent_ink);
     ctx.global_style_mut(|s| {
@@ -683,6 +744,23 @@ mod tests {
         run(&ctx);
         assert_eq!(label_font(&ctx, 12.0), type_face::semibold(12.0));
         run(&ctx);
+    }
+
+    /// Applying the theme registers a Hebrew fallback font when one is bundled or installed on desktop.
+    #[test]
+    fn hebrew_fallback_font_renders_hebrew_text_without_panicking() {
+        let ctx = egui::Context::default();
+        apply(&ctx, false);
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let galley = ui.painter().layout_no_wrap("עברית".into(), egui::FontId::proportional(14.0), Color32::WHITE);
+            assert!(galley.size().x > 0.0);
+        });
+        out.textures_delta.clear();
+        #[cfg(target_os = "macos")]
+        {
+            let has_hebrew = ctx.fonts_mut(|f| f.has_glyph(&egui::FontId::proportional(14.0), 'ע'));
+            assert!(has_hebrew, "expected system Hebrew fallback font on macOS");
+        }
     }
 
     /// The kit draws with FieldCraft's colours once they are applied: its tokens are [`kit`]'s,
