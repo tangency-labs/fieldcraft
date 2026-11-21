@@ -385,6 +385,17 @@ impl Walls {
         });
     }
 
+    /// The wall model's friction velocity at each modelled wall cell, as [`Walls::sample`] takes
+    /// it from `velocity(cell)` (the second cell's fluid velocity, lattice units, with the half
+    /// force): each one's cell, its distance to its wall and u_τ (lattice units), in cell order.
+    /// Read only: recomputed, nothing stored (the Spalart–Allmaras wall function reads it).
+    pub fn friction_velocities<'a>(&'a self, velocity: impl Fn(usize) -> [f64; 3] + 'a) -> impl Iterator<Item = (usize, f64, f64)> + 'a {
+        self.walls.iter().filter(|w| w.second != NONE).map(move |w| {
+            let speed = w.tangential_speed(velocity(w.second as usize));
+            (w.cell as usize, w.distance, musker_friction(speed, 3.0 * w.distance, self.nu))
+        })
+    }
+
     /// The wall-function bounce's sample before a collision (Han, Ooka and Kikumoto, their eqs.
     /// 16–17): from `moments(cell)`, each wall cell's own density and velocity (lattice units,
     /// with the half force), the stress ρ u_τ² along its velocity parallel to the wall, u_τ from
@@ -512,6 +523,16 @@ pub fn wall_law(speed: f64, y1: f64, y2: f64, nu: f64) -> (f64, f64) {
     let l = MIXING_KAPPA * y1 * (1.0 - (-y_plus / MIXING_A_PLUS).exp());
     let nu_t = l * l * dudy.abs();
     if (ut * u_plus).is_finite() && nu_t.is_finite() { (ut * u_plus, nu_t) } else { (0.0, 0.0) }
+}
+
+/// The eddy viscosity of [`wall_law`] in units of ν as a function of y⁺ alone: with its mixing length
+/// l = κ y (1 − exp(−y⁺/A⁺)) and ∂ũ/∂y = u_τ² slope / ν, ν_t / ν = (κ y⁺ (1 − exp(−y⁺/A⁺)))² du⁺/dy⁺.
+/// 0 where it is not a number.
+pub fn musker_eddy_viscosity(y_plus: f64) -> f64 {
+    let (_, slope) = musker(y_plus);
+    let l = MIXING_KAPPA * y_plus * (1.0 - (-y_plus / MIXING_A_PLUS).exp());
+    let nu_t = l * l * slope.abs();
+    if nu_t.is_finite() { nu_t } else { 0.0 }
 }
 
 /// Musker's profile u⁺(y⁺) and its slope du⁺/dy⁺ (A. J. Musker, *Explicit expression for the
