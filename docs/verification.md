@@ -363,7 +363,10 @@ model's steady equation to round-off and the model's own one-dimensional solver.
 gates, all heavy (`cargo xtask test --heavy`), are in `crates/lbm/tests/sa_channel.rs`: Re_τ 182
 (Lee & Moser, U_b⁺ and C_f, centreline U⁺ in 17.75 to 18.65) at 12 and 24 cells per half-height,
 Re_τ 1000 within 5 % of C_f at 20 and 32 cells, and a third channel at Re_τ 543, run with the
-law's constants fixed beforehand. Each test prints its gate table.
+law's constants fixed beforehand. Each test prints its gate table. The Re_τ 180 and 543 channels also run on
+the half-way wall (`*_surface`, law at the second open cell, 1½ cells): their carried C_f is pinned
+(within half a point of the recorded error) rather than gated, and only the Spalart–Allmaras law is
+expected to be near Lee & Moser's.
 
 ### What #664's acceptance still lacks
 
