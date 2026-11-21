@@ -43,6 +43,51 @@ pub const TARGET_LATTICE_VELOCITY: f64 = 0.05;
 pub const AUTO_TAU_MAX: f64 = 1.0;
 /// The largest lattice Mach number `u Δt / (Δx c_s)` of the characteristic velocity.
 pub const MAX_MACH: f64 = 0.3;
+
+/// Whether the cell at `p` in a box of `cells` cells lies in a velocity inlet face's layer and touches two or more
+/// walls (box faces at rest or moving, not periodic): at such a corner an inlet condition and a wall's law meet on one
+/// cell, and the on-node wall-function bounce grows a density mode there that takes the run down. The rule: the cell is
+/// a wall cell (plain bounce-back, no inlet condition, no wall law). A cell with one wall keeps the inlet's rule.
+pub(crate) fn is_inlet_corner(domain: &FluidDomain, cells: [usize; 3], p: [usize; 3]) -> bool {
+    let (mut walls, mut inlet) = (0usize, false);
+    for a in 0..3 {
+        if domain.faces.periodic(a) {
+            continue;
+        }
+        let (Some(&c), Some(&i)) = (cells.get(a), p.get(a)) else { return false };
+        for (at, face) in [(i == 0, BoxFace::of(a, false)), (i + 1 == c, BoxFace::of(a, true))] {
+            if !at {
+                continue;
+            }
+            match domain.faces.get(face) {
+                FaceCondition::Velocity { .. } => inlet = true,
+                FaceCondition::Wall {} | FaceCondition::MovingWall { .. } => walls += 1,
+                _ => {}
+            }
+        }
+    }
+    inlet && walls >= 2
+}
+
+/// How many cells [`is_inlet_corner`] picks in a box of `cells` cells: the cells along its twelve edges.
+pub(crate) fn inlet_corner_count(domain: &FluidDomain, cells: [usize; 3]) -> usize {
+    let mut found = std::collections::BTreeSet::new();
+    for along in 0..3 {
+        let (a, b) = ((along + 1) % 3, (along + 2) % 3);
+        for (ia, ib) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+            for t in 0..cells.get(along).copied().unwrap_or(0) {
+                let mut p = [0usize; 3];
+                p[along] = t;
+                p[a] = if ia == 0 { 0 } else { cells.get(a).copied().unwrap_or(1).saturating_sub(1) };
+                p[b] = if ib == 0 { 0 } else { cells.get(b).copied().unwrap_or(1).saturating_sub(1) };
+                if is_inlet_corner(domain, cells, p) {
+                    found.insert(p);
+                }
+            }
+        }
+    }
+    found.len()
+}
 /// The smallest symmetric relaxation time τ⁺.
 pub const MIN_TAU: f64 = 0.505;
 /// The smallest τ⁺ of the fluid itself with a turbulence model: the eddy viscosity raises each
@@ -67,6 +112,9 @@ pub const TURBULENT_PRANDTL: std::ops::RangeInclusive<f64> = 0.1..=10.0;
 /// The range of Van Driest's damping constant A⁺ a step takes (26 is Van Driest's; 25 to 30 is
 /// usual).
 pub const VAN_DRIEST: std::ops::RangeInclusive<f64> = 1.0..=100.0;
+
+/// The range of the Spalart–Allmaras inflow ratio ν̃/ν.
+pub const SA_INFLOW_RATIO: std::ops::RangeInclusive<f64> = 0.0..=100.0;
 /// The default two-relaxation-time parameter Λ: bounce-back walls exactly halfway between cells
 /// (Ginzburg, Verhaeghe & d'Humières 2008).
 pub const DEFAULT_MAGIC: f64 = 3.0 / 16.0;
@@ -267,6 +315,9 @@ pub struct Setup {
     /// Vreman's model constant c = 2.5 C_s² of its eddy viscosity ([`crate::vreman`]; 0: none).
     /// At most one of `smagorinsky` and `vreman` is above 0.
     pub vreman: f64,
+    /// The Spalart–Allmaras model, when the step takes it ([`crate::sa`]): its eddy viscosity
+    /// then comes from the transported ν̃. Neither `smagorinsky` nor `vreman` is set with it.
+    pub spalart_allmaras: Option<SaSetup>,
     /// Van Driest's damping constant A⁺ of the length scale near walls (none: no damping).
     pub van_driest: Option<f64>,
     /// The wall model of the fluid cells next to no-slip walls (none: the bounce-back alone).
@@ -296,6 +347,13 @@ pub struct Setup {
     /// the cells' range, and that range.
     pub shear_dependent_tau: Option<crate::solve::ShearDependentTau>,
     pub warnings: Vec<String>,
+}
+
+/// The Spalart–Allmaras model's settings ([`crate::sa`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SaSetup {
+    /// ν̃/ν at inflows and in the initial field.
+    pub inflow_ratio: f64,
 }
 
 /// What a zone of the domain does, in lattice units.
@@ -527,6 +585,14 @@ impl Setup {
                 "wall_model `spalding_bounce_halfway` is disabled because its wall-row checkerboard mode grows; remove `wall_model` for resolved no-slip walls, or explicitly choose and validate another wall treatment. `spalding_bounce` uses a different, on-node wall location".into(),
             ));
         }
+        if turbulence.as_ref().is_some_and(|t| {
+            matches!(t.wall_model(), Some(WallModel::SpalartAllmarasBounce | WallModel::SpalartAllmarasBounceSurface))
+                && !matches!(t, Turbulence::SpalartAllmaras { .. })
+        }) {
+            return Err(Error::Invalid(
+                "wall_model `spalart_allmaras_bounce` and `spalart_allmaras_bounce_surface` are the Spalart–Allmaras model's own wall law: use them with `spalart_allmaras` turbulence, or `spalding_bounce` / `spalding_bounce_surface` with a subgrid model".into(),
+            ));
+        }
         // Interpolated walls replace the bounce-back of the obstacles' links; the wall models and
         // the free surface rebuild or reflect those populations their own way.
         if *walls == WallTreatment::Interpolated {
@@ -539,25 +605,16 @@ impl Setup {
             if domain.free_surface.is_some() {
                 return refuse("with a free surface (`free_surface`)".into());
             }
+            if matches!(turbulence, Some(Turbulence::SpalartAllmaras { .. })) {
+                return refuse("with the Spalart–Allmaras model (`spalart_allmaras`)".into());
+            }
         }
         let walls = *walls;
         let domain = domain.clone();
-        let (smagorinsky, vreman, turbulent_prandtl, van_driest, wall_model) = match turbulence {
-            None => (0.0, 0.0, 0.9, None, None),
+        let (smagorinsky, vreman, spalart_allmaras, turbulent_prandtl, van_driest, wall_model) = match turbulence {
+            None => (0.0, 0.0, None, 0.9, None, None),
             Some(t) => {
-                let (constant, prandtl, van_driest) = (t.constant(), t.prandtl(), t.van_driest());
-                let (smagorinsky, vreman, what, usual) = match t {
-                    Turbulence::Smagorinsky { .. } => (constant, 0.0, "the Smagorinsky constant", "0.1 to 0.2"),
-                    Turbulence::Vreman { .. } => (
-                        0.0,
-                        crate::vreman::model_constant(constant),
-                        "the constant of Vreman's model (the Smagorinsky-equivalent C_s of c = 2.5 C_s²)",
-                        "0.17 to 0.18",
-                    ),
-                };
-                if !(constant.is_finite() && constant > 0.0 && constant <= MAX_SMAGORINSKY) {
-                    return Err(Error::Invalid(format!("{what} is {constant}: give one above 0 and at most {MAX_SMAGORINSKY} ({usual} is usual)")));
-                }
+                let (prandtl, van_driest) = (t.prandtl(), t.van_driest());
                 if !(prandtl.is_finite() && TURBULENT_PRANDTL.contains(&prandtl)) {
                     return Err(Error::Invalid(format!(
                         "the turbulent Prandtl number is {prandtl}: give one from {} to {} (0.85 to 0.9 is usual)",
@@ -565,14 +622,42 @@ impl Setup {
                         TURBULENT_PRANDTL.end()
                     )));
                 }
-                if let Some(a_plus) = van_driest.filter(|a| !(a.is_finite() && VAN_DRIEST.contains(a))) {
-                    return Err(Error::Invalid(format!(
-                        "Van Driest's damping constant A⁺ is {a_plus}: give one from {} to {} (26 is usual)",
-                        VAN_DRIEST.start(),
-                        VAN_DRIEST.end()
-                    )));
+                let subgrid = |smagorinsky: f64, vreman: f64, constant: f64, what: &str, usual: &str| {
+                    if !(constant.is_finite() && constant > 0.0 && constant <= MAX_SMAGORINSKY) {
+                        return Err(Error::Invalid(format!(
+                            "{what} is {constant}: give one above 0 and at most {MAX_SMAGORINSKY} ({usual} is usual)"
+                        )));
+                    }
+                    if let Some(a_plus) = van_driest.filter(|a| !(a.is_finite() && VAN_DRIEST.contains(a))) {
+                        return Err(Error::Invalid(format!(
+                            "Van Driest's damping constant A⁺ is {a_plus}: give one from {} to {} (26 is usual)",
+                            VAN_DRIEST.start(),
+                            VAN_DRIEST.end()
+                        )));
+                    }
+                    Ok((smagorinsky, vreman, None, prandtl, van_driest, t.wall_model()))
+                };
+                match *t {
+                    Turbulence::Smagorinsky { constant, .. } => subgrid(constant, 0.0, constant, "the Smagorinsky constant", "0.1 to 0.2")?,
+                    Turbulence::Vreman { constant, .. } => subgrid(
+                        0.0,
+                        crate::vreman::model_constant(constant),
+                        constant,
+                        "the constant of Vreman's model (the Smagorinsky-equivalent C_s of c = 2.5 C_s²)",
+                        "0.17 to 0.18",
+                    )?,
+                    // No subgrid constant and no Van Driest damping (the variant has no such field).
+                    Turbulence::SpalartAllmaras { inflow_ratio, .. } => {
+                        if !(inflow_ratio.is_finite() && SA_INFLOW_RATIO.contains(&inflow_ratio)) {
+                            return Err(Error::Invalid(format!(
+                                "the Spalart–Allmaras inflow ratio ν̃/ν is {inflow_ratio}: give one from {} to {} (3 is usual)",
+                                SA_INFLOW_RATIO.start(),
+                                SA_INFLOW_RATIO.end()
+                            )));
+                        }
+                        (0.0, 0.0, Some(SaSetup { inflow_ratio }), prandtl, None, t.wall_model())
+                    }
                 }
-                (smagorinsky, vreman, prandtl, van_driest, t.wall_model())
             }
         };
         let material = model.material(&domain.material);
@@ -783,9 +868,11 @@ impl Setup {
             shear_dependent_floor(r, &domain, initial_kelvin, tau_plus, &mut warnings)?;
             tau_plus.clamp(r.tau[0], r.tau[1])
         } else {
-            let min_tau = if turbulence.is_some() { MIN_TAU_TURBULENT } else { MIN_TAU };
+            // The Spalart–Allmaras model with no ν̃ anywhere (`inflow_ratio` 0) gives no eddy viscosity to lower the floor.
+            let eddy = turbulence.as_ref().is_some_and(|t| !matches!(t, Turbulence::SpalartAllmaras { inflow_ratio, .. } if *inflow_ratio <= 0.0));
+            let min_tau = if eddy { MIN_TAU_TURBULENT } else { MIN_TAU };
             if !(tau_plus >= min_tau) {
-                let model = if turbulence.is_some() { "" } else { ", or add a turbulence model (`turbulence`)" };
+                let model = if eddy { "" } else { ", or add a turbulence model (`turbulence`)" };
                 return Err(Error::Invalid(format!(
                     "the relaxation time τ = {tau_plus:.5} is below {min_tau}: the grid cannot resolve viscosity {viscosity} at this time step (cell Reynolds number {:.1}); refine the spacing or raise the time step{model}",
                     if nu > 0.0 { lattice_velocity / nu } else { f64::INFINITY }
@@ -984,6 +1071,11 @@ impl Setup {
                 "dynamic σ needs a subgrid model's eddy viscosity: add `turbulence` (Vreman's or Smagorinsky's model)".into(),
             ));
         }
+        if dynamic_sigma && spalart_allmaras.is_some() {
+            return Err(Error::Invalid(
+                "not supported yet: dynamic σ with the Spalart–Allmaras model, whose Reynolds-averaged eddy viscosity is not a subgrid one; give a fixed `sigma`".into(),
+            ));
+        }
         let hybrid_sigma = HrrSigma::fixed(*sigma);
         if collision != Collision::Hrr && sigma.is_some() {
             warnings.push(format!("the hybrid collision's σ (`sigma`) has no effect with the {} collision", collision.name()));
@@ -1002,6 +1094,23 @@ impl Setup {
             warnings.push(format!("the two-relaxation-time parameter Λ (`magic`) has no effect with the {} collision", collision.name()));
         }
 
+        if matches!(
+            wall_model,
+            Some(
+                WallModel::SpaldingBounce
+                    | WallModel::SpalartAllmarasBounce
+                    | WallModel::SpaldingBounceSurface
+                    | WallModel::SpalartAllmarasBounceSurface
+            )
+        ) {
+            let corners = inlet_corner_count(&domain, cells);
+            if corners > 0 {
+                warnings.push(format!(
+                    "{corners} cells in an inlet face's layer touch two walls: they are wall cells (plain bounce-back, no inlet condition, no wall law), because the on-node wall-function bounce is unstable where an inlet meets two walls"
+                ));
+            }
+        }
+
         Ok(Setup {
             step: s.name.clone(),
             grid,
@@ -1018,6 +1127,7 @@ impl Setup {
             dynamic_sigma,
             smagorinsky,
             vreman,
+            spalart_allmaras,
             van_driest,
             wall_model,
             walls,
@@ -1044,9 +1154,10 @@ impl Setup {
         self.grid.spacing.powi(3) / self.time_step
     }
 
-    /// Whether a subgrid model (Smagorinsky's or Vreman's) gives the cells an eddy viscosity.
+    /// Whether a turbulence model (Smagorinsky's, Vreman's or Spalart–Allmaras) gives the cells
+    /// an eddy viscosity.
     pub fn turbulent(&self) -> bool {
-        self.smagorinsky > 0.0 || self.vreman > 0.0
+        self.smagorinsky > 0.0 || self.vreman > 0.0 || self.spalart_allmaras.is_some()
     }
 
     /// Model units per lattice unit of velocity, pressure and force.

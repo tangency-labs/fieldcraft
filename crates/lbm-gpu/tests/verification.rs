@@ -12,6 +12,10 @@
 
 #[path = "../../lbm/tests/common/mod.rs"]
 mod common;
+#[path = "verification/han.rs"]
+mod han;
+#[path = "verification/sa.rs"]
+mod sa;
 #[path = "../../lbm/tests/support/wall_balance.rs"]
 mod wall_balance;
 #[path = "verification/zones.rs"]
@@ -3222,6 +3226,8 @@ impl HanSetup {
                 "smagorinsky: estimate (C D)^2 sqrt(2 S:S) of the finite-difference strain, D Van Driest's at the nominal y+ (the device's is Hou's, from the flux)",
                 " (ν_t a finite-difference estimate)",
             ),
+            // Not a subgrid model: these channel cases never run it.
+            Turbulence::SpalartAllmaras { .. } => ("spalart_allmaras: not a subgrid model, not checked here", ""),
         }
     }
 }
@@ -3402,6 +3408,7 @@ impl ChannelStats {
                     let y_plus = (j as f64 + self.half).min((ny - 1 - j) as f64 + self.half) * self.dx * self.re_tau;
                     (constant * van_driest.map_or(1.0, |a| 1.0 - (-y_plus / a).exp())).powi(2)
                 }
+                Turbulence::SpalartAllmaras { .. } => 0.0,
             })
             .collect();
         let (first, last) = (self.wall_rows, ny - 1 - self.wall_rows);
@@ -3422,6 +3429,7 @@ impl ChannelStats {
             let nu_t = match self.turbulence {
                 Turbulence::Vreman { .. } => vreman::eddy_viscosity(&g, c),
                 Turbulence::Smagorinsky { .. } => c * (2.0 * ss).sqrt(),
+                Turbulence::SpalartAllmaras { .. } => 0.0,
             };
             let ratio = nu_t / self.nu;
             let sigma = match self.sigma {
