@@ -111,6 +111,11 @@ struct ChannelResult {
     blocks: Blocks,
     settled: bool,
     steps: u64,
+    /// The mean u over u_τ at the first three open rows (the half-way wall's y = ½, 1½, 2½ cells),
+    /// the friction velocity and the viscosity (lattice units).
+    profile: [f64; 3],
+    u_tau: f64,
+    nu: f64,
 }
 
 impl Channel {
@@ -118,9 +123,25 @@ impl Channel {
         1.0 / self.cells as f64
     }
 
+    /// Whether the walls are the half-way wall (`*_bounce_surface`): two obstacle slabs two cells
+    /// thick (`slabs`) whose faces are the walls at y = 0 and 2, the open rows exactly 2 cells per δ.
+    fn surface(&self) -> bool {
+        let wall = match self.turbulence {
+            Some(Turbulence::SpalartAllmaras { wall_model, .. } | Turbulence::Smagorinsky { wall_model, .. }) => wall_model,
+            _ => None,
+        };
+        matches!(wall, Some(WallModel::SpaldingBounceSurface | WallModel::SpalartAllmarasBounceSurface))
+    }
+
     /// Cell rows of obstacle slab at each end of the box (0 without slabs).
     fn slab_rows(&self) -> usize {
-        usize::from(self.slabs)
+        if !self.slabs {
+            0
+        } else if self.surface() {
+            2
+        } else {
+            1
+        }
     }
 
     /// The obstacle slabs, with `slabs`.
@@ -205,6 +226,13 @@ impl Channel {
             };
             if rows % 2 == 1 { row(rows / 2) } else { 0.5 * (row(rows / 2 - 1) + row(rows / 2)) }
         };
+        let plane = |flow: &Flow, j: usize| -> f64 {
+            (0..grid.cells[0] * grid.cells[2])
+                .map(|k| flow.moments(grid.index([k % grid.cells[0], j + first, k / grid.cells[0]])).map_or(0.0, |(_, u)| u[0]))
+                .sum::<f64>()
+                / (grid.cells[0] * grid.cells[2]) as f64
+        };
+        let mut planes: Vec<[f64; 3]> = Vec::new();
         let acoustic = 2.0 * rows as f64 * 3f64.sqrt();
         let bulk_lattice = self.lattice_bulk;
         let flow_through = 2.0 * std::f64::consts::PI * self.cells as f64 / bulk_lattice;
@@ -265,6 +293,7 @@ impl Channel {
             // Past MAX_BLOCKS the stream refuses more samples; the statistics keep what they hold.
             blocks.push(cf(row[0], row[4], rho)).ok();
             history.push(row);
+            planes.push([plane(&flow, 0), plane(&flow, 1), plane(&flow, 2)]);
             let carried: Vec<Vec<f64>> = history.iter().map(|r| vec![cf(r[0], r[4], rho)]).collect();
             let last = mean(&history[history.len().saturating_sub(window)..]);
             let balanced = (last[1] * area / last[3] - 1.0).abs() <= self.settling.drift;
@@ -275,7 +304,12 @@ impl Channel {
         }
         let last = mean(&history[history.len().saturating_sub(window)..]);
         let u_tau = (last[0] / rho).sqrt();
+        let tail = &planes[planes.len().saturating_sub(window)..];
+        let profile = [0, 1, 2].map(|k| tail.iter().map(|p| p[k]).sum::<f64>() / tail.len().max(1) as f64 / u_tau);
         ChannelResult {
+            profile,
+            u_tau,
+            nu,
             bulk: last[4] / u_tau,
             bulk_trapezoid: last[5] / u_tau,
             centre: last[6] / u_tau,
@@ -465,6 +499,68 @@ fn channel_at_re_tau_1000(wall: WallModel, cells: usize, max_steps: u64) -> Chan
     .run()
 }
 
+/// The SA channel at Re_τ 180 on the half-way wall (`*_bounce_surface`): the walls are the faces of two
+/// obstacle slabs two cells thick, the open rows exactly 2 cells per δ. The law reads the second open
+/// cell off each wall (y = 1½; y⁺ 27 and 14 on 10 and 20 cells per δ), and ν̃ is imposed at the first
+/// two open cells. U_b⁺ is the mean over the open rows (midpoint). Pinned, not gated: each carried
+/// C_f error stays within 0.5 points of its recorded value, so a change that moves it comes to review.
+/// Only the SA law is validated; Spalding's is a contrast and 8–9 % high.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn sa_rans_channel_at_re_tau_180_on_the_half_way_wall() {
+    let mut failures = Vec::new();
+    for (wall, cells, pinned) in [
+        (WallModel::SpaldingBounceSurface, 10usize, 0.0893),
+        (WallModel::SpaldingBounceSurface, 20, 0.0802),
+        (WallModel::SpalartAllmarasBounceSurface, 10, 0.0655),
+        (WallModel::SpalartAllmarasBounceSurface, 20, -0.0132),
+    ] {
+        let r = Channel {
+            re_tau: LEE_MOSER_180_RE_TAU,
+            cells,
+            bulk_guess: LEE_MOSER_180_BULK,
+            lattice_bulk: 0.1,
+            collision: Collision::Mrt,
+            sigma: None,
+            turbulence: Some(sa(wall)),
+            on_node: false,
+            slabs: true,
+            max_steps: 2_000_000,
+            sample: 100,
+            settling: GATED,
+        }
+        .run();
+        let name = format!("SA {wall:?}, {cells} cells per δ (first open cell y⁺ {:.1})", 0.5 * LEE_MOSER_180_RE_TAU / cells as f64);
+        report(&name, &r, LEE_MOSER_180_BULK, LEE_MOSER_180_CF);
+        let error = r.carried / LEE_MOSER_180_CF - 1.0;
+        println!("{name}: C_f carried {:+.2} % against Lee & Moser (pinned {:+.2} %)", 100.0 * error, 100.0 * pinned);
+        // The mean u⁺ at the first three open cells against the SA law at their own y⁺: the second
+        // (the cell the law reads) sits on it by construction, the first is where the model's error is.
+        for (k, u) in r.profile.iter().enumerate() {
+            let y_plus = (k as f64 + 0.5) * r.u_tau / r.nu;
+            let law = fieldcraft_lbm::sa_law::u_plus(y_plus);
+            println!("{name}: open cell {} y⁺ {y_plus:.1} u⁺ {u:.2} (SA law {law:.2}, {:+.1} %)", k + 1, 100.0 * (u / law - 1.0));
+            if k == 1 && matches!(wall, WallModel::SpalartAllmarasBounceSurface) && (u / law - 1.0).abs() > 0.02 {
+                failures.push(format!("{name}: the sampled cell's u⁺ {u:.2} is off the law's {law:.2}"));
+            }
+        }
+        if (error - pinned).abs() > 0.005 {
+            failures.push(format!("{name}: C_f error {:+.2} % left its pinned band {:+.2} ± 0.5 %", 100.0 * error, 100.0 * pinned));
+        }
+        if !r.settled {
+            failures.push(format!("{name}: not settled in {} steps", r.steps));
+        }
+        if !r.min_nu_tilde.is_some_and(|v| v >= 0.0) {
+            failures.push(format!("{name}: ν̃ below 0 ({:?})", r.min_nu_tilde));
+        }
+        let ratio = r.requested.unwrap_or(f64::NAN) / r.carried;
+        if (ratio - 1.0).abs() > 0.01 {
+            failures.push(format!("{name}: requested / carried {ratio}"));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
 /// The Spalart–Allmaras wall law (`spalart_allmaras_bounce`) on a periodic SA channel at
 /// Re_τ 182, 12 and 24 cells per half-height (the first fluid node at y⁺ 15 and 7.6), on MRT and
 /// on the hybrid collision at σ 0.99. Spalding's law is biased low in the buffer layer (the finding
@@ -601,4 +697,33 @@ fn sa_law_channel_at_re_tau_550_meets_lee_and_moser() {
     println!("{}", score.table());
     assert!(failures.is_empty(), "{failures:?}");
     assert!(score.passes());
+}
+
+/// The Re_τ 543.496 channel (Lee & Moser) on the half-way wall, SA law, the hybrid collision at
+/// σ 0.95, 20 cells per δ (the first open cell at y⁺ 13.6, the sampled second at 40.8). Gate: carried
+/// C_f within 3 %, request = carried within 1 %.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn sa_rans_channel_at_re_tau_550_on_the_half_way_wall() {
+    let r = Channel {
+        re_tau: LEE_MOSER_550_RE_TAU,
+        cells: 20,
+        bulk_guess: LEE_MOSER_550_BULK,
+        lattice_bulk: 0.1,
+        collision: Collision::Hrr,
+        sigma: Some(0.95),
+        turbulence: Some(sa(WallModel::SpalartAllmarasBounceSurface)),
+        on_node: false,
+        slabs: true,
+        max_steps: 3_000_000,
+        sample: 100,
+        settling: GATED,
+    }
+    .run();
+    report("Re_τ 550, half-way wall, HRR σ 0.95, 20 cells per δ", &r, LEE_MOSER_550_BULK, LEE_MOSER_550_CF);
+    let error = r.carried / LEE_MOSER_550_CF - 1.0;
+    println!("Re_τ 550: C_f carried {:+.2} % against Lee & Moser; centre U⁺ {:.2} (ref {LEE_MOSER_550_CENTRE})", 100.0 * error, r.centre);
+    assert!(r.settled, "not settled in {} steps", r.steps);
+    assert!(error.abs() < 0.03, "C_f error {:+.2} %", 100.0 * error);
+    assert!((r.requested.unwrap_or(f64::NAN) / r.carried - 1.0).abs() < 0.01);
 }
