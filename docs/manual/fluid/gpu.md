@@ -114,7 +114,7 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Steady-state rule and averaging | yes (decided on the host from read-back fields) |
 | Fans and porous zones (curves, Darcy–Forchheimer, loss coefficients), with every collision and wall treatment | yes |
 | The halfway wall-function bounce (`wall_model: "spalding_bounce_halfway"`) | yes |
-| Han et al.'s on-node wall-function bounce (`wall_model: "spalding_bounce"`, their eq. 14) | yes |
+| Han et al.'s on-node wall-function bounce (`wall_model: "spalding_bounce"`, their eq. 14) | yes: box faces, obstacles, edges, corners and the cells where a wall meets an open face |
 
 ## Algorithm
 
@@ -344,6 +344,45 @@ the CPU's rate (`the_on_node_bounce_damps_the_odd_even_mode_of_its_wall_rows_on_
 per step on the GB10, −1.174e-4 on llvmpipe, −1.169e-4 on the CPU, tolerance 10 % and ≤ 0), seeded
 at 1e-3 of a lattice speed: at the CPU's 1e-6 single precision's rounding of the base holds the mode
 near 4e-6 and the rate measured is the rounding's.
+
+Off a plane box face (an obstacle's faces, edges and corners, a node beside an open face) the
+device runs the CPU's link-pair form of eq. 14 (`bounce::roles`, `bounce::on_links`). Each node has
+a side row after the nodes' four rows: its Han links and its links to the fluid as one bit per
+direction, its cell, and flags (flat, sampled, which tangential axes carry the stress). Flat nodes
+keep the unrolled plane-wall path; the others assign each population by a statement of its own (no
+loop that tests c_q, as above). A node off a plane box face hands what it took from the fluid to a
+contrib slot of its own after the links, listed under its group, and the weights' share is
+−2 Σ w_q c_q over its links to the fluid (−n/3 on a plane wall, as before). A block on a channel
+floor (1120 nodes: flat ones, convex-edge nodes with one wall direction, concave-edge corner nodes
+with two) with Smagorinsky 0.1 against the CPU, both layouts, `trt` and `mrt` at τ − ½ 0.1, 400
+steps (`han_s_wall_follows_the_cpu_around_a_block`, bounds velocity 1e-4, density 1e-5, groups'
+forces averaged over 200 steps 1e-3, all of the largest): velocity 4.1e-7 to 8.6e-7, density 6.3e-8
+to 8.0e-8, forces 5.6e-10 to 2.2e-9, on an NVIDIA GeForce RTX 4070 Laptop GPU.
+
+With the Spalart–Allmaras model (`spalart_allmaras` and `spalding_bounce`) the wall function runs on
+the device too (`sa_wall_function` in `lbm.wgsl`): one row per first fluid node, the interior cell
+of one or more sampled boundary nodes, from the host after the nodes' side rows. After the ν̃
+sub-steps and before the collision it takes u_τ = √(τ_w / ρ) from the largest stress the law asked
+for at its nodes, ν_t = ν νt⁺(y⁺) from Spalding's law and ν̃ as the root of ν̃ f_v1 = ν_t, both
+roots by bisection (at most 40 halvings; the CPU's upper end), and writes u_τ back for the host.
+Against the CPU, both layouts, hybrid (σ 0.99) and multiple-relaxation-time collisions at
+τ − ½ 1.2e-4, 2000 steps (`the_model_on_han_s_wall_follows_the_cpu_for_2000_steps`; 300 steps in
+the trunk's gate): the forced channel with box-face walls and with obstacle slabs (144 rows), the
+junction duct (124 rows) and the block on a floor (1072 rows), 400 steps. Bounds: velocity 1e-4,
+density 1e-5, ν̃ 5e-5 (of the largest), the wall function's friction velocities and the groups'
+forces 1e-3. Measured on an NVIDIA GeForce RTX 4070 Laptop GPU: channel velocity 3.2e-7 to 4.2e-7,
+ν̃ 1.5e-5 to 1.6e-5, u_τ 7.0e-8 to 4.9e-7; junction duct velocity 3.1e-7 to 1.2e-6; block velocity
+1.8e-6 to 2.4e-6, ν̃ 3.7e-6 to 4.0e-6; forces below 9e-9 in all. `Flow::sa_wall_function` has the
+same rows on both backends, and two runs on one device agree bit for bit.
+
+`wall_model: "spalart_allmaras_bounce"` runs on the device with the model's own law: the host packs
+the CPU's table as segments (`sa_law::segments`) in f32, after the wall function's rows, a header
+row with the segment count and one row per segment; the kernel finds u⁺(y⁺) by binary search and
+the friction velocity by the segment's quadratic (the sublayer's root below the first node, the
+last node above the table), and the node's ν̃ is κ u_τ y exactly. Against the CPU on the cases of
+the section above (`the_model_s_own_wall_law_follows_the_cpu_for_2000_steps`): channel velocity
+4.6e-7 to 5.7e-7, ν̃ 2.2e-5 to 2.4e-5, u_τ 2.0e-7 to 5.4e-7; junction duct velocity 3.0e-7 to
+9.9e-7; block velocity 1.6e-6, ν̃ 5.6e-6; forces below 2.0e-8.
 
 The Taylor–Green study (`study_taylor_green_vortex_dissipation`, 64³, lattice speed 0.05, to
 t = 20) on the GB10 gives the CPU's peak dissipation to the digits printed, at the same time:

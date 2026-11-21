@@ -67,6 +67,11 @@ pub trait Backend {
     fn eddy_viscosity_ratio(&self) -> f64 {
         0.0
     }
+    /// With the Spalart–Allmaras model: ν̃ per cell (lattice units, 0 outside the fluid); `None`
+    /// without it. A backend without the model refuses a flow with one when it is made.
+    fn nu_tilde(&mut self) -> Result<Option<Vec<f64>>> {
+        Ok(None)
+    }
     /// With a phase change: the mean over the fluid cells of the solid fraction now. A backend
     /// without melting and freezing refuses a flow with them when it is made, so the default is
     /// none.
@@ -117,6 +122,11 @@ pub trait Backend {
     /// With interpolated walls, how the obstacles' links bounce back (a backend runs the links
     /// of the flow it was made from).
     fn wall_links(&self) -> Option<crate::flow::WallLinks> {
+        None
+    }
+
+    /// What the half-way wall made of the obstacles' walls, when the run uses it.
+    fn wall_layer(&self) -> Option<crate::wall_layer::WallLayerReport> {
         None
     }
 }
