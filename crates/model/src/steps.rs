@@ -293,28 +293,45 @@ pub enum Turbulence {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         wall_model: Option<WallModel>,
     },
+    /// The Spalart–Allmaras one-equation model (P. R. Spalart, S. R. Allmaras, La Recherche
+    /// Aérospatiale 1994(1):5–21), in the negative form of Allmaras, Johnson and Spalart (ICCFD7,
+    /// 2012): a Reynolds-averaged eddy viscosity ν_t = ν̃ f_v1 from a transported ν̃. It replaces
+    /// a subgrid model, never adds to one. `inflow_ratio` is ν̃/ν at inflows and in the initial
+    /// field (3 by default, as NASA's Turbulence Modeling Resource recommends).
+    /// `prandtl` and `wall_model` as for Smagorinsky's model.
+    SpalartAllmaras {
+        #[serde(default = "default_turbulent_prandtl")]
+        prandtl: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wall_model: Option<WallModel>,
+        #[serde(default = "default_sa_inflow_ratio")]
+        inflow_ratio: f64,
+    },
 }
 
 impl Turbulence {
-    /// `smagorinsky` or `vreman`, as written in the model.
+    /// `smagorinsky`, `vreman` or `spalart_allmaras`, as written in the model.
     pub fn name(self) -> &'static str {
         match self {
             Turbulence::Smagorinsky { .. } => "smagorinsky",
             Turbulence::Vreman { .. } => "vreman",
+            Turbulence::SpalartAllmaras { .. } => "spalart_allmaras",
         }
     }
 
-    /// The model's constant (Smagorinsky's C, or Vreman's Smagorinsky-equivalent C_s).
-    pub fn constant(self) -> f64 {
+    /// A subgrid model's constant (Smagorinsky's C, or Vreman's Smagorinsky-equivalent C_s);
+    /// none for the Spalart–Allmaras model.
+    pub fn constant(self) -> Option<f64> {
         match self {
-            Turbulence::Smagorinsky { constant, .. } | Turbulence::Vreman { constant, .. } => constant,
+            Turbulence::Smagorinsky { constant, .. } | Turbulence::Vreman { constant, .. } => Some(constant),
+            Turbulence::SpalartAllmaras { .. } => None,
         }
     }
 
     /// The turbulent Prandtl number of the heat diffusivity ν_t / Pr_t.
     pub fn prandtl(self) -> f64 {
         match self {
-            Turbulence::Smagorinsky { prandtl, .. } | Turbulence::Vreman { prandtl, .. } => prandtl,
+            Turbulence::Smagorinsky { prandtl, .. } | Turbulence::Vreman { prandtl, .. } | Turbulence::SpalartAllmaras { prandtl, .. } => prandtl,
         }
     }
 
@@ -322,14 +339,16 @@ impl Turbulence {
     pub fn van_driest(self) -> Option<f64> {
         match self {
             Turbulence::Smagorinsky { van_driest, .. } => van_driest,
-            Turbulence::Vreman { .. } => None,
+            Turbulence::Vreman { .. } | Turbulence::SpalartAllmaras { .. } => None,
         }
     }
 
     /// The wall model of the fluid cells next to no-slip walls.
     pub fn wall_model(self) -> Option<WallModel> {
         match self {
-            Turbulence::Smagorinsky { wall_model, .. } | Turbulence::Vreman { wall_model, .. } => wall_model,
+            Turbulence::Smagorinsky { wall_model, .. } | Turbulence::Vreman { wall_model, .. } | Turbulence::SpalartAllmaras { wall_model, .. } => {
+                wall_model
+            }
         }
     }
 }
@@ -349,7 +368,11 @@ pub enum WallModel {
     /// stress Spalding's law (κ 0.41, B 5.5) gives at the interior node one cell above it
     /// (M. Han, R. Ooka, H. Kikumoto, *A wall function approach in lattice Boltzmann method:
     /// algorithm and validation using turbulent channel flow*, Fluid Dyn. Res. 53:045506, 2021,
-    /// doi:10.1088/1873-7005/ac1782).
+    /// doi:10.1088/1873-7005/ac1782). A cell in a velocity inlet's layer that touches two walls (a box
+    /// edge, a staircase step on an obstacle's rim) is a wall cell, plain bounce-back with no inlet
+    /// condition and no wall law, because the inlet and the law together grow a density mode there; the
+    /// inlet's velocity is raised to keep its volume flow, and an inlet that would lose more than a tenth
+    /// of its cells is refused. Other wall treatments are unchanged.
     SpaldingBounce,
     /// Our halfway variant of a wall-function bounce, not Han, Ooka and Kikumoto's scheme: a
     /// plane no-slip box face at rest lies halfway along the links and reflects its populations
@@ -364,6 +387,10 @@ pub enum WallModel {
 
 fn default_turbulent_prandtl() -> f64 {
     0.9
+}
+
+fn default_sa_inflow_ratio() -> f64 {
+    3.0
 }
 
 /// Most quantities a steady-state rule monitors besides the residual.
