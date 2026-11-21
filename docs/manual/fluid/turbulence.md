@@ -181,12 +181,13 @@ Each time step, before the collision:
    one cell from the wall. The GPU runs the same scheme (`node_bounce`; [GPU backend](gpu.md),
    "Han et al.'s on-node wall-function bounce"), within 10⁻⁴ of the CPU's velocity and 10⁻³ of
    its wall drag from the first step.
-   At an obstacle's edges and corners and at plate ends (FieldCraft's extension of the paper,
-   `crates/lbm/src/bounce.rs`), eq. 14 runs on each link pair whose two cells and the normal
-   neighbour are fluid, and every other link to the fluid is halfway bounce-back (reported as the
-   node's edge impulse). A stress a node can't carry is set to zero, with the law's request kept
-   beside it, so the wall takes exactly the stress it applies and the fluid's mass is kept. A
-   channel built from obstacle slabs gives the box-face channel's result bit for bit
+   At obstacle edges and corners, plate ends and where a wall meets an inlet, outlet or slip face
+   (FieldCraft's extension of the paper, `crates/lbm/src/bounce.rs`): eq. 14 runs on each link
+   pair whose two cells and the normal neighbour are fluid, and every other link to the fluid is
+   halfway bounce-back (reported as the node's edge impulse). A stress a node can't carry is set
+   to zero, with the law's request kept beside it, so the wall takes exactly the stress it applies
+   and the fluid's mass is kept. A cell in an inlet, outlet or slip layer keeps that face's rule.
+   A channel built from obstacle slabs gives the box-face channel's result bit for bit
    (`han_obstacles.rs`). The device refuses nodes that are not on a plane box face.
 3. **Collision.** For each fluid cell: the flux P from its populations; the cell's constant C,
    scaled by `1 − exp(−y⁺/A⁺)` with damping (taken as 1 from y⁺/A⁺ = 40, where it rounds to 1);
