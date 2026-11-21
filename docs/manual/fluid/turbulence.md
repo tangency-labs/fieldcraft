@@ -180,8 +180,8 @@ about κ u⁺). A run with the Spalart–Allmaras model and a wall model therefo
 without the wall function.
 
 Refused, with a message that names the model: interpolated walls and the hybrid collision's
-dynamic σ (both backends); on the GPU also a wall model, on-node walls, heat, fans and porous
-zones, and a box face with two kinds of cell (an inlet patch). `backend: "cpu"` runs them.
+dynamic σ (both backends); on the GPU also Musker's wall model, the model's own wall law, the half-way wall, heat, fans
+and porous zones, and a box face with two kinds of cell (an inlet patch). `backend: "cpu"` runs them.
 
 ## Algorithm
 

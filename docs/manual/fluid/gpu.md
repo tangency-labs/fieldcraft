@@ -359,6 +359,22 @@ steps (`han_s_wall_follows_the_cpu_around_a_block`, bounds velocity 1e-4, densit
 forces averaged over 200 steps 1e-3, all of the largest): velocity 4.1e-7 to 8.6e-7, density 6.3e-8
 to 8.0e-8, forces 5.6e-10 to 2.2e-9, on an NVIDIA GeForce RTX 4070 Laptop GPU.
 
+With the Spalart–Allmaras model (`spalart_allmaras` and `spalding_bounce`) the wall function runs on
+the device too (`sa_wall_function` in `lbm.wgsl`): one row per first fluid node, the interior cell
+of one or more sampled boundary nodes, from the host after the nodes' side rows. After the ν̃
+sub-steps and before the collision it takes u_τ = √(τ_w / ρ) from the largest stress the law asked
+for at its nodes, ν_t = ν νt⁺(y⁺) from Spalding's law and ν̃ as the root of ν̃ f_v1 = ν_t, both
+roots by bisection (at most 40 halvings; the CPU's upper end), and writes u_τ back for the host.
+Against the CPU, both layouts, hybrid (σ 0.99) and multiple-relaxation-time collisions at
+τ − ½ 1.2e-4, 2000 steps (`the_model_on_han_s_wall_follows_the_cpu_for_2000_steps`; 300 steps in
+the trunk's gate): the forced channel with box-face walls and with obstacle slabs (144 rows), the
+junction duct (124 rows) and the block on a floor (1072 rows), 400 steps. Bounds: velocity 1e-4,
+density 1e-5, ν̃ 5e-5 (of the largest), the wall function's friction velocities and the groups'
+forces 1e-3. Measured on an NVIDIA GeForce RTX 4070 Laptop GPU: channel velocity 3.2e-7 to 4.2e-7,
+ν̃ 1.5e-5 to 1.6e-5, u_τ 7.0e-8 to 4.9e-7; junction duct velocity 3.1e-7 to 1.2e-6; block velocity
+1.8e-6 to 2.4e-6, ν̃ 3.7e-6 to 4.0e-6; forces below 9e-9 in all. `Flow::sa_wall_function` has the
+same rows on both backends, and two runs on one device agree bit for bit.
+
 The Taylor–Green study (`study_taylor_green_vortex_dissipation`, 64³, lattice speed 0.05, to
 t = 20) on the GB10 gives the CPU's peak dissipation to the digits printed, at the same time:
 
