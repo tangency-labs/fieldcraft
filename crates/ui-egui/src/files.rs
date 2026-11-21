@@ -313,6 +313,8 @@ pub struct Prefs {
     /// The version the user skipped (the automatic check does not offer it); empty for none.
     pub update_skip: String,
     /// The units numbers are shown and typed in, for a model without its own (docs/units.md).
+    /// A preset or unit this version does not know reads as the default system.
+    #[serde(deserialize_with = "known_or_default")]
     pub units: fieldcraft_model::DisplaySystem,
     /// The browser card's width, in points.
     pub browser_width: f32,
@@ -2066,6 +2068,29 @@ pub(crate) mod tests {
         std::fs::write(&file, br#"{"reverse_zoom": true, "history_dock": "top"}"#).unwrap();
         let prefs = Prefs::load(Some(&store));
         assert_eq!((prefs.reverse_zoom, prefs.history_dock), (true, crate::shell::HistoryDock::Top), "a known dock is read");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Units this version does not know (a preset or an override a newer FieldCraft saved) read as
+    /// the default system, and every other preference is kept (#954: they were all reset).
+    #[test]
+    fn unknown_units_keep_the_other_preferences() {
+        let dir = temp("prefs-units");
+        let file = dir.join("prefs.json");
+        let store = PrefsStore::file(file.clone());
+        let kept = Prefs { nav_preset: "solidworks".into(), reverse_zoom: true, ..Prefs::default() };
+        for units in [
+            r#""from_the_future""#,
+            r#"{"preset": "from_the_future", "overrides": {}}"#,
+            r#"{"preset": "mm_t_s", "overrides": {"length": "parsec"}}"#,
+        ] {
+            std::fs::write(&file, format!(r#"{{"nav_preset": "solidworks", "reverse_zoom": true, "units": {units}}}"#)).unwrap();
+            assert_eq!(Prefs::load(Some(&store)), kept, "units {units}");
+        }
+        let si = fieldcraft_model::DisplaySystem::new(fieldcraft_model::units::Preset::MKgS);
+        std::fs::write(&file, format!(r#"{{"reverse_zoom": true, "units": {}}}"#, serde_json::to_string(&si).unwrap())).unwrap();
+        let prefs = Prefs::load(Some(&store));
+        assert_eq!((prefs.reverse_zoom, prefs.units), (true, si), "known units are read");
         let _ = std::fs::remove_dir_all(dir);
     }
 
