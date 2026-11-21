@@ -375,6 +375,15 @@ forces 1e-3. Measured on an NVIDIA GeForce RTX 4070 Laptop GPU: channel velocity
 1.8e-6 to 2.4e-6, ν̃ 3.7e-6 to 4.0e-6; forces below 9e-9 in all. `Flow::sa_wall_function` has the
 same rows on both backends, and two runs on one device agree bit for bit.
 
+`wall_model: "spalart_allmaras_bounce"` runs on the device with the model's own law: the host packs
+the CPU's table as segments (`sa_law::segments`) in f32, after the wall function's rows, a header
+row with the segment count and one row per segment; the kernel finds u⁺(y⁺) by binary search and
+the friction velocity by the segment's quadratic (the sublayer's root below the first node, the
+last node above the table), and the node's ν̃ is κ u_τ y exactly. Against the CPU on the cases of
+the section above (`the_model_s_own_wall_law_follows_the_cpu_for_2000_steps`): channel velocity
+4.6e-7 to 5.7e-7, ν̃ 2.2e-5 to 2.4e-5, u_τ 2.0e-7 to 5.4e-7; junction duct velocity 3.0e-7 to
+9.9e-7; block velocity 1.6e-6, ν̃ 5.6e-6; forces below 2.0e-8.
+
 The Taylor–Green study (`study_taylor_green_vortex_dissipation`, 64³, lattice speed 0.05, to
 t = 20) on the GB10 gives the CPU's peak dissipation to the digits printed, at the same time:
 
