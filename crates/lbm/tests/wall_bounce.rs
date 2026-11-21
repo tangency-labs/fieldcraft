@@ -309,7 +309,7 @@ fn the_boundary_nodes_are_the_outermost_layers_and_not_fluid() {
     }
 }
 
-/// What the on-node bounce does not do yet is refused, naming it: a moving wall, an obstacle, a
+/// What the on-node bounce does not do yet is refused, naming it: a moving wall, a moving obstacle face, a
 /// wall that meets a face that is not periodic, heat, and a box too thin for an interior node.
 #[test]
 fn the_on_node_bounce_refuses_what_it_does_not_support() {
@@ -337,11 +337,16 @@ fn the_on_node_bounce_refuses_what_it_does_not_support() {
     d.faces.x_max = FaceCondition::Wall {};
     let err = refused(d, &[]);
     assert!(err.contains("not supported yet") && err.contains("x_min") && err.contains("periodic"), "{err}");
+    // An obstacle runs (crates/lbm/tests/han_obstacles.rs); one with a moving face doesn't.
     let mut d = channel();
     d.obstacles = vec!["Block".into()];
+    d.surfaces.push(fieldcraft_model::SurfaceBoundary {
+        face: fieldcraft_model::GeometryRef::face("Block", "side").unwrap(),
+        condition: fieldcraft_model::SurfaceCondition::MovingWall { velocity: [0.1, 0.0, 0.0] },
+    });
     let block = obstacle("Block", cuboid([0.1, 0.4, 0.0], [0.3, 0.6, 0.25]), &["side"]);
     let err = refused(d, &[block]);
-    assert!(err.contains("not supported yet") && err.contains("obstacle"), "{err}");
+    assert!(err.contains("not supported yet") && err.contains("moving obstacle face") && err.contains("Block"), "{err}");
     let mut d = domain([0.0; 3], [4.0 * dx, 2.0 * dx, 2.0 * dx], dx);
     for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
         *f = PERIODIC;

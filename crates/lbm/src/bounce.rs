@@ -51,10 +51,23 @@
 //! area `Δx²`), to round-off, whatever the normal flow; along the normal it is the bounce-back's
 //! `2 Σ f_q` of the populations arriving from the fluid (their pressure and normal momentum flux).
 //!
-//! **Where it runs.** On plane box faces at rest with the box periodic along the wall (the
-//! paper's channel); obstacles, moving walls, a wall that meets another non-periodic face at an
-//! edge, and heat are refused ("not supported yet"). The GPU backend runs the same scheme
-//! (`crates/lbm-gpu/src/lbm.wgsl`, `node_bounce`).
+//! **Obstacles, edges and corners** (FieldCraft's extension, not the paper's). A fluid cell next to a wall along one of the six axes (a solid cell,
+//! or outside the box through a wall face) is a boundary node, the wall through its centre: at a
+//! box face the outermost layer, as above; at an obstacle, the fluid layer next to it. Eq. 14
+//! is applied link pair by link pair ([`roles`], [`on_links`]): along the normal, and on each
+//! tangential pair `n ± e_b` whose two cells and the normal neighbour are fluid, it is eq. 14
+//! (a pair carries `τ_{w,b}` exactly and keeps mass, as on a plane wall); every other link to the
+//! fluid (an edge, a corner, the sides of a plate's leading edge, a pair cut by a corner) is
+//! halfway bounce-back, its momentum exchange counted as the node's edge impulse; a node at a
+//! concave corner (two wall directions) has no normal and only bounces. A stress a node can't
+//! carry is set to zero and the law's full request kept beside it ([`WallNode::wanted`]), so
+//! the wall takes exactly the stress it applies. A plane node runs [`on_node`] unchanged.
+//!
+//! **Where it runs.** On walls at rest: plane box faces with the box periodic along them, and
+//! obstacles. Moving walls and obstacle faces, a box-face wall meeting another face that is not
+//! periodic, an obstacle's node in the layer of an inlet, outlet or slip face, and heat are
+//! refused ("not supported yet"). The GPU backend runs the plane box-face scheme
+//! (`crates/lbm-gpu/src/lbm.wgsl`, `node_bounce`) and refuses the rest.
 //!
 //! No code of any lattice Boltzmann package was read; this is written from the paper.
 
@@ -158,7 +171,7 @@ pub enum Neighbour {
 }
 
 /// What a boundary node sends along one direction `q` (the population `f*_q` it streams to its
-/// neighbour along `c_q`): agent-hub notes/cfd-wall-obstacles.md §2.
+/// neighbour along `c_q`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     /// Eq. 14a–c: the specular image across the wall of the population arriving from the fluid,
@@ -242,8 +255,7 @@ pub fn carries(roles: &[Role; Q], axis: usize, inward: i32, b: usize) -> bool {
     C.iter().position(|c| *c == v).is_some_and(|q| roles.get(q) == Some(&Role::Han))
 }
 
-/// Eq. 14 by link pairs on one boundary node of any shape (agent-hub notes/cfd-wall-obstacles.md
-/// §2): its streamed populations `fq` become its post-collision populations, by `roles`. The wall's
+/// Eq. 14 by link pairs on one boundary node of any shape: its streamed populations `fq` become its post-collision populations, by `roles`. The wall's
 /// normal is along `axis`; `stress` is the wall stress as in [`on_node`], and its
 /// component along a tangential axis must be zero unless the roles carry it ([`carries`]).
 ///
@@ -331,6 +343,16 @@ impl WallNode {
         WallNode { cell, interior, axis, inward, group, stress: [0.0; 3], taken: [0.0; 3], roles, flat, wanted: [0.0; 3], edge: [0.0; 3] }
     }
 
+    /// Whether it samples Spalding's law at its interior node: its normal link is Han's (always on
+    /// a flat node), so the interior node is the first fluid node off its wall.
+    pub fn sampled(&self) -> bool {
+        let mut n = [0; 3];
+        if let Some(v) = n.get_mut(usize::from(self.axis)) {
+            *v = i32::from(self.inward).signum();
+        }
+        self.flat || C.iter().position(|c| *c == n).is_some_and(|q| self.roles.get(q) == Some(&Role::Han))
+    }
+
     /// Eq. 14 on this node's streamed populations `fq`: [`on_node`] when flat, [`on_links`]
     /// otherwise. Sets `taken` and `edge`.
     pub fn collide(&mut self, fq: &mut [f64; Q]) {
@@ -394,7 +416,7 @@ impl WallNodes {
             let axis = usize::from(w.axis).min(2);
             let inward = i32::from(w.inward);
             // A node with no Han link along its normal has no fluid node to sample.
-            if !w.flat && !(0..3).any(|b| carries(&w.roles, axis, inward, b)) {
+            if !w.sampled() {
                 return;
             }
             let Some((rho, u)) = moments(w.interior as usize) else { return };

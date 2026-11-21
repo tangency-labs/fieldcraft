@@ -17,9 +17,10 @@
 //! - **Walls:** halfway bounce-back at every link from a fluid cell to a solid cell or across a
 //!   wall face of the box; moving walls add Ladd's term `6 w_q ρ₀ c_q·u_w` (Ladd 1994, JFM
 //!   271:285). Slip faces reflect populations specularly. Under Han et al.'s on-node
-//!   wall-function bounce (`spalding_bounce`, [`crate::bounce`]) the outermost cell layer at a
-//!   wall face is the wall instead: those boundary nodes run their eq. 14 in place of the
-//!   collision and are not fluid cells.
+//!   wall-function bounce (`spalding_bounce`, [`crate::bounce`]) the fluid cells next to a wall
+//!   (the outermost cell layer at a wall face, the fluid layer next to an obstacle) are the wall
+//!   instead: those boundary nodes run their eq. 14 in place of the collision and are not fluid
+//!   cells.
 //! - **Interpolated walls** (`walls: "interpolated"`): each link into an obstacle bounces back
 //!   where the obstacle's surface crosses it, at the fraction `q` of the link from the fluid
 //!   cell ([`crate::voxel::link_fraction`]), by the linear interpolation of M. Bouzidi,
@@ -829,8 +830,21 @@ impl Flow {
                 face.name()
             )));
         }
-        // Han et al.'s on-node wall-function bounce: the outermost cell layer at each wall face
-        // is its boundary nodes ([`crate::bounce`]).
+        // The group and moving-wall term of a link into fluid cell `cell` (direction q) from the
+        // obstacle cell `solid`: the face of the triangle nearest the link's midpoint.
+        let obstacle_link = |cell: usize, solid: u32, q: usize| -> Rule {
+            let k = owner.get(solid as usize).copied().unwrap_or(NONE) as usize;
+            let (Some((tree, tags, _)), Some(faces), Some(&first)) = (trees.get(k), setup.obstacles.get(k), base.get(k)) else {
+                return Rule::Bounce { group: 0, du: 0.0 };
+            };
+            let (centre, cq) = (grid.centre(cell), c(q));
+            let mid = [0, 1, 2].map(|a| centre[a] - 0.5 * cq[a] * grid.spacing);
+            let tag = tree.nearest(mid).and_then(|t| tags.get(t as usize).copied()).unwrap_or(0);
+            let u = faces.velocities.get(tag as usize).copied().unwrap_or([0.0; 3]);
+            Rule::Bounce { group: first + tag, du: moving_wall(q, u) }
+        };
+
+        // Han et al.'s on-node wall ([`crate::bounce`]): a fluid cell next to a wall is a boundary node.
         let on_node = setup.wall_model == Some(WallModel::SpaldingBounce);
         let mut node_list: Vec<WallNode> = Vec::new();
         let mut bulk = Vec::new();
@@ -843,9 +857,11 @@ impl Flow {
             if let Some(face) = BoxFace::ALL.iter().find(|f| matches!(domain.faces.get(**f), FaceCondition::MovingWall { .. })) {
                 return refuse(format!("on a moving wall (`{}`)", face.name()));
             }
-            if let Some(o) = setup.obstacles.first() {
-                let body = obstacles.get(o.index).map_or("", |o| o.body.as_str());
-                return refuse(format!("at the walls of an obstacle (`{body}`): it runs at plane box faces only"));
+            if let Some(k) = obstacle_walls.iter().position(|v| v.is_some_and(|u| u != [0.0; 3])) {
+                // The obstacle groups follow the six box faces (the baffles' come after them).
+                let g = groups.get(BoxFace::ALL.len() + k);
+                let (body, face) = g.map_or(("", ""), |g| (g.body.as_deref().unwrap_or(""), g.name.as_str()));
+                return refuse(format!("on a moving obstacle face (`{body}`, `{face}`)"));
             }
             if setup.thermal.is_some() {
                 return refuse("with heat".to_string());
@@ -862,26 +878,85 @@ impl Flow {
                 if grid.cells[a] < 3 {
                     return refuse(format!("on a box {} cells across its wall `{}`: it needs at least 3", grid.cells[a], face.name()));
                 }
-                let (t1, t2) = ((a + 1) % 3, (a + 2) % 3);
-                let (layer, inward) = if face.is_max() { (grid.cells[a] - 1, -1i32) } else { (0, 1) };
-                for j in 0..grid.cells[t2] {
-                    for i in 0..grid.cells[t1] {
-                        let mut ijk = [0usize; 3];
-                        ijk[a] = layer;
-                        ijk[t1] = i;
-                        ijk[t2] = j;
-                        let cell = grid.index(ijk);
-                        ijk[a] = if inward > 0 { layer + 1 } else { layer - 1 };
-                        node_list.push(WallNode::new(
-                            cell as u32,
-                            grid.index(ijk) as u32,
-                            a as u8,
-                            inward as i8,
-                            face.index() as u32,
-                            crate::bounce::flat_roles(a, inward),
-                        ));
+            }
+            let step = |p: [usize; 3], v: [i32; 3]| -> Option<usize> {
+                let mut out = [0usize; 3];
+                for a in 0..3 {
+                    let n = grid.cells[a] as i64;
+                    let mut i = p[a] as i64 + i64::from(v[a]);
+                    if i < 0 || i >= n {
+                        if !periodic[a] {
+                            return None;
+                        }
+                        i = i.rem_euclid(n);
+                    }
+                    out[a] = i as usize;
+                }
+                Some(grid.index(out))
+            };
+            // Each fluid cell's wall directions: (axis, sign towards the wall, force group).
+            let mut walled: Vec<(usize, Vec<(usize, i32, u32)>)> = Vec::new();
+            for cell in (0..n).filter(|c| fluid[*c]) {
+                let p = grid.coords(cell);
+                let mut dirs = Vec::new();
+                for a in 0..3 {
+                    for s in [-1i32, 1] {
+                        let mut v = [0i32; 3];
+                        v[a] = s;
+                        let group = match step(p, v) {
+                            Some(nb) if fluid.get(nb).copied().unwrap_or(false) => None,
+                            Some(nb) => {
+                                let q = C.iter().position(|c| *c == v.map(|x| -x)).unwrap_or(0);
+                                match obstacle_link(cell, nb as u32, q) {
+                                    Rule::Bounce { group, .. } => Some(group),
+                                    _ => None,
+                                }
+                            }
+                            None => {
+                                let face = BoxFace::of(a, s > 0);
+                                wall_velocity(face).map(|_| face.index() as u32)
+                            }
+                        };
+                        if let Some(g) = group {
+                            dirs.push((a, s, g));
+                        }
                     }
                 }
+                if dirs.is_empty() {
+                    continue;
+                }
+                // A node in the layer of an inlet, outlet or slip face.
+                if let Some(face) = (0..3).filter(|a| !periodic[*a]).find_map(|a| {
+                    let face = BoxFace::of(a, p[a] + 1 == grid.cells[a]);
+                    ((p[a] == 0 || p[a] + 1 == grid.cells[a]) && wall_velocity(face).is_none()).then_some(face)
+                }) {
+                    let body = dirs.iter().find_map(|d| groups.get(d.2 as usize).and_then(|g| g.body.clone())).unwrap_or_default();
+                    return refuse(format!("where the walls of `{body}` meet the face `{}` that is not a wall", face.name()));
+                }
+                walled.push((cell, dirs));
+            }
+            let mut node = filled(n, false, "boundary nodes")?;
+            for (cell, _) in &walled {
+                if let Some(x) = node.get_mut(*cell) {
+                    *x = true;
+                }
+            }
+            for (cell, dirs) in &walled {
+                let p = grid.coords(*cell);
+                // A node with several wall directions (an edge or a corner) reports its force in the group of the first.
+                let Some(&(a, s, group)) = dirs.first() else { continue };
+                let normal = (dirs.len() == 1).then_some((a, -s));
+                let neighbour = |q: usize| match C.get(q).and_then(|v| step(p, *v)) {
+                    None => crate::bounce::Neighbour::Wall,
+                    Some(nb) if !fluid.get(nb).copied().unwrap_or(false) => crate::bounce::Neighbour::Wall,
+                    Some(nb) if node.get(nb).copied().unwrap_or(false) => crate::bounce::Neighbour::Node,
+                    Some(_) => crate::bounce::Neighbour::Fluid,
+                };
+                let roles = crate::bounce::roles(normal, neighbour);
+                let mut v = [0i32; 3];
+                v[a] = -s;
+                let interior = step(p, v).unwrap_or(*cell);
+                node_list.push(WallNode::new(*cell as u32, interior as u32, a as u8, (-s) as i8, group, roles));
             }
             node_list.sort_by_key(|w| w.cell);
             bulk = fluid.clone();
@@ -889,6 +964,13 @@ impl Flow {
                 if let Some(b) = bulk.get_mut(w.cell as usize) {
                     *b = false;
                 }
+            }
+            if !node_list.is_empty() && !bulk.iter().any(|b| *b) {
+                return Err(Error::Invalid(format!(
+                    "Han et al.'s on-node wall-function bounce (`spalding_bounce`) leaves no fluid cell: every one of the {} cells between the walls is a boundary node; refine the spacing ({}) or widen the gaps",
+                    node_list.len(),
+                    grid.spacing
+                )));
             }
         }
         let is_node = |cell: usize| bulk.get(cell).is_some_and(|b| !b) && fluid.get(cell).copied().unwrap_or(false);
@@ -900,19 +982,6 @@ impl Flow {
             *o = cq[0] as isize + nx as isize * (cq[1] as isize + ny as isize * cq[2] as isize);
         }
 
-        // The group and moving-wall term of a link into fluid cell `cell` (direction q) from the
-        // obstacle cell `solid`: the face of the triangle nearest the link's midpoint.
-        let obstacle_link = |cell: usize, solid: u32, q: usize| -> Rule {
-            let k = owner.get(solid as usize).copied().unwrap_or(NONE) as usize;
-            let (Some((tree, tags, _)), Some(faces), Some(&first)) = (trees.get(k), setup.obstacles.get(k), base.get(k)) else {
-                return Rule::Bounce { group: 0, du: 0.0 };
-            };
-            let (centre, cq) = (grid.centre(cell), c(q));
-            let mid = [0, 1, 2].map(|a| centre[a] - 0.5 * cq[a] * grid.spacing);
-            let tag = tree.nearest(mid).and_then(|t| tags.get(t as usize).copied()).unwrap_or(0);
-            let u = faces.velocities.get(tag as usize).copied().unwrap_or([0.0; 3]);
-            Rule::Bounce { group: first + tag, du: moving_wall(q, u) }
-        };
         // With interpolated walls, an obstacle link's bounce-back where the surface crosses it
         // (Bouzidi et al.), or halfway when it has no crossing or no second fluid cell.
         let interpolate = setup.walls == WallTreatment::Interpolated;
@@ -986,6 +1055,9 @@ impl Flow {
                         match (fluid.get(from as usize).copied().unwrap_or(false), wrapped) {
                             (true, false) => continue,
                             (true, true) => Rule::Pull { from },
+                            // From a solid cell into a boundary node: not needed, its own rule
+                            // writes it (a placeholder, no force), as from outside the box.
+                            (false, _) if is_node(cell) => Rule::Open,
                             (false, _) => {
                                 let rule = obstacle_link(cell, from, q);
                                 if let (true, Some(solid), Rule::Bounce { group, .. }) = (q < QT, conducting_at(from as usize), rule) {
@@ -1295,7 +1367,7 @@ impl Flow {
         let walls = if on_node {
             // Van Driest's damping from the interior nodes next to the boundary nodes.
             let cells: Vec<(u32, usize, i32, u32)> =
-                node_list.iter().map(|w| (w.interior, usize::from(w.axis), i32::from(w.inward), w.group)).collect();
+                node_list.iter().filter(|w| w.sampled()).map(|w| (w.interior, usize::from(w.axis), i32::from(w.inward), w.group)).collect();
             setup.van_driest.map(|a| Walls::on_node(&grid, &bulk, &cells, Some(a), nu)).transpose()?
         } else if setup.van_driest.is_some() || setup.wall_model.is_some() {
             Some(Walls::new(&grid, &fluid, &links, &group_walls, setup.van_driest, nu)?)
