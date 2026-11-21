@@ -109,6 +109,8 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Heat: the D3Q7 lattice, held temperatures, fluxes, buoyancy | yes |
 | Conducting solids, thermal contacts, solid power | yes |
 | Interpolated obstacle walls (`walls: "interpolated"`), moving walls included | yes (within 1.3e-5 of the CPU in the skin force, 6.5e-6 of the peak velocity) |
+| The interpolated walls' mass correction (`Flow::set_wall_mass_correction`), linear and quadratic, at rest and moving | yes (fields within 3.5e-6 of the CPU, skin force within 2.4e-6; mass held to 1e-8 against 4e-12 on the CPU) |
+| Quadratic interpolated walls (`walls: "interpolated_quadratic"`), at rest (a moving wall keeps the linear form) | yes (within 2.4e-6 of the CPU in the skin force, 3.5e-6 of the peak velocity; not above 16.7 million cells) |
 | Thin walls (`baffles`) | no: refused before a device is opened |
 | Smagorinsky's model, the wall model (`wall_model: "musker"`), Van Driest damping (`van_driest`) | yes |
 | Steady-state rule and averaging | yes (decided on the host from read-back fields) |

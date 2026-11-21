@@ -77,7 +77,8 @@
 // as written. All its reads are post-collision values the gather takes before the scatter writes.
 // Its momentum exchange is Galilean invariant (Y. Wen et al., JCP 266:161, 2014), with the
 // group's wall velocity. `link_f` then holds per link its moving-wall term [0, L), its q
-// [L, 2L) and per group its wall velocity (4 floats each) from 2L.
+// [L, 2L) and per group its wall velocity (4 floats each) from 2L (3L with QUADRATIC, whose
+// third row [2L, 3L) holds each quadratic link's third node).
 //
 // Han, Ooka and Kikumoto's on-node wall-function bounce (fieldcraft_lbm::bounce, `ON_NODE`): the
 // outermost cell layer at each wall face is boundary nodes, the wall through their centres. They
@@ -109,6 +110,15 @@ override WALL_BOUNCE: bool = false;
 override ON_NODE: bool = false;
 // Interpolated walls; likewise.
 override INTERPOLATED: bool = false;
+// The interpolated walls' mass correction (fieldcraft_lbm::wall_mass): the link gather records what
+// each interpolated link created in `contrib.w`, `wall_delta` sums it per wall node into `wallf.x`
+// (over the sum of the lattice weights of the node's fluid targets), and `wall_remove` one step
+// later has every target cell take back the lattice-weighted share of what its neighbours
+// handed out; likewise.
+override WALL_MASS: bool = false;
+// Some interpolated links take the quadratic form (`link_f` then has a third row of links, the
+// third node of each, and the groups' wall velocities follow it); likewise.
+override QUADRATIC: bool = false;
 // The hybrid recursive regularised collision (fieldcraft_lbm::hrr, with REGULARIZED): its σ in
 // `params.les.x`; likewise.
 override HRR: bool = false;
@@ -136,6 +146,9 @@ const RESET: u32 = 0x1000000u;
 // Set in a bounce link's first word when it interpolates where the surface crosses it (with
 // INTERPOLATED; its second word is the next fluid cell away from the wall).
 const INTERP: u32 = 0x2000000u;
+// Set with INTERP when the link takes the quadratic form (with QUADRATIC; fieldcraft_lbm::flow::
+// bouzidi_quadratic): `link_f[2L + l]` is the cell two links further from the wall.
+const QUAD: u32 = 0x4000000u;
 
 struct Params {
     n: u32,
@@ -250,6 +263,11 @@ struct Params {
 @group(0) @binding(25) var<storage, read_write> velocity: array<f32>;
 // The flags buffer (`fluid`), writable, for `fan_update` alone.
 @group(0) @binding(26) var<storage, read_write> zones_rw: array<u32>;
+// Per cell: x the share a wall node hands to each target per unit of lattice weight (its delta
+// over W), y 1 where the cell takes mass back (`wall_remove`, `wall_delta`).
+@group(0) @binding(27) var<storage, read_write> wallf: array<vec2<f32>>;
+// Per wall node: its cell, the range of its cell's links (first, end) and 1/W as f32 bits.
+@group(0) @binding(28) var<storage, read> wallnode: array<vec4<u32>>;
 
 var<workgroup> red: array<vec4<f32>, 256>;
 // The largest squared speed of a workgroup's cells (collide): one atomic per workgroup, not
@@ -1523,12 +1541,58 @@ fn gather_link(l: u32, exchange: bool) {
     } else {
         v = post(opp(q), cell);
     }
+    // What an interpolated wall link returned beyond what left along it (`wall_mass`).
+    var created = 0.0;
+    if WALL_MASS && kind == KIND_BOUNCE && is_interpolated(lu) { created = v - post(opp(q), cell); }
     if AA_MODE {
         g[l] = v;
-        if exchange { contrib[l] = vec4<f32>(momentum_exchange(l, lu, q, kind, q2), 0.0); }
+        if exchange { contrib[l] = vec4<f32>(momentum_exchange(l, lu, q, kind, q2), created); }
+        else if WALL_MASS { contrib[l].w = created; }
     } else {
         g[q * n + cell] = v;
+        if WALL_MASS { contrib[l].w = created; }
     }
+}
+
+// What the wall nodes handed out one step ago, taken back: each target cell removes, spread over
+// its populations by the lattice weights, the sum over its neighbours y of w_i * share(y) (the
+// weights renormalised over the fluid targets are in `share`). Run after the streamed populations
+// are complete, before `wall_delta` replaces the shares.
+@compute @workgroup_size(256)
+fn wall_remove(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let cell = cell_of(lid, wg);
+    if cell >= params.n || wallf[cell].y == 0.0 { return; }
+    let xyz = coords(cell);
+    let size = vec3<i32>(i32(params.nx), i32(params.ny), i32(params.nz));
+    let periodic = params.periodic.xyz != vec3<u32>(0u);
+    var got = 0.0;
+    for (var i = 0u; i < 19u; i = i + 1u) {
+        let p = xyz - c_of(i);
+        if any(((p < vec3<i32>(0)) | (p >= size)) & !periodic) { continue; }
+        got = got + w_of(i) * wallf[wrapped(p)].x;
+    }
+    if got == 0.0 { return; }
+    let at = aa_coords(cell);
+    for (var q = 0u; q < 19u; q = q + 1u) {
+        store_streamed(q, cell, at, streamed(q, cell, at) - got * w_of(q));
+    }
+}
+
+// One thread per wall node: what its links created this step, over the sum of the weights of its
+// fluid targets, kept for the next step's `wall_remove`.
+@compute @workgroup_size(256)
+fn wall_delta(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let k = cell_of(lid, wg);
+    if k >= arrayLength(&wallnode) { return; }
+    let node = wallnode[k];
+    var s = 0.0;
+    for (var l = node.y; l < node.z; l = l + 1u) {
+        let lu = link_u[l];
+        if ((lu.x >> 8u) & 0xffu) == KIND_BOUNCE && is_interpolated(lu) {
+            s = s + contrib[l].w;
+        }
+    }
+    wallf[node.x].x = s * bitcast<f32>(node.w);
 }
 
 // The gather above must complete before any AA boundary population is overwritten.
@@ -1798,6 +1862,14 @@ fn interpolated_back(l: u32, lu: vec4<u32>, q: u32, cell: u32) -> f32 {
     let frac = link_f[params.links + l];
     let out = post(opp(q), cell);
     let du = link_f[l];
+    if QUADRATIC && (lu.x & QUAD) != 0u {
+        // Lagrange interpolation on three nodes in line (walls at rest: no moving-wall term).
+        if frac < 0.5 {
+            let next2 = u32(link_f[2u * params.links + l]);
+            return frac * (1.0 + 2.0 * frac) * out + (1.0 - 4.0 * frac * frac) * post(opp(q), lu.y) - frac * (1.0 - 2.0 * frac) * post(opp(q), next2);
+        }
+        return out / (frac * (2.0 * frac + 1.0)) + (2.0 * frac - 1.0) / frac * post(q, cell) - (2.0 * frac - 1.0) / (2.0 * frac + 1.0) * post(q, lu.y);
+    }
     if frac < 0.5 {
         return 2.0 * frac * out + (1.0 - 2.0 * frac) * post(opp(q), lu.y) + du;
     }
@@ -1812,7 +1884,8 @@ fn momentum_exchange(l: u32, lu: vec4<u32>, q: u32, kind: u32, q2: u32) -> vec3<
             // (c_out − u_w) f* − (c_in − u_w) f' with c_out = −c_q (Wen et al. 2014); the
             // weights cancel in out − back.
             let back = interpolated_back(l, lu, q, lu.w);
-            let w = 2u * params.links + 4u * lu.z;
+            let rows = select(2u, 3u, QUADRATIC);
+            let w = rows * params.links + 4u * lu.z;
             let uw = vec3<f32>(link_f[w], link_f[w + 1u], link_f[w + 2u]);
             v = -vec3<f32>(c_of(q)) * (out + back) - uw * (out - back);
         } else {

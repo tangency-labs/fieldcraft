@@ -20,8 +20,8 @@
 //!   wall-function bounce (`spalding_bounce`, [`crate::bounce`]) the outermost cell layer at a
 //!   wall face is the wall instead: those boundary nodes run their eq. 14 in place of the
 //!   collision and are not fluid cells.
-//! - **Interpolated walls** (`walls: "interpolated"`): each link into an obstacle bounces back
-//!   where the obstacle's surface crosses it, at the fraction `q` of the link from the fluid
+//! - **Interpolated walls** (`walls: "interpolated"` or `"interpolated_quadratic"`): each link
+//!   into an obstacle bounces back where the obstacle's surface crosses it, at the fraction `q` of the link from the fluid
 //!   cell ([`crate::voxel::link_fraction`]), by the linear interpolation of M. Bouzidi,
 //!   M. Firdaouss, P. Lallemand, *Momentum transfer of a Boltzmann-lattice fluid with
 //!   boundaries*, Phys. Fluids 13(11):3452, 2001. With `f*` the post-collision populations,
@@ -33,7 +33,11 @@
 //!   At `q = ½` both are halfway bounce-back. A link with `q < ½` whose `x_ff` is not a fluid
 //!   cell (another wall, a box face that is not periodic) has no second node to interpolate
 //!   from and keeps halfway bounce-back, as does a link no crossing was found on; both are
-//!   counted ([`WallLinks`]) and reported. The scheme is not mass conservative: the populations
+//!   counted ([`WallLinks`]) and reported. `"interpolated_quadratic"` reads the same characteristic
+//!   from three nodes in line ([`bouzidi_quadratic`]: Lagrange interpolation, the coefficients sum
+//!   to one and both lines are halfway bounce-back at `q = ½`) on links of walls at rest whose
+//!   nodes are fluid, and keeps the linear form on the others (counted in [`WallLinks`]).
+//!   The scheme is not mass conservative: the populations
 //!   a wall sends back no longer sum to those it received. The box's walls lie halfway along
 //!   their links already and keep halfway bounce-back, as do thin walls and, with heat, the
 //!   temperature lattice.
@@ -203,6 +207,20 @@ pub fn bouzidi(frac: f64, out: f64, next_out: f64, same: f64, du: f64) -> f64 {
     if frac < 0.5 { 2.0 * frac * out + (1.0 - 2.0 * frac) * next_out + du } else { (out + (2.0 * frac - 1.0) * same + du) / (2.0 * frac) }
 }
 
+/// The quadratic form of [`bouzidi`]: the same characteristic read from three nodes in line
+/// (Lagrange interpolation; the coefficients sum to one and both lines are halfway bounce-back at
+/// `frac = ½`). For `frac < ½` the populations leaving toward the wall of the cell (`out`), of the
+/// next cell (`next_out`) and of the one after it (`next2_out`); otherwise `out`, the cell's `same`
+/// and the next cell's (`next_same`). Walls at rest: there is no moving-wall term.
+#[inline(always)]
+pub fn bouzidi_quadratic(frac: f64, out: f64, next_out: f64, next2_out: f64, same: f64, next_same: f64) -> f64 {
+    if frac < 0.5 {
+        frac * (1.0 + 2.0 * frac) * out + (1.0 - 4.0 * frac * frac) * next_out - frac * (1.0 - 2.0 * frac) * next2_out
+    } else {
+        out / (frac * (2.0 * frac + 1.0)) + (2.0 * frac - 1.0) / frac * same - (2.0 * frac - 1.0) / (2.0 * frac + 1.0) * next_same
+    }
+}
+
 /// An interpolated wall link's data ([`Rule::Interpolated`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Interpolation {
@@ -214,12 +232,26 @@ pub struct Interpolation {
     pub q: f64,
     /// Ladd's moving-wall term, as for [`Rule::Bounce`].
     pub du: f64,
+    /// Whether the link takes the quadratic form ([`bouzidi_quadratic`]): the walls ask for it, the
+    /// wall is at rest and the nodes it reads are fluid.
+    pub quadratic: bool,
+    /// The fluid cell two links further from the wall, read by the quadratic form when `q < ½`
+    /// (the link's own cell otherwise).
+    pub next2: u32,
 }
 
 /// [`bouzidi`] on the populations `f` (direction stride `s`) of cell `cell`, direction `q`.
 #[inline(always)]
-fn interpolated_value(f: &[f64], s: usize, cell: usize, q: usize, link: Interpolation) -> Option<f64> {
+pub(crate) fn interpolated_value(f: &[f64], s: usize, cell: usize, q: usize, link: Interpolation) -> Option<f64> {
     let out = *f.get(opposite(q) * s + cell)?;
+    if link.quadratic {
+        let (next, next2) = (link.next as usize, link.next2 as usize);
+        return Some(if link.q < 0.5 {
+            bouzidi_quadratic(link.q, out, *f.get(opposite(q) * s + next)?, *f.get(opposite(q) * s + next2)?, 0.0, 0.0)
+        } else {
+            bouzidi_quadratic(link.q, out, 0.0, 0.0, *f.get(q * s + cell)?, *f.get(q * s + next)?)
+        });
+    }
     let next_out = if link.q < 0.5 { *f.get(opposite(q) * s + link.next as usize)? } else { 0.0 };
     let same = if link.q < 0.5 { 0.0 } else { *f.get(q * s + cell)? };
     Some(bouzidi(link.q, out, next_out, same, link.du))
@@ -235,6 +267,9 @@ pub struct WallLinks {
     pub no_second_node: u64,
     /// Links on which no crossing with the surface was found: halfway bounce-back.
     pub no_crossing: u64,
+    /// Of the interpolated links, those that take the quadratic form (`interpolated_quadratic`
+    /// walls; the others keep the linear one).
+    pub quadratic: u64,
 }
 
 impl WallLinks {
@@ -626,6 +661,8 @@ pub struct Flow {
     /// with halfway walls).
     wall_velocity: Vec<[f64; 3]>,
     wall_links: Option<WallLinks>,
+    /// The mass correction of the interpolated walls, when switched on ([`Flow::set_wall_mass_correction`]).
+    wall_mass: Option<crate::wall_mass::WallMass>,
     /// The interpolated links' data, by slot.
     interpolations: Vec<Interpolation>,
     /// Per direction, the index offset of the neighbour a population streams from.
@@ -903,16 +940,33 @@ impl Flow {
         };
         // With interpolated walls, an obstacle link's bounce-back where the surface crosses it
         // (Bouzidi et al.), or halfway when it has no crossing or no second fluid cell.
-        let interpolate = setup.walls == WallTreatment::Interpolated;
+        let interpolate = setup.walls.is_interpolated();
+        let quadratic_walls = setup.walls == WallTreatment::InterpolatedQuadratic;
         let mut wall_links = interpolate.then(WallLinks::default);
         let mut interpolations: Vec<Interpolation> = Vec::new();
         let interpolated = |cell: usize, solid: u32, q: usize, rule: Rule, counts: &mut WallLinks, slots: &mut Vec<Interpolation>| -> Rule {
             let Rule::Bounce { group, du } = rule else { return rule };
             let k = owner.get(solid as usize).copied().unwrap_or(NONE) as usize;
             let Some((tree, tags, exact)) = trees.get(k) else { return rule };
-            let (centre, cq) = (grid.centre(cell), c(q));
+            let (mut centre, cq) = (grid.centre(cell), c(q));
             // The solid centre where the link really ends (unwrapped across a periodic face).
-            let end = [0, 1, 2].map(|a| centre[a] - cq[a] * grid.spacing);
+            let mut end = [0, 1, 2].map(|a| centre[a] - cq[a] * grid.spacing);
+            // A solid cell across a periodic face: the surface lies on its own side of the box, so
+            // the whole segment moves by a box length to put its solid end inside the box.
+            for a in 0..3 {
+                let length = grid.cells[a] as f64 * grid.spacing;
+                let shift = if end[a] < grid.origin[a] {
+                    length
+                } else if end[a] > grid.origin[a] + length {
+                    -length
+                } else {
+                    0.0
+                };
+                if periodic[a] && shift != 0.0 {
+                    centre[a] += shift;
+                    end[a] += shift;
+                }
+            }
             let Some(frac) = crate::voxel::link_fraction(tree, tags, exact, centre, end) else {
                 counts.no_crossing += 1;
                 return rule;
@@ -923,9 +977,14 @@ impl Flow {
                 counts.no_second_node += 1;
                 return rule;
             }
+            // The quadratic form reads one node more in line, on walls at rest.
+            let next2 =
+                next.and_then(|n| crate::surface::neighbour(&grid, periodic, grid.coords(n), q)).filter(|n| fluid.get(*n).copied().unwrap_or(false));
+            let quadratic = quadratic_walls && du == 0.0 && next.is_some() && (frac >= 0.5 || next2.is_some());
             counts.interpolated += 1;
+            counts.quadratic += u64::from(quadratic);
             let slot = slots.len() as u32;
-            slots.push(Interpolation { next: next.unwrap_or(cell) as u32, q: frac, du });
+            slots.push(Interpolation { next: next.unwrap_or(cell) as u32, q: frac, du, quadratic, next2: next2.unwrap_or(cell) as u32 });
             Rule::Interpolated { group, slot }
         };
 
@@ -1293,6 +1352,7 @@ impl Flow {
             groups,
             wall_velocity: wall_velocities,
             wall_links,
+            wall_mass: None,
             interpolations,
             offset,
             fluid_cells,
@@ -1612,6 +1672,45 @@ impl Flow {
     /// With interpolated walls, how the obstacles' links bounce back.
     pub fn wall_links(&self) -> Option<WallLinks> {
         self.wall_links
+    }
+
+    /// Switch the mass correction of the interpolated walls on or off (off at the start; see
+    /// [`crate::wall_mass`]). Refused without interpolated links. While it is on the flow cannot be
+    /// checkpointed (the mass in flight is state a checkpoint does not carry yet).
+    pub fn set_wall_mass_correction(&mut self, on: bool) -> Result<()> {
+        if !on {
+            self.wall_mass = None;
+            return Ok(());
+        }
+        if self.interpolations.is_empty() {
+            return Err(Error::Invalid("this flow has no interpolated walls to correct the mass of".into()));
+        }
+        let (grid, periodic) = (self.grid, self.periodic);
+        let mut open = vec![false; self.n];
+        for cell in &self.open {
+            if let Some(x) = open.get_mut(cell.cell as usize) {
+                *x = true;
+            }
+        }
+        // The targets: a wall node's own cell and its fluid neighbours (across periodic faces), not
+        // the open cells.
+        let target = |cell: u32, i: usize| {
+            let t = crate::surface::neighbour(&grid, periodic, grid.coords(cell as usize), i)?;
+            (self.fluid.get(t).copied().unwrap_or(false) && !open.get(t).copied().unwrap_or(false)).then_some(t as u32)
+        };
+        self.wall_mass = Some(crate::wall_mass::WallMass::new(&self.links, target));
+        Ok(())
+    }
+
+    /// The mass correction of the interpolated walls, when it is on.
+    pub fn wall_mass(&self) -> Option<&crate::wall_mass::WallMass> {
+        self.wall_mass.as_ref()
+    }
+
+    /// The mass the walls created at the last step that the correction has not taken back yet; total
+    /// mass less this is the conserved quantity. Zero with the correction off.
+    pub fn wall_mass_pending(&self) -> f64 {
+        self.wall_mass.as_ref().map_or(0.0, |w| w.pending())
     }
 
     /// The interpolated links' data, by [`Rule::Interpolated`] slot.
@@ -2658,6 +2757,11 @@ impl Flow {
                 }
             }
         }
+        // The walls' mass correction, after the forces read what the links sent back.
+        if let Some(wall_mass) = &mut self.wall_mass {
+            let s = self.stride;
+            wall_mass.conserve(&self.f, &mut self.g, s, &self.links, &self.interpolations);
+        }
     }
 
     /// Zou–He velocity, extrapolated pressure and convective boundaries. Every inner-cell read
@@ -2875,6 +2979,9 @@ impl crate::backend::Backend for Flow {
     }
 
     fn checkpoint(&mut self, a: &mut dyn crate::checkpoint::Archive) -> Result<()> {
+        if self.wall_mass.is_some() {
+            return Err(Error::Invalid("not supported yet: checkpoint of a flow with the interpolated walls' mass correction".into()));
+        }
         use crate::checkpoint::{boolean, doubles, f64, fixed, u64, vectors};
         // Streaming targets are allocated once, not cloned into a separate snapshot.
         self.targets()?;
@@ -2911,6 +3018,7 @@ impl crate::backend::Backend for Flow {
             // Fixed by the setup (the links carry their rules and are saved).
             wall_velocity: _,
             wall_links: _,
+            wall_mass: _,
             interpolations,
             offset: _,
             fluid_cells: _,
@@ -2989,6 +3097,9 @@ impl crate::backend::Backend for Flow {
                     fixed(a, i.next as u64)?;
                     fixed(a, i.q.to_bits())?;
                     fixed(a, i.du.to_bits())?;
+                    if i.quadratic {
+                        fixed(a, i.next2 as u64)?;
+                    }
                 }
                 Rule::Reflect { from, q, group } => {
                     fixed(a, 2)?;
