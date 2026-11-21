@@ -87,6 +87,9 @@
 // `node_bounce` runs eq. 14 on each node in place of a collision, with the AA addressing of a
 // collision (each node reads and writes only its own populations), and records the momentum the
 // node took, which `wall_forces` gives the node's box face.
+//
+// Spalart–Allmaras (`SA`) f32 guards: r = ν̃/(S̃ κ² d²) only where the denominator is positive,
+// r⁶ and g⁶ by multiplication, pow only for the ^(1/6) of a positive argument.
 
 override AA_MODE: bool = true;
 // The recursive regularised collision instead of the two-relaxation-time one
@@ -118,6 +121,8 @@ override VREMAN: bool = false;
 override DYNAMIC: bool = false;
 // Fans and porous zones (fieldcraft_lbm::flow's zone actions, data in `fluid`: zones.rs); likewise.
 override ZONES: bool = false;
+// The Spalart–Allmaras model (fieldcraft_lbm::sa): ν̃'s passes and its ν_t in the collision; likewise.
+override SA: bool = false;
 // The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
 // outlet's convection speed.
 override MAX_SPEED: f32 = 0.5;
@@ -177,6 +182,10 @@ struct Params {
     // Whether each axis is periodic (xyz: 1 or 0), for the finite-difference gradient's
     // neighbours.
     periodic: vec4<u32>,
+    // The Spalart–Allmaras model: each box face's kind for ν̃ (x, 2 bits per face −x, +x, −y, +y,
+    // −z, +z: 1 wall, 2 inflow, 3 open), the inflow ν̃ (y) and the sub-step dt = 1/N (z), as f32
+    // bits, and whether the model's sources act (w: 1, or 0 for the transport alone).
+    sa: vec4<u32>,
 };
 
 // Each kernel's bind group holds only the bindings it reaches (native.rs reads them from this
@@ -206,7 +215,9 @@ struct Params {
 // Per cell: velocity (with the half force) and density, from the moments kernel.
 @group(0) @binding(9) var<storage, read_write> moments: array<vec4<f32>>;
 // [0]: the largest squared lattice speed of the chunk (as f32 bits); [1]: a density was not positive;
-// [2]: a temperature was not a number; [3]: the last step's largest eddy viscosity (f32 bits).
+// [2]: a temperature was not a number; [3]: the last step's largest eddy viscosity (f32 bits);
+// [4]: the chunk's largest ν̃ transport coefficient sum (f32 bits, `sa_rate`); [5]: a ν̃ was not
+// a finite number (`sa_update`).
 @group(0) @binding(10) var<storage, read_write> stats: array<atomic<u32>>;
 // Per link, the momentum it transferred to its group in the last step.
 @group(0) @binding(11) var<storage, read_write> contrib: array<vec4<f32>>;
@@ -250,6 +261,12 @@ struct Params {
 @group(0) @binding(25) var<storage, read_write> velocity: array<f32>;
 // The flags buffer (`fluid`), writable, for `fan_update` alone.
 @group(0) @binding(26) var<storage, read_write> zones_rw: array<u32>;
+// The Spalart–Allmaras model: ν̃ per cell (0 outside the fluid); each cell's transport rate and
+// coefficient sum of the current sub-step (`sa_rate`); each cell's vorticity (x, `sa_prepare`)
+// and wall distance (y, from the host).
+@group(0) @binding(27) var<storage, read_write> nu_tilde: array<f32>;
+@group(0) @binding(28) var<storage, read_write> sa_rates: array<vec2<f32>>;
+@group(0) @binding(29) var<storage, read_write> sa_cell: array<vec2<f32>>;
 
 var<workgroup> red: array<vec4<f32>, 256>;
 // The largest squared speed of a workgroup's cells (collide): one atomic per workgroup, not
@@ -458,7 +475,7 @@ fn collide(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg:
 }
 
 fn turbulent() -> bool {
-    return SMAGORINSKY || VREMAN;
+    return SMAGORINSKY || VREMAN || SA;
 }
 
 // The non-equilibrium flux P = Σ c c h − δρ c_s² I − ρ u u + ½ (u F + F u): its diagonal (xx, yy,
@@ -624,6 +641,17 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
         let scale = rho * ut * ut / speed;
         if speed > 0.0 && scale < 1e30 { stress = scale * t; }
     }
+    if ON_NODE {
+        // The node's side row (`node_side`): a node with no Han link along its normal samples
+        // nothing; the law's request is kept beside the stress, and a node that is not flat
+        // carries only the axes whose pair n ± e_b is Han's (fieldcraft_lbm::bounce::carries).
+        let flags = bitcast<u32>(walls[node_side(k)].w);
+        if (flags & NODE_SAMPLED) == 0u { stress = vec3<f32>(0.0); }
+        walls[node_side(k) + 1u] = vec4<f32>(stress, 0.0);
+        if (flags & NODE_FLAT) == 0u {
+            stress = stress * vec3<f32>(vec3<u32>(flags >> 2u, flags >> 3u, flags >> 4u) & vec3<u32>(1u));
+        }
+    }
     walls[4u * k + 2u] = vec4<f32>(stress, 0.0);
     walls[4u * k + 3u] = vec4<f32>(stress, walls[4u * k + 3u].w);
 }
@@ -646,6 +674,10 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
 fn node_bounce(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     let k = cell_of(lid, wg);
     if !ON_NODE || k >= params.wall.x { return; }
+    if (bitcast<u32>(walls[node_side(k)].w) & NODE_FLAT) == 0u {
+        node_links(k);
+        return;
+    }
     let normal = walls[4u * k].xyz;
     let interior = bitcast<u32>(walls[4u * k + 1u].w);
     let stress = walls[4u * k + 2u].xyz;
@@ -765,6 +797,78 @@ fn node_bounce(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
     f[post_index(pc + 1u, cell, xyz)] = fq[pc];
     f[post_index(pd, cell, xyz)] = fq[pd + 1u];
     f[post_index(pd + 1u, cell, xyz)] = fq[pd];
+    walls[4u * k + 3u] = vec4<f32>(taken, walls[4u * k + 3u].w);
+}
+
+// A boundary node's side row in `walls`, after the four rows of every node (native.rs, from
+// fieldcraft_lbm::bounce::roles): its Han links (x), its links to the fluid as bits (y), its cell (z),
+// its flags (w), then the stress the law asked for (xyz).
+const NODE_FLAT: u32 = 1u;
+const NODE_SAMPLED: u32 = 2u;
+
+fn node_side(k: u32) -> u32 {
+    return 4u * params.wall.x + 2u * k;
+}
+
+// Boundary node k when it is not a plane wall's (an obstacle's edge or corner, a node beside a
+// junction cell): eq. 14 link pair by link pair, one statement per population, with no loop that
+// tests c_q (the GB10 driver miscompiles it; see `fd_neighbour`).
+fn node_links(k: u32) {
+    let side = walls[node_side(k)];
+    let han = bitcast<u32>(side.x);
+    let to_fluid = bitcast<u32>(side.y);
+    let cell = bitcast<u32>(side.z);
+    let normal = walls[4u * k].xyz;
+    let axis = select(select(2u, 1u, normal.y != 0.0), 0u, normal.x != 0.0);
+    let s = walls[4u * k + 2u].xyz;
+    var xyz = vec3<i32>(0);
+    if AA_MODE && params.phase.x == 1u { xyz = coords(cell); }
+    var fq: array<f32, 19>;
+    for (var q = 0u; q < Q; q = q + 1u) {
+        fq[q] = population(q, cell, xyz);
+    }
+    var out: array<f32, 19>;
+    out[0] = fq[0];
+    out[1u] = select(fq[2u], fq[select(select(1u, 1u, axis == 1u), 2u, axis == 0u)] - 0.5 * dot(vec3<f32>(1.0, 0.0, 0.0), s), (han & 2u) != 0u);
+    out[2u] = select(fq[1u], fq[select(select(2u, 2u, axis == 1u), 1u, axis == 0u)] - 0.5 * dot(vec3<f32>(-1.0, 0.0, 0.0), s), (han & 4u) != 0u);
+    out[3u] = select(fq[4u], fq[select(select(3u, 4u, axis == 1u), 3u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, 1.0, 0.0), s), (han & 8u) != 0u);
+    out[4u] = select(fq[3u], fq[select(select(4u, 3u, axis == 1u), 4u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, -1.0, 0.0), s), (han & 16u) != 0u);
+    out[5u] = select(fq[6u], fq[select(select(6u, 5u, axis == 1u), 5u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, 0.0, 1.0), s), (han & 32u) != 0u);
+    out[6u] = select(fq[5u], fq[select(select(5u, 6u, axis == 1u), 6u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, 0.0, -1.0), s), (han & 64u) != 0u);
+    out[7u] = select(fq[8u], fq[select(select(7u, 9u, axis == 1u), 10u, axis == 0u)] - 0.5 * dot(vec3<f32>(1.0, 1.0, 0.0), s), (han & 128u) != 0u);
+    out[8u] = select(fq[7u], fq[select(select(8u, 10u, axis == 1u), 9u, axis == 0u)] - 0.5 * dot(vec3<f32>(-1.0, -1.0, 0.0), s), (han & 256u) != 0u);
+    out[9u] = select(fq[10u], fq[select(select(9u, 7u, axis == 1u), 8u, axis == 0u)] - 0.5 * dot(vec3<f32>(1.0, -1.0, 0.0), s), (han & 512u) != 0u);
+    out[10u] = select(fq[9u], fq[select(select(10u, 8u, axis == 1u), 7u, axis == 0u)] - 0.5 * dot(vec3<f32>(-1.0, 1.0, 0.0), s), (han & 1024u) != 0u);
+    out[11u] = select(fq[12u], fq[select(select(13u, 11u, axis == 1u), 14u, axis == 0u)] - 0.5 * dot(vec3<f32>(1.0, 0.0, 1.0), s), (han & 2048u) != 0u);
+    out[12u] = select(fq[11u], fq[select(select(14u, 12u, axis == 1u), 13u, axis == 0u)] - 0.5 * dot(vec3<f32>(-1.0, 0.0, -1.0), s), (han & 4096u) != 0u);
+    out[13u] = select(fq[14u], fq[select(select(11u, 13u, axis == 1u), 12u, axis == 0u)] - 0.5 * dot(vec3<f32>(1.0, 0.0, -1.0), s), (han & 8192u) != 0u);
+    out[14u] = select(fq[13u], fq[select(select(12u, 14u, axis == 1u), 11u, axis == 0u)] - 0.5 * dot(vec3<f32>(-1.0, 0.0, 1.0), s), (han & 16384u) != 0u);
+    out[15u] = select(fq[16u], fq[select(select(17u, 18u, axis == 1u), 15u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, 1.0, 1.0), s), (han & 32768u) != 0u);
+    out[16u] = select(fq[15u], fq[select(select(18u, 17u, axis == 1u), 16u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, -1.0, -1.0), s), (han & 65536u) != 0u);
+    out[17u] = select(fq[18u], fq[select(select(15u, 16u, axis == 1u), 17u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, 1.0, -1.0), s), (han & 131072u) != 0u);
+    out[18u] = select(fq[17u], fq[select(select(16u, 15u, axis == 1u), 18u, axis == 0u)] - 0.5 * dot(vec3<f32>(0.0, -1.0, 1.0), s), (han & 262144u) != 0u);
+    var taken = vec3<f32>(0.0);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(1.0, 0.0, 0.0) * (fq[2u] + out[1u]), (to_fluid & 2u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(-1.0, 0.0, 0.0) * (fq[1u] + out[2u]), (to_fluid & 4u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, 1.0, 0.0) * (fq[4u] + out[3u]), (to_fluid & 8u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, -1.0, 0.0) * (fq[3u] + out[4u]), (to_fluid & 16u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, 0.0, 1.0) * (fq[6u] + out[5u]), (to_fluid & 32u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, 0.0, -1.0) * (fq[5u] + out[6u]), (to_fluid & 64u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(1.0, 1.0, 0.0) * (fq[8u] + out[7u]), (to_fluid & 128u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(-1.0, -1.0, 0.0) * (fq[7u] + out[8u]), (to_fluid & 256u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(1.0, -1.0, 0.0) * (fq[10u] + out[9u]), (to_fluid & 512u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(-1.0, 1.0, 0.0) * (fq[9u] + out[10u]), (to_fluid & 1024u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(1.0, 0.0, 1.0) * (fq[12u] + out[11u]), (to_fluid & 2048u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(-1.0, 0.0, -1.0) * (fq[11u] + out[12u]), (to_fluid & 4096u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(1.0, 0.0, -1.0) * (fq[14u] + out[13u]), (to_fluid & 8192u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(-1.0, 0.0, 1.0) * (fq[13u] + out[14u]), (to_fluid & 16384u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, 1.0, 1.0) * (fq[16u] + out[15u]), (to_fluid & 32768u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, -1.0, -1.0) * (fq[15u] + out[16u]), (to_fluid & 65536u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, 1.0, -1.0) * (fq[18u] + out[17u]), (to_fluid & 131072u) != 0u);
+    taken = taken - select(vec3<f32>(0.0), vec3<f32>(0.0, -1.0, 1.0) * (fq[17u] + out[18u]), (to_fluid & 262144u) != 0u);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        f[post_index(q, cell, xyz)] = out[q];
+    }
     walls[4u * k + 3u] = vec4<f32>(taken, walls[4u * k + 3u].w);
 }
 
@@ -951,6 +1055,12 @@ fn record_eddy_nu(cell: u32, lid: u32, nu_t: f32, u: vec3<f32>) {
 const NONE: u32 = 0xffffffffu;
 
 fn gradients() -> bool {
+    return HRR || VREMAN || SA;
+}
+
+// Whether the collision itself takes the gradient (the Spalart–Allmaras model's vorticity is
+// `sa_prepare`'s).
+fn collision_gradient() -> bool {
     return HRR || VREMAN;
 }
 
@@ -1075,6 +1185,249 @@ fn vreman_nu(g: Gradient) -> f32 {
     return 0.0;
 }
 
+// The explicit eddy viscosity of a cell: the Spalart–Allmaras model's ν̃ f_v1 or Vreman's.
+fn eddy_nu(cell: u32, g: Gradient) -> f32 {
+    // `sa_update` left it in `moments`' w (free without heat, which the model refuses on the
+    // device), so the collision binds no ν̃ buffer and stays within 8 storage buffers.
+    if SA { return moments[cell].w; }
+    return vreman_nu(g);
+}
+
+// ---- The Spalart–Allmaras model (fieldcraft_lbm::sa, in f32) ----
+
+const SA_CB1: f32 = 0.1355;
+const SA_SIGMA: f32 = 0.6666667;
+const SA_CB2: f32 = 0.622;
+const SA_KAPPA: f32 = 0.41;
+const SA_CW2: f32 = 0.3;
+const SA_CW3_6: f32 = 64.0;
+const SA_CV1_3: f32 = 357.911;
+const SA_CT3: f32 = 1.2;
+const SA_CT4: f32 = 0.5;
+const SA_CV2: f32 = 0.7;
+const SA_CV3: f32 = 0.9;
+const SA_CN1: f32 = 16.0;
+const SA_RMAX: f32 = 10.0;
+const SA_CELL: u32 = 0u;
+const SA_WALL: u32 = 1u;
+const SA_INFLOW: u32 = 2u;
+const SA_OPEN: u32 = 3u;
+
+fn sa_cw1() -> f32 {
+    return SA_CB1 / (SA_KAPPA * SA_KAPPA) + (1.0 + SA_CB2) / SA_SIGMA;
+}
+
+fn sa_fv1(chi: f32) -> f32 {
+    let c3 = chi * chi * chi;
+    return c3 / (c3 + SA_CV1_3);
+}
+
+fn sa_fv2(chi: f32) -> f32 {
+    return 1.0 - chi / (1.0 + chi * sa_fv1(chi));
+}
+
+fn sa_ft2(chi: f32) -> f32 {
+    return SA_CT3 * exp(-SA_CT4 * chi * chi);
+}
+
+fn sa_fn(chi: f32) -> f32 {
+    if chi >= 0.0 { return 1.0; }
+    let c3 = chi * chi * chi;
+    return (SA_CN1 + c3) / (SA_CN1 - c3);
+}
+
+// f_w(r), r in [0, R_MAX]: r⁶ ≤ 1e6 and g⁶ ≤ 7.3e32 stay within f32; pow only for the ^(1/6) of
+// a positive number.
+fn sa_fw(r: f32) -> f32 {
+    let r2 = r * r;
+    let g = r + SA_CW2 * (r2 * r2 * r2 - r);
+    let g2 = g * g;
+    return g * pow((1.0 + SA_CW3_6) / (g2 * g2 * g2 + SA_CW3_6), 1.0 / 6.0);
+}
+
+// ν_t = ν̃ f_v1(ν̃/ν), 0 where ν̃ is not above 0 or a number is not usable.
+fn sa_nu_t(v: f32, nu: f32) -> f32 {
+    if !(v > 0.0 && nu > 0.0) { return 0.0; }
+    let x = v * sa_fv1(v / nu);
+    if x > 0.0 && x < 1e30 { return x; }
+    return 0.0;
+}
+
+fn sa_diffusivity(v: f32, nu: f32) -> f32 {
+    if v >= 0.0 { return nu + v; }
+    return nu + v * sa_fn(v / nu);
+}
+
+// S̃ with Allmaras et al.'s limiter (Ω, d > 0; only for ν̃ ≥ 0, so Ω = 0 never meets S̄ < 0).
+fn sa_s_tilde(omega: f32, v: f32, nu: f32, d: f32) -> f32 {
+    let s_bar = v * sa_fv2(v / nu) / (SA_KAPPA * SA_KAPPA * d * d);
+    if s_bar >= -SA_CV2 * omega { return omega + s_bar; }
+    return omega + omega * (SA_CV2 * SA_CV2 * omega + SA_CV3 * s_bar) / ((SA_CV3 - 2.0 * SA_CV2) * omega - s_bar);
+}
+
+// P and D per unit ν̃, (p, k) with P = p ν̃ and D = k ν̃, never dividing by ν̃ (sa::coefficients);
+// z = 0 where an input is not usable.
+fn sa_coefficients(v: f32, nu: f32, omega: f32, d: f32) -> vec3<f32> {
+    if !(nu > 0.0 && d > 0.0 && omega >= 0.0 && abs(v) < 1e30 && omega < 1e30 && d < 1e30) { return vec3<f32>(0.0); }
+    var p = 0.0;
+    var k = 0.0;
+    if v >= 0.0 {
+        let ft2 = sa_ft2(v / nu);
+        let st = sa_s_tilde(omega, v, nu, d);
+        let den = st * SA_KAPPA * SA_KAPPA * d * d;
+        var r = SA_RMAX;
+        if den > 0.0 { r = min(v / den, SA_RMAX); }
+        p = SA_CB1 * (1.0 - ft2) * st;
+        k = (sa_cw1() * sa_fw(r) - SA_CB1 / (SA_KAPPA * SA_KAPPA) * ft2) * v / (d * d);
+    } else {
+        p = SA_CB1 * (1.0 - SA_CT3) * omega;
+        k = -sa_cw1() * v / (d * d);
+    }
+    if abs(p) < 1e30 && abs(k) < 1e30 { return vec3<f32>(p, k, 1.0); }
+    return vec3<f32>(0.0);
+}
+
+// Each fluid cell's vorticity |curl u| (sa::vorticity) from the finite-difference gradient, beside
+// its wall distance; 0 outside the fluid.
+@compute @workgroup_size(256)
+fn sa_prepare(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let cell = cell_of(lid, wg);
+    if !SA || cell >= params.n { return; }
+    var w = 0.0;
+    if is_fluid(cell) {
+        let g = fd_gradient(cell);
+        let wx = g.y.z - g.z.y;
+        let wy = g.z.x - g.x.z;
+        let wz = g.x.y - g.y.x;
+        w = sqrt(wx * wx + wy * wy + wz * wz);
+        if !(w < 1e30) { w = 0.0; }
+    }
+    sa_cell[cell] = vec2<f32>(w, sa_cell[cell].y);
+}
+
+// What lies across the face of the cell at `p` one step `d` along an axis (`face` its index,
+// 2 axis + up): (SA_CELL, the cell), (SA_WALL, 0) for a solid cell, or the box face's kind.
+fn sa_side(p: vec3<i32>, d: vec3<i32>, face: u32) -> vec2<u32> {
+    let size = vec3<i32>(i32(params.nx), i32(params.ny), i32(params.nz));
+    let periodic = params.periodic.xyz != vec3<u32>(0u);
+    let w = p + d;
+    if any(((w < vec3<i32>(0)) | (w >= size)) & !periodic) { return vec2<u32>((params.sa.x >> (2u * face)) & 3u, 0u); }
+    let cell = wrapped(w);
+    if !is_fluid(cell) { return vec2<u32>(SA_WALL, 0u); }
+    return vec2<u32>(SA_CELL, cell);
+}
+
+// One face of SaField::rate: the face value's contribution to the rate and the coefficient sum
+// (x, y, with z = 1 when the face has a value) and the slope per half spacing (w).
+fn sa_face(side: vec2<u32>, v: f32, uc: f32, axis: u32, sign: f32, nu: f32, eta_c: f32) -> vec4<f32> {
+    var face = 0.0;
+    var un = 0.0;
+    var d = 0.0;
+    var slope = 0.0;
+    var has = true;
+    switch side.x {
+        case 0u: {
+            let vn = nu_tilde[side.y];
+            un = 0.5 * (uc + velocity[axis * params.n + side.y]) * sign;
+            d = 0.5 * (eta_c + sa_diffusivity(vn, nu)) / SA_SIGMA;
+            slope = vn - v;
+            face = vn;
+        }
+        case 1u: {
+            slope = -2.0 * v;
+            d = 2.0 * nu / SA_SIGMA;
+        }
+        case 2u: {
+            let inflow = bitcast<f32>(params.sa.y);
+            slope = 2.0 * (inflow - v);
+            face = inflow;
+            un = uc * sign;
+            d = 2.0 * sa_diffusivity(inflow, nu) / SA_SIGMA;
+        }
+        default: {
+            un = uc * sign;
+            has = false;
+        }
+    }
+    if !has { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+    let upwind = max(-un, 0.0);
+    return vec4<f32>((upwind + d) * (face - v), upwind + d, 1.0, slope);
+}
+
+// The c_b2 term's squared gradient along one axis from its two faces' slopes.
+fn sa_grad2(m: vec4<f32>, p: vec4<f32>) -> f32 {
+    if m.z > 0.0 && p.z > 0.0 { return 0.5 * (m.w * m.w + p.w * p.w); }
+    if m.z > 0.0 { return m.w * m.w; }
+    if p.z > 0.0 { return p.w * p.w; }
+    return 0.0;
+}
+
+// Each fluid cell's explicit transport rate and coefficient sum from the old ν̃ (SaField::rate),
+// the six faces unrolled (no loop over directions: see `fd_neighbour`); the largest sum to
+// stats[4] (one atomic per workgroup).
+@compute @workgroup_size(256)
+fn sa_rate(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let cell = cell_of(lid, wg);
+    speed[lid] = 0.0;
+    if SA && cell < params.n {
+        var out = vec2<f32>(0.0);
+        if is_fluid(cell) {
+            let nu = params.smag.w;
+            let v = nu_tilde[cell];
+            let uc = velocity_of(cell);
+            let eta_c = sa_diffusivity(v, nu);
+            let p = coords(cell);
+            let xm = sa_face(sa_side(p, vec3<i32>(-1, 0, 0), 0u), v, uc.x, 0u, -1.0, nu, eta_c);
+            let xp = sa_face(sa_side(p, vec3<i32>(1, 0, 0), 1u), v, uc.x, 0u, 1.0, nu, eta_c);
+            let ym = sa_face(sa_side(p, vec3<i32>(0, -1, 0), 2u), v, uc.y, 1u, -1.0, nu, eta_c);
+            let yp = sa_face(sa_side(p, vec3<i32>(0, 1, 0), 3u), v, uc.y, 1u, 1.0, nu, eta_c);
+            let zm = sa_face(sa_side(p, vec3<i32>(0, 0, -1), 4u), v, uc.z, 2u, -1.0, nu, eta_c);
+            let zp = sa_face(sa_side(p, vec3<i32>(0, 0, 1), 5u), v, uc.z, 2u, 1.0, nu, eta_c);
+            var rate = xm.x + xp.x + ym.x + yp.x + zm.x + zp.x;
+            let coef = xm.y + xp.y + ym.y + yp.y + zm.y + zp.y;
+            rate = rate + SA_CB2 / SA_SIGMA * (sa_grad2(xm, xp) + sa_grad2(ym, yp) + sa_grad2(zm, zp));
+            out = vec2<f32>(rate, coef);
+            // A coefficient that is not a number shows as the largest bits (NaN above +inf).
+            speed[lid] = select(bitcast<f32>(0x7fc00000u), coef, coef == coef);
+        }
+        sa_rates[cell] = out;
+    }
+    workgroupBarrier();
+    for (var k = 128u; k > 0u; k = k >> 1u) {
+        if lid < k {
+            let a = speed[lid];
+            let b = speed[lid + k];
+            speed[lid] = select(max(a, b), a, a != a);
+            if b != b { speed[lid] = b; }
+        }
+        workgroupBarrier();
+    }
+    if lid == 0u && SA { atomicMax(&stats[4], bitcast<u32>(speed[0])); }
+}
+
+// ν̃ after one sub-step dt (`params.sa.z`): explicit transport, then the model's sources
+// point-implicitly in their division-free forms (SaField::update); a value that is not finite to
+// stats[5].
+@compute @workgroup_size(256)
+fn sa_update(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let cell = cell_of(lid, wg);
+    if !SA || cell >= params.n || !is_fluid(cell) { return; }
+    let dt = bitcast<f32>(params.sa.z);
+    var v = nu_tilde[cell] + dt * sa_rates[cell].x;
+    let c = sa_cell[cell];
+    let s = sa_coefficients(v, params.smag.w, c.x, c.y);
+    if params.sa.w != 0u && s.z > 0.0 {
+        if v > 0.0 {
+            v = (v + dt * v * (max(s.x, 0.0) + max(-s.y, 0.0))) / (1.0 + dt * (max(s.y, 0.0) + max(-s.x, 0.0)));
+        } else if v < 0.0 {
+            v = v / (1.0 + dt * max(s.y - s.x, 0.0));
+        }
+    }
+    if !(abs(v) < 1e30) { atomicStore(&stats[5], 1u); }
+    nu_tilde[cell] = v;
+    moments[cell] = vec4<f32>(moments[cell].xyz, sa_nu_t(v, params.smag.w));
+}
+
 // The rate of an explicit eddy viscosity, τ̄ = 3 (ν + ν_t) + ½.
 fn explicit_omega(nu_t: f32) -> f32 {
     return 1.0 / (1.0 / params.omega_plus + 3.0 * nu_t);
@@ -1149,7 +1502,7 @@ fn collide_cell(cell: u32, lid: u32) {
     let forced = forced();
     // The finite-difference gradient of the neighbours' velocities (zero without the models).
     var g = Gradient(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
-    if gradients() { g = fd_gradient(cell); }
+    if collision_gradient() { g = fd_gradient(cell); }
     if REGULARIZED {
         collide_regularized(cell, lid, xyz, &fq, drho, rho, u, force, forced, g);
         return;
@@ -1167,7 +1520,7 @@ fn collide_cell(cell: u32, lid: u32) {
             if SMAGORINSKY {
                 wp = smagorinsky_omega(flux(&fq, drho, rho, u, force, forced), rho, params.omega_plus, smagorinsky_c2(cell));
             } else {
-                let nu_t = vreman_nu(g);
+                let nu_t = eddy_nu(cell, g);
                 if nu_t > 0.0 { wp = explicit_omega(nu_t); }
             }
         }
@@ -1298,7 +1651,7 @@ fn collide_mrt(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32,
         } else if SMAGORINSKY {
             omega = smagorinsky_omega(flux(fq, drho, rho, u, force, forced), rho, omega, smagorinsky_c2(cell));
         } else {
-            let nu_t = vreman_nu(g);
+            let nu_t = eddy_nu(cell, g);
             if nu_t > 0.0 { omega = explicit_omega(nu_t); }
         }
         record_eddy(cell, lid, omega, u);
@@ -1393,7 +1746,7 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
             if SMAGORINSKY {
                 nu_t = smagorinsky_nu(p, rho, omega, smagorinsky_c2(cell), flux_floor(drho, rho, u));
             } else {
-                nu_t = vreman_nu(g);
+                nu_t = eddy_nu(cell, g);
             }
             record_eddy_nu(cell, lid, nu_t, u);
             sigma = dynamic_sigma(g, nu_t);
@@ -1401,7 +1754,7 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
             if SMAGORINSKY {
                 omega = smagorinsky_omega(p, rho, omega, smagorinsky_c2(cell));
             } else {
-                let nu_t = vreman_nu(g);
+                let nu_t = eddy_nu(cell, g);
                 if nu_t > 0.0 { omega = explicit_omega(nu_t); }
             }
             record_eddy(cell, lid, omega, u);
@@ -1432,7 +1785,8 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
     // odd ones (orders 1 and 3, the force's first) change sign.
     var rest = w_of(0u) * (drho - 1.5 * rho * uu - relax * 1.5 * trace);
     if forced { rest = rest - 1.5 * w_of(0u) * uf; }
-    f[post_index(0u, cell, xyz)] = rest;
+    var out: array<f32, 19>;
+    out[0] = rest;
     for (var q = 1u; q < Q; q = q + 2u) {
         let c = vec3<f32>(c_of(q));
         let w = w_of(q);
@@ -1454,8 +1808,28 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
             even = even + 0.5 * w * (9.0 * cu * cf - 3.0 * uf);
             odd = odd + 1.5 * w * cf;
         }
-        f[post_index(q, cell, xyz)] = even + odd;
-        f[post_index(q + 1u, cell, xyz)] = even - odd;
+        out[q] = even + odd;
+        out[q + 1u] = even - odd;
+    }
+    // The rebuild from (δρ, j, P) keeps mass and momentum only to its f32 rounding, and in a
+    // nearly steady flow beside walls that rounding has the same sign every step: the mean
+    // momentum drifted about 4e-8 of itself per step from the CPU's, at any τ, with or without
+    // the force, and only where walls make the flow non-uniform. So the rebuilt populations are projected
+    // back onto the collision's exact budget, mass unchanged and momentum + F, through the
+    // weights' first two moments (Σ w = 1, Σ w c = 0, Σ 3 w c c = I). The defects are summed as
+    // per-direction differences fq − out, small numbers among themselves, and the force added
+    // to that sum: a target of ρu + F/2 against Σ c out instead added F/2 (~1e-6) to ρu (~0.1),
+    // rounding the force to ulp(ρu) the same way every step, and left the forced drift.
+    var dm = 0.0;
+    var dj = vec3<f32>(0.0);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let d = (*fq)[q] - out[q];
+        dm = dm + d;
+        dj = dj + vec3<f32>(c_of(q)) * d;
+    }
+    if forced { dj = dj + force; }
+    for (var q = 0u; q < Q; q = q + 1u) {
+        f[post_index(q, cell, xyz)] = out[q] + w_of(q) * (dm + 3.0 * dot(vec3<f32>(c_of(q)), dj));
     }
 }
 
@@ -2000,8 +2374,12 @@ fn wall_forces(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
     if !(WALL_MODEL || WALL_BOUNCE || ON_NODE) || k >= params.wall.x { return; }
     let row = walls[4u * k + 3u];
     let l = bitcast<u32>(row.w);
-    if l >= params.links { return; }
-    contrib[l] = vec4<f32>(contrib[l].xyz + row.xyz, contrib[l].w);
+    if l < params.links {
+        contrib[l] = vec4<f32>(contrib[l].xyz + row.xyz, contrib[l].w);
+    } else if ON_NODE && l < arrayLength(&contrib) {
+        // A boundary node's own slot after the links (one per node off a plane box face).
+        contrib[l] = vec4<f32>(row.xyz, 0.0);
+    }
 }
 
 // One workgroup per group: the sum of its links' contributions.

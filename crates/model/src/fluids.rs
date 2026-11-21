@@ -1424,7 +1424,10 @@ mod tests {
         let turbulence = |t: serde_json::Value| serde_json::from_value::<crate::Turbulence>(t);
         let vreman = turbulence(serde_json::json!({"type": "vreman", "constant": 0.18})).unwrap();
         assert_eq!(vreman, crate::Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None });
-        assert_eq!((vreman.name(), vreman.constant(), vreman.prandtl(), vreman.van_driest(), vreman.wall_model()), ("vreman", 0.18, 0.9, None, None));
+        assert_eq!(
+            (vreman.name(), vreman.constant(), vreman.prandtl(), vreman.van_driest(), vreman.wall_model()),
+            ("vreman", Some(0.18), 0.9, None, None)
+        );
         let walled =
             turbulence(serde_json::json!({"type": "vreman", "constant": 0.17, "prandtl": 0.85, "wall_model": "spalding_bounce_halfway"})).unwrap();
         assert_eq!(walled.wall_model(), Some(crate::WallModel::SpaldingBounceHalfway));
@@ -1439,6 +1442,18 @@ mod tests {
             ("smagorinsky", Some(26.0), Some(crate::WallModel::Musker))
         );
         assert!(turbulence(serde_json::json!({"type": "smagorinsky", "constant": 0.1, "damping": 26})).is_err());
+        // Spalart–Allmaras: TMR's inflow ν̃/ν of 3 by default; unknown fields refused; written back the same way.
+        let sa = turbulence(serde_json::json!({"type": "spalart_allmaras"})).unwrap();
+        assert_eq!(sa, crate::Turbulence::SpalartAllmaras { prandtl: 0.9, wall_model: None, inflow_ratio: 3.0 });
+        assert_eq!((sa.name(), sa.constant(), sa.van_driest(), sa.wall_model()), ("spalart_allmaras", None, None, None));
+        let walled = turbulence(serde_json::json!({"type": "spalart_allmaras", "wall_model": "musker", "inflow_ratio": 5})).unwrap();
+        assert_eq!(walled, crate::Turbulence::SpalartAllmaras { prandtl: 0.9, wall_model: Some(crate::WallModel::Musker), inflow_ratio: 5.0 });
+        for t in [sa, walled] {
+            assert_eq!(serde_json::from_str::<crate::Turbulence>(&serde_json::to_string(&t).unwrap()).unwrap(), t);
+        }
+        assert!(turbulence(serde_json::json!({"type": "spalart_allmaras", "constant": 0.1})).is_err());
+        // Van Driest's damping is a subgrid model's: the Reynolds-averaged ν_t damps itself.
+        assert!(turbulence(serde_json::json!({"type": "spalart_allmaras", "van_driest": 26})).is_err());
         // The JSON form reads back to the same model, through the same checks.
         let text = serde_json::to_string(&m).unwrap();
         assert_eq!(serde_json::from_str::<Model>(&text).unwrap(), m);
