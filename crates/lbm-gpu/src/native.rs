@@ -26,6 +26,8 @@ const KIND_OPEN: u32 = 3;
 const RESET: u32 = 1 << 24;
 /// Marks a bounce link that interpolates where the obstacle's surface crosses it (see lbm.wgsl).
 const INTERP: u32 = 1 << 25;
+/// Marks an interpolated link that takes the quadratic form (see lbm.wgsl).
+const QUAD: u32 = 1 << 26;
 /// Floats per open cell in the outlet buffer (see lbm.wgsl).
 const OUTLET: usize = fieldcraft_lbm::memory::DEVICE_OUTLET_WORDS;
 /// The flag word of a boundary node of the on-node wall-function bounce: it streams, but it is not
@@ -517,6 +519,8 @@ struct Variant {
     zones: bool,
     /// Interpolated wall links.
     interpolated: bool,
+    /// Some of them take the quadratic form.
+    quadratic: bool,
 }
 
 /// A compiled kernel: its pipeline, its bind group's layout and the bindings in it.
@@ -569,6 +573,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("DYNAMIC", if variant.dynamic { 1.0 } else { 0.0 }),
                     ("ZONES", if variant.zones { 1.0 } else { 0.0 }),
                     ("INTERPOLATED", if variant.interpolated { 1.0 } else { 0.0 }),
+                    ("QUADRATIC", if variant.quadratic { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
                 ..Default::default()
@@ -862,8 +867,15 @@ impl GpuFlow {
         // (lbm.wgsl, `link_f`).
         let interpolations = flow.interpolations();
         let interpolated = !interpolations.is_empty();
+        let quadratic = interpolations.iter().any(|i| i.quadratic);
+        // The quadratic links' third node is a cell index held as a float (exact below 2^24).
+        if quadratic && flow.grid().len() > 1 << 24 {
+            return Err(Error::Invalid("not supported yet: `walls: \"interpolated_quadratic\"` on the GPU with more than 16.7 million cells".into()));
+        }
         let mut link_q = reserved(if interpolated { links.len() } else { 0 }, "link fractions")?;
-        let mut link_f = reserved(if interpolated { 2 * links.len() + 4 * flow.groups().len() } else { links.len() }, "links")?;
+        let mut link_next2 = reserved(if quadratic { links.len() } else { 0 }, "link third nodes")?;
+        let rows = if quadratic { 3 } else { 2 };
+        let mut link_f = reserved(if interpolated { rows * links.len() + 4 * flow.groups().len() } else { links.len() }, "links")?;
         let mut by_group: Vec<(u32, u32)> = reserved(links.len(), "links by group")?;
         let group_count = flow.groups().len();
         let mut weight_forces = filled(group_count, [0.0f64; 3], "force groups")?;
@@ -885,6 +897,13 @@ impl GpuFlow {
             if interpolated {
                 link_q.push(frac as f32);
             }
+            let (quad, next2) = match link.rule {
+                Rule::Interpolated { slot, .. } => interpolations.get(slot as usize).map_or((false, 0), |i| (i.quadratic, i.next2)),
+                _ => (false, 0),
+            };
+            if quadratic {
+                link_next2.push(next2 as f32);
+            }
             // What the weights add to the link's exchange (see `link_forces`).
             let weight = match link.rule {
                 // The interpolated exchange's weights cancel in out − back, as the halfway one's.
@@ -902,11 +921,13 @@ impl GpuFlow {
             }
             let reset = if thermal.is_some_and(|t| t.resets(link.cell)) { RESET } else { 0 };
             let interp = if matches!(link.rule, Rule::Interpolated { .. }) { INTERP } else { 0 };
-            link_u.extend_from_slice(&[u32::from(link.q) | (kind << 8) | (q2 << 16) | reset | interp, from, group, link.cell]);
+            let quad = if quad { QUAD } else { 0 };
+            link_u.extend_from_slice(&[u32::from(link.q) | (kind << 8) | (q2 << 16) | reset | interp | quad, from, group, link.cell]);
             link_f.push(du as f32);
         }
         if interpolated {
             link_f.extend_from_slice(&link_q);
+            link_f.extend_from_slice(&link_next2);
             let velocities = flow.wall_velocities();
             for g in 0..group_count {
                 let u = velocities.get(g).copied().unwrap_or([0.0; 3]);
@@ -1176,6 +1197,7 @@ impl GpuFlow {
             dynamic: hybrid == Some(HrrSigma::Dynamic),
             zones: zones.zones > 0,
             interpolated,
+            quadratic,
         })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
         let resource = |binding: u32, k: usize| -> Option<&wgpu::Buffer> {
