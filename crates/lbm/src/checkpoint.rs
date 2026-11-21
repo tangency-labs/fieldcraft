@@ -163,7 +163,7 @@ pub(crate) struct RunState<'a> {
 
 impl RunState<'_> {
     pub fn archive(&mut self, a: &mut dyn Archive, setup: &crate::Setup) -> Result<()> {
-        fixed(a, u64::from_le_bytes(*b"FCRST5\0\0"))?; // The layout tag: a change to the saved state changes it.
+        fixed(a, u64::from_le_bytes(*b"FCRST7\0\0"))?; // The layout tag: a change to the saved state changes it.
         u64(a, self.k)?;
         if *self.k == 0 || *self.k > setup.steps {
             return Err(Error::Invalid("checkpoint step is outside this run".into()));

@@ -11,6 +11,8 @@
 //!   walls (moving walls after Ladd), slip faces, Zou–He inlets and outlets, and the
 //!   momentum-exchange force on every wall; fans (a pressure–flow curve) and porous zones
 //!   (Darcy–Forchheimer resistance) as body forces.
+//! - [`distance`]: every fluid cell's exact distance to the nearest no-slip wall, for
+//!   turbulence models that read it.
 //! - [`bounce`]: Han, Ooka and Kikumoto's on-node wall-function bounce (their eq. 14).
 //! - [`outlet`]: convective pressure outlets, which carry a wake or vortices out of the box.
 //! - [`solve`]: the time loop, output frames and force histories in model units.
@@ -65,6 +67,7 @@ pub mod baffle;
 pub mod bounce;
 pub mod checkpoint;
 pub mod conduction;
+pub mod distance;
 pub mod flow;
 pub mod hrr;
 pub mod lattice;
@@ -74,6 +77,8 @@ pub mod outlet;
 pub mod ports;
 pub mod regularized;
 pub mod rheology;
+pub mod sa;
+pub mod sa_law;
 pub mod setup;
 pub mod solve;
 pub mod statistics;
@@ -84,13 +89,14 @@ pub mod validity;
 pub mod voxel;
 pub mod vreman;
 pub mod wall;
+pub mod wall_layer;
 
 pub use backend::{Backend, Choice, Fields, device_available, register_backend};
 pub use flow::{Flow, Group, Interpolation, Link, OpenCell, Rule, Target, ThermalState, WallLinks, ZoneSample};
 pub use memory::{DeviceBuffer, Memory};
 pub use ports::{FaceMean, Port, PortProperties, Stream};
 pub use setup::{ContactSetup, PhaseSetup, SolidSetup, SurfaceSetup, ThermalSetup};
-pub use setup::{Obstacle, Setup, ZoneKind, ZoneSetup, fluid_step};
+pub use setup::{Obstacle, SaSetup, Setup, ZoneKind, ZoneSetup, fluid_step};
 pub use solve::{
     ComponentCheck, FluidResult, FluidStats, ForceHistory, Frame, FreeSurfaceStats, HeatHistory, Peak, ShearDependentTau, SolidResult,
     SurfaceHistory, ZoneHistory, run, solve_fluid, solve_fluid_on,
