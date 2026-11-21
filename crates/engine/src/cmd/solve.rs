@@ -2013,6 +2013,59 @@ pub(crate) mod tests {
         assert_eq!(s.model, before);
     }
 
+    /// The Spalart–Allmaras model: hostile parameters refused with a message naming them on either
+    /// backend; never a panic, the model unchanged, nothing solved (what the GPU does not run yet
+    /// is lbm-gpu's tests). An unknown field is refused by the command. A valid model solves on the CPU,
+    /// reporting its largest ν_t/ν.
+    #[test]
+    fn spalart_allmaras_solves_on_the_cpu_and_hostile_parameters_are_named() {
+        use fieldcraft_model::{Procedure, Turbulence};
+        let mut s = Session::default();
+        couette(&mut s);
+        let sa = |prandtl: f64, inflow_ratio: f64| Turbulence::SpalartAllmaras { prandtl, wall_model: None, inflow_ratio };
+        let mut cases = Vec::new();
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0, 0.0, 1e300] {
+            cases.push((sa(bad, 3.0), "turbulent Prandtl number"));
+            if bad != 0.0 {
+                cases.push((sa(0.9, bad), "inflow ratio"));
+            }
+        }
+        for (turbulence, want) in cases {
+            let mut step = s.model.step("Shear").unwrap().clone();
+            if let Procedure::Fluid { turbulence: t, .. } = &mut step.procedure {
+                *t = Some(turbulence);
+            }
+            s.model.replace_step(step).unwrap();
+            // Compared as text: a NaN parameter is never equal to itself.
+            let before = format!("{:?}", s.model);
+            for backend in ["cpu", "gpu"] {
+                let error = s.execute("solve.fluid", &json!({"backend": backend})).unwrap_err().to_string();
+                assert!(error.contains(want), "{turbulence:?} on {backend}: {error}");
+                assert_eq!(format!("{:?}", s.model), before);
+                assert_eq!(s.solved_steps().count(), 0);
+            }
+        }
+        let error = s
+            .execute(
+                "model.step.create",
+                &json!({"name": "Bad", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 1, "turbulence": {"type": "spalart_allmaras", "constant": 0.1}}}),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("constant"), "{error}");
+        let mut step = s.model.step("Shear").unwrap().clone();
+        if let Procedure::Fluid { turbulence: t, .. } = &mut step.procedure {
+            *t = Some(sa(0.9, 3.0));
+        }
+        s.model.replace_step(step).unwrap();
+        let reply = s.execute("solve.fluid", &json!({"backend": "cpu"})).unwrap();
+        // The gap runs at Re 1, where destruction takes ν̃ to 0: the ratio is reported, finite
+        // and not negative (the lbm tests' forced channel shows a positive one).
+        let ratio = reply.get("eddy_viscosity_ratio").and_then(serde_json::Value::as_f64);
+        assert!(ratio.is_some_and(|r| r.is_finite() && r >= 0.0), "{reply}");
+        assert_eq!(s.solved_steps().count(), 1);
+    }
+
     /// A channel filled by a velocity inlet behind a free surface: the solve reports the mass
     /// balance, a line reads the fill level, and `front` gives the liquid's extent and when it
     /// reached a point; hostile parameters are refused.
