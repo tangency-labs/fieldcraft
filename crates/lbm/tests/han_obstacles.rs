@@ -217,7 +217,7 @@ fn inventory(flow: &Flow) -> ([f64; 3], f64) {
 /// Hostile geometry: gaps of one and two cells, a one-cell obstacle, an obstacle that leaves one
 /// column of fluid, one that fills the box, one thinner than a cell, and an obstacle reaching an
 /// inlet. Each is refused with a message or runs 20 steps (stopping with an error at worst), with
-/// no panic; wherever it runs, the nodes keep the fluid's mass.
+/// no panic; wherever it runs in a closed box, the nodes keep the fluid's mass.
 #[test]
 fn hostile_obstacle_geometry_is_refused_or_runs_without_panic() {
     let dx = 1.0 / 8.0;
@@ -258,17 +258,12 @@ fn hostile_obstacle_geometry_is_refused_or_runs_without_panic() {
             Err(e) => {
                 let e = e.to_string();
                 println!("{name}: refused: {e}");
-                if inlet {
-                    assert!(e.contains("not supported yet") && e.contains("x_min"), "{name}: {e}");
-                } else {
-                    assert!(e.contains("leaves no fluid cell") && e.contains("refine"), "{name}: {e}");
-                    assert!(["gap of one cell", "gap of two cells", "one column left"].contains(&name), "{name}: {e}");
-                }
+                assert!(e.contains("leaves no fluid cell") && e.contains("refine"), "{name}: {e}");
+                assert!(["gap of one cell", "gap of two cells", "one column left"].contains(&name), "{name}: {e}");
                 continue;
             }
             Ok(b) => b,
         };
-        assert!(!inlet, "{name}: an obstacle node at an inlet runs");
         assert!(!["gap of one cell", "gap of two cells", "one column left"].contains(&name), "{name} runs with no fluid cell");
         let (_, m0) = inventory(&flow);
         let mut stopped = None;
@@ -281,8 +276,95 @@ fn hostile_obstacle_geometry_is_refused_or_runs_without_panic() {
         let (_, m1) = inventory(&flow);
         let nodes = flow.wall_nodes().map_or(0, |n| n.nodes().len());
         println!("{name}: {nodes} nodes, mass {:.1e}, {}", (m1 / m0 - 1.0).abs(), stopped.as_deref().unwrap_or("ran"));
-        if stopped.is_none() && m0 > 0.0 {
+        if stopped.is_none() && m0 > 0.0 && !inlet {
             assert!((m1 / m0 - 1.0).abs() < 1e-12, "{name}: mass {m0} → {m1}");
+        }
+    }
+}
+
+/// Where a wall meets an inlet, an outlet or a slip face, the cell in that face's layer keeps the
+/// face's rule and is no node: a box-face channel with a velocity
+/// inlet and a pressure outlet, and a plate of obstacle strips on a slip floor running into the
+/// outlet (a flat plate in a channel). Both run on TRT and MRT; the open layers hold no node; the nodes
+/// beside a junction keep their Han pairs and bounce towards the junction cell; every node's pairs
+/// carry exactly its applied stress.
+#[test]
+fn junctions_keep_one_rule_per_cell() {
+    use fieldcraft_lbm::bounce::Role;
+    use fieldcraft_lbm::lattice::C;
+    let dx = 1.0 / 8.0;
+    for plate in [false, true] {
+        for collision in [Collision::Trt, Collision::Mrt] {
+            let (lx, ly) = (24.0 * dx, 10.0 * dx);
+            let mut d = domain([0.0, if plate { -dx } else { 0.0 }, 0.0], [lx, ly, dx], dx);
+            d.faces.x_min = FaceCondition::Velocity { velocity: [1.0, 0.0, 0.0], profile: Default::default() };
+            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: fieldcraft_model::Outflow::Convective };
+            d.faces.z_min = PERIODIC;
+            d.faces.z_max = PERIODIC;
+            d.faces.y_min = if plate { FaceCondition::Slip {} } else { FaceCondition::Wall {} };
+            d.faces.y_max = if plate { FaceCondition::Slip {} } else { FaceCondition::Wall {} };
+            let obstacles: Vec<fieldcraft_lbm::Obstacle> = if plate {
+                (0..4)
+                    .map(|k| {
+                        let x0 = (8.0 + 4.0 * k as f64) * dx;
+                        obstacle(&format!("Strip{k}"), cuboid([x0, -dx, -1.0], [x0 + 4.0 * dx, 0.0, 1.0]), &CUBOID_FACES)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            d.obstacles = obstacles.iter().map(|o| o.body.clone()).collect();
+            d.initial_velocity = [1.0, 0.0, 0.0];
+            let dt = 0.05 * dx;
+            let mut p = collide(200.0 * dt, dt, None, collision);
+            if let Procedure::Fluid { turbulence: t, .. } = &mut p {
+                *t = Some(spalart_allmaras());
+            }
+            let (setup, mut flow) = prepare(&model(1.0, 0.01, d, p), &obstacles);
+            let grid = *flow.grid();
+            let [nx, ny, _] = grid.cells;
+            let nodes = flow.wall_nodes().unwrap().nodes().to_vec();
+            assert!(!nodes.is_empty());
+            for w in &nodes {
+                let [i, j, _] = grid.coords(w.cell as usize);
+                assert!(i > 0 && i + 1 < nx, "plate {plate}: a node in an open layer: {w:?}");
+                if plate {
+                    assert!(j > 0 && j + 1 < ny, "a node in a slip layer: {w:?}");
+                }
+            }
+            let open: Vec<usize> = flow.open_cells().iter().map(|o| o.cell as usize).collect();
+            for w in nodes.iter().filter(|w| {
+                let i = grid.coords(w.cell as usize)[0];
+                i == 1 || i + 2 == nx
+            }) {
+                assert!(w.sampled() && (0..3).any(|b| fieldcraft_lbm::bounce::carries(&w.roles, usize::from(w.axis), i32::from(w.inward), b)));
+                let towards = if grid.coords(w.cell as usize)[0] == 1 { -1 } else { 1 };
+                let q = C.iter().position(|c| *c == [towards, 0, 0]).unwrap();
+                assert_eq!(w.roles[q], Role::Edge, "{w:?}");
+                let [i, j, k] = grid.coords(w.cell as usize);
+                assert!(open.contains(&grid.index([(i as i64 + i64::from(towards)) as usize, j, k])), "the junction cell is an open cell");
+            }
+            let mut pairs = 0.0f64;
+            let mut stopped = None;
+            for _ in 0..setup.steps {
+                if let Err(e) = flow.step() {
+                    stopped = Some(e.to_string());
+                    break;
+                }
+                for w in flow.wall_nodes().unwrap().nodes() {
+                    for b in (0..3).filter(|b| *b != usize::from(w.axis)) {
+                        pairs = pairs.max((w.taken[b] - w.edge[b] - w.stress[b]).abs());
+                    }
+                }
+            }
+            println!(
+                "plate {plate} {}: {} nodes, pairs vs stress {pairs:.1e}, {}",
+                collision.name(),
+                nodes.len(),
+                stopped.as_deref().unwrap_or("ran")
+            );
+            assert!(stopped.is_none(), "{stopped:?}");
+            assert!(pairs < 1e-15, "{pairs}");
         }
     }
 }
