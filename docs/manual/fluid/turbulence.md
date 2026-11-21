@@ -51,7 +51,7 @@ initial field, 3 by default) instead of a constant:
 | `turbulence.inflow_ratio` | at least 0 | 3 | `spalart_allmaras` only: ν̃/ν at the inflows and in the initial field (3 is the value of NASA's Turbulence Modeling Resource). With 0 and no wall model the model gives no eddy viscosity and the flow equals the model off bit for bit. |
 | `turbulence.prandtl` | 0.1 to 10 | 0.9 | Turbulent Prandtl number Pr_t of the turbulent heat diffusivity ν_t / Pr_t (with heat only). 0.85 to 0.9 is usual for air and water. |
 | `turbulence.van_driest` | 1 to 100 | none | Van Driest's A⁺: damps the length scale near no-slip walls. 26 is Van Driest's value. Smagorinsky's model only: Vreman's needs no damping, and the field is refused with it. |
-| `turbulence.wall_model` | `"musker"`, `"spalding_bounce"`, `"spalding_bounce_halfway"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` is Han, Ooka and Kikumoto's wall-function bounce as their eq. 14 states it (2021), on-node: the outermost cell layer at each plane no-slip box face is the wall (the wall plane through its centres, so a channel 2δ wide is 2δ + Δx high), bounces back and sends into the fluid the specular images of its incoming diagonals less the stress of Spalding's law at the interior node one cell above; CPU and GPU, the box periodic along the walls, no obstacles, moving walls or heat. `"spalding_bounce_halfway"` is disabled because its wall-row checkerboard mode grows. Files preserve this selection when loaded, but solves refuse it at setup. Remove `wall_model` for resolved no-slip walls, or explicitly select and validate a supported treatment; the on-node variant changes the wall location. |
+| `turbulence.wall_model` | `"musker"`, `"spalding_bounce"`, `"spalding_bounce_halfway"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` is Han, Ooka and Kikumoto's wall-function bounce as their eq. 14 states it (2021), on-node: the outermost cell layer at each plane no-slip box face is the wall (the wall plane through its centres, so a channel 2δ wide is 2δ + Δx high), bounces back and sends into the fluid the specular images of its incoming diagonals less the stress of Spalding's law at the interior node one cell above; CPU and GPU, the box periodic along its walls, no moving walls or heat; obstacles on the CPU only. `"spalding_bounce_halfway"` is disabled because its wall-row checkerboard mode grows. Files preserve this selection when loaded, but solves refuse it at setup. Remove `wall_model` for resolved no-slip walls, or explicitly select and validate a supported treatment; the on-node variant changes the wall location. |
 | `collision` | `"trt"`, `"regularized"`, `"mrt"`, `"hrr"` | `"trt"` | Either model runs with every collision ([Collision operators](collision.md)); with `hrr` the finite-difference stress uses the cell's τ̄ with its eddy viscosity. |
 
 A value outside its range is refused when the step is set up, naming the range. With a
@@ -196,7 +196,8 @@ Each time step, before the collision:
    inside the box samples that cell's velocity and stores its modelled velocity and relaxation
    rate. A wall cell whose second cell is not fluid inside the box keeps the bounce-back alone.
    With `"spalding_bounce"` (Han et al.'s eq. 14, `crates/lbm/src/bounce.rs`), each boundary
-   node (the outermost cell layer at a wall face; the wall passes through its centre) takes the
+   node (a fluid cell next to a wall: the outermost cell layer at a wall face, or the fluid layer
+   next to an obstacle, which then grows by Δx/2 on each face; the wall passes through its centre) takes the
    stress τ = ρ u_τ² along the velocity parallel to the wall of the interior node one cell above
    it, u_τ the root of Spalding's law with κ 0.41 and B 5.5 at y = Δx, ρ that node's density.
    The boundary nodes do not collide: after the fluid cells' collision each runs eq. 14 instead
@@ -213,6 +214,13 @@ Each time step, before the collision:
    one cell from the wall. The GPU runs the same scheme (`node_bounce`; [GPU backend](gpu.md),
    "Han et al.'s on-node wall-function bounce"), within 10⁻⁴ of the CPU's velocity and 10⁻³ of
    its wall drag from the first step.
+   At an obstacle's edges and corners and at plate ends (FieldCraft's extension of the paper,
+   `crates/lbm/src/bounce.rs`), eq. 14 runs on each link pair whose two cells and the normal
+   neighbour are fluid, and every other link to the fluid is halfway bounce-back (reported as the
+   node's edge impulse). A stress a node can't carry is set to zero, with the law's request kept
+   beside it, so the wall takes exactly the stress it applies and the fluid's mass is kept. A
+   channel built from obstacle slabs gives the box-face channel's result bit for bit
+   (`han_obstacles.rs`). The device refuses nodes that are not on a plane box face.
 3. **Collision.** For each fluid cell: the flux P from its populations; the cell's constant C,
    scaled by `1 − exp(−y⁺/A⁺)` with damping (taken as 1 from y⁺/A⁺ = 40, where it rounds to 1);
    the cell's rate from the closed form above, or the fluid's own rate where the result is not a
