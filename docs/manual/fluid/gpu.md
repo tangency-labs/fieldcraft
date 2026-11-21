@@ -384,6 +384,19 @@ the section above (`the_model_s_own_wall_law_follows_the_cpu_for_2000_steps`): c
 4.6e-7 to 5.7e-7, ν̃ 2.2e-5 to 2.4e-5, u_τ 2.0e-7 to 5.4e-7; junction duct velocity 3.0e-7 to
 9.9e-7; block velocity 1.6e-6, ν̃ 5.6e-6; forces below 2.0e-8.
 
+The half-way wall (`spalding_bounce_surface`, `spalart_allmaras_bounce_surface`) runs on the device
+with the same kernels: a node's third wall row carries the cell its law reads (the interior node,
+or the second open cell) in w and its distance y (½ or 1½) in the row's z. The Spalart–Allmaras
+rows add the second open cells, where ν̃ = κ u_τ y is imposed too (not in the readback: the CPU's
+`sa_wall_function` has only the first cells). A cell that is some node's first cell is never another
+node's second, and nodes sharing a second cell take the larger u_τ, as on the CPU. The device
+reports the wall layer (`WallLayerReport`) as the CPU does, so the solve's warnings are the same.
+Against the CPU, the forced channel between slabs (144 nodes), both laws, hybrid and
+multiple-relaxation-time collisions, τ − ½ 1.2e-4 and 0.1, 2000 steps
+(`the_half_way_wall_follows_the_cpu_for_2000_steps`; 300 steps in the trunk's gate): velocity
+1.3e-7 to 2.0e-6, density up to 5.2e-8, ν̃ 5.1e-7 to 1.4e-5, u_τ 9.4e-8 to 6.6e-7, forces below
+1.2e-8; half way through (1000 steps) the fields agree to 2e-6 of the largest speed.
+
 The Taylor–Green study (`study_taylor_green_vortex_dissipation`, 64³, lattice speed 0.05, to
 t = 20) on the GB10 gives the CPU's peak dissipation to the digits printed, at the same time:
 
