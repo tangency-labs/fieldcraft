@@ -2,6 +2,7 @@
 //! running a flow to a time.
 #![allow(dead_code)]
 
+pub mod cases;
 pub mod curved_cht;
 pub mod pressure_zone;
 
