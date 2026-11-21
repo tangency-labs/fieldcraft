@@ -51,7 +51,7 @@ initial field, 3 by default) instead of a constant:
 | `turbulence.inflow_ratio` | at least 0 | 3 | `spalart_allmaras` only: ν̃/ν at the inflows and in the initial field (3 is the value of NASA's Turbulence Modeling Resource). With 0 and no wall model the model gives no eddy viscosity and the flow equals the model off bit for bit. |
 | `turbulence.prandtl` | 0.1 to 10 | 0.9 | Turbulent Prandtl number Pr_t of the turbulent heat diffusivity ν_t / Pr_t (with heat only). 0.85 to 0.9 is usual for air and water. |
 | `turbulence.van_driest` | 1 to 100 | none | Van Driest's A⁺: damps the length scale near no-slip walls. 26 is Van Driest's value. Smagorinsky's model only: Vreman's needs no damping, and the field is refused with it. |
-| `turbulence.wall_model` | `"musker"`, `"spalding_bounce"`, `"spalding_bounce_halfway"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` is Han, Ooka and Kikumoto's wall-function bounce as their eq. 14 states it (2021), on-node: the outermost cell layer at each plane no-slip box face is the wall (the wall plane through its centres, so a channel 2δ wide is 2δ + Δx high), bounces back and sends into the fluid the specular images of its incoming diagonals less the stress of Spalding's law at the interior node one cell above; CPU and GPU, the box periodic along its walls, no moving walls or heat; obstacles on the CPU only. `"spalding_bounce_halfway"` is disabled because its wall-row checkerboard mode grows. Files preserve this selection when loaded, but solves refuse it at setup. Remove `wall_model` for resolved no-slip walls, or explicitly select and validate a supported treatment; the on-node variant changes the wall location. |
+| `turbulence.wall_model` | `"musker"`, `"spalding_bounce"`, `"spalart_allmaras_bounce"`, `"spalding_bounce_halfway"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` is Han, Ooka and Kikumoto's wall-function bounce as their eq. 14 states it (2021), on-node: the outermost cell layer at each plane no-slip box face is the wall (the wall plane through its centres, so a channel 2δ wide is 2δ + Δx high), bounces back and sends into the fluid the specular images of its incoming diagonals less the stress of Spalding's law at the interior node one cell above; CPU and GPU, the box periodic along its walls, no moving walls or heat; obstacles on the CPU only. `"spalart_allmaras_bounce"` is the same wall with the Spalart–Allmaras model's own constant-stress law in place of Spalding's (`spalart_allmaras` turbulence only; CPU only). `"spalding_bounce_halfway"` is disabled because its wall-row checkerboard mode grows. Files preserve this selection when loaded, but solves refuse it at setup. Remove `wall_model` for resolved no-slip walls, or explicitly select and validate a supported treatment; the on-node variant changes the wall location. |
 | `collision` | `"trt"`, `"regularized"`, `"mrt"`, `"hrr"` | `"trt"` | Either model runs with every collision ([Collision operators](collision.md)); with `hrr` the finite-difference stress uses the cell's τ̄ with its eddy viscosity. |
 
 A value outside its range is refused when the step is set up, naming the range. With a
@@ -192,7 +192,16 @@ Each time step, before the collision:
    at the log law, and refined by Newton steps guarded by bisection, at most 100
    (`SPALDING_ITERATIONS`). A speed or a Reynolds number that is not a positive finite number
    gives u_τ = 0.
-2. **Wall model** (`wall_model`). With `"musker"`, each wall cell whose second cell is fluid
+2. **Wall model** (`wall_model`). With `"spalart_allmaras_bounce"` the wall is the one below and
+   the stress and the ν̃ at the first node come from Spalart & Allmaras's own law
+   (`crates/lbm/src/sa_law.rs`): in a constant-stress layer ν̃ = κ u_τ y solves the model's
+   steady equation exactly at every height, so u⁺(y⁺) is the integral of 1 / (1 + κ y⁺ f_v1(κ y⁺))
+   with κ 0.41: u⁺ = y⁺ in the sublayer and the log law above. The table is built once at startup
+   (a trapezoid rule on a geometric grid, at most 20 000 nodes, only +, −, ×, ÷ so it is
+   bit-deterministic), read by linear interpolation and inverted exactly. The model imposes
+   ν̃ = κ u_τ y at the node, not the ν̃ that inverts a Spalding profile (Nichols & Nelson 2004
+   describe the same idea). Spalding's law (κ 0.41, B 5.5) is low in the buffer layer, which
+   matters when the first node sits at y⁺ 5 to 15 (docs/verification.md). With `"musker"`, each wall cell whose second cell is fluid
    inside the box samples that cell's velocity and stores its modelled velocity and relaxation
    rate. A wall cell whose second cell is not fluid inside the box keeps the bounce-back alone.
    With `"spalding_bounce"` (Han et al.'s eq. 14, `crates/lbm/src/bounce.rs`), each boundary
