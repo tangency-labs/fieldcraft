@@ -1432,7 +1432,8 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
     // odd ones (orders 1 and 3, the force's first) change sign.
     var rest = w_of(0u) * (drho - 1.5 * rho * uu - relax * 1.5 * trace);
     if forced { rest = rest - 1.5 * w_of(0u) * uf; }
-    f[post_index(0u, cell, xyz)] = rest;
+    var out: array<f32, 19>;
+    out[0] = rest;
     for (var q = 1u; q < Q; q = q + 2u) {
         let c = vec3<f32>(c_of(q));
         let w = w_of(q);
@@ -1454,8 +1455,21 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
             even = even + 0.5 * w * (9.0 * cu * cf - 3.0 * uf);
             odd = odd + 1.5 * w * cf;
         }
-        f[post_index(q, cell, xyz)] = even + odd;
-        f[post_index(q + 1u, cell, xyz)] = even - odd;
+        out[q] = even + odd;
+        out[q + 1u] = even - odd;
+    }
+    // The f32 rebuild keeps mass and momentum only to rounding, which beside walls has one sign every step;
+    // project back onto the exact budget, summing the defects as per-direction differences so small meets small.
+    var dm = 0.0;
+    var dj = vec3<f32>(0.0);
+    for (var q = 0u; q < Q; q = q + 1u) {
+        let d = (*fq)[q] - out[q];
+        dm = dm + d;
+        dj = dj + vec3<f32>(c_of(q)) * d;
+    }
+    if forced { dj = dj + force; }
+    for (var q = 0u; q < Q; q = q + 1u) {
+        f[post_index(q, cell, xyz)] = out[q] + w_of(q) * (dm + 3.0 * dot(vec3<f32>(c_of(q)), dj));
     }
 }
 
