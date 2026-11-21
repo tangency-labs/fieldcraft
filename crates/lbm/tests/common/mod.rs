@@ -2,6 +2,7 @@
 //! running a flow to a time.
 #![allow(dead_code)]
 
+pub mod cases;
 pub mod curved_cht;
 pub mod pressure_zone;
 
@@ -532,7 +533,7 @@ pub fn halfway_diagnostic_setup(model: &Model, obstacles: &[Obstacle]) -> Setup 
     let mut m = model.clone();
     let mut step = m.steps().first().unwrap().clone();
     let Procedure::Fluid { turbulence: Some(t), .. } = &mut step.procedure else { panic!("expected a turbulent fluid diagnostic") };
-    let (Turbulence::Smagorinsky { wall_model, .. } | Turbulence::Vreman { wall_model, .. }) = t;
+    let (Turbulence::Smagorinsky { wall_model, .. } | Turbulence::Vreman { wall_model, .. } | Turbulence::SpalartAllmaras { wall_model, .. }) = t;
     assert_eq!(*wall_model, Some(WallModel::SpaldingBounceHalfway));
     *wall_model = None;
     m.replace_step(step).unwrap();

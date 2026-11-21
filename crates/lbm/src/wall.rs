@@ -80,8 +80,10 @@ const KAPPA: f64 = 0.4;
 const B: f64 = 5.5;
 
 /// Han, Ooka and Kikumoto's constants of Spalding's law in their wall-function bounce.
-pub(crate) const BOUNCE_KAPPA: f64 = 0.41;
-pub(crate) const BOUNCE_B: f64 = 5.5;
+#[doc(hidden)]
+pub const BOUNCE_KAPPA: f64 = 0.41;
+#[doc(hidden)]
+pub const BOUNCE_B: f64 = 5.5;
 
 /// The most times the spreading may lower each cell's distance on average before it is stopped.
 const MAX_UPDATES_PER_CELL: usize = 64;
@@ -385,6 +387,17 @@ impl Walls {
         });
     }
 
+    /// The wall model's friction velocity at each modelled wall cell, as [`Walls::sample`] takes
+    /// it from `velocity(cell)` (the second cell's fluid velocity, lattice units, with the half
+    /// force): each one's cell, its distance to its wall and u_τ (lattice units), in cell order.
+    /// Read only: recomputed, nothing stored (the Spalart–Allmaras wall function reads it).
+    pub fn friction_velocities<'a>(&'a self, velocity: impl Fn(usize) -> [f64; 3] + 'a) -> impl Iterator<Item = (usize, f64, f64)> + 'a {
+        self.walls.iter().filter(|w| w.second != NONE).map(move |w| {
+            let speed = w.tangential_speed(velocity(w.second as usize));
+            (w.cell as usize, w.distance, musker_friction(speed, 3.0 * w.distance, self.nu))
+        })
+    }
+
     /// The wall-function bounce's sample before a collision (Han, Ooka and Kikumoto, their eqs.
     /// 16–17): from `moments(cell)`, each wall cell's own density and velocity (lattice units,
     /// with the half force), the stress ρ u_τ² along its velocity parallel to the wall, u_τ from
@@ -514,6 +527,16 @@ pub fn wall_law(speed: f64, y1: f64, y2: f64, nu: f64) -> (f64, f64) {
     if (ut * u_plus).is_finite() && nu_t.is_finite() { (ut * u_plus, nu_t) } else { (0.0, 0.0) }
 }
 
+/// The eddy viscosity of [`wall_law`] in units of ν as a function of y⁺ alone: with its mixing length
+/// l = κ y (1 − exp(−y⁺/A⁺)) and ∂ũ/∂y = u_τ² slope / ν, ν_t / ν = (κ y⁺ (1 − exp(−y⁺/A⁺)))² du⁺/dy⁺.
+/// 0 where it is not a number.
+pub fn musker_eddy_viscosity(y_plus: f64) -> f64 {
+    let (_, slope) = musker(y_plus);
+    let l = MIXING_KAPPA * y_plus * (1.0 - (-y_plus / MIXING_A_PLUS).exp());
+    let nu_t = l * l * slope.abs();
+    if nu_t.is_finite() { nu_t } else { 0.0 }
+}
+
 /// Musker's profile u⁺(y⁺) and its slope du⁺/dy⁺ (A. J. Musker, *Explicit expression for the
 /// smooth wall velocity distribution in a turbulent boundary layer*, AIAA J. 17(6):655–657, 1979,
 /// with the constants Malaspinas and Sagaut print in their eq. 59, 0.434 standing for 1/ln 10):
@@ -637,7 +660,8 @@ pub fn friction_velocity(speed: f64, y: f64, nu: f64) -> f64 {
 }
 
 /// [`friction_velocity`] with Kármán's constant `kappa` and the intercept `b`.
-pub(crate) fn spalding_friction(speed: f64, y: f64, nu: f64, kappa: f64, b: f64) -> f64 {
+#[doc(hidden)]
+pub fn spalding_friction(speed: f64, y: f64, nu: f64, kappa: f64, b: f64) -> f64 {
     let re = speed * y / nu;
     if !(re.is_finite() && re > 0.0) {
         return 0.0;

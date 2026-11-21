@@ -337,6 +337,20 @@ fn wall_models_and_every_collision_resume_bit_for_bit() {
     }
 }
 
+/// The Spalart–Allmaras model's ν̃ survives a restart bit for bit, with halfway walls under the
+/// two-relaxation-time collision and with the on-node bounce (its boundary nodes a full cell from
+/// the first fluid node) under the hybrid collision.
+#[test]
+fn spalart_allmaras_resumes_bit_for_bit() {
+    for (collision, wall_model, on_node) in [(Collision::Trt, None, false), (Collision::Hrr, Some(WallModel::SpaldingBounce), true)] {
+        let turbulence = Turbulence::SpalartAllmaras { prandtl: 0.9, wall_model, inflow_ratio: 3.0 };
+        let m = wall_channel(collision, None, turbulence, on_node);
+        let normal = solve_fluid(&m, None, &[], &Limits::default()).unwrap();
+        assert!(normal.stats.eddy_viscosity_ratio.unwrap() > 0.0, "{collision:?}: the model is active");
+        parity(&m, &[]);
+    }
+}
+
 /// A shear-thinning channel clamps its relaxation time in the middle, where it is at rest; the
 /// clamped share over the run in the warning counts the steps before the restart too.
 #[test]

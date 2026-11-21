@@ -334,8 +334,11 @@ pub fn solve_fluid_on(model: &Model, step: Option<&str>, obstacles: &[Obstacle],
     let setup = Setup::new(model, step, obstacles, limits)?;
     crate::memory::Memory::of(&setup, choice)?.check(limits)?;
     let flow = Flow::new(&setup, obstacles)?;
+    let corners = flow.inlet_corner_report().message();
     let mut backend = crate::backend::backend(choice, flow, &setup)?;
-    run(&setup, backend.as_mut(), limits)
+    let mut result = run(&setup, backend.as_mut(), limits)?;
+    result.warnings.extend(corners);
+    Ok(result)
 }
 
 /// An explicit CPU checkpoint/resume run. The store checks model/settings identity and owns
@@ -354,6 +357,7 @@ pub fn solve_fluid_checkpointed(
         return Err(Error::Limit("CPU checkpoint run plus streaming buffer exceeds the memory bound".into()));
     }
     let mut flow = Flow::new(&setup, obstacles)?;
+    let corners = flow.inlet_corner_report().message();
     // A restart fills one rebuilt flow in place, never keeps a second snapshot or file buffer.
     // Include retained histories and monitor windows, which the ordinary frame estimate omits.
     let groups = flow.groups().len() as u64;
@@ -386,7 +390,9 @@ pub fn solve_fluid_checkpointed(
         )));
     }
     store.checked_memory(needed);
-    run_checkpointed(&setup, &mut flow, limits, Some(store))
+    let mut result = run_checkpointed(&setup, &mut flow, limits, Some(store))?;
+    result.warnings.extend(corners);
+    Ok(result)
 }
 
 fn frame(setup: &Setup, flow: &mut dyn Backend, step: u64, validity: &mut crate::validity::Sampler) -> Result<Frame> {
@@ -673,6 +679,36 @@ fn run_checkpointed(
     warnings.extend(flow.wall_y_plus().and_then(crate::wall::unresolved_wall));
     if let (Some(clamps), Some(r)) = (flow.viscosity_clamps(), &setup.rheology) {
         warnings.extend(clamps.warning(flow.fluid_cells(), r.tau));
+    }
+    if let Some(layer) = flow.wall_layer() {
+        let share = layer.plain_share();
+        if share > crate::wall_layer::PLAIN_SHARE_WARNING {
+            warnings.push(format!(
+                "{:.1} % of the obstacles' wall area ({} of {} wall faces) runs plain bounce-back with no wall law: those walls are fewer than three solid centres across, or lie in the layer of an open face of the box; refine the spacing or thicken them",
+                100.0 * share,
+                layer.plain_faces,
+                layer.faces
+            ));
+        }
+    }
+    if let Some(layer) = flow.wall_layer()
+        && layer.narrow_nodes > 0
+    {
+        warnings.push(format!(
+            "{} of {} wall nodes ({:.1} %) have fewer than {} open cells between them and the opposite wall: the half-way wall's law reads the second open cell, which needs a passage at least about that wide to lie in the log layer; refine the spacing there",
+            layer.narrow_nodes,
+            layer.nodes,
+            100.0 * layer.narrow_share(),
+            crate::wall_layer::NARROW_CELLS
+        ));
+    }
+    if let Some(layer) = flow.wall_layer()
+        && layer.unsealed_share > crate::wall_layer::UNSEALED_WARNING
+    {
+        warnings.push(format!(
+            "{:.2} % of the obstacles' surface area has no cell centre inside it (a wall thinner than the spacing): the flow leaks through it; refine the spacing or thicken the wall",
+            100.0 * layer.unsealed_share
+        ));
     }
     for body in flow.empty_obstacles() {
         warnings.push(format!("obstacle `{body}` covers no cell centre: it is smaller than the spacing or outside the box"));
