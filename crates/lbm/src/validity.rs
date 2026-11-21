@@ -132,6 +132,15 @@ pub struct Report {
 }
 
 impl Report {
+    /// The usable sample with the largest local Mach number (the first, when several tie): the
+    /// true largest speed over every fluid cell at the sampled steps.
+    pub fn peak_mach(&self) -> Option<&Sample> {
+        self.samples.iter().filter(|s| !s.invalid).fold(None, |best: Option<&Sample>, s| match best {
+            Some(b) if b.mach_max >= s.mach_max => Some(b),
+            _ => Some(s),
+        })
+    }
+
     pub fn new(samples: Vec<Sample>, field_every_steps: u64, force_every_steps: u64, forces: &[crate::ForceHistory]) -> Result<Self> {
         if samples.len() > MAX_SAMPLES || field_every_steps == 0 || force_every_steps == 0 {
             return Err(Error::Invalid("validity report exceeds its sample cap or has zero cadence".into()));

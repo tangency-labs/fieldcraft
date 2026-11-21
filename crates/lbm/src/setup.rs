@@ -83,7 +83,7 @@ pub const DEFAULT_MAGIC: f64 = 3.0 / 16.0;
 pub const THERMAL_MAGIC: f64 = 1.0 / 12.0;
 /// A lattice Mach number above this (with its round-off) is warned about: the compressibility
 /// error, of order Ma², becomes visible.
-const MACH_WARNING: f64 = 0.1 + 1e-12; // unit-factors: a Mach number, with its round-off
+pub(crate) const MACH_WARNING: f64 = 0.1 + 1e-12; // unit-factors: a Mach number, with its round-off
 
 /// The surface of an obstacle body and the persistent name of each of its faces (by the
 /// triangles' face tags); prepared by the caller from the geometry.
