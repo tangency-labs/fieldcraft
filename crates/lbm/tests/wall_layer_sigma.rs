@@ -13,6 +13,9 @@ use fieldcraft_lbm::Flow;
 use fieldcraft_lbm::backend::Backend;
 use fieldcraft_model::{Collision, FaceCondition, HrrSigma, Procedure};
 
+/// The hash of the 200-step channel run on the hybrid collision before the layer existed.
+const DEVELOP_HASH: u64 = 0xe68c_caf8_0bc4_26d7;
+
 /// What a slot run reads: the largest second difference along x, downstream of the plate, of the wall row's u_x and of the slot's flux,
 /// over the slot's mean speed. `setup` is applied to the flow before it runs.
 fn slot_alternation(slot: usize, sigma: f64, setup: impl Fn(&mut Flow)) -> [f64; 2] {
@@ -112,4 +115,133 @@ fn the_plain_hybrid_duct_is_within_five_percent_of_the_series() {
     let r = duct_ratio(12, |_| {});
     println!("periodic duct, 12 cells, plain hybrid, sigma 0.99: flow rate / exact = {r:.5}");
     assert!((r - 1.0).abs() < 0.05, "the duct's flow rate is {r} of the exact series'");
+}
+
+// ---- the wall layer (`Flow::set_wall_layer_sigma_one`) ----
+
+const CHANNEL_CELLS: usize = 8;
+const CHANNEL_STEPS: usize = 200;
+
+/// A 16-row channel as a one-cell column on the hybrid collision (σ 0.99), between two box-face walls or between two obstacle slabs (the
+/// same fluid).
+fn channel(slabs: bool) -> Flow {
+    let dx = 1.0 / CHANNEL_CELLS as f64;
+    let (lo, hi) = if slabs { (-dx, 2.0 + dx) } else { (0.0, 2.0) };
+    let mut d = domain([0.0, lo, 0.0], [dx, hi, dx], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = FaceCondition::Periodic {};
+    }
+    let obstacles = if slabs {
+        d.faces.y_min = FaceCondition::Periodic {};
+        d.faces.y_max = FaceCondition::Periodic {};
+        d.obstacles = vec!["Floor".into(), "Roof".into()];
+        vec![
+            obstacle("Floor", cuboid([-1.0, -dx, -1.0], [1.0 + dx, 0.0, 1.0 + dx]), &CUBOID_FACES),
+            obstacle("Roof", cuboid([-1.0, 2.0, -1.0], [1.0 + dx, 2.0 + dx, 1.0 + dx]), &CUBOID_FACES),
+        ]
+    } else {
+        d.faces.y_min = FaceCondition::Wall {};
+        d.faces.y_max = FaceCondition::Wall {};
+        Vec::new()
+    };
+    d.acceleration = [1.0, 0.0, 0.0];
+    d.initial_velocity = [12.0, 0.0, 0.0];
+    // lattice viscosity 0.0125 and a bulk speed near 0.1 (τ − ½ about 0.04)
+    let dt = 0.1 * dx / 12.0;
+    let mut p = collide(CHANNEL_STEPS as f64 * dt, dt, None, Collision::Hrr);
+    if let Procedure::Fluid { sigma, .. } = &mut p {
+        *sigma = Some(HrrSigma::Value(0.95));
+    }
+    prepare(&model(1.0, 1.0 / 20.0, d, p), &obstacles).1
+}
+
+/// ρ and u of every cell, as bits, folded into one hash.
+fn hash(flow: &Flow) -> u64 {
+    (0..flow.grid().len())
+        .flat_map(|c| flow.moments(c).map_or([f64::NAN; 4], |(r, u)| [r, u[0], u[1], u[2]]))
+        .fold(0xcbf2_9ce4_8422_2325u64, |h, x| (h ^ x.to_bits()).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+fn run_channel(slabs: bool, layer: Option<bool>) -> Flow {
+    let mut flow = channel(slabs);
+    if let Some(on) = layer {
+        flow.set_wall_layer_sigma_one(on);
+    }
+    for _ in 0..CHANNEL_STEPS {
+        flow.step().expect("a step");
+    }
+    flow
+}
+
+/// The layer is off by default, and off is the collision as it was before the layer existed (the hash the same run gave on develop).
+#[test]
+fn the_wall_layer_is_off_by_default_and_off_is_the_collision_before_it() {
+    let flow = channel(true);
+    assert!(!flow.wall_layer_sigma_one(), "the layer is off by default");
+    assert!(flow.wall_sigma_layer_mask().iter().any(|&m| m), "the slabs' walls have a layer");
+    let (default, off, on) = (hash(&run_channel(true, None)), hash(&run_channel(true, Some(false))), hash(&run_channel(true, Some(true))));
+    println!("hashes: default {default:#018x} off {off:#018x} on {on:#018x}");
+    assert_eq!(default, off, "the default is the layer off");
+    assert_ne!(on, off, "the layer acts on a half-way wall");
+    assert_eq!(off, DEVELOP_HASH, "off is the collision on develop before the layer");
+}
+
+/// The layer is what the walls are, not how they are described: the channel between box faces and between slabs of obstacle cells differs
+/// by round-off with the layer off and with it on alike (one rule for both kinds of wall).
+#[test]
+fn a_box_face_wall_and_a_slab_wall_agree_with_the_layer_on_and_off() {
+    let gap = |on: bool| {
+        let (a, b) = (run_channel(false, Some(on)), run_channel(true, Some(on)));
+        let (ga, gb) = (*a.grid(), *b.grid());
+        let (mut worst, mut peak) = (0.0f64, 0.0f64);
+        for y in 0..2 * CHANNEL_CELLS {
+            let (p, q) = (a.moments(ga.index([0, y, 0])), b.moments(gb.index([0, y + 1, 0])));
+            let (Some((ra, ua)), Some((rb, ub))) = (p, q) else { panic!("row {y} is not fluid") };
+            worst = worst.max((ra - rb).abs());
+            for k in 0..3 {
+                worst = worst.max((ua[k] - ub[k]).abs());
+            }
+            peak = peak.max(ua[0]);
+        }
+        (worst, peak)
+    };
+    let (off, peak) = gap(false);
+    let (on, _) = gap(true);
+    println!("box face against slab, lattice units: layer off {off:.3e}, on {on:.3e} (peak speed {peak:.3e})");
+    assert!(peak > 1e-3, "the channel did not accelerate: {peak:e}");
+    assert!(off <= 1e-10 * peak.max(1.0), "the same wall differs by {off:e} with the layer off");
+    assert!(on <= 1e-10 * peak.max(1.0), "the same wall differs by {on:e} with the layer on");
+}
+
+/// A symmetry plane and a slip face are not no-slip walls: a channel with a wall at the bottom and one of them at the top has the layer
+/// in its bottom row only.
+#[test]
+fn a_symmetry_plane_and_a_slip_face_are_not_in_the_wall_layer() {
+    for top in [FaceCondition::Symmetry {}, FaceCondition::Slip {}] {
+        let dx = 1.0 / CHANNEL_CELLS as f64;
+        let mut d = domain([0.0; 3], [dx, 1.0, dx], dx);
+        for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+            *f = FaceCondition::Periodic {};
+        }
+        d.faces.y_min = FaceCondition::Wall {};
+        d.faces.y_max = top;
+        let mut p = collide(1e-3, 0.1 * dx / 12.0, None, Collision::Hrr);
+        if let Procedure::Fluid { sigma, .. } = &mut p {
+            *sigma = Some(HrrSigma::Value(0.99));
+        }
+        let flow = prepare(&model(1.0, 1.0 / 20.0, d, p), &[]).1;
+        let grid = *flow.grid();
+        let mask = flow.wall_sigma_layer_mask();
+        let rows: Vec<bool> = (0..grid.cells[1]).map(|y| mask[grid.index([0, y, 0])]).collect();
+        assert!(rows[0], "{top:?}: the wall's row is in the layer");
+        assert!(rows[1..].iter().all(|&m| !m), "{top:?}: only the wall's row is in the layer: {rows:?}");
+    }
+}
+
+/// σ = 1 in the layer alone, without the trace relaxation of the next commit, carries the cell-to-cell mode on a slot of 6 cells.
+#[test]
+fn the_wall_layer_alone_carries_a_mode_on_a_slot_of_6_cells() {
+    let [wall, flux] = slot_alternation(6, 0.99, |f| f.set_wall_layer_sigma_one(true));
+    println!("slot 6, layer only: wall-row alternation {wall:.3e}, flux alternation {flux:.3e}");
+    assert!(wall > 1e-2 || flux > 1e-2, "no mode: {wall:e}, {flux:e}");
 }
