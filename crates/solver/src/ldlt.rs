@@ -615,11 +615,9 @@ mod tests {
         assert!(residual(&a, &|b: &mut [f64]| f.solve(b).unwrap(), 1.0) < 1e-12);
     }
 
-    #[test]
-    fn two_by_two_pivots_for_zero_diagonals() {
-        // A saddle point [[K, B], [Bᵀ, 0]] inside one dense supernode: zero diagonals need 2 × 2
-        // pivots, and the inertia is (positive: K's size, negative: the constraints').
-        let (nk, nb) = (8, 3);
+    /// A saddle point [[K, B], [Bᵀ, 0]] inside one dense supernode: zero diagonals need 2 × 2
+    /// pivots; its inertia is (positive: K's size, negative: the constraints').
+    fn saddle(nk: usize, nb: usize) -> Csr {
         let n = nk + nb;
         let mut rows: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
         for i in 0..nk {
@@ -648,7 +646,13 @@ mod tests {
         for (i, row) in rows.iter().enumerate() {
             permuted[inverse[i]] = row.iter().map(|(c, v)| (inverse[*c], *v)).collect();
         }
-        let a = csr(&permuted);
+        csr(&permuted)
+    }
+
+    #[test]
+    fn two_by_two_pivots_for_zero_diagonals() {
+        let (nk, nb) = (8, 3);
+        let a = saddle(nk, nb);
         let f = LdltFactor::new(&UpperColumns::from_symmetric(&a), usize::MAX).unwrap();
         assert_eq!(f.inertia(), Inertia { positive: nk, negative: nb });
         assert!(f.two_by_two() > 0);
@@ -708,6 +712,99 @@ mod tests {
         }
         let err = residual(&a, &|b: &mut [f64]| one.solve(b).unwrap(), 0.1);
         assert!(err < 1e-9, "{err}");
+    }
+
+    /// FNV-1a over the bit patterns of the values: one changed bit changes the fingerprint.
+    fn fingerprint(values: impl Iterator<Item = f64>) -> u64 {
+        values.fold(0xcbf2_9ce4_8422_2325, |h, v| (h ^ v.to_bits()).wrapping_mul(0x0000_0100_0000_01b3))
+    }
+
+    /// The f64 factors and solutions of real systems, as bits (exact right-hand sides, so every
+    /// platform builds the same inputs): definite, indefinite and 2 × 2
+    /// pivoted. Frozen from the factorization before the scalar generalization (any change to the
+    /// f64 arithmetic changes a fingerprint).
+    #[derive(Debug, PartialEq, Eq)]
+    struct Frozen {
+        name: &'static str,
+        negative: usize,
+        two_by_two: usize,
+        factor: u64,
+        solution: u64,
+        cholesky: Option<u64>,
+    }
+
+    fn frozen_cases() -> Vec<Frozen> {
+        let cases = [
+            ("shifted grid, definite", shifted_grid([5, 5, 5], -0.5).0),
+            ("shifted grid, indefinite", shifted_grid([7, 6, 5], 3.3).0),
+            ("saddle point, 2 × 2 pivots", saddle(8, 3)),
+            ("hex stiffness, indefinite", hex_pattern(6, 22.0)),
+        ];
+        cases
+            .into_iter()
+            .map(|(name, a)| {
+                let upper = UpperColumns::from_symmetric(&a);
+                let f = LdltFactor::new(&upper, usize::MAX).unwrap();
+                // Exact values: sin differs between libms, and the freeze must not.
+                let x: Vec<f64> = (0..a.n).map(|i| ((i * 37 % 101) as f64 - 50.0) / 50.0).collect();
+                let mut b = vec![0.0; a.n];
+                a.mul(&x, &mut b);
+                f.solve(&mut b).unwrap();
+                let cholesky = Factor::new(&upper, usize::MAX).ok().map(|c| {
+                    let mut y = vec![0.0; a.n];
+                    a.mul(&x, &mut y);
+                    c.solve(&mut y).unwrap();
+                    fingerprint(y.into_iter())
+                });
+                Frozen {
+                    name,
+                    negative: f.inertia().negative,
+                    two_by_two: f.two_by_two(),
+                    factor: fingerprint(f.blocks.iter().flat_map(|b| b.values.iter().copied())),
+                    solution: fingerprint(b.into_iter()),
+                    cholesky,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn f64_factors_keep_their_bits() {
+        let frozen = [
+            Frozen {
+                name: "shifted grid, definite",
+                negative: 0,
+                two_by_two: 0,
+                factor: 12318096910519023990,
+                solution: 10217835541271929398,
+                cholesky: Some(15069623423640047316),
+            },
+            Frozen {
+                name: "shifted grid, indefinite",
+                negative: 78,
+                two_by_two: 9,
+                factor: 17838274908630861643,
+                solution: 4015666017640459628,
+                cholesky: None,
+            },
+            Frozen {
+                name: "saddle point, 2 × 2 pivots",
+                negative: 3,
+                two_by_two: 3,
+                factor: 4028760691601933113,
+                solution: 11718422723752440401,
+                cholesky: None,
+            },
+            Frozen {
+                name: "hex stiffness, indefinite",
+                negative: 45,
+                two_by_two: 40,
+                factor: 2687260628477475718,
+                solution: 8749587493275634787,
+                cholesky: None,
+            },
+        ];
+        assert_eq!(frozen_cases(), frozen.into_iter().collect::<Vec<_>>());
     }
 
     #[test]
