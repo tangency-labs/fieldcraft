@@ -480,18 +480,23 @@ fn solve_below(l: &Panel, c0: usize, c1: usize) -> Vec<Vec<f64>> {
     if (m - c1).saturating_mul(pw).saturating_mul(pw) >= PARALLEL_WORK { parallel::map(tiles, tile) } else { (0..tiles).map(tile).collect() }
 }
 
-/// The matrix in postorder by lower columns: column j holds A(i, j) for i ≥ j, rows sorted.
-pub(crate) struct Lower {
+/// The lower triangle of the matrix in postorder, as the pattern: column j holds A(i, j) for
+/// i ≥ j, rows sorted. It belongs to the symbolic analysis, so one analysis serves every matrix
+/// with this pattern (the values come from [`Symbolic::numeric`]).
+pub(crate) struct Pattern {
     ptr: Vec<usize>,
     idx: Vec<usize>,
-    val: Vec<f64>,
-    diag: Vec<f64>,
-    /// The largest magnitude in each row (= column) of the whole symmetric matrix.
-    pub(crate) scale: Vec<f64>,
+    /// For each entry of the upper columns: its position in `idx`, and its (row, column) in
+    /// postorder.
+    slot: Vec<usize>,
+    coords: Vec<(usize, usize)>,
+    /// The upper columns' pattern, which a matrix given to [`Symbolic::numeric`] must have.
+    upper_ptr: Vec<usize>,
+    upper_idx: Vec<usize>,
 }
 
-impl Lower {
-    fn new(a: &UpperColumns, inverse: &[usize]) -> Lower {
+impl Pattern {
+    fn new(a: &UpperColumns, inverse: &[usize]) -> Pattern {
         let n = a.n;
         let new = |i: usize| inverse.get(i).copied().unwrap_or(0);
         let mut ptr = vec![0usize; n + 1];
@@ -508,27 +513,20 @@ impl Lower {
                 *c += before;
             }
         }
-        let mut pairs = vec![(0usize, 0.0f64); ptr.last().copied().unwrap_or(0)];
+        // (row, upper entry) by column, then sorted by row.
+        let mut entries = vec![(0usize, 0usize); ptr.last().copied().unwrap_or(0)];
         let mut next = ptr.clone();
-        let mut diag = vec![0.0; n];
-        let mut scale = vec![0.0f64; n];
+        let mut coords = vec![(0usize, 0usize); a.idx.len()];
         for k in 0..n {
-            let (rows, vals) = a.column(k);
-            for (&i, &v) in rows.iter().zip(vals) {
+            let first = a.ptr.get(k).copied().unwrap_or(0);
+            for (t, &i) in a.column(k).0.iter().enumerate() {
                 let (r, c) = (new(i).max(new(k)), new(i).min(new(k)));
-                if r == c
-                    && let Some(d) = diag.get_mut(c)
-                {
-                    *d = v;
-                }
-                for x in [r, c] {
-                    if let Some(s) = scale.get_mut(x) {
-                        *s = s.max(v.abs());
-                    }
+                if let Some(x) = coords.get_mut(first + t) {
+                    *x = (r, c);
                 }
                 if let Some(slot) = next.get_mut(c) {
-                    if let Some(p) = pairs.get_mut(*slot) {
-                        *p = (r, v);
+                    if let Some(p) = entries.get_mut(*slot) {
+                        *p = (r, first + t);
                     }
                     *slot += 1;
                 }
@@ -536,24 +534,44 @@ impl Lower {
         }
         for j in 0..n {
             let (s, e) = (ptr.get(j).copied().unwrap_or(0), ptr.get(j + 1).copied().unwrap_or(0));
-            if let Some(col) = pairs.get_mut(s..e) {
+            if let Some(col) = entries.get_mut(s..e) {
                 col.sort_by_key(|p| p.0);
             }
         }
-        let (idx, val) = pairs.into_iter().unzip();
-        Lower { ptr, idx, val, diag, scale }
+        let mut slot = vec![0usize; a.idx.len()];
+        for (pos, &(_, e)) in entries.iter().enumerate() {
+            if let Some(x) = slot.get_mut(e) {
+                *x = pos;
+            }
+        }
+        let idx = entries.into_iter().map(|p| p.0).collect();
+        Pattern { ptr, idx, slot, coords, upper_ptr: a.ptr.clone(), upper_idx: a.idx.clone() }
     }
 
-    fn column(&self, j: usize) -> (&[usize], &[f64]) {
-        let (a, b) = (self.ptr.get(j).copied().unwrap_or(0), self.ptr.get(j + 1).copied().unwrap_or(0));
-        (self.idx.get(a..b).unwrap_or_default(), self.val.get(a..b).unwrap_or_default())
+    /// Positions of column j in `idx`.
+    fn range(&self, j: usize) -> std::ops::Range<usize> {
+        self.ptr.get(j).copied().unwrap_or(0)..self.ptr.get(j + 1).copied().unwrap_or(0)
     }
+
+    /// The rows of column j, sorted.
+    fn rows(&self, j: usize) -> &[usize] {
+        self.idx.get(self.range(j)).unwrap_or_default()
+    }
+}
+
+/// The values of the matrix in postorder, on a [`Pattern`]: entries, diagonal and the largest
+/// magnitude of each row (= column) of the whole symmetric matrix.
+pub(crate) struct Lower {
+    val: Vec<f64>,
+    diag: Vec<f64>,
+    pub(crate) scale: Vec<f64>,
 }
 
 /// What a supernode's factorization reads: the matrix, the structure and the updates each
 /// supernode receives.
 pub(crate) struct Context<'a> {
     pub(crate) a: &'a Lower,
+    pattern: &'a Pattern,
     pub(crate) s: &'a Structure,
     updates: &'a [Vec<Update>],
 }
@@ -720,7 +738,8 @@ impl Context<'_> {
         own.fill(0.0);
         // The columns of A.
         for c in 0..w {
-            let (ai, av) = self.a.column(f + c);
+            let range = self.pattern.range(f + c);
+            let (ai, av) = (self.pattern.idx.get(range.clone()).unwrap_or_default(), self.a.val.get(range).unwrap_or_default());
             for (r, v) in ai.iter().zip(av) {
                 let at = rows.binary_search(r).map_err(|_| internal("an entry of A outside the structure"))?;
                 if at < c {
@@ -827,7 +846,7 @@ pub(crate) struct Symbolic {
     /// `perm[k]`: the original column that is column k of the factor.
     pub(crate) perm: Vec<usize>,
     pub(crate) structure: Structure,
-    a: Lower,
+    pattern: Pattern,
     updates: Vec<Vec<Update>>,
     /// Subtrees factored as parallel tasks, and the supernodes above them, in order.
     tasks: Vec<std::ops::Range<usize>>,
@@ -861,7 +880,7 @@ impl Symbolic {
         let parent: Vec<usize> =
             perm.iter().map(|&j| parent0.get(j).copied().filter(|p| *p != NONE).and_then(|p| inverse.get(p).copied()).unwrap_or(NONE)).collect();
         let counts: Vec<usize> = perm.iter().map(|&j| counts0.get(j).copied().unwrap_or(1)).collect();
-        let a = Lower::new(a, &inverse);
+        let pattern = Pattern::new(a, &inverse);
 
         // Fundamental supernodes: column j joins column j − 1's supernode when it is j − 1's
         // parent, j − 1 is its only child, and their structures nest.
@@ -921,7 +940,7 @@ impl Symbolic {
             };
             for j in f..l {
                 add(j, &mut set);
-                for &r in a.column(j).0 {
+                for &r in pattern.rows(j) {
                     add(r, &mut set);
                 }
             }
@@ -1004,7 +1023,7 @@ impl Symbolic {
             }
         }
 
-        Ok(Symbolic { n, perm, structure, a, updates, tasks, top, entries: total })
+        Ok(Symbolic { n, perm, structure, pattern, updates, tasks, top, entries: total })
     }
 
     /// Supernodes.
@@ -1015,6 +1034,34 @@ impl Symbolic {
     /// The original column of factor column `column`.
     pub(crate) fn original(&self, column: usize) -> usize {
         self.perm.get(column).copied().unwrap_or(column)
+    }
+
+    /// The values of `a` in the analysed order. `a` must have the pattern the analysis was made
+    /// from.
+    pub(crate) fn numeric(&self, a: &UpperColumns) -> std::result::Result<Lower, FactorError> {
+        let p = &self.pattern;
+        if a.ptr != p.upper_ptr || a.idx != p.upper_idx || a.val.len() != p.slot.len() {
+            return Err(internal("the matrix's pattern differs from the analysed one"));
+        }
+        let mut val = vec![0.0; p.idx.len()];
+        let mut diag = vec![0.0; self.n];
+        let mut scale = vec![0.0f64; self.n];
+        for (e, (&v, &(r, c))) in a.val.iter().zip(&p.coords).enumerate() {
+            if let Some(x) = p.slot.get(e).and_then(|&at| val.get_mut(at)) {
+                *x = v;
+            }
+            if r == c
+                && let Some(d) = diag.get_mut(c)
+            {
+                *d = v;
+            }
+            for x in [r, c] {
+                if let Some(s) = scale.get_mut(x) {
+                    *s = s.max(v.abs());
+                }
+            }
+        }
+        Ok(Lower { val, diag, scale })
     }
 
     /// Zeroed memory for every supernode's trapezoid, taken without aborting.
@@ -1038,10 +1085,11 @@ impl Symbolic {
     /// its original column.
     pub(crate) fn factor<T: Supernode>(
         &self,
+        a: &Lower,
         values: &mut [T],
         supernode: impl Fn(&Context, usize, &[T], usize, &mut T) -> std::result::Result<(), FactorError> + Sync,
     ) -> std::result::Result<(), FactorError> {
-        let context = Context { a: &self.a, s: &self.structure, updates: &self.updates };
+        let context = Context { a, pattern: &self.pattern, s: &self.structure, updates: &self.updates };
         // The tasks run in parallel, each through its supernodes in order.
         let mut pieces: Vec<(std::ops::Range<usize>, &mut [T], Option<FactorError>)> = Vec::with_capacity(self.tasks.len());
         let mut rest: &mut [T] = values;
@@ -1125,12 +1173,13 @@ pub struct Factor {
 
 impl Factor {
     pub fn new(a: &UpperColumns, max_entries: usize) -> std::result::Result<Factor, FactorError> {
-        Factor::from_symbolic(&Symbolic::new(a, max_entries)?)
+        Factor::from_symbolic(&Symbolic::new(a, max_entries)?, a)
     }
 
-    pub(crate) fn from_symbolic(symbolic: &Symbolic) -> std::result::Result<Factor, FactorError> {
+    pub(crate) fn from_symbolic(symbolic: &Symbolic, a: &UpperColumns) -> std::result::Result<Factor, FactorError> {
+        let lower = symbolic.numeric(a)?;
         let mut values = symbolic.allocate()?;
-        symbolic.factor(&mut values, |context, j, done, base, own| context.supernode(j, done, base, own))?;
+        symbolic.factor(&lower, &mut values, |context, j, done, base, own| context.supernode(j, done, base, own))?;
         Ok(Factor { n: symbolic.n, perm: symbolic.perm.clone(), structure: symbolic.structure.clone(), values, entries: symbolic.entries })
     }
 
