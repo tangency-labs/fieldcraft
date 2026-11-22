@@ -765,7 +765,8 @@ impl Flow {
             trees.push((TriangleTree::new(&o.surface), o.surface.tri_face(), &o.exact[..]));
             base.push(groups.len() as u32);
             groups.extend(faces.names.iter().map(|name| Group { name: name.clone(), body: Some(o.body.clone()) }));
-            obstacle_walls.extend((0..faces.names.len()).map(|t| Some(setup.to_lattice(faces.velocities.get(t).copied().unwrap_or([0.0; 3])))));
+            // `faces.velocities` are in lattice units already (Setup scales them).
+            obstacle_walls.extend((0..faces.names.len()).map(|t| Some(faces.velocities.get(t).copied().unwrap_or([0.0; 3]))));
         }
 
         // Conducting cells: per grid cell its index among them (empty without conducting solids),
