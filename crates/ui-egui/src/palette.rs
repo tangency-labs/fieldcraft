@@ -123,12 +123,19 @@ fn submit_line(app: &mut ModelApp, line: &str) {
     }
 }
 
-/// Where the open search field's top left goes over the ribbon's closed `field` in `screen`:
-/// its right edge kept, inside the window.
+/// Keep the search field and its results inside the viewport, even when a phone
+/// or the on-screen keyboard leaves less room than the usual popup width.
+fn field_rect(screen: Rect, field: Rect) -> Rect {
+    let padding = solidcraft_theme::Tokens::get().space_8.min(screen.width().max(0.0) * 0.5);
+    let left = screen.left() + padding;
+    let width = kit::CommandSearch::width().min((screen.width() - 2.0 * padding).max(0.0));
+    let x = (field.right() - width).clamp(left, (screen.right() - padding - width).max(left));
+    Rect::from_min_size(egui::pos2(x, field.top()), egui::vec2(width, field.height()))
+}
+
+/// Top left of the expanded search field, constrained to this viewport.
 pub fn open_field_at(screen: Rect, field: Rect) -> egui::Pos2 {
-    let k = solidcraft_theme::Tokens::get();
-    let width = kit::CommandSearch::width();
-    egui::pos2((field.right() - width).clamp(screen.left() + k.space_8, (screen.right() - width - k.space_8).max(screen.left())), field.top())
+    field_rect(screen, field).min
 }
 
 /// The command search: the kit's search field opened where the ribbon's closed field is, with
@@ -148,7 +155,9 @@ pub fn popup(app: &mut ModelApp, ctx: &egui::Context) {
         .get("ribbon:search")
         .copied()
         .unwrap_or_else(|| Rect::from_center_size(egui::pos2(screen.center().x, 60.0), egui::vec2(width, 26.0)));
-    let at = open_field_at(screen, field);
+    let field_bounds = field_rect(screen, field);
+    let width = field_bounds.width();
+    let at = field_bounds.min;
     let key = crate::appbar::shortcut("K");
     // An anchored popup host over the ribbon's field.
     let host = kit::Container::new(ctx, kit::Surface::Popup);
@@ -235,6 +244,17 @@ mod tests {
     use fieldcraft_engine::Session;
 
     use super::*;
+
+    #[test]
+    fn search_fits_narrow_and_offset_viewports() {
+        let field = Rect::from_min_size(egui::pos2(300.0, 50.0), egui::vec2(100.0, 30.0));
+        for width in [0.0, 8.0, 204.0, 336.0, 400.0, 1200.0] {
+            let screen = Rect::from_min_size(egui::pos2(25.0, 0.0), egui::vec2(width, 600.0));
+            let popup = field_rect(screen, field);
+            assert!(popup.left() >= screen.left() && popup.right() <= screen.right());
+            assert_eq!(popup.top(), field.top());
+        }
+    }
 
     #[test]
     fn search_finds_entries_and_related_commands_ready_first() {
