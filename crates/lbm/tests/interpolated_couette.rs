@@ -12,7 +12,7 @@
 mod common;
 
 use common::*;
-use fieldcraft_lbm::WallLinks;
+use fieldcraft_lbm::{Flow, Setup, WallLinks};
 use fieldcraft_mesh::surface::BoundarySurface;
 use fieldcraft_mesh::tet::geometry::AnalyticSurface;
 use fieldcraft_model::{FaceCondition, GeometryRef, SurfaceBoundary, SurfaceCondition, WallTreatment};
@@ -81,9 +81,9 @@ struct Couette {
     links: Option<WallLinks>,
 }
 
-/// Annular Couette flow with `k` cells per outer radius, one cell deep and periodic along x, run
-/// from rest for five viscous times of the gap (τ = 1 on every grid).
-fn couette(k: usize, w: WallTreatment) -> Couette {
+/// Annular Couette flow with `k` cells per outer radius, one cell deep and periodic along x, set
+/// up for five viscous times of the gap (τ = 1 on every grid).
+fn prepare_couette(k: usize, w: WallTreatment) -> (Setup, Flow) {
     let dx = R2 / k as f64;
     let half = R2 + 2.0 * dx;
     let mut d = domain([0.0, -half, -half], [dx, half, half], dx);
@@ -101,7 +101,13 @@ fn couette(k: usize, w: WallTreatment) -> Couette {
     inner.exact = vec![axis(R1), None, None];
     let gap = R2 - R1;
     let m = model(1.0, NU, d, with_walls(step(5.0 * gap * gap / NU, dx * dx, None), w));
-    let (setup, mut flow) = prepare(&m, &[tube, inner]);
+    prepare(&m, &[tube, inner])
+}
+
+/// Annular Couette flow with `k` cells per outer radius, run from rest.
+fn couette(k: usize, w: WallTreatment) -> Couette {
+    let dx = R2 / k as f64;
+    let (setup, mut flow) = prepare_couette(k, w);
     run_all(&setup, &mut flow);
     let grid = *flow.grid();
     let (mut e2, mut u2) = (0.0, 0.0);
@@ -135,8 +141,10 @@ fn study(cells: &[usize]) -> [f64; 4] {
         assert!(h.links.is_none());
         // Every link into either cylinder finds its surface and has a fluid cell behind it.
         assert!(links.interpolated > 0 && links.halfway() == 0, "{links:?}");
-        // At steady state the outer wall takes back what the rod gives the fluid.
-        assert!(h.balance.abs() < 1e-6 && i.balance.abs() < 1e-6, "{} {}", h.balance, i.balance);
+        // At steady state the outer wall takes back what the rod gives the fluid. Interpolated
+        // walls leave a residue from the moving-wall term u_w (f* − f') of the force, which grows
+        // with the wall's speed.
+        assert!(h.balance.abs() < 1e-6 && i.balance.abs() < 1e-5, "{} {}", h.balance, i.balance);
         // The interpolated walls are closer on every grid (measured: 7 to 31 times), and so is
         // the rod's drag: within 0.5 % (measured 0.11 % at most), where the staircase's moves
         // between 0.5 and 14 % as the grid cuts the rod differently.
@@ -172,9 +180,24 @@ fn a_sliding_rod_on_eight_cells_per_radius_is_closer_with_interpolated_walls() {
     );
     let links = i.links.unwrap_or_default();
     assert!(links.interpolated > 0 && links.halfway() == 0, "{links:?}");
-    assert!(h.balance.abs() < 1e-6 && i.balance.abs() < 1e-6, "{} {}", h.balance, i.balance);
+    // The interpolated residue comes from the moving-wall term u_w (f* − f') of the force and
+    // scales with the wall's speed (measured −1.4e-6).
+    assert!(h.balance.abs() < 1e-6 && i.balance.abs() < 1e-5, "{} {}", h.balance, i.balance);
     assert!(i.l2 < 0.1 * h.l2, "{} {}", i.l2, h.l2);
     assert!(i.drag.abs() < 5e-3 && i.drag.abs() < 0.25 * h.drag.abs(), "interpolated {}, halfway {}", i.drag, h.drag);
+}
+
+/// The rod's wall velocity, as interpolated walls and the wall model see it, is its speed in
+/// lattice units (`U Δt / Δx`), converted once. Here `Δt / Δx` is 1/8, so a second conversion
+/// would make it eight times too small.
+#[test]
+fn the_sliding_rod_s_wall_velocity_is_in_lattice_units() {
+    let (setup, flow) = prepare_couette(8, INTERPOLATED);
+    let side = flow.groups().iter().position(|g| g.name == "side").unwrap();
+    let u = flow.wall_velocities()[side];
+    let expected = SPEED / setup.velocity_scale();
+    assert!((u[0] - expected).abs() < 1e-12 * expected, "{} against {expected}", u[0]);
+    assert_eq!([u[1], u[2]], [0.0, 0.0]);
 }
 
 /// The sliding rod on 6 to 16 cells per outer radius (3 to 8 across the rod's radius).
