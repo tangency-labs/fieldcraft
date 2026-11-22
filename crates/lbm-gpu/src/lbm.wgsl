@@ -118,6 +118,12 @@ override HRR: bool = false;
 override VREMAN: bool = false;
 // The hybrid collision's dynamic σ from the subgrid model's eddy viscosity (with HRR); likewise.
 override DYNAMIC: bool = false;
+// The hybrid collision's wall layer (fieldcraft_lbm::flow::Flow::set_wall_layer_sigma_one, with HRR): one flag word per cell follows the
+// cell flags from WALL_SIGMA1_BASE (bit 0: the cell is in the layer, σ = 1). The host builds the words from the CPU flow's layer.
+override WALL_SIGMA1: bool = false;
+override WALL_SIGMA1_BASE: u32 = 0u;
+// The hybrid collision's trace relaxation (Flow::set_trace_bulk_one, with HRR): the non-equilibrium density mode is removed in every cell.
+override TRACE_BULK: bool = false;
 // Fans and porous zones (fieldcraft_lbm::flow's zone actions, data in `fluid`: zones.rs); likewise.
 override ZONES: bool = false;
 // The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
@@ -1410,6 +1416,9 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
             record_eddy(cell, lid, omega, u);
         }
     }
+    if WALL_SIGMA1 && HRR && (fluid[WALL_SIGMA1_BASE + cell] & 1u) != 0u {
+        sigma = 1.0;
+    }
     if HRR && sigma != 1.0 {
         let s = strain(g);
         let fd = -2.0 * (1.0 / 3.0) * rho / omega;
@@ -1459,6 +1468,23 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
         }
         f[post_index(q, cell, xyz)] = even + odd;
         f[post_index(q + 1u, cell, xyz)] = even - odd;
+    }
+    // The trace relaxation: with h_q = c² − 1 and a = Σ f_q h_q − ρ u² − u·F (the deviations from the weights have Σ w h = 0; Guo's forcing
+    // keeps u·F of the trace at this rate), f_q −= 1.5 a w_q h_q; density and momentum are untouched.
+    if TRACE_BULK && HRR {
+        var a = -rho * uu;
+        if forced {
+            a = a - dot(u, force);
+        }
+        for (var q = 0u; q < Q; q = q + 1u) {
+            let cq = vec3<f32>(c_of(q));
+            a = a + f[post_index(q, cell, xyz)] * (dot(cq, cq) - 1.0);
+        }
+        for (var q = 0u; q < Q; q = q + 1u) {
+            let cq = vec3<f32>(c_of(q));
+            let i = post_index(q, cell, xyz);
+            f[i] = f[i] - 1.5 * a * w_of(q) * (dot(cq, cq) - 1.0);
+        }
     }
 }
 

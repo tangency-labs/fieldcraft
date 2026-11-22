@@ -550,6 +550,11 @@ struct Variant {
     hrr: bool,
     vreman: bool,
     dynamic: bool,
+    /// The hybrid collision's wall layer (`Flow::set_wall_layer_sigma_one`), and where its per-cell flags start in the cell flags.
+    wall_sigma1: bool,
+    wall_sigma1_base: u32,
+    /// The hybrid collision's trace relaxation (`Flow::set_trace_bulk_one`).
+    trace_bulk: bool,
     /// Fans or porous zones.
     zones: bool,
     /// Interpolated wall links.
@@ -605,6 +610,9 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("HRR", if variant.hrr { 1.0 } else { 0.0 }),
                     ("VREMAN", if variant.vreman { 1.0 } else { 0.0 }),
                     ("DYNAMIC", if variant.dynamic { 1.0 } else { 0.0 }),
+                    ("WALL_SIGMA1", if variant.wall_sigma1 { 1.0 } else { 0.0 }),
+                    ("WALL_SIGMA1_BASE", f64::from(variant.wall_sigma1_base)),
+                    ("TRACE_BULK", if variant.trace_bulk { 1.0 } else { 0.0 }),
                     ("ZONES", if variant.zones { 1.0 } else { 0.0 }),
                     ("INTERPOLATED", if variant.interpolated { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
@@ -1130,6 +1138,22 @@ impl GpuFlow {
         // the driver rounds the rest differently: 1.5e-8 of 0.03 on the GB10).
         use fieldcraft_model::HrrSigma;
         let hybrid = flow.hybrid_sigma().filter(|s| *s != HrrSigma::Value(1.0));
+        // The wall layer: the CPU flow's layer, one flag word per cell after the cell flags and the zone data (bit 0 in the layer); none when
+        // it is off or the layer is empty.
+        let wall_sigma_cells = if flow.wall_layer_sigma_one() && hybrid.is_some() { flow.wall_sigma_layer_mask() } else { Vec::new() };
+        let wall_sigma_base = if wall_sigma_cells.iter().any(|&m| m) {
+            let base = u32::try_from(fluid_u32.len()).map_err(|_| Error::Limit("too many cells for the GPU solver".into()))?;
+            fluid_u32.extend((0..n).map(|c| u32::from(wall_sigma_cells.get(c).copied().unwrap_or(false))));
+            let bytes = (fluid_u32.len() as u64).checked_mul(4).ok_or_else(|| Error::Limit("too much GPU zone data".into()))?;
+            if bytes > cap {
+                return Err(Error::Limit(format!(
+                    "GPU cell flags, layer flags and fan/porous data need {bytes} bytes; this device allows {cap} per buffer"
+                )));
+            }
+            Some(base)
+        } else {
+            None
+        };
         let fixed_sigma = match hybrid {
             Some(HrrSigma::Value(s)) => s,
             _ => 1.0,
@@ -1228,6 +1252,9 @@ impl GpuFlow {
             hrr: hybrid.is_some(),
             vreman: flow.vreman() > 0.0,
             dynamic: hybrid == Some(HrrSigma::Dynamic),
+            wall_sigma1: wall_sigma_base.is_some(),
+            wall_sigma1_base: wall_sigma_base.unwrap_or(0),
+            trace_bulk: flow.trace_bulk_one() && hybrid.is_some(),
             zones: zones.zones > 0,
             interpolated,
         })?;
