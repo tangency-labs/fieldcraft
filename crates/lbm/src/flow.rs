@@ -851,6 +851,9 @@ pub struct Flow {
     wall_model: bool,
     /// Whether the wall-function bounce gives the walls their stress (`spalding_bounce_halfway`).
     wall_bounce: bool,
+    /// Tests only: run the general collision where the plain one would apply.
+    #[cfg(test)]
+    general_collision: bool,
     /// Han et al.'s on-node wall-function bounce (`spalding_bounce`): its boundary nodes.
     nodes: Option<WallNodes>,
     /// With it, the cells that collide: the fluid cells less the boundary nodes (empty
@@ -1694,6 +1697,8 @@ impl Flow {
             walls,
             wall_model: setup.wall_model == Some(WallModel::Musker),
             wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounceHalfway),
+            #[cfg(test)]
+            general_collision: false,
             nodes: on_node.then(|| WallNodes::new(node_list, nu, node_law)),
             bulk,
             rheology: setup.rheology.clone(),
@@ -2876,6 +2881,7 @@ impl Flow {
             for (i, w) in out.iter_mut().enumerate() {
                 let cell = b * block + i;
                 *w = 0.0;
+                // targets() always runs before this pass, so a skipped cell is one that holds no populations
                 let (true, Some(&uc)) = (fluid.get(cell).copied().unwrap_or(false), u.get(cell)) else { continue };
                 let p = grid.coords(cell);
                 let nb: crate::hrr::Neighbours =
@@ -2989,6 +2995,8 @@ impl Flow {
         // No model that changes a cell's state or rates: the plain two-relaxation-time collision,
         // the same arithmetic vectorised over chunks of cells.
         let plain = !regularized && !mrt && !turbulent && rheology.is_none() && model_walls.is_none() && zone_of.is_empty() && liquid.is_none();
+        #[cfg(test)]
+        let plain = plain && !self.general_collision;
         parallel::for_each_mut(&mut work, |b, (f, block_max, u_out, nu_out, max_nu, removed, sigma_stats, block_clamped)| {
             if plain {
                 let at = |i: usize| cell_force.get(b * block + i).copied().unwrap_or(constant);
@@ -3593,6 +3601,8 @@ impl crate::backend::Backend for Flow {
             walls,
             wall_model,
             wall_bounce,
+            #[cfg(test)]
+                general_collision: _,
             nodes,
             bulk: _,
             rheology,
@@ -4100,6 +4110,68 @@ mod tests {
         let bits = |v: &[[f64; 3]]| v.iter().map(|f| f.map(f64::to_bits)).collect::<Vec<_>>();
         assert!(serial.iter().flatten().any(|&x| x != 0.0));
         assert_eq!(bits(&flow.forces), bits(&serial));
+    }
+
+    /// `Flow::collide` with the plain two-relaxation-time path and with the general path forced
+    /// give the same populations bit for bit after a few steps (walls, a moving wall, slip, a
+    /// body force and an initial velocity).
+    #[test]
+    fn flow_collide_plain_path_matches_the_general_path_bit_for_bit() {
+        use fieldcraft_model::{BoxFaces, Fluid, FluidDomain, Material, Model, Procedure, Step, WallTreatment};
+        let faces = BoxFaces {
+            x_min: FaceCondition::Wall {},
+            x_max: FaceCondition::MovingWall { velocity: [0.0, 0.02, 0.01] },
+            y_min: FaceCondition::Slip {},
+            y_max: FaceCondition::Wall {},
+            z_min: FaceCondition::Wall {},
+            z_max: FaceCondition::Slip {},
+        };
+        let domain = FluidDomain {
+            material: "Fluid".into(),
+            min: [0.0; 3],
+            max: [20.0, 12.0, 9.0],
+            spacing: 1.0,
+            faces,
+            obstacles: vec![],
+            surfaces: vec![],
+            initial_velocity: [0.01, -0.005, 0.0],
+            acceleration: [1e-5, 0.0, 2e-6],
+            tolerance: None,
+            thermal: None,
+            porous: vec![],
+            fans: vec![],
+            baffles: vec![],
+            free_surface: None,
+        };
+        let mut m = Model::default();
+        m.add_material("Fluid", Material { density: Some(1.0), fluid: Some(Fluid::Newtonian { viscosity: 0.1 }), ..Material::default() }).unwrap();
+        m.add_fluid_domain("Flow", domain).unwrap();
+        let procedure = Procedure::Fluid {
+            domain: "Flow".into(),
+            end_time: None,
+            steps: Some(10),
+            time_step: Some(1.0),
+            frames: 1,
+            magic: None,
+            sigma: None,
+            collision: None,
+            turbulence: None,
+            steady: None,
+            walls: WallTreatment::Halfway,
+        };
+        m.add_step(Step::new("Run", procedure), None).unwrap();
+        let setup = Setup::new(&m, None, &[], &crate::Limits::default()).unwrap();
+        let run = |general: bool| {
+            let mut flow = Flow::new(&setup, &[]).unwrap();
+            flow.general_collision = general;
+            for _ in 0..5 {
+                flow.step().unwrap();
+            }
+            flow.f.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+        };
+        let (plain, general) = (run(false), run(true));
+        assert!(plain.iter().any(|&b| f64::from_bits(b) != 0.0));
+        assert!(plain == general, "the plain path differs from the general path");
     }
 
     /// The vectorised plain collision gives the general collision's populations, velocities and
