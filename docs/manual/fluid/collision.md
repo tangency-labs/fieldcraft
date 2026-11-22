@@ -146,6 +146,40 @@ the model's ν_t, and with heat α_t = ν_t / Pr_t still reaches the scalar latt
 continuous model's estimate; near τ̄ = ½ the scheme's own hyperviscosity is several times larger
 (above), so there dynamic σ dissipates more than the subgrid model it matches.
 
+### Wall layer and trace relaxation (opt-in)
+
+Two switches of the hybrid collision, both off by default (`Flow::set_wall_layer_sigma_one(true)` and `Flow::set_trace_bulk_one(true)`; the
+CPU and the GPU run them the same way, within 2e-7 in velocity). Off, the collision is the one described above, bit for bit.
+
+**The layer.** The blend's finite-difference strain `∇u` is first-order accurate at a half-way wall, and the blend multiplies its error
+by `τ̄ / (τ̄ − ½)`, which is large exactly where τ̄ − ½ is small. With `set_wall_layer_sigma_one` the cells of the layer take σ = 1, the
+regularised flux alone, with no finite difference. The layer is the cells that collide and have a solid cell across an axis neighbour, or a
+wall face of the box (an inlet or outlet cell is not a wall there). A box face and a slab of obstacle cells give the same flow. Cells under a
+wall law are not in it: the law sets their stress.
+
+**The trace relaxation.** σ = 1 in the layer leaves the non-equilibrium density (trace) mode, the Hermite component `H = |c|² − 1` of the
+populations, undamped, and next to a wall it grows into a standing cell-to-cell mode along the flow (a slot of 8 cells or fewer: 50 times the
+alternation of the plain collision at 6 cells). `set_trace_bulk_one` relaxes this one mode at the rate ω_b = 1 in every hybrid cell: the
+populations lose `1.5 a w_q H_q` with `a = Σ f_q H_q − ρ u² − u·F`, which leaves density and momentum alone, since `H` is orthogonal to both; the `u·F` is the trace Guo's forcing puts in the populations at this rate (`(1 − ω_b/2) · 2 u·F`), which stays. The rate
+is one number, with no per-wall share and no margin at open faces to tune. A periodic square duct at τ̄ − ½ = 6e-3 and σ 0.99, flow rate over
+the exact laminar series (Boussinesq):
+
+| cells | plain hybrid | layer and trace relaxation |
+|---|---|---|
+| 8 | 0.9445 | 0.9916 |
+| 12 | 0.9709 | 0.9968 |
+| 16 | 0.9798 | 0.9962 |
+
+The remaining −0.4 % at 12 and 16 cells is the hybrid blend's own interior term (it grows with 1 − σ and does not shrink with the grid).
+The half-way bounce-back itself is second order: for a plane channel of N cells the flow-rate error is −(1 − 8Λ)/N² with BGK (Λ ≈ 0, so
+−1/N²), a slip velocity and not a shift of the wall, and +½/N² at the magic parameter Λ = 3/16 (TRT).
+
+**Limits.** The bulk rate fixes the bulk viscosity ζ = (2/9)(1/ω_b − ½) in lattice units against the shear viscosity ν = (1/3)(1/ω − ½):
+at τ̄ − ½ = 3e-3 and ω_b = 1, ζ is about 110 ν. The dilatational mode, which carries sound, is damped two orders of magnitude harder than the
+shear. That suits steady and low-Mach flows (RANS, the incompressible limit), where the density mode carries noise. It does not suit
+aeroacoustics, compressible transients (waves, fronts, the dilatational dissipation are the physics there) or Mach numbers above about
+0.3. Switching it on changes the answer of every hybrid flow it is on for; keep it off for those.
+
 ### Multiple relaxation times
 
 The populations are mapped to 19 orthogonal moments m = M f, each relaxed towards its equilibrium
