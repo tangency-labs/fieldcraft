@@ -11,7 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use fieldcraft_geometry::tagged_mesh;
-use fieldcraft_geometry::{Design, MAX_DESIGN_BYTES, open_design};
+use fieldcraft_geometry::{Design, design_file_limit, open_design, open_geometry};
 use fieldcraft_io::{Geometry, ModelFile, SourceFile};
 use serde_json::{Value, json};
 
@@ -19,6 +19,46 @@ use fieldcraft_io::roots::{Access, Roots};
 
 use super::{file_param, opt, req};
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session, next_revision};
+
+/// What opening a file does with it, from its extension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenFileKind {
+    /// A `.fieldcraft` model replaces the session (`file.open`).
+    Model,
+    /// A SolidCraft design (`.sc` or `.solidcraft`) or STEP/IGES file becomes the geometry (`geometry.open`).
+    Design,
+    /// A `.3mf` face-tagged mesh is added as a surface (`geometry.import.mesh`).
+    Mesh,
+    /// A `.msh` orphan mesh replaces the mesh (`mesh.import.orphan`).
+    Orphan,
+}
+
+impl OpenFileKind {
+    /// The kind of a file by its extension (any case); `None` for a file FieldCraft does not open.
+    pub fn of(path: &str) -> Option<OpenFileKind> {
+        if fieldcraft_geometry::is_exchange_file(path) {
+            return Some(OpenFileKind::Design);
+        }
+        let ext = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+        match ext.as_str() {
+            "fieldcraft" => Some(OpenFileKind::Model),
+            "sc" | "solidcraft" => Some(OpenFileKind::Design),
+            "3mf" => Some(OpenFileKind::Mesh),
+            "msh" => Some(OpenFileKind::Orphan),
+            _ => None,
+        }
+    }
+
+    /// The engine command that opens this kind of file.
+    pub fn command(self) -> &'static str {
+        match self {
+            OpenFileKind::Model => "file.open",
+            OpenFileKind::Design => "geometry.open",
+            OpenFileKind::Mesh => "geometry.import.mesh",
+            OpenFileKind::Orphan => "mesh.import.orphan",
+        }
+    }
+}
 
 pub const NEW: CommandSpec = CommandSpec {
     id: "file.new",
@@ -305,8 +345,18 @@ impl Session {
         let mut model = file.model;
         let mut names = super::names::Report::default();
         if let Some(stored) = &file.geometry.design {
-            let (opened, source) = reopen("design", stored, base, roots, MAX_DESIGN_BYTES as u64, open_design, copy(stored), &mut warnings);
-            design = opened.and_then(|d| {
+            let (opened, source) = reopen(
+                "design",
+                stored,
+                base,
+                roots,
+                design_file_limit(stored.path()) as u64,
+                |bytes| open_geometry(stored.path(), bytes),
+                copy(stored),
+                &mut warnings,
+            );
+            design = opened.and_then(|(d, import_warnings)| {
+                warnings.extend(import_warnings);
                 match super::datum::partitioned(&d, &framed).and_then(|cut| super::names::reconcile(&mut model, Some(&mut framed), &d, cut)) {
                     Ok((cut, report)) => {
                         names = report;
@@ -618,6 +668,128 @@ mod tests {
         assert!(s.model.materials().is_empty() && s.model.steps().is_empty() && s.design.is_none() && s.sample.is_none());
         assert!(!s.is_dirty(), "an empty model has nothing to save");
         assert!(s.execute("edit.undo", &json!({})).is_err(), "the undo history starts empty");
+    }
+
+    #[test]
+    fn step_source_reopens_from_disk_and_from_the_packed_model() {
+        let d = dir("step-roundtrip");
+        let path = d.join("pair.STP");
+        let model = d.join("pair.fieldcraft");
+        std::fs::write(&path, fieldcraft_geometry::sample::step_assembly(10.0).unwrap()).unwrap();
+        let mut s = Session::default();
+        s.execute("geometry.open", &json!({"path": path})).unwrap();
+        let before = s.execute("geometry.bodies", &json!({})).unwrap();
+        assert_eq!(before.as_array().unwrap().len(), 2);
+        let first = &s.design.as_ref().unwrap().bodies[0];
+        let set = json!({"name":"Contact", "geometry":[{"body":first.name, "face":first.faces()[0].name}]});
+        s.execute("model.set.create", &set).unwrap();
+        std::fs::write(&path, fieldcraft_geometry::sample::step_assembly(15.0).unwrap()).unwrap();
+        let updated = s.execute("geometry.open", &json!({"path":path,"model":"keep"})).unwrap();
+        assert_eq!(updated["stale"]["references"], json!([]), "{updated}");
+        assert_eq!(updated["stale"]["sets"], json!([]), "{updated}");
+        let revised = s.execute("geometry.bodies", &json!({})).unwrap();
+        assert_ne!(before, revised, "the second occurrence moved");
+        s.execute("file.save_as", &json!({"path":model, "geometry":"embed"})).unwrap();
+        for embedded in [false, true] {
+            if embedded {
+                std::fs::remove_file(&path).unwrap();
+            }
+            let mut t = Session::default();
+            let opened = t.execute("file.open", &json!({"path":model})).unwrap();
+            assert!(opened["design"].is_string(), "{opened}");
+            assert_eq!(t.execute("geometry.bodies", &json!({})).unwrap(), revised);
+            assert_eq!(t.model, s.model);
+        }
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn invalid_exchange_records_leave_the_open_design_intact() {
+        let d = dir("invalid-exchange");
+        let valid = fieldcraft_geometry::sample::step_assembly(10.0).unwrap();
+        let good = d.join("original.step");
+        std::fs::write(&good, &valid).unwrap();
+        let mut s = Session::default();
+        s.execute("geometry.open", &json!({"path":good})).unwrap();
+        let before = s.execute("geometry.bodies", &json!({})).unwrap();
+
+        // Keep the STEP header but truncate the data, or damage entity declarations in the complete file.
+        let first_entity = valid.iter().position(|b| *b == b'#').unwrap();
+        let mut bad_ids = valid.clone();
+        for line in bad_ids.split_mut(|b| *b == b'\n') {
+            if line.first() == Some(&b'#') {
+                line[0] = b'?';
+            }
+        }
+        // Keep the IGES parameter data but remove the directory section designators (column 73).
+        let mut bad_directory = fieldcraft_geometry::sample::iges_block().unwrap();
+        for line in bad_directory.split_mut(|b| *b == b'\n') {
+            if line.get(72) == Some(&b'D') {
+                line[72] = b'?';
+            }
+        }
+        for (name, bytes) in
+            [("truncated.step", &valid[..first_entity + 2]), ("mutated.stp", bad_ids.as_slice()), ("directory.iges", bad_directory.as_slice())]
+        {
+            let path = d.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            let error = s.execute("geometry.open", &json!({"path":path, "model":"new"})).unwrap_err().to_string();
+            assert!(error.contains("cannot open") && error.contains(name), "{error}");
+            assert_eq!(s.execute("geometry.bodies", &json!({})).unwrap(), before);
+        }
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn exchange_reader_and_visibility_warnings_reach_the_command_reply() {
+        let d = dir("exchange-warnings");
+        let path = d.join("hidden.step");
+        let mut text = String::from_utf8(fieldcraft_geometry::sample::step_assembly(10.0).unwrap()).unwrap();
+        let solid = text.lines().find(|l| l.contains("MANIFOLD_SOLID_BREP(")).unwrap();
+        let id = solid.split_once('=').unwrap().0.trim();
+        let next = text.lines().filter_map(|l| l.split_once('=')?.0.trim().strip_prefix('#')?.parse::<u64>().ok()).max().unwrap() + 1;
+        // The reader warns about the repeated definition and keeps the original geometry.
+        let records = format!("{solid}\n#{next}=INVISIBILITY(({id}));\n");
+        let end = text.rfind("ENDSEC;").unwrap();
+        text.insert_str(end, &records);
+        std::fs::write(&path, text).unwrap();
+        let mut s = Session::default();
+        let r = s.execute("geometry.open", &json!({"path":path})).unwrap();
+        let warnings: Vec<_> = r["warnings"].as_array().unwrap().iter().map(|w| w.as_str().unwrap()).collect();
+        assert!(warnings.iter().any(|w| w.contains("defined twice")), "{r}");
+        assert_eq!(r["bodies"], json!(["Insert", "Insert (2)"]));
+        for name in ["Insert", "Insert (2)"] {
+            assert!(warnings.iter().any(|w| w.contains(&format!("`{name}` is marked invisible"))), "{r}");
+        }
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confined_step_link_keeps_its_format_when_the_model_reopens() {
+        let d = dir("step-link").canonicalize().unwrap();
+        let target = d.join("geometry");
+        let link = d.join("pair.step");
+        let model = d.join("pair.fieldcraft");
+        std::fs::write(&target, fieldcraft_geometry::sample::step_assembly(10.0).unwrap()).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let roots = Roots::new(Some(&d), Some(&d)).unwrap();
+        let mut s = Session { file_access: roots.clone(), ..Session::default() };
+        let opened = s.execute("geometry.open", &json!({"path": link})).unwrap();
+        assert_eq!(opened["bodies"], json!(["Insert", "Insert (2)"]));
+        s.execute("file.save_as", &json!({"path": model, "geometry": "embed"})).unwrap();
+        let saved = fieldcraft_io::read(&std::fs::read(&model).unwrap()).unwrap();
+        assert_eq!(saved.geometry.design.as_ref().unwrap().path(), "pair.step");
+
+        let mut reopened = Session { file_access: roots, ..Session::default() };
+        let linked = reopened.execute("file.open", &json!({"path": model})).unwrap();
+        assert_eq!(linked["warnings"], json!([]));
+        let bodies = s.execute("geometry.bodies", &json!({})).unwrap();
+        assert_eq!(reopened.execute("geometry.bodies", &json!({})).unwrap(), bodies);
+        std::fs::remove_file(&link).unwrap();
+        reopened.execute("file.open", &json!({"path": model})).unwrap();
+        assert_eq!(reopened.execute("geometry.bodies", &json!({})).unwrap(), bodies);
+        let _ = std::fs::remove_dir_all(d);
     }
 
     #[test]

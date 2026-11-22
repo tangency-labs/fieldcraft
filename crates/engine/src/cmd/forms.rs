@@ -2243,7 +2243,7 @@ pub const TAG: &[Field] = &[
 // ---- Geometry and files ----
 
 pub const OPEN_DESIGN: &[Field] = &[
-    path("path", "Design", false).help("The SolidCraft design file to open.").req(),
+    path("path", "Design", false).help("The SolidCraft, STEP or IGES file to open.").req(),
     choice("model", "Model", &[("keep", "Keep the current model"), ("new", "Start a new model")])
         .help("Keep the current model with the new geometry, or start a new one.")
         .def("\"keep\""),

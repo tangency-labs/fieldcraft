@@ -107,6 +107,44 @@ impl Design {
 /// The newest design format the pinned SolidCraft reads (and the one it writes).
 pub const DESIGN_FORMAT: u32 = solidcraft_doc::format::FORMAT;
 
+/// STEP and IGES paths supported by FieldCraft. SolidCraft also handles native CAD through this reader.
+pub fn is_exchange_file(path: &str) -> bool {
+    solidcraft_io::is_step_path(path) && !solidcraft_io::is_native_cad_path(path)
+}
+
+/// Byte limit for a design source, applied before reading its contents.
+pub fn design_file_limit(path: &str) -> usize {
+    if is_exchange_file(path) { solidcraft_io::MAX_STEP_BYTES } else { MAX_DESIGN_BYTES }
+}
+
+/// Open a geometry source, including a packed model's in-memory copy. SolidCraft's
+/// import feature carries the exact bodies of each occurrence already placed in world coordinates.
+pub fn open_geometry(path: &str, bytes: &[u8]) -> Result<(Design, Vec<String>)> {
+    if !is_exchange_file(path) {
+        return open_design(bytes).map(|d| (d, Vec::new()));
+    }
+    let imported = guard("read CAD exchange", || solidcraft_io::step_import_feature(bytes, path).map_err(|e| KernelError::Invalid(e.to_string())))
+        .map_err(|e| crate::Error::Invalid(format!("cannot open `{path}`: {e}")))?;
+    let mut doc = Document::new(&imported.name);
+    let id = doc.add_feature(imported.kind, Some(&imported.name)).map_err(|e| crate::Error::Invalid(format!("import `{path}`: {e}")))?;
+    let feature = doc.feature_mut(id).ok_or_else(|| crate::Error::Failed(format!("missing import feature for `{path}`")))?;
+    feature.body_names = imported.body_names;
+    let design = rebuild_with_body_names(&doc, BodyNames::Exchange).map_err(|e| crate::Error::Failed(format!("import `{path}`: {e}")))?;
+    if let Some(error) = design.errors.first() {
+        return Err(crate::Error::Invalid(format!("cannot build `{path}`: {}", error.message)));
+    }
+    if design.bodies.is_empty() {
+        return Err(crate::Error::Invalid(format!("no bodies in `{path}`")));
+    }
+    let mut warnings = imported.warnings;
+    for (body, hidden) in design.bodies.iter().zip(imported.invisible) {
+        if hidden {
+            warnings.push(format!("Body `{}` is marked invisible in the source and was included in the analysis geometry.", body.name));
+        }
+    }
+    Ok((design, warnings))
+}
+
 /// Open a design from its file bytes (a `.solidcraft` container or a JSON design) and rebuild it.
 /// A design of a newer format than [`DESIGN_FORMAT`] is [`crate::Error::NewerDesign`].
 pub fn open_design(bytes: &[u8]) -> Result<Design> {
@@ -150,6 +188,15 @@ fn saved_format(bytes: &[u8]) -> Option<u32> {
 
 /// Rebuild an in-memory document (the design half of [`open_design`]).
 pub(crate) fn rebuild(doc: &Document) -> Result<Design> {
+    rebuild_with_body_names(doc, BodyNames::Design)
+}
+
+enum BodyNames {
+    Design,
+    Exchange,
+}
+
+fn rebuild_with_body_names(doc: &Document, naming: BodyNames) -> Result<Design> {
     let model = guard("rebuild design", || {
         let mut m = Model::new();
         m.evaluate(doc);
@@ -190,7 +237,12 @@ pub(crate) fn rebuild(doc: &Document) -> Result<Design> {
         })
         .collect();
     // The errors name the bodies as SolidCraft does; they follow the pieces' new names.
-    let renamed = number_split_bodies(&mut bodies);
+    let renamed = match naming {
+        BodyNames::Design => number_split_bodies(&mut bodies),
+        // A numeric suffix in a CAD product name belongs to the source. It does not identify
+        // pieces of a FieldCraft split, and must not change when occurrences move past each other.
+        BodyNames::Exchange => Vec::new(),
+    };
     let errors = errors
         .into_iter()
         .map(|mut e| {
@@ -281,6 +333,51 @@ fn number_split_bodies(bodies: &mut [Shape]) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn step_places_both_occurrences_and_preserves_the_faces() {
+        let bytes = crate::sample::step_assembly(10.0).unwrap();
+        let (d, _) = open_geometry("pair.StP", &bytes).unwrap();
+        assert_eq!(d.bodies.len(), 2);
+        assert_ne!(d.bodies[0].name, d.bodies[1].name);
+        let mut centres = Vec::new();
+        for b in &d.bodies {
+            assert_eq!(b.faces().len(), 6);
+            assert_eq!(b.faces().iter().map(|f| &f.name).collect::<std::collections::BTreeSet<_>>().len(), 6);
+            let m = b.measure().unwrap();
+            assert!((m.volume - 24.0).abs() < 1e-8);
+            centres.push(m.centroid[0]);
+        }
+        centres.sort_by(f64::total_cmp);
+        assert!((centres[0] - 1.0).abs() < 1e-8 && (centres[1] - 11.0).abs() < 1e-8, "{centres:?}");
+    }
+
+    #[test]
+    fn cad_product_names_with_numeric_suffixes_remain_distinct() {
+        use solidcraft_kernel::{ExportBody, StepHeader, step_export_bodies};
+        let left = crate::block([0.0; 3], [1.0; 3]).unwrap();
+        let right = crate::block([2.0; 3], [3.0; 3]).unwrap();
+        let solids = [
+            ExportBody { name: "Housing (7)".into(), body: &left.body, color: None },
+            ExportBody { name: "Housing (3)".into(), body: &right.body, color: None },
+        ];
+        let text = guard("write numbered products", || step_export_bodies(&solids, &StepHeader::default())).unwrap();
+        let (d, _) = open_geometry("housings.step", text.as_bytes()).unwrap();
+        assert_eq!(d.bodies.len(), 2);
+        assert!(d.body("Housing (7)").unwrap().measure().unwrap().centroid[0] < 1.0);
+        assert!(d.body("Housing (3)").unwrap().measure().unwrap().centroid[0] > 2.0);
+    }
+
+    #[test]
+    fn iges_retains_the_geometry_and_unreadable_exchange_is_an_error() {
+        let bytes = crate::sample::iges_block().unwrap();
+        let (d, _) = open_geometry("pad.IGS", &bytes).unwrap();
+        assert_eq!(d.bodies.len(), 1);
+        assert!((d.bodies[0].measure().unwrap().volume - 24.0).abs() < 1e-8);
+        for file in ["broken.step", "broken.IGES"] {
+            assert!(open_geometry(file, b"malformed geometry").unwrap_err().to_string().contains(file));
+        }
+    }
 
     #[test]
     fn split_suffixes_are_stripped() {

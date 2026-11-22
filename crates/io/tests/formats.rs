@@ -693,6 +693,24 @@ fn outputs_never_replace_a_model_or_a_design() {
         assert!(e.to_string().contains(kind) && e.to_string().contains("choose another file name"), "{e}");
         assert_eq!(std::fs::read(path).unwrap(), before);
     }
+    for (name, kind) in [("part.StEp", "STEP"), ("part.STP", "STEP"), ("part.IGES", "IGES"), ("part.IgS", "IGES")] {
+        let path = dir.join(name);
+        assert_eq!(protected_kind(&path), None);
+        std::fs::write(&path, b"original").unwrap();
+        assert!(write_output(&path, b"new output").unwrap_err().to_string().contains(kind));
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+    }
+    // A confined read or write can follow a CAD symlink to a target with no suffix.
+    for (header, kind) in [
+        ("ISO-10303-21;\nHEADER;".to_string(), "STEP"),
+        (format!("{:<72}S      1\r\n", "Block"), "IGES"),
+        (format!("{:<72}S0000001\n", "Block"), "IGES"),
+    ] {
+        let target = dir.join("geometry");
+        std::fs::write(&target, &header).unwrap();
+        assert!(write_output(&target, b"new output").unwrap_err().to_string().contains(kind));
+        assert_eq!(std::fs::read_to_string(target).unwrap(), header);
+    }
     assert_eq!(std::fs::read(&model).unwrap(), original);
     // Other files, and new ones, are written as before.
     let notes = dir.join("notes.inp");

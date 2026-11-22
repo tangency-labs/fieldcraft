@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use fieldcraft_geometry::tagged_mesh;
-use fieldcraft_geometry::{Design, MAX_DESIGN_BYTES, Shape, SurfaceMesh, open_design};
+use fieldcraft_geometry::{Design, Shape, SurfaceMesh, design_file_limit, open_geometry};
 use fieldcraft_io::SourceFile;
 use fieldcraft_io::roots::Access;
 use fieldcraft_model::Model;
@@ -24,7 +24,7 @@ const SAME_AXIS: f64 = 1e-6; // unit-factors: relative to the body's size
 pub const OPEN: CommandSpec = CommandSpec {
     id: "geometry.open",
     label: "Open Design",
-    params: r#"{"path": "part.solidcraft", "model"?: "keep"} — rebuilds the SolidCraft design and makes its bodies the geometry. `model`: "keep" (default) keeps the mesh and every definition, so opening the same design again after an edit picks up the change and sets follow their persistent face names; "new" starts a new model with the design (no mesh, sets, materials, sections, BCs, loads or steps; the unit system stays; the model is untitled until saved, and undo restores the previous file). The reply's `related` is false when the model (before the open) refers to bodies (mesh tags, set geometry) and the design has none of them, or refers to none but has a mesh or definitions and its design (if any) shares no body with this one, and `stale` lists what no longer resolves: `mesh_bodies` (bodies the mesh is tagged with that the design lacks) `sets` (sets naming a body or face it lacks) and `seeds` (seeds on edges or faces it lacks), and `references` every definition naming a face, edge or vertex of a body the design has but not that entity ({owner, reference, why}). Such a name is first looked for again as file.open does (`renamed`, `mismatched`). `errors` lists the features that failed to rebuild with the `bodies` each may change, and `warnings` says so in one line each. One undo step"#,
+    params: r#"{"path": "part.solidcraft", "model"?: "keep"} — opens a SolidCraft design or imports STEP (.step/.stp) or IGES (.iges/.igs) through SolidCraft as a base feature and makes its placed bodies the geometry. `model`: "keep" (default) keeps the mesh and every definition, so opening the same design again after an edit picks up the change and sets follow their persistent face names; "new" starts a new model with the design (no mesh, sets, materials, sections, BCs, loads or steps; the unit system stays; the model is untitled until saved, and undo restores the previous file). The reply's `related` is false when the model (before the open) refers to bodies (mesh tags, set geometry) and the design has none of them, or refers to none but has a mesh or definitions and its design (if any) shares no body with this one, and `stale` lists what no longer resolves: `mesh_bodies` (bodies the mesh is tagged with that the design lacks) `sets` (sets naming a body or face it lacks) and `seeds` (seeds on edges or faces it lacks), and `references` every definition naming a face, edge or vertex of a body the design has but not that entity ({owner, reference, why}). Such a name is first looked for again as file.open does (`renamed`, `mismatched`). `errors` lists the features that failed to rebuild with the `bodies` each may change, and `warnings` says so in one line each. One undo step"#,
     form: Some(super::forms::OPEN_DESIGN),
     kind: CommandKind::Model,
     requires: &[],
@@ -100,10 +100,12 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
             _ => return Err(EngineError::Params(r#"`model` must be "keep" or "new""#.into())),
         },
     };
-    let path = super::file_param(s, p, "path", Access::Read)?;
-    let bytes = super::file::read_file(&path, MAX_DESIGN_BYTES as u64)?;
-    let source = SourceFile::of(super::file::absolute(&path), &bytes)?;
-    let opened = open_design(&bytes)?;
+    let path = super::path_param(p, "path")?;
+    let checked = s.checked_path(path, Access::Read)?;
+    // A symlink's name selects the reader, including when the saved model reopens its source.
+    let bytes = super::file::read_file(&checked, design_file_limit(path) as u64)?;
+    let source = SourceFile::of(super::file::absolute(path), &bytes)?;
+    let (opened, import_warnings) = open_geometry(path, &bytes)?;
     // The model's partitions cut the design again (a new model has none), and its names are
     // brought to the design's (#605).
     let (design, names) = if new_model {
@@ -133,7 +135,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         "errors": design.errors.iter().map(|e| json!({"feature": e.feature, "message": e.message, "bodies": e.bodies})).collect::<Vec<_>>(),
         // Shown with the open: a body that differs from the design is never silent.
         // So is a definition whose name the design no longer has, or one it now names otherwise.
-        "warnings": design.errors.iter().map(|e| e.warning()).chain(names.warnings()).collect::<Vec<_>>(),
+        "warnings": import_warnings.into_iter().chain(design.errors.iter().map(|e| e.warning())).chain(names.warnings()).collect::<Vec<_>>(),
         "model": if new_model { "new" } else { "kept" },
         "related": fit.related,
         "renamed": names.json()["renamed"],
@@ -796,7 +798,7 @@ pub(crate) mod tests {
     fn centres_of_holes_vertices_and_faces() {
         use fieldcraft_geometry::FaceSurface;
         use fieldcraft_geometry::sample::{Plate, plate_design};
-        let design = Arc::new(open_design(&plate_design(&Plate::default()).unwrap()).unwrap());
+        let design = Arc::new(fieldcraft_geometry::open_design(&plate_design(&Plate::default()).unwrap()).unwrap());
         let mut s = Session { design: Some(design.clone()), ..Session::default() };
         let body = &design.bodies[0];
         let near = |v: &Value, p: [f64; 3]| {

@@ -22,8 +22,7 @@ use fieldcraft_engine::autosave::{self, Autosaver};
 use fieldcraft_engine::{Session, crash, logfile};
 use fieldcraft_ui_egui::{FilePicker, ModelApp, Services};
 
-const USAGE: &str =
-    "usage: fieldcraft [--sample [NAME]] [--control PORT] [FILE…]  (NAME: a sample, docs/examples.md; FILE: .fieldcraft, .solidcraft or .3mf)";
+const USAGE: &str = "usage: fieldcraft [--sample [NAME]] [--control PORT] [FILE…]  (NAME: a sample, docs/examples.md; FILE: .fieldcraft, .solidcraft, STEP, IGES, .3mf or .msh)";
 const DEPTH_BITS: u8 = 24;
 /// The window draws its own caption buttons where the OS ones would sit apart from the app bar.
 const CUSTOM_TITLEBAR: bool = !cfg!(target_os = "macos");

@@ -49,7 +49,7 @@ pub fn version_backup_paths(path: &Path, format: Option<u32>) -> impl Iterator<I
 
 /// What the existing file at `path` is when it is a FieldCraft model or a SolidCraft design,
 /// which no export, deck or picture may replace: by its extension (`.fieldcraft`,
-/// `.sc`, `.solidcraft`, any case) or by its content (a FieldCraft package with a format tag, a
+/// `.sc`, `.solidcraft`, STEP or IGES, any case) or by its content (a FieldCraft package with a format tag, a
 /// SolidCraft design's `"format": "solidcraft/…"`). `None` when there is no file or it is
 /// neither.
 pub fn protected_kind(path: &Path) -> Option<&'static str> {
@@ -62,12 +62,22 @@ pub fn protected_kind(path: &Path) -> Option<&'static str> {
     }
     let head = read_prefix(path, 4096);
     let text = String::from_utf8_lossy(&head);
+    if matches!(ext.as_deref(), Some("step" | "stp")) || text.trim_start().starts_with("ISO-10303-21;") {
+        return Some("STEP geometry file");
+    }
+    // An IGES start record ends with S and its seven-column sequence number.
+    let start = head.split(|&b| b == b'\n').next().unwrap_or_default();
+    let start = start.strip_suffix(b"\r").unwrap_or(start);
+    let first_sequence = start.get(73..).and_then(|s| s.trim_ascii_start().strip_suffix(b"1")).is_some_and(|pad| pad.iter().all(|&b| b == b'0'));
+    if matches!(ext.as_deref(), Some("iges" | "igs")) || (start.len() == 80 && start.get(72) == Some(&b'S') && first_sequence) {
+        return Some("IGES geometry file");
+    }
     let design = text.trim_start().starts_with('{') && text.contains("\"solidcraft/");
     (matches!(ext.as_deref(), Some("sc" | "solidcraft")) || design).then_some("SolidCraft design")
 }
 
 /// Write an export, a deck, a picture or any other output that is not the model's own file:
-/// atomically, with no backup, but never over a FieldCraft model or SolidCraft design
+/// atomically, with no backup, but never over a FieldCraft model or a supported CAD source
 /// ([`protected_kind`]), which that would destroy with nothing kept.
 pub fn write_output(path: &Path, bytes: &[u8]) -> crate::Result<()> {
     if let Some(kind) = protected_kind(path) {

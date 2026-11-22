@@ -165,14 +165,14 @@ pub fn tool_definitions() -> Vec<Value> {
             "open",
             "Open a file",
             "Open by extension: a .fieldcraft model (file.open: replaces the model; its design and meshes open again), a \
-             SolidCraft design .sc or .solidcraft (geometry.open: its bodies become the geometry; `model` \"keep\", the default, \
+             SolidCraft (.sc/.solidcraft), STEP (.step/.stp) or IGES (.iges/.igs) design (geometry.open: its bodies become the geometry; `model` \"keep\", the default, \
              keeps the mesh and definitions for a reopen after an edit, \"new\" starts a new model; the reply's `related` \
              and `stale` say what no longer resolves on another part) or a face-tagged .3mf mesh (geometry.import.mesh: \
-             added as a surface).",
+             added as a surface), or a .msh orphan mesh (mesh.import.orphan).",
             obj(
                 json!({
-                    "path": string("Path to a .fieldcraft model, a .sc or .solidcraft design, or a .3mf mesh"),
-                    "model": {"type": "string", "enum": ["keep", "new"], "description": "For a .sc or .solidcraft design: keep the current model (default) or start a new one"},
+                    "path": string("Path to a .fieldcraft model, SolidCraft, STEP or IGES geometry, a .3mf mesh, or a .msh orphan mesh"),
+                    "model": {"type": "string", "enum": ["keep", "new"], "description": "For SolidCraft, STEP or IGES geometry: keep the current model (default) or start a new one"},
                 }),
                 &["path"],
             ),
@@ -504,17 +504,13 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
         "check_model" => b.execute("model.check", json!({})),
         "open" => {
             let path = str_arg(a, "path").ok_or("`path` is required")?;
-            let ext = Path::new(path).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
-            let command = match ext.as_deref() {
-                Some("fieldcraft") => "file.open",
-                Some("sc" | "solidcraft") => "geometry.open",
-                Some("3mf") => "geometry.import.mesh",
-                _ => return Err("open: a .fieldcraft model, a .sc or .solidcraft design or a .3mf mesh".into()),
-            };
+            let kind = fieldcraft_engine::OpenFileKind::of(path)
+                .ok_or("open: expected a .fieldcraft model, a SolidCraft, STEP or IGES design, a .3mf mesh, or a .msh orphan mesh")?;
+            let command = kind.command();
             let mut params = json!({"path": path});
             if let Some(model) = a.get("model").filter(|m| !m.is_null()) {
-                if command != "geometry.open" {
-                    return Err("open: `model` applies to a .sc or .solidcraft design only".into());
+                if kind != fieldcraft_engine::OpenFileKind::Design {
+                    return Err("open: `model` applies to SolidCraft, STEP and IGES geometry only".into());
                 }
                 params["model"] = model.clone();
             }

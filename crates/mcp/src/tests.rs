@@ -51,6 +51,22 @@ impl Drop for Dir {
 }
 
 #[test]
+fn open_routes_step_and_iges_to_the_design_command() {
+    let d = Dir::new("exchange");
+    let mut s = confined(&d.0, &d.0);
+    let step = fieldcraft_geometry::sample::step_assembly(10.0).unwrap();
+    let iges = fieldcraft_geometry::sample::iges_block().unwrap();
+    for (file, bytes, count) in [("pair.StEp", &step, 2), ("pair.STP", &step, 2), ("pad.iGeS", &iges, 1), ("pad.IGS", &iges, 1)] {
+        let path = d.0.join(file);
+        std::fs::write(&path, bytes).unwrap();
+        let r = ok(&mut s, "open", json!({"path":path,"model":"new"}));
+        assert_eq!(r["command"], "geometry.open");
+        assert_eq!(r["result"]["model"], "new");
+        assert_eq!(r["result"]["bodies"].as_array().unwrap().len(), count);
+    }
+}
+
+#[test]
 fn initialize_lists_tools_and_resources() {
     let mut s = server();
     let r = send(&mut s, json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26", "capabilities": {}}}));
