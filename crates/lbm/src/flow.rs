@@ -380,6 +380,21 @@ fn neighbour(grid: &Grid, periodic: [bool; 3], fluid: &[bool], p: [usize; 3], ax
     fluid.get(cell).copied().unwrap_or(false).then_some(cell)
 }
 
+/// Relax the non-equilibrium density (trace) mode of the populations `post`, which carry the body force `force` (`uf = u·F`), at the bulk rate
+/// ω_b = 1: the Hermite component `H = |c|² − 1` (c_s² = 1/3, so the trace of the equilibrium second moment is ρ(1 + u²)). Guo's forcing adds
+/// `(1 − ω_b/2) · 2 u·F` to the trace, which is `u·F` at ω_b = 1 and stays: with `a = Σ post H − ρ u² − u·F` and `Σ w H² = 2/3`, the removed
+/// component is `1.5 a w H`; the density and the momentum are untouched (H is orthogonal to both).
+fn remove_density_mode(post: &mut [f64; Q], rho: f64, uu: f64, uf: f64) {
+    let h = |q: usize| {
+        let c = C[q];
+        f64::from(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]) - 1.0
+    };
+    let a: f64 = post.iter().enumerate().map(|(q, v)| v * h(q)).sum::<f64>() - rho * uu - uf;
+    for (q, v) in post.iter_mut().enumerate() {
+        *v -= 1.5 * a * W[q] * h(q);
+    }
+}
+
 /// A cell's action: its zone's, with the resistance of its liquid fraction `liquid` (with a phase
 /// change) added where it is not wholly liquid.
 #[inline(always)]
@@ -621,6 +636,8 @@ pub struct Flow {
     wall_layer_sigma_one: bool,
     /// Which box faces are walls (axis, at the upper end): the rule's layer includes the cells on them.
     wall_faces: [[bool; 2]; 3],
+    /// The hybrid collision's trace relaxation ([`Flow::set_trace_bulk_one`]): off by default.
+    trace_bulk_one: bool,
     /// The layer per cell, built on first use.
     wall_sigma_layer: std::sync::OnceLock<std::sync::Arc<Vec<bool>>>,
     /// Han et al.'s on-node wall-function bounce (`spalding_bounce`): its boundary nodes.
@@ -1336,6 +1353,7 @@ impl Flow {
             wall_model: setup.wall_model == Some(WallModel::Musker),
             wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounceHalfway),
             wall_layer_sigma_one: false,
+            trace_bulk_one: false,
             wall_faces,
             wall_sigma_layer: std::sync::OnceLock::new(),
             nodes: on_node.then(|| WallNodes::new(node_list, nu)),
@@ -1658,6 +1676,26 @@ impl Flow {
     /// wall-function bounce is not in the layer: the wall law sets its stress.
     pub fn set_wall_layer_sigma_one(&mut self, on: bool) {
         self.wall_layer_sigma_one = on;
+    }
+
+    /// The hybrid collision's trace relaxation: the non-equilibrium density (trace) mode, the Hermite component `|c|² − 1`, is relaxed at
+    /// the bulk rate ω_b = 1 in every cell (`on`; off by default, the hybrid collision's own rate). With σ = 1 in the wall layer
+    /// ([`Flow::set_wall_layer_sigma_one`]) it removes the cell-to-cell mode the layer alone carries along a slot of 8 cells or fewer, and a
+    /// laminar square duct's flow rate is within 1 % of the exact series' at 8 to 16 cells (the plain hybrid collision: 2 to 6 % low). No
+    /// shares and no margin to tune: the rate is one number, in the walls' layer and in the bulk alike. The body force's share of the trace, `u·F` at this rate (Guo), is kept.
+    ///
+    /// **Limits (physics, not numerics).** The bulk rate sets the bulk viscosity ζ = (2/9)(1/ω_b − ½) in lattice units, about 110 times the
+    /// shear viscosity at τ − ½ = 3e-3: the trace mode (dilatation, acoustics) is damped about two orders of magnitude harder than the shear.
+    /// That is right for steady and low-Mach flows, RANS and the incompressible limit, where the density mode only carries noise. It is not
+    /// for aeroacoustics, for compressible transients, or for Mach numbers above about 0.3: there the acoustic waves, shock-like fronts and
+    /// the dilatational dissipation are the physics. Changes every hybrid flow it is on for; acts with the hybrid collision only.
+    pub fn set_trace_bulk_one(&mut self, on: bool) {
+        self.trace_bulk_one = on;
+    }
+
+    /// Whether [`Flow::set_trace_bulk_one`] is on (it is off by default).
+    pub fn trace_bulk_one(&self) -> bool {
+        self.trace_bulk_one
     }
 
     /// Whether [`Flow::set_wall_layer_sigma_one`] is on (it is off by default).
@@ -2385,6 +2423,7 @@ impl Flow {
         let mrt = self.collision == Collision::Mrt;
         let (sigma, gradient_u, grid, periodic) = (self.sigma, &self.gradient_u, self.grid, self.periodic);
         // The wall layer (empty when it is off or the collision is not the hybrid one).
+        let trace_bulk = self.trace_bulk_one && hybrid;
         let sigma_layer: std::sync::Arc<Vec<bool>> =
             if self.wall_layer_sigma_one && hybrid { self.wall_sigma_layer() } else { std::sync::Arc::default() };
         // Dynamic σ's cap on the von Kármán length: the box's shortest extent in cells.
@@ -2587,6 +2626,9 @@ impl Flow {
                         );
                     if turbulent {
                         eddy(nu_model.unwrap_or_else(|| from_rate(w)));
+                    }
+                    if trace_bulk {
+                        remove_density_mode(&mut post, rho, uu, if forced { u[0] * force[0] + u[1] * force[1] + u[2] * force[2] } else { 0.0 });
                     }
                     for (q, v) in post.iter().enumerate() {
                         put(q, *v);
@@ -3032,6 +3074,7 @@ impl crate::backend::Backend for Flow {
             wall_model,
             wall_bounce,
             wall_layer_sigma_one: _,
+            trace_bulk_one: _,
             wall_faces: _,
             wall_sigma_layer: _,
             nodes,
@@ -3373,5 +3416,40 @@ impl crate::backend::Backend for Flow {
 
     fn power_share(&self) -> &[f64] {
         self.thermal.as_ref().and_then(|t| t.solid.as_ref()).map_or(&[], |s| &s.power_share)
+    }
+}
+
+#[cfg(test)]
+mod trace_tests {
+    use super::*;
+
+    /// The trace relaxation at ω_b = 1 leaves the trace the forcing puts in the populations (Guo: `u·F`), takes the rest of the
+    /// non-equilibrium trace, and leaves density and momentum alone.
+    #[test]
+    fn the_trace_relaxation_keeps_the_forcing_trace_and_removes_the_rest() {
+        let mut fq = [0.0; Q];
+        for (q, v) in fq.iter_mut().enumerate() {
+            *v = W[q] * (1.0 + 0.03 * ((q * 7 % 5) as f64 - 2.0));
+        }
+        let rho: f64 = fq.iter().sum();
+        let force = [3e-3, -1e-3, 2e-3];
+        let j: [f64; 3] = [0, 1, 2].map(|k| fq.iter().enumerate().map(|(q, v)| v * f64::from(C[q][k])).sum());
+        let u = [0, 1, 2].map(|k| (j[k] + 0.5 * force[k]) / rho);
+        let uu: f64 = u.iter().map(|x| x * x).sum();
+        let uf: f64 = (0..3).map(|k| u[k] * force[k]).sum();
+        assert!(uf.abs() > 1e-6, "the test needs u·F ≠ 0");
+        let mut post = [0.0; Q];
+        crate::regularized::rebuild(&fq, rho, u, force, true, None, &mut post, |_| 1.7);
+        let moments = |p: &[f64; Q]| {
+            let h: f64 = p.iter().enumerate().map(|(q, v)| v * (f64::from(C[q][0].pow(2) + C[q][1].pow(2) + C[q][2].pow(2)) - 1.0)).sum();
+            let j: [f64; 3] = [0, 1, 2].map(|k| p.iter().enumerate().map(|(q, v)| v * f64::from(C[q][k])).sum());
+            (p.iter().sum::<f64>(), j, h)
+        };
+        let (r0, j0, h0) = moments(&post);
+        assert!((h0 - rho * uu - uf).abs() > 1e-5, "the populations carry a non-equilibrium trace to remove");
+        remove_density_mode(&mut post, rho, uu, uf);
+        let (r1, j1, h1) = moments(&post);
+        assert!((r1 - r0).abs() < 1e-15 && (0..3).all(|k| (j1[k] - j0[k]).abs() < 1e-15), "density and momentum are untouched");
+        assert!((h1 - rho * uu - uf).abs() < 1e-14, "the trace is ρu² + u·F: {} against {}", h1, rho * uu + uf);
     }
 }

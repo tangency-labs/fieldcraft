@@ -245,3 +245,37 @@ fn the_wall_layer_alone_carries_a_mode_on_a_slot_of_6_cells() {
     println!("slot 6, layer only: wall-row alternation {wall:.3e}, flux alternation {flux:.3e}");
     assert!(wall > 1e-2 || flux > 1e-2, "no mode: {wall:e}, {flux:e}");
 }
+
+// ---- the trace relaxation (`Flow::set_trace_bulk_one`) with the layer ----
+
+fn layer_and_trace(f: &mut Flow) {
+    f.set_wall_layer_sigma_one(true);
+    f.set_trace_bulk_one(true);
+}
+
+/// With σ = 1 in the layer and the trace relaxed at ω_b = 1 the slots of 6 and 8 cells carry no more alternation than the plain hybrid
+/// collision (the layer alone has 50 times as much).
+#[test]
+fn the_layer_with_the_trace_relaxation_carries_no_mode_on_slots_of_6_and_8_cells() {
+    for slot in [6, 8] {
+        let plain = slot_alternation(slot, 0.99, |_| {});
+        let both = slot_alternation(slot, 0.99, layer_and_trace);
+        println!("slot {slot}: plain {plain:?}, layer and trace {both:?}");
+        for k in 0..2 {
+            assert!(both[k] < 2.0 * plain[k] + 1e-4, "slot {slot}: alternation {k} {:.3e} against {:.3e} for the plain collision", both[k], plain[k]);
+        }
+    }
+}
+
+/// The periodic duct's flow rate against the series with the layer and the trace relaxation: within 1 % at 8, 12 and 16 cells where the
+/// plain collision is 2 to 6 % off, and closer than the plain collision's at every width.
+#[test]
+fn the_duct_flow_rate_with_the_layer_and_the_trace_relaxation_is_within_one_percent_of_the_series() {
+    for w in [8usize, 12, 16] {
+        let on = duct_ratio(w, layer_and_trace);
+        let plain = duct_ratio(w, |_| {});
+        println!("duct {w} cells: flow rate / exact {on:.5} with the layer and the trace relaxation, {plain:.5} plain");
+        assert!((on - 1.0).abs() < (plain - 1.0).abs() / 2.0, "{w} cells: {on} is not twice as close to 1 as the plain collision's {plain}");
+        assert!((on - 1.0).abs() < 0.01, "{w} cells: {on}");
+    }
+}
