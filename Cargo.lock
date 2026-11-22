@@ -2033,6 +2033,7 @@ name = "fieldcraft-mcp"
 version = "0.8.1"
 dependencies = [
  "fieldcraft-engine",
+ "fieldcraft-geometry",
  "fieldcraft-gpu",
  "fieldcraft-io",
  "fieldcraft-render",

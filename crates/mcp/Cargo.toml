@@ -16,4 +16,5 @@ fieldcraft-render = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+fieldcraft-geometry = { workspace = true }
 fieldcraft-testkit = { workspace = true }

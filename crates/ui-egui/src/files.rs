@@ -22,6 +22,7 @@ use std::task::{Context, Poll, Waker};
 
 use fieldcraft_model::progress::Progress;
 
+pub use fieldcraft_engine::OpenFileKind as Kind;
 use fieldcraft_engine::Session;
 use serde_json::{Value, json};
 use solidcraft_ui_kit as kit;
@@ -98,7 +99,13 @@ pub(crate) struct PendingPicker {
 }
 
 const MODEL: Filter = Filter { name: "FieldCraft model", extensions: &["fieldcraft"] };
-const DESIGN: Filter = Filter { name: "SolidCraft design", extensions: &["sc", "SC", "solidcraft"] };
+const DESIGN: Filter = Filter { name: "SolidCraft design", extensions: &["sc", "SC", "solidcraft", "SOLIDCRAFT"] };
+const GEOMETRY: Filter = Filter {
+    name: "SolidCraft, STEP and IGES geometry",
+    extensions: &["sc", "SC", "solidcraft", "SOLIDCRAFT", "step", "STEP", "stp", "STP", "iges", "IGES", "igs", "IGS"],
+};
+const STEP: Filter = Filter { name: "STEP geometry", extensions: &["step", "stp", "STEP", "STP"] };
+const IGES: Filter = Filter { name: "IGES geometry", extensions: &["iges", "igs", "IGES", "IGS"] };
 const MESH: Filter = Filter { name: "Face-tagged mesh (3MF)", extensions: &["3mf", "3MF"] };
 const ORPHAN: Filter = Filter { name: "Orphan mesh (Gmsh MSH 4.1)", extensions: &["msh", "MSH"] };
 /// The Delete confirmation's icon: the kit's bin, as its delete buttons draw.
@@ -106,62 +113,47 @@ pub(crate) const DELETE_ICON: &str = "delete";
 const SCRIPT: Filter = Filter { name: "FieldCraft script (JSON)", extensions: &["json", "JSON"] };
 /// Largest script File › Run Script… reads (bytes), as `fieldcraft-cli run`.
 const MAX_SCRIPT_BYTES: u64 = 256 * 1024 * 1024;
-const ANY: Filter = Filter { name: "Models, designs and meshes", extensions: &["fieldcraft", "sc", "SC", "solidcraft", "3mf", "3MF", "msh", "MSH"] };
+const ANY: Filter = Filter {
+    name: "Models, designs and meshes",
+    extensions: &[
+        "fieldcraft",
+        "sc",
+        "SC",
+        "solidcraft",
+        "SOLIDCRAFT",
+        "step",
+        "stp",
+        "STEP",
+        "STP",
+        "iges",
+        "igs",
+        "IGES",
+        "IGS",
+        "3mf",
+        "3MF",
+        "msh",
+        "MSH",
+    ],
+};
 
 /// The Open picker's filters: everything FieldCraft opens, then each type.
-pub const OPEN_FILTERS: &[Filter] = &[ANY, MODEL, DESIGN, MESH, ORPHAN];
+pub const OPEN_FILTERS: &[Filter] = &[ANY, MODEL, DESIGN, STEP, IGES, MESH, ORPHAN];
 
-/// What opening a file does with it, from its extension.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    /// A `.fieldcraft` model replaces the session (`file.open`).
-    Model,
-    /// A `.sc` (or older `.solidcraft`) design becomes the geometry (`geometry.open`).
-    Design,
-    /// A `.3mf` face-tagged mesh is added as a surface (`geometry.import.mesh`).
-    Mesh,
-    /// A `.msh` orphan mesh replaces the mesh (`mesh.import.orphan`).
-    Orphan,
+/// The picker's filters when the user asked for this kind (its own type first).
+fn filters(kind: Kind) -> &'static [Filter] {
+    match kind {
+        Kind::Model => &[MODEL, ANY],
+        Kind::Design => &[GEOMETRY, DESIGN, STEP, IGES, ANY],
+        Kind::Mesh => &[MESH, ANY],
+        Kind::Orphan => &[ORPHAN, ANY],
+    }
 }
 
-impl Kind {
-    /// The kind of a file by its extension (any case); `None` for a file FieldCraft does not open.
-    pub fn of(path: &str) -> Option<Kind> {
-        let ext = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
-        match ext.as_str() {
-            "fieldcraft" => Some(Kind::Model),
-            "sc" | "solidcraft" => Some(Kind::Design),
-            "3mf" => Some(Kind::Mesh),
-            "msh" => Some(Kind::Orphan),
-            _ => None,
-        }
-    }
-
-    pub fn command(self) -> &'static str {
-        match self {
-            Kind::Model => "file.open",
-            Kind::Design => "geometry.open",
-            Kind::Mesh => "geometry.import.mesh",
-            Kind::Orphan => "mesh.import.orphan",
-        }
-    }
-
-    /// The picker's filters when the user asked for this kind (its own type first).
-    fn filters(self) -> &'static [Filter] {
-        match self {
-            Kind::Model => &[MODEL, ANY],
-            Kind::Design => &[DESIGN, ANY],
-            Kind::Mesh => &[MESH, ANY],
-            Kind::Orphan => &[ORPHAN, ANY],
-        }
-    }
-
-    /// What the window says while it opens and once it has.
-    fn verbs(self) -> (&'static str, &'static str) {
-        match self {
-            Kind::Model | Kind::Design => ("Opening", "Opened"),
-            Kind::Mesh | Kind::Orphan => ("Importing", "Imported"),
-        }
+/// What the window says while it opens and once it has.
+fn verbs(kind: Kind) -> (&'static str, &'static str) {
+    match kind {
+        Kind::Model | Kind::Design => ("Opening", "Opened"),
+        Kind::Mesh | Kind::Orphan => ("Importing", "Imported"),
     }
 }
 
@@ -898,7 +890,7 @@ impl ModelApp {
         let path = kind_of_command(command).and(params.get("path")).and_then(Value::as_str).map(str::to_string);
         let (title, done) = match (kind_of_command(command), &path) {
             (Some(kind), Some(path)) => {
-                let (doing, done) = kind.verbs();
+                let (doing, done) = verbs(kind);
                 (format!("{doing} {}", file_name(path)), format!("{done} {}", file_name(path)))
             }
             _ => (label.clone(), format!("{label} done")),
@@ -917,7 +909,7 @@ impl ModelApp {
             self.open_form(kind.unwrap_or(Kind::Model).command(), json!({}));
             return;
         }
-        self.pick_file(FilePicker::Open { filters: kind.map_or(OPEN_FILTERS, Kind::filters).to_vec() }, PickerAction::Open);
+        self.pick_file(FilePicker::Open { filters: kind.map_or(OPEN_FILTERS, filters).to_vec() }, PickerAction::Open);
     }
 
     /// File › Run Script…: pick a JSON script (an array of `{"command", "params"}`, or a journal)
@@ -959,7 +951,9 @@ impl ModelApp {
     pub fn open_path(&mut self, path: &str) {
         let Some(kind) = Kind::of(path) else {
             self.set_status(
-                format!("{path}: FieldCraft opens .fieldcraft models, .solidcraft designs, .3mf tagged meshes and .msh orphan meshes"),
+                format!(
+                    "{path}: FieldCraft opens .fieldcraft models, .solidcraft designs, STEP/IGES geometry, .3mf tagged meshes and .msh orphan meshes"
+                ),
                 true,
             );
             return;
@@ -978,7 +972,7 @@ impl ModelApp {
             return;
         }
         let name = file_name(&path);
-        let (doing, done) = kind.verbs();
+        let (doing, done) = verbs(kind);
         self.begin_job(kind.command(), json!({"path": path}), format!("{doing} {name}"), format!("{done} {name}"), Some(path));
     }
 
@@ -1472,7 +1466,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         let fraction = app.loading.as_ref().and_then(|l| l.progress.snapshot().fraction());
         let text = match app.loading.as_ref() {
             Some(l) => l.line(),
-            None => "Drop to open: .fieldcraft models, .solidcraft designs, .3mf tagged meshes, .msh orphan meshes".into(),
+            None => "Drop to open: .fieldcraft models, .solidcraft designs, STEP/IGES geometry, .3mf tagged meshes, .msh orphan meshes".into(),
         };
         let mut cancel = false;
         // A notification surface (the kit's Toast), independent of the workspace layout, with the
@@ -1873,7 +1867,7 @@ pub(crate) mod tests {
         app.wait_loaded();
         assert!(app.session.model.node(1).is_some());
         app.open_dialog(Some(Kind::Mesh));
-        assert_eq!(chooser.requests.borrow().last(), Some(&FilePicker::Open { filters: Kind::Mesh.filters().to_vec() }));
+        assert_eq!(chooser.requests.borrow().last(), Some(&FilePicker::Open { filters: filters(Kind::Mesh).to_vec() }));
         // A bad import is still handled by the normal error path without replacing the model.
         *chooser.answer.borrow_mut() = Some(Some(dir.join("missing.3mf").to_string_lossy().into_owned()));
         app.poll_picker();
@@ -2263,6 +2257,18 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn open_design_offers_all_geometry_formats_in_its_first_filter() {
+        let mut app = ModelApp::new(Session::default());
+        let chooser = deferred(&mut app);
+        app.open_dialog(Some(Kind::Design));
+        let requests = chooser.requests.borrow();
+        let FilePicker::Open { filters } = &requests[0] else { panic!("expected an open dialog") };
+        for suffix in ["sc", "SC", "solidcraft", "SOLIDCRAFT", "step", "STEP", "stp", "STP", "iges", "IGES", "igs", "IGS"] {
+            assert!(filters[0].extensions.contains(&suffix), "{suffix}");
+        }
+    }
+
+    #[test]
     fn file_types_dispatch_to_their_command() {
         assert_eq!(Kind::of("a/b.fieldcraft"), Some(Kind::Model));
         assert_eq!(Kind::of("B.SOLIDCRAFT"), Some(Kind::Design));
@@ -2271,10 +2277,36 @@ pub(crate) mod tests {
         assert_eq!(Kind::of("part.3MF").map(Kind::command), Some("geometry.import.mesh"));
         assert_eq!(Kind::of("part.MSH").map(Kind::command), Some("mesh.import.orphan"));
         assert!(is_long("mesh.import.orphan"));
-        assert_eq!(Kind::of("part.step"), None);
+        for path in ["part.step", "part.StP", "part.IGES", "part.igs"] {
+            assert_eq!(Kind::of(path).map(Kind::command), Some("geometry.open"));
+        }
+        assert_eq!(Kind::of("part.unknown"), None);
         assert_eq!(Kind::of("noext"), None);
         assert_eq!(with_extension("a/b".into(), "fieldcraft"), "a/b.fieldcraft");
         assert_eq!(with_extension("a/b.FIELDCRAFT".into(), "fieldcraft"), "a/b.FIELDCRAFT");
+    }
+
+    #[test]
+    fn step_picker_opens_the_assembly_and_a_failed_drop_keeps_it() {
+        let dir = temp("step-picker");
+        let path = dir.join("assembly.STP").to_string_lossy().into_owned();
+        std::fs::write(&path, fieldcraft_geometry::sample::step_assembly(10.0).unwrap()).unwrap();
+        let offered = Rc::new(RefCell::new(Vec::new()));
+        let mut app = ModelApp::new(Session::default());
+        app.services.pick_open = Some(answering(Some(path.clone()), offered.clone()));
+        app.open_dialog(None);
+        assert!(offered.borrow()[0].contains(&STEP));
+        assert_eq!(app.busy(), Some("Opening assembly.STP"));
+        app.wait_loaded();
+        assert_eq!(app.session.design.as_ref().unwrap().bodies.len(), 2);
+        assert_eq!(app.recent.paths, [path]);
+        let broken = dir.join("empty.step");
+        std::fs::write(&broken, []).unwrap();
+        app.open_path(&broken.to_string_lossy());
+        app.wait_loaded();
+        assert!(app.status.as_ref().is_some_and(|s| s.error && s.text.contains("empty.step")));
+        assert_eq!(app.session.design.as_ref().unwrap().bodies.len(), 2);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

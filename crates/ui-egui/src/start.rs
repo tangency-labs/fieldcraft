@@ -213,7 +213,14 @@ fn start<'a>(app: &'a ModelApp, ctx: &egui::Context) -> Start<'a, Action> {
     let actions = vec![
         tile("start:tile:new", "new", "New model", "Empty: add geometry, a mesh and the setup".into(), true, Action::New),
         tile("start:tile:open", "open", "Open…", format!("A model, a design or a mesh ({open_key})"), false, Action::Open(None)),
-        tile("start:tile:design", "open", "Open design…", "A SolidCraft design, to mesh and set up".into(), false, Action::Open(Some(Kind::Design))),
+        tile(
+            "start:tile:design",
+            "open",
+            "Open design…",
+            "SolidCraft, STEP or IGES geometry to mesh and set up".into(),
+            false,
+            Action::Open(Some(Kind::Design)),
+        ),
         tile("start:tile:mesh", "import", "Import mesh…", "A face-tagged 3MF surface mesh".into(), false, Action::Open(Some(Kind::Mesh))),
         tile("start:tile:deck", "import", "Read deck…", "An Abaqus, Nastran or LS-DYNA input deck".into(), false, Action::ReadDeck),
     ];
@@ -245,7 +252,7 @@ fn recent_row(path: &str) -> Recent<'static, Action> {
     let folder = std::path::Path::new(path).parent().map(|p| p.display().to_string()).unwrap_or_default();
     let kind = match Kind::of(path) {
         Some(Kind::Model) => "Model",
-        Some(Kind::Design) => "SolidCraft design",
+        Some(Kind::Design) => "CAD geometry",
         Some(Kind::Mesh) => "Tagged mesh",
         Some(Kind::Orphan) => "Orphan mesh",
         None => "",

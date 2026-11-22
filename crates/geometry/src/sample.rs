@@ -127,6 +127,38 @@ pub fn plate_design(p: &Plate) -> Result<Vec<u8>> {
     solidcraft_io::write_design_container(&doc).map_err(failed)
 }
 
+/// A 2 × 3 × 4 mm IGES solid named Pad.
+pub fn iges_block() -> Result<Vec<u8>> {
+    let shape = crate::block([0.0; 3], [2.0, 3.0, 4.0])?;
+    let text = solidcraft_kernel::guard("write sample IGES", || {
+        solidcraft_kernel::iges_export_bodies(
+            &[solidcraft_kernel::ExportBody { name: "Pad".into(), body: &shape.body, color: None }],
+            &solidcraft_kernel::StepHeader::default(),
+        )
+    })?;
+    Ok(text.into_bytes())
+}
+
+/// A STEP assembly with two occurrences of the same 2 × 3 × 4 mm block.
+/// The second component is translated along X by `offset` millimetres.
+pub fn step_assembly(offset: f64) -> Result<Vec<u8>> {
+    use solidcraft_kernel::{ExportBody, ExportProduct, StepHeader, guard, step_export_products};
+    if !offset.is_finite() || offset.abs() > MAX_DIMENSION {
+        return Err(Error::Invalid(format!("sample occurrence offset out of range: {offset}")));
+    }
+    let shape = crate::block([0.0; 3], [2.0, 3.0, 4.0])?;
+    let placement = |x| [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [x, 0.0, 0.0, 1.0]];
+    let pair = ExportProduct {
+        name: "Pair".into(),
+        bodies: vec![],
+        children: vec![(1, placement(0.0), "Left".into()), (1, placement(offset), "Right".into())],
+    };
+    let pad =
+        ExportProduct { name: "Pad".into(), bodies: vec![ExportBody { name: "Insert".into(), body: &shape.body, color: None }], children: vec![] };
+    let text = guard("write sample STEP assembly", || step_export_products(&[pair, pad], 0, &StepHeader::default()))?;
+    Ok(text.into_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

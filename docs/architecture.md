@@ -51,6 +51,12 @@ Rules beyond the layer order:
   scripts (`script_design`, through `solidcraft-engine`) for the test corpus; the library opens
   designs without it.
 
+Opening a STEP or IGES source uses SolidCraft’s in-memory import feature in
+`fieldcraft-geometry`. SolidCraft places each product occurrence and supplies body and
+face identities. The original CAD file is the geometry source referenced (or embedded)
+by the model. Reopening a revised file goes through the usual geometry reconciliation.
+A native open runs on the same background job as opening a SolidCraft design.
+
 ### SolidCraft pin
 
 `solidcraft-*` come from https://github.com/tangency-labs/solidcraft (formerly

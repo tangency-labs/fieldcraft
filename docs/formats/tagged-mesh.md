@@ -1,6 +1,6 @@
 # Face-tagged meshes (3MF with B-rep face tags)
 
-Besides opening a `.solidcraft` design, geometry can enter FieldCraft as a triangulated boundary
+Besides opening a SolidCraft design, STEP or IGES file, geometry can enter FieldCraft as a triangulated boundary
 surface written by another program, with each triangle tagged by the B-rep face it lies on.
 FieldCraft reads it into a `SurfaceMesh` (`fieldcraft_geometry::tagged_mesh`, command
 `geometry.import.mesh`) without involving the kernel.

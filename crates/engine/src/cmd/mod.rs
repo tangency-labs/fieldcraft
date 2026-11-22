@@ -338,8 +338,8 @@ fn path_param<'a>(p: &'a Value, key: &str) -> Result<&'a str> {
 
 /// A required path parameter naming a file (or folder) the command reads or writes: the path
 /// to use, checked against the session's [`Session::file_access`] (as given while unconfined;
-/// resolved, links followed, when confined). Every command that touches a file named by a
-/// parameter takes its path from here.
+/// resolved, links followed, when confined). A command that also needs the requested name
+/// can use [`path_param`] and [`Session::checked_path`] separately.
 pub(crate) fn file_param(s: &Session, p: &Value, key: &str, access: Access) -> Result<String> {
     s.checked_path(path_param(p, key)?, access)
 }

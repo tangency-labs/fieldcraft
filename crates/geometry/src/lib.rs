@@ -30,7 +30,7 @@ mod script;
 pub mod stitch;
 pub mod virtual_faces;
 
-pub use design::{DESIGN_FORMAT, Design, FeatureError, MAX_DESIGN_BYTES, open_design};
+pub use design::{DESIGN_FORMAT, Design, FeatureError, MAX_DESIGN_BYTES, design_file_limit, is_exchange_file, open_design, open_geometry};
 pub use edges::{EDGE_TOLERANCE, Edge, Vertex};
 pub use features::{BodyFeatures, Curve, FeatureNode, ProfileGeometry, SketchGeometry};
 pub use partition::{Cut, CutReport};

@@ -84,8 +84,10 @@ The same part also meshes all-hex automatically with the octree mesher (`mesh.he
 
 ## What it does today
 
-- **Geometry in:** SolidCraft designs (`.solidcraft`) with persistent face, edge and body names,
-  and face-tagged 3MF meshes; surface checks (weld, manifold, orientation, self-intersection).
+- **Geometry in:** Open a SolidCraft design, STEP or IGES file from File → Open or drop it on
+  the viewport. CAD bodies keep their placement and faces for meshing and named sets. FieldCraft
+  also reads face-tagged 3MF meshes and checks surfaces for welding, manifoldness, orientation
+  and self-intersection.
 - **Meshing:** constrained Delaunay tetrahedra (tet4, tet10) with exact predicates and a
   certified validity gate; Delaunay refinement, smoothing and sliver removal; structured hex by
   sweeping, revolving and mapping (hex8, hex20), and conforming multi-block hex across a part
