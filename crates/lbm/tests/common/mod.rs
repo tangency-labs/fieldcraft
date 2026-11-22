@@ -5,6 +5,7 @@
 pub mod curved_cht;
 pub mod inlet;
 pub mod pressure_zone;
+pub mod slot_bed;
 
 use std::collections::BTreeMap;
 
