@@ -376,12 +376,13 @@ pub struct LdltFactor {
 
 impl LdltFactor {
     pub fn new(a: &UpperColumns, max_entries: usize) -> std::result::Result<LdltFactor, FactorError> {
-        LdltFactor::from_symbolic(&Symbolic::new(a, max_entries)?)
+        LdltFactor::from_symbolic(&Symbolic::new(a, max_entries)?, a)
     }
 
-    pub(crate) fn from_symbolic(symbolic: &Symbolic) -> std::result::Result<LdltFactor, FactorError> {
+    pub(crate) fn from_symbolic(symbolic: &Symbolic, a: &UpperColumns) -> std::result::Result<LdltFactor, FactorError> {
+        let lower = symbolic.numeric(a)?;
         let mut blocks = symbolic.allocate()?.into_iter().map(|values| Block { values, ..Block::default() }).collect::<Vec<_>>();
-        symbolic.factor(&mut blocks, supernode)?;
+        symbolic.factor(&lower, &mut blocks, supernode)?;
         let mut inertia = Inertia::default();
         let mut two_by_two = 0;
         for b in &blocks {
@@ -447,9 +448,9 @@ impl Symmetric {
             Kind::Indefinite => LdltFactor::new(a, max_entries).map(Symmetric::Indefinite),
             Kind::Auto => {
                 let symbolic = Symbolic::new(a, max_entries)?;
-                match Factor::from_symbolic(&symbolic) {
+                match Factor::from_symbolic(&symbolic, a) {
                     Ok(f) => Ok(Symmetric::Cholesky(f)),
-                    Err(FactorError::NotPositiveDefinite { .. }) => LdltFactor::from_symbolic(&symbolic).map(Symmetric::Indefinite),
+                    Err(FactorError::NotPositiveDefinite { .. }) => LdltFactor::from_symbolic(&symbolic, a).map(Symmetric::Indefinite),
                     Err(e) => Err(e),
                 }
             }
