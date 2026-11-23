@@ -37,6 +37,8 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
+# Complex scalars for the complex-symmetric solves (MIT OR Apache-2.0; docs/adr/0001-libraries.md).
+num-complex = "0.4"
 # Pure-Rust maths (a port of musl's libm) for the transcendental functions that place nodes or
 # decide a mesh: the same bits on every platform, where the system library's (macOS libm, glibc)
 # are not correctly rounded and differ in the last bits (#438, #115).

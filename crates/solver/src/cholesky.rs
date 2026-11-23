@@ -36,6 +36,7 @@
 
 use fieldcraft_parallel as parallel;
 
+use crate::scalar::Scalar;
 use crate::{Error, Result};
 
 /// Relative pivot size below which the matrix counts as singular.
@@ -62,17 +63,17 @@ const SUBTREE_SHARE: usize = 256;
 /// The upper triangle of a symmetric matrix by columns: column k holds A(i, k) for i ≤ k, rows
 /// sorted.
 #[derive(Debug, Clone)]
-pub struct UpperColumns {
+pub struct UpperColumns<T = f64> {
     pub n: usize,
     pub ptr: Vec<usize>,
     pub idx: Vec<usize>,
-    pub val: Vec<f64>,
+    pub val: Vec<T>,
 }
 
-impl UpperColumns {
+impl<T: Scalar> UpperColumns<T> {
     /// From a symmetric matrix stored by full rows (row k's entries with column ≤ k are column k
     /// of the upper triangle).
-    pub fn from_symmetric(a: &crate::sparse::Csr) -> UpperColumns {
+    pub fn from_symmetric(a: &crate::sparse::Csr<T>) -> UpperColumns<T> {
         let mut ptr = Vec::with_capacity(a.n + 1);
         ptr.push(0);
         let mut idx = Vec::new();
@@ -89,8 +90,10 @@ impl UpperColumns {
         }
         UpperColumns { n: a.n, ptr, idx, val }
     }
+}
 
-    fn column(&self, k: usize) -> (&[usize], &[f64]) {
+impl<T> UpperColumns<T> {
+    fn column(&self, k: usize) -> (&[usize], &[T]) {
         let (a, b) = (self.ptr.get(k).copied().unwrap_or(0), self.ptr.get(k + 1).copied().unwrap_or(0));
         (self.idx.get(a..b).unwrap_or_default(), self.val.get(a..b).unwrap_or_default())
     }
@@ -99,7 +102,7 @@ impl UpperColumns {
 const NONE: usize = usize::MAX;
 
 /// The elimination tree: parent of each column, `NONE` at roots.
-fn etree(a: &UpperColumns) -> Vec<usize> {
+fn etree<T>(a: &UpperColumns<T>) -> Vec<usize> {
     let mut parent = vec![NONE; a.n];
     let mut ancestor = vec![NONE; a.n];
     for k in 0..a.n {
@@ -127,7 +130,7 @@ fn etree(a: &UpperColumns) -> Vec<usize> {
 /// The pattern of row k of L (excluding the diagonal): the reach of column k's entries in the
 /// elimination tree. Fills `stack[top..]` and returns `top`; `mark` holds `k` for visited
 /// columns.
-fn ereach(a: &UpperColumns, k: usize, parent: &[usize], stack: &mut [usize], mark: &mut [usize], path: &mut Vec<usize>) -> usize {
+fn ereach<T>(a: &UpperColumns<T>, k: usize, parent: &[usize], stack: &mut [usize], mark: &mut [usize], path: &mut Vec<usize>) -> usize {
     let n = a.n;
     let mut top = n;
     if let Some(m) = mark.get_mut(k) {
@@ -158,12 +161,12 @@ fn ereach(a: &UpperColumns, k: usize, parent: &[usize], stack: &mut [usize], mar
 }
 
 /// The entries of the Cholesky factor of `a`'s pattern, in its own order, without values.
-pub(crate) fn factor_entries(a: &UpperColumns) -> usize {
+pub(crate) fn factor_entries<T>(a: &UpperColumns<T>) -> usize {
     symbolic(a).1.iter().sum()
 }
 
 /// The elimination tree and the entry count of each column of L, without computing values.
-fn symbolic(a: &UpperColumns) -> (Vec<usize>, Vec<usize>) {
+fn symbolic<T>(a: &UpperColumns<T>) -> (Vec<usize>, Vec<usize>) {
     let parent = etree(a);
     let mut counts = vec![1usize; a.n];
     let mut stack = vec![0; a.n];
@@ -302,19 +305,19 @@ pub(crate) fn offset(m: usize, c: usize) -> usize {
 
 /// A dense lower trapezoid of m rows: one supernode's values, column by column, column c
 /// holding rows c..m of the supernode's row structure.
-pub(crate) struct Panel<'a> {
+pub(crate) struct Panel<'a, T> {
     pub(crate) m: usize,
-    pub(crate) data: &'a [f64],
+    pub(crate) data: &'a [T],
 }
 
-impl Panel<'_> {
+impl<T: Scalar> Panel<'_, T> {
     /// L(r, c) for r ≥ c.
-    pub(crate) fn at(&self, r: usize, c: usize) -> f64 {
-        self.data.get(offset(self.m, c) + r - c).copied().unwrap_or(0.0)
+    pub(crate) fn at(&self, r: usize, c: usize) -> T {
+        self.data.get(offset(self.m, c) + r - c).copied().unwrap_or(T::ZERO)
     }
 
     /// Rows r..r+len of column c (r ≥ c).
-    pub(crate) fn column(&self, c: usize, r: usize, len: usize) -> &[f64] {
+    pub(crate) fn column(&self, c: usize, r: usize, len: usize) -> &[T] {
         let start = offset(self.m, c) + r - c;
         self.data.get(start..start + len).unwrap_or_default()
     }
@@ -333,12 +336,12 @@ pub(crate) enum Pivot {
 
 /// `row` (entries for the columns k0.. of a trapezoid) ← `row` D, with D the block diagonal the
 /// trapezoid holds for those columns and `pivots` its pivots from column k0.
-pub(crate) fn times_d(row: &mut [f64], l: &Panel, k0: usize, pivots: &[Pivot]) {
+pub(crate) fn times_d<T: Scalar>(row: &mut [T], l: &Panel<T>, k0: usize, pivots: &[Pivot]) {
     let mut k = 0;
     while k < row.len() {
         let d = |r: usize, c: usize| l.at(k0 + r, k0 + c);
         if pivots.get(k) == Some(&Pivot::First) {
-            let (a, b) = (row.get(k).copied().unwrap_or(0.0), row.get(k + 1).copied().unwrap_or(0.0));
+            let (a, b) = (row.get(k).copied().unwrap_or(T::ZERO), row.get(k + 1).copied().unwrap_or(T::ZERO));
             let (d11, d21, d22) = (d(k, k), d(k + 1, k), d(k + 1, k + 1));
             if let Some(x) = row.get_mut(k) {
                 *x = a * d11 + b * d21;
@@ -361,10 +364,17 @@ pub(crate) fn times_d(row: &mut [f64], l: &Panel, k0: usize, pivots: &[Pivot]) {
 /// (Cholesky), or L D with D the block diagonal the trapezoid holds when `pivots` (of the
 /// columns `cols`) are given. Returned by row tiles: tile t holds rows t·TILE.. as
 /// `tile[c * TILE + i]`.
-pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: usize, wu: usize, pivots: Option<&[Pivot]>) -> Vec<Vec<f64>> {
+pub(crate) fn products<T: Scalar>(
+    l: &Panel<T>,
+    cols: std::ops::Range<usize>,
+    p: usize,
+    mu: usize,
+    wu: usize,
+    pivots: Option<&[Pivot]>,
+) -> Vec<Vec<T>> {
     let (k0, kw) = (cols.start, cols.len());
     // Rows p..p+wu of the columns, transposed so that column c's coefficients are contiguous.
-    let mut yt = vec![0.0; wu * kw];
+    let mut yt = vec![T::ZERO; wu * kw];
     for k in 0..kw {
         for (c, y) in l.column(k0 + k, p, wu).iter().enumerate() {
             if let Some(slot) = yt.get_mut(c * kw + k) {
@@ -378,7 +388,7 @@ pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: us
         }
     }
     // Y by blocks of NR columns, k-major (zero past wu): what a micro-tile reads at each k.
-    let mut yp = vec![[0.0f64; NR]; wu.div_ceil(NR) * kw];
+    let mut yp = vec![[T::ZERO; NR]; wu.div_ceil(NR) * kw];
     for (c, row) in yt.chunks(kw.max(1)).enumerate().take(wu) {
         for (k, y) in row.iter().enumerate() {
             if let Some(slot) = yp.get_mut((c / NR) * kw + k).and_then(|b| b.get_mut(c % NR)) {
@@ -387,11 +397,11 @@ pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: us
         }
     }
     let tiles = mu.div_ceil(TILE);
-    let tile = |t: usize| -> Vec<f64> {
+    let tile = |t: usize| -> Vec<T> {
         let i0 = t * TILE;
         let h = TILE.min(mu - i0);
         // The tile's rows of every column by blocks of MR rows, k-major, padded to TILE rows.
-        let mut xp = vec![[0.0f64; MR]; TILE / MR * kw];
+        let mut xp = vec![[T::ZERO; MR]; TILE / MR * kw];
         for k in 0..kw {
             for (i, x) in l.column(k0 + k, p + i0, h).iter().enumerate() {
                 if let Some(slot) = xp.get_mut((i / MR) * kw + k).and_then(|b| b.get_mut(i % MR)) {
@@ -400,17 +410,17 @@ pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: us
             }
         }
         let cols = wu.min(i0 + h);
-        let mut out = vec![0.0; cols * TILE];
+        let mut out = vec![T::ZERO; cols * TILE];
         // Micro-tiles of MR rows and NR columns: each S(i, c) is summed in a register over k in
         // order from 0, the same operations as one column at a time, with each X and Y value
         // loaded once per micro-tile.
         for (b, ys) in yp.chunks(kw.max(1)).enumerate().take(cols.div_ceil(NR)) {
             for (r, xs) in xp.chunks(kw.max(1)).enumerate() {
-                let mut acc = [[0.0f64; MR]; NR];
+                let mut acc = [[T::ZERO; MR]; NR];
                 for (x, y) in xs.iter().zip(ys) {
                     for (a, yj) in acc.iter_mut().zip(y) {
                         for (ai, xi) in a.iter_mut().zip(x) {
-                            *ai += xi * yj;
+                            *ai += *xi * *yj;
                         }
                     }
                 }
@@ -430,7 +440,7 @@ pub(crate) fn products(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: us
 }
 
 /// own(rel(i), rel(c)) −= S(i, c) for i ≥ c, with S in the tiles of [`products`].
-pub(crate) fn subtract(own: &mut [f64], m: usize, tiles: &[Vec<f64>], mu: usize, wu: usize, rel: impl Fn(usize) -> usize) {
+pub(crate) fn subtract<T: Scalar>(own: &mut [T], m: usize, tiles: &[Vec<T>], mu: usize, wu: usize, rel: impl Fn(usize) -> usize) {
     for (t, tile) in tiles.iter().enumerate() {
         let i0 = t * TILE;
         let h = TILE.min(mu - i0);
@@ -439,7 +449,7 @@ pub(crate) fn subtract(own: &mut [f64], m: usize, tiles: &[Vec<f64>], mu: usize,
             for i in i0.max(c)..i0 + h {
                 let rr = rel(i);
                 if let (Some(x), Some(s)) = (own.get_mut(offset(m, cc) + rr - cc), tile.get(c * TILE + i - i0)) {
-                    *x -= s;
+                    *x -= *s;
                 }
             }
         }
@@ -449,7 +459,7 @@ pub(crate) fn subtract(own: &mut [f64], m: usize, tiles: &[Vec<f64>], mu: usize,
 /// Rows c1..m of the panel c0..c1 solved against its factored diagonal block, by tiles of
 /// [`TILE`] rows (`tile[c * TILE + i]`): L(r, c) −= L(r, k) L(c, k) for the panel's k < c in
 /// order, then ÷ L(c, c).
-fn solve_below(l: &Panel, c0: usize, c1: usize) -> Vec<Vec<f64>> {
+fn solve_below(l: &Panel<f64>, c0: usize, c1: usize) -> Vec<Vec<f64>> {
     let (m, pw) = (l.m, c1 - c0);
     let tiles = (m - c1).div_ceil(TILE);
     let tile = |t: usize| -> Vec<f64> {
@@ -496,7 +506,7 @@ pub(crate) struct Pattern {
 }
 
 impl Pattern {
-    fn new(a: &UpperColumns, inverse: &[usize]) -> Pattern {
+    fn new<T>(a: &UpperColumns<T>, inverse: &[usize]) -> Pattern {
         let n = a.n;
         let new = |i: usize| inverse.get(i).copied().unwrap_or(0);
         let mut ptr = vec![0usize; n + 1];
@@ -561,25 +571,25 @@ impl Pattern {
 
 /// The values of the matrix in postorder, on a [`Pattern`]: entries, diagonal and the largest
 /// magnitude of each row (= column) of the whole symmetric matrix.
-pub(crate) struct Lower {
-    val: Vec<f64>,
-    diag: Vec<f64>,
+pub(crate) struct Lower<T> {
+    val: Vec<T>,
+    diag: Vec<T>,
     pub(crate) scale: Vec<f64>,
 }
 
 /// What a supernode's factorization reads: the matrix, the structure and the updates each
 /// supernode receives.
-pub(crate) struct Context<'a> {
-    pub(crate) a: &'a Lower,
+pub(crate) struct Context<'a, T> {
+    pub(crate) a: &'a Lower<T>,
     pattern: &'a Pattern,
     pub(crate) s: &'a Structure,
     updates: &'a [Vec<Update>],
 }
 
 /// What the numeric factorization of one kind keeps per supernode.
-pub(crate) trait Supernode: Send + Sync {
+pub(crate) trait Supernode<T>: Send + Sync {
     /// The supernode's values: its lower trapezoid by columns.
-    fn values(&self) -> &[f64];
+    fn values(&self) -> &[T];
     /// The pivots of D (symmetric indefinite factors), `None` for Cholesky.
     fn pivots(&self) -> Option<&[Pivot]>;
     /// Local pivot position to symbolic column within this supernode; identity for Cholesky.
@@ -589,9 +599,9 @@ pub(crate) trait Supernode: Send + Sync {
     }
 }
 
-impl Supernode for Vec<f64> {
+impl<T: Scalar> Supernode<T> for Vec<T> {
     #[inline]
-    fn values(&self) -> &[f64] {
+    fn values(&self) -> &[T] {
         self
     }
     #[inline]
@@ -601,12 +611,12 @@ impl Supernode for Vec<f64> {
 }
 
 /// Shared triangular solve, with Cholesky's diagonal or LDLᵀ's unit L and block diagonal D.
-pub(crate) fn solve_supernodes<T: Supernode>(n: usize, perm: &[usize], s: &Structure, blocks: &[T], b: &mut [f64]) -> Result<()> {
+pub(crate) fn solve_supernodes<T: Scalar, S: Supernode<T>>(n: usize, perm: &[usize], s: &Structure, blocks: &[S], b: &mut [T]) -> Result<()> {
     if b.len() != n {
         return Err(Error::Internal("right-hand side length".into()));
     }
-    let mut x: Vec<f64> = perm.iter().map(|&j| b.get(j).copied().unwrap_or(0.0)).collect();
-    let get = |v: &[f64], i: usize| v.get(i).copied().unwrap_or(0.0);
+    let mut x: Vec<T> = perm.iter().map(|&j| b.get(j).copied().unwrap_or(T::ZERO)).collect();
+    let get = |v: &[T], i: usize| v.get(i).copied().unwrap_or(T::ZERO);
     let mut scratch = Vec::new();
     // L z = P b, then D⁻¹, by supernodes; the supernode's own unknowns are left in pivot
     // order for the backward pass.
@@ -628,17 +638,17 @@ pub(crate) fn solve_supernodes<T: Supernode>(n: usize, perm: &[usize], s: &Struc
             let end = q + if pivots.and_then(|p| p.get(q)) == Some(&Pivot::First) { 2 } else { 1 };
             let mut yq = get(y, q);
             if pivots.is_none() {
-                yq /= t.data.get(offset(m, q)).copied().unwrap_or(1.0);
+                yq /= t.data.get(offset(m, q)).copied().unwrap_or(T::ONE);
                 if let Some(v) = y.get_mut(q) {
                     *v = yq;
                 }
             }
             for (v, l) in y.get_mut(end..w).unwrap_or_default().iter_mut().zip(t.column(q, end, w - end)) {
-                *v -= l * yq;
+                *v -= *l * yq;
             }
             for (&r, l) in rows.get(w..).unwrap_or_default().iter().zip(t.column(q, w, m - w)) {
                 if let Some(v) = tail.get_mut(r.wrapping_sub(f + w)) {
-                    *v -= l * yq;
+                    *v -= *l * yq;
                 }
             }
         }
@@ -692,13 +702,13 @@ pub(crate) fn solve_supernodes<T: Supernode>(n: usize, perm: &[usize], s: &Struc
             };
             let mut sum = get(y, q);
             for (v, l) in y.get(end..w).unwrap_or_default().iter().zip(t.column(q, end, w - end)) {
-                sum -= l * v;
+                sum -= *l * *v;
             }
             for (&r, l) in rows.get(w..).unwrap_or_default().iter().zip(t.column(q, w, m - w)) {
-                sum -= l * get(tail, r.wrapping_sub(f + w));
+                sum -= *l * get(tail, r.wrapping_sub(f + w));
             }
             if pivots.is_none() {
-                sum /= t.data.get(offset(m, q)).copied().unwrap_or(1.0);
+                sum /= t.data.get(offset(m, q)).copied().unwrap_or(T::ONE);
             }
             if let Some(v) = y.get_mut(q) {
                 *v = sum;
@@ -724,18 +734,18 @@ fn internal(what: &str) -> FactorError {
     FactorError::Internal(format!("supernodal factorization: {what}"))
 }
 
-impl Context<'_> {
+impl<T: Scalar> Context<'_, T> {
     /// Supernode `j` assembled into `own`: its columns of A minus the update L_K Y_Kᵀ of every
     /// descendant K that reaches it (Y = L, or L D), in supernode order; the descendants are
     /// `done[k - base]`.
-    pub(crate) fn assemble<T: Supernode>(&self, j: usize, done: &[T], base: usize, own: &mut [f64]) -> std::result::Result<(), FactorError> {
+    pub(crate) fn assemble<S: Supernode<T>>(&self, j: usize, done: &[S], base: usize, own: &mut [T]) -> std::result::Result<(), FactorError> {
         let rows = self.s.rows(j);
         let cols = self.s.cols(j);
         let (m, w, f) = (rows.len(), cols.len(), cols.start);
         if own.len() != trapezoid(m, w) {
             return Err(internal("supernode size"));
         }
-        own.fill(0.0);
+        own.fill(T::ZERO);
         // The columns of A.
         for c in 0..w {
             let range = self.pattern.range(f + c);
@@ -775,7 +785,10 @@ impl Context<'_> {
         }
         Ok(())
     }
+}
 
+/// Cholesky's numeric factorization of a supernode (real: the diagonal is a square root).
+impl Context<'_, f64> {
     /// Factor supernode `j` into `own`; its descendants' values are `done[k - base]`. Fails with
     /// the first column (postorder) whose pivot is not positive.
     fn supernode(&self, j: usize, done: &[Vec<f64>], base: usize, own: &mut [f64]) -> std::result::Result<(), FactorError> {
@@ -858,7 +871,7 @@ pub(crate) struct Symbolic {
 impl Symbolic {
     /// The structure of the factor of `a`, refused before any numeric memory is taken when the
     /// factor would hold more than `max_entries` entries.
-    pub(crate) fn new(a: &UpperColumns, max_entries: usize) -> std::result::Result<Symbolic, FactorError> {
+    pub(crate) fn new<T>(a: &UpperColumns<T>, max_entries: usize) -> std::result::Result<Symbolic, FactorError> {
         let n = a.n;
         let internal = |what: &str| FactorError::Internal(format!("supernodal structure: {what}"));
         let (parent0, counts0) = symbolic(a);
@@ -1038,13 +1051,13 @@ impl Symbolic {
 
     /// The values of `a` in the analysed order. `a` must have the pattern the analysis was made
     /// from.
-    pub(crate) fn numeric(&self, a: &UpperColumns) -> std::result::Result<Lower, FactorError> {
+    pub(crate) fn numeric<T: Scalar>(&self, a: &UpperColumns<T>) -> std::result::Result<Lower<T>, FactorError> {
         let p = &self.pattern;
         if a.ptr != p.upper_ptr || a.idx != p.upper_idx || a.val.len() != p.slot.len() {
             return Err(internal("the matrix's pattern differs from the analysed one"));
         }
-        let mut val = vec![0.0; p.idx.len()];
-        let mut diag = vec![0.0; self.n];
+        let mut val = vec![T::ZERO; p.idx.len()];
+        let mut diag = vec![T::ZERO; self.n];
         let mut scale = vec![0.0f64; self.n];
         for (e, (&v, &(r, c))) in a.val.iter().zip(&p.coords).enumerate() {
             if let Some(x) = p.slot.get(e).and_then(|&at| val.get_mut(at)) {
@@ -1057,7 +1070,7 @@ impl Symbolic {
             }
             for x in [r, c] {
                 if let Some(s) = scale.get_mut(x) {
-                    *s = s.max(v.abs());
+                    *s = s.max(v.modulus());
                 }
             }
         }
@@ -1065,14 +1078,14 @@ impl Symbolic {
     }
 
     /// Zeroed memory for every supernode's trapezoid, taken without aborting.
-    pub(crate) fn allocate(&self) -> std::result::Result<Vec<Vec<f64>>, FactorError> {
+    pub(crate) fn allocate<T: Scalar>(&self) -> std::result::Result<Vec<Vec<T>>, FactorError> {
         let ns = self.supernodes();
-        let mut values: Vec<Vec<f64>> = Vec::new();
+        let mut values: Vec<Vec<T>> = Vec::new();
         values.try_reserve_exact(ns).map_err(|_| FactorError::OutOfMemory { entries: self.entries })?;
         for s in 0..ns {
             let mut v = Vec::new();
             v.try_reserve_exact(self.structure.size(s)).map_err(|_| FactorError::OutOfMemory { entries: self.entries })?;
-            v.resize(self.structure.size(s), 0.0);
+            v.resize(self.structure.size(s), T::ZERO);
             values.push(v);
         }
         Ok(values)
@@ -1083,16 +1096,16 @@ impl Symbolic {
     /// supernodes above them in order. A numeric failure is the first failing column in
     /// postorder (the one a pass in order would meet first, whichever thread meets it), named by
     /// its original column.
-    pub(crate) fn factor<T: Supernode>(
+    pub(crate) fn factor<T: Scalar, S: Supernode<T>>(
         &self,
-        a: &Lower,
-        values: &mut [T],
-        supernode: impl Fn(&Context, usize, &[T], usize, &mut T) -> std::result::Result<(), FactorError> + Sync,
+        a: &Lower<T>,
+        values: &mut [S],
+        supernode: impl Fn(&Context<T>, usize, &[S], usize, &mut S) -> std::result::Result<(), FactorError> + Sync,
     ) -> std::result::Result<(), FactorError> {
         let context = Context { a, pattern: &self.pattern, s: &self.structure, updates: &self.updates };
         // The tasks run in parallel, each through its supernodes in order.
-        let mut pieces: Vec<(std::ops::Range<usize>, &mut [T], Option<FactorError>)> = Vec::with_capacity(self.tasks.len());
-        let mut rest: &mut [T] = values;
+        let mut pieces: Vec<(std::ops::Range<usize>, &mut [S], Option<FactorError>)> = Vec::with_capacity(self.tasks.len());
+        let mut rest: &mut [S] = values;
         let mut at = 0;
         for range in &self.tasks {
             let (_, tail) = std::mem::take(&mut rest).split_at_mut(range.start - at);
@@ -1201,7 +1214,14 @@ mod tests {
 
     /// [`products`] one output column at a time, its sum over k in order: the reference the
     /// micro-tiles reorganise.
-    fn products_by_columns(l: &Panel, cols: std::ops::Range<usize>, p: usize, mu: usize, wu: usize, pivots: Option<&[Pivot]>) -> Vec<Vec<f64>> {
+    fn products_by_columns(
+        l: &Panel<'_, f64>,
+        cols: std::ops::Range<usize>,
+        p: usize,
+        mu: usize,
+        wu: usize,
+        pivots: Option<&[Pivot]>,
+    ) -> Vec<Vec<f64>> {
         let (k0, kw) = (cols.start, cols.len());
         let mut yt = vec![0.0; wu * kw];
         for k in 0..kw {
