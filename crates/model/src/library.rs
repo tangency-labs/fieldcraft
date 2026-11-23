@@ -32,10 +32,14 @@ pub const DEFAULT_TEMPERATURE: f64 = crate::units::CELSIUS_ZERO + 20.0;
 /// Stable entry names and labels, also used by command forms.
 pub const CHOICES: &[(&str, &str)] = &[
     ("EN10025-S235", "S235 structural steel"),
+    ("EN10025-S275", "S275 structural steel"),
     ("EN10025-S355", "S355 structural steel"),
+    ("EN10025-S460N", "S460N structural steel"),
     ("EN10088-14301", "1.4301 / 304 stainless steel"),
     ("EN10088-14401", "1.4401 / 316 stainless steel"),
+    ("AA5083-H111", "5083-H111 aluminium"),
     ("AA6061-T6", "6061-T6 aluminium"),
+    ("AA6063-T6", "6063-T6 aluminium"),
     ("AA6082-T6", "6082-T6 aluminium"),
     ("AA7075-T6", "7075-T6 aluminium"),
     ("AA2024-T3", "2024-T3 aluminium"),
@@ -415,7 +419,7 @@ mod tests {
     #[test]
     fn catalogue_is_cited_and_materials_remain_si_in_every_display_system() {
         let all = entries().unwrap();
-        assert_eq!(all.len(), 10);
+        assert_eq!(all.len(), 14);
         validate(all).unwrap();
         for e in all {
             let material = e.material(293.15, 293.15).unwrap();
@@ -498,6 +502,23 @@ mod tests {
         assert!(stainless.material(-1.0, 293.15).is_err());
         assert!(stainless.material(f64::INFINITY, 293.15).is_err());
         assert!(stainless.material(293.15, f64::NAN).is_err());
+
+        let s275 = entry("EN10025-S275").unwrap();
+        assert!(close(s275.value(Property::Yield).unwrap(), 275e6));
+        assert!(close(s275.value(Property::Tensile).unwrap(), 410e6));
+        let s460 = entry("EN10025-S460N").unwrap();
+        assert!(close(s460.value(Property::Yield).unwrap(), 460e6));
+        assert!(close(s460.value(Property::Tensile).unwrap(), 540e6));
+        let al5083 = entry("AA5083-H111").unwrap();
+        assert!(close(al5083.value(Property::Conductivity).unwrap(), 120.0));
+        assert!(close(al5083.value(Property::SpecificHeat).unwrap(), 1030.0));
+        assert!(close(al5083.value(Property::Yield).unwrap(), 125e6));
+        assert!(close(al5083.value(Property::Tensile).unwrap(), 275e6));
+        let al6063 = entry("AA6063-T6").unwrap();
+        assert!(close(al6063.value(Property::Conductivity).unwrap(), 201.0));
+        assert!(close(al6063.value(Property::SpecificHeat).unwrap(), 901.0));
+        assert!(close(al6063.value(Property::Yield).unwrap(), 170e6));
+        assert!(close(al6063.value(Property::Tensile).unwrap(), 215e6));
     }
 
     /// EN 1993-1-2's carbon-steel specific heat (J/(kg K)) and conductivity (W/(m K)) at `c` °C,
@@ -539,7 +560,7 @@ mod tests {
 
         // EN 1993-1-2 3.4.1 (carbon steel), in °C.
         let celsius = |f: fn(f64) -> f64| move |t: f64| f(t - CELSIUS_ZERO);
-        for id in ["EN10025-S235", "EN10025-S355"] {
+        for id in ["EN10025-S235", "EN10025-S275", "EN10025-S355", "EN10025-S460N"] {
             each_point(id, Property::SpecificHeat, celsius(steel_specific_heat));
             each_point(id, Property::Conductivity, celsius(steel_conductivity));
             // Between the points too: within 0.1 % of the equations, through the 735 °C peak.

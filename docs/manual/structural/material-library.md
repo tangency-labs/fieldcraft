@@ -2,7 +2,7 @@
 
 The Material menu offers **Browse Material Library** and **Add Library Material**. The same
 actions are `model.material.library.list` and `model.material.library.add` in scripts, the CLI and
-MCP. Browse all ten entries, or filter `family` to `steel`, `stainless`, `aluminium`,
+MCP. Browse all fourteen entries, or filter `family` to `steel`, `stainless`, `aluminium`,
 `titanium` or `fluid`. Adding an entry creates an ordinary editable material; it refuses a taken name.
 
 ```json
@@ -21,10 +21,14 @@ not supplied by this small catalogue. No network request or external data file i
 | Entry id | Material and main qualification |
 |---|---|
 | `EN10025-S235` | S235 hot-rolled steel, nominal thickness up to 40 mm |
+| `EN10025-S275` | S275JR hot-rolled steel; published DoP strength minimums for nominal thickness up to 16 mm |
 | `EN10025-S355` | S355 hot-rolled steel, nominal thickness up to 40 mm |
+| `EN10025-S460N` | S460N normalized fine-grain steel plate; published DoP strength minimums for nominal thickness 3-16 mm |
 | `EN10088-14301` | 1.4301 / 304 stainless, hot-rolled plate up to 75 mm |
 | `EN10088-14401` | 1.4401 / 316 stainless, hot-rolled plate up to 75 mm |
+| `AA5083-H111` | Rolled 5083-H111 sheet; EN 485-2 strength minimums for 3.0-6.3 mm (Alumeco); thermal properties from Hydro 5083 sheet |
 | `AA6061-T6` | Wrought 6061-T6; no product-specific strength selected |
+| `AA6063-T6` | Extruded 6063-T6 profile; strength row for wall thickness up to 10 mm |
 | `AA6082-T6` | Extruded 6082-T6; strength row for 5-20 mm specimen cross-section |
 | `AA7075-T6` | Wrought 7075-T6; no product-specific strength selected |
 | `AA2024-T3` | Bare 2024-T3 sheet, 0.010-0.128 inch, explicitly legacy handbook edition |
@@ -39,7 +43,7 @@ constant. A curve is linear between its points and held at its end values outsid
 
 | Entry | Curves | Source |
 |---|---|---|
-| `EN10025-S235`, `EN10025-S355` | conductivity and specific heat 20-1200 C, through the 5000 J/(kg K) specific heat peak at 735 C | The EN 1993-1-2:2005 (3.4.1) carbon-steel design equations as an open paper reproduces them (Abeysiriwardena and Mahendran, Thin-Walled Structures 180 (2022) 109792, accepted manuscript on QUT ePrints, p. 19, Eqs. (27)-(32)), evaluated densely enough that specific-heat interpolation stays within 0.1 % of its equations |
+| `EN10025-S235`, `EN10025-S275`, `EN10025-S355`, `EN10025-S460N` | conductivity and specific heat 20-1200 C, through the 5000 J/(kg K) specific heat peak at 735 C | The EN 1993-1-2:2005 (3.4.1) carbon-steel design equations as an open paper reproduces them (Abeysiriwardena and Mahendran, Thin-Walled Structures 180 (2022) 109792, accepted manuscript on QUT ePrints, p. 19, Eqs. (27)-(32)), evaluated densely enough that specific-heat interpolation stays within 0.1 % of its equations |
 | `air` | viscosity, conductivity, density, 200-400 K every 10 K | U.S. Standard Atmosphere 1976, eq. (51) and (53) p. 19, eq. (42) at 101325 Pa p. 15 |
 
 Adding such an entry makes a material that keeps the whole curves (saved in the model, so a later
@@ -87,8 +91,11 @@ The original small curation in [materials.json](../../../crates/model/data/mater
 individual cited facts; it does not copy a handbook table layout or another product's material
 library. Standards are cited by number, edition, clause or table and, where checked, page; the catalogue does
 not link to third-party copies. Steel/stainless calculation constants come from the explicitly
-cited EN 1993 editions;
-6082 constants use EN 1999-1-1 and the product-specific Hydro sheet. Stainless physical values
+cited EN 1993 editions, with S275JR and S460N minimum strengths taken from published
+thyssenkrupp Steel Europe EN 10025-1 Declarations of Performance;
+5083, 6063 and 6082 elastic constants use EN 1999-1-1, paired with product-specific
+Alumeco (5083-H111 strength) and Hydro sheets (5083 thermal properties; 6063 and 6082
+thermal and strength values). Stainless physical values
 are from Outokumpu's public Core/Supra Table 7. NASA's public 1972 alloy handbooks identify the
 6061/7075 elastic constants and physical-property temperature ranges. Ti-6Al-4V combines NASA's
 nominal design tensile modulus with TIMET's cited room-temperature physical values: it is an

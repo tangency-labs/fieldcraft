@@ -19,7 +19,7 @@ pub const LIST: CommandSpec = CommandSpec {
 pub const ADD: CommandSpec = CommandSpec {
     id: "model.material.library.add",
     label: "Add Library Material",
-    params: r#"{"entry": "EN10025-S235|EN10025-S355|EN10088-14301|EN10088-14401|AA6061-T6|AA6082-T6|AA7075-T6|AA2024-T3|Ti6Al4V-annealed|air", "name"?: "Steel" (default: entry id), "reference_temperature"?: 20 (default 20 °C; bare numbers in display units, or a value with its unit), "temperature"?: 20 (default 20 °C: where temperature-dependent properties give their constants)} — create an isotropic material (a Newtonian fluid for air) from cited properties, refusing duplicate names. Temperature curves are saved with the material: heat transfer follows its conductivity, specific heat and density curves, a fluid step with heat its viscosity curve; other solvers use the constants taken at `temperature`, with a warning when it lies outside a curve (the end value is taken). The stress-free temperature is your modelling choice. Missing data stays absent; strength data is reported but never applied as plasticity/damage/failure criteria."#,
+    params: r#"{"entry": "EN10025-S235|EN10025-S275|EN10025-S355|EN10025-S460N|EN10088-14301|EN10088-14401|AA5083-H111|AA6061-T6|AA6063-T6|AA6082-T6|AA7075-T6|AA2024-T3|Ti6Al4V-annealed|air", "name"?: "Steel" (default: entry id), "reference_temperature"?: 20 (default 20 °C; bare numbers in display units, or a value with its unit), "temperature"?: 20 (default 20 °C: where temperature-dependent properties give their constants)} — create an isotropic material (a Newtonian fluid for air) from cited properties, refusing duplicate names. Temperature curves are saved with the material: heat transfer follows its conductivity, specific heat and density curves, a fluid step with heat its viscosity curve; other solvers use the constants taken at `temperature`, with a warning when it lies outside a curve (the end value is taken). The stress-free temperature is your modelling choice. Missing data stays absent; strength data is reported but never applied as plasticity/damage/failure criteria."#,
     form: Some(super::forms::MATERIAL_LIBRARY),
     kind: CommandKind::Model,
     requires: &[],
@@ -124,9 +124,11 @@ mod tests {
         let mut s = Session::default();
         let before = s.revision();
         let all = s.execute(LIST.id, &json!({})).unwrap();
-        assert_eq!(all["count"], 10);
+        assert_eq!(all["count"], 14);
+        let steel = s.execute(LIST.id, &json!({"family": "steel"})).unwrap();
+        assert_eq!(steel["count"], 4);
         let aluminium = s.execute(LIST.id, &json!({"family": "aluminium"})).unwrap();
-        assert_eq!(aluminium["count"], 4);
+        assert_eq!(aluminium["count"], 6);
         assert_eq!(s.revision(), before);
         for e in aluminium["entries"].as_array().unwrap() {
             assert_eq!(e["family"], "aluminium");
