@@ -497,8 +497,9 @@ pub static CATALOGUE: &[Capability] = &[
         "Mark the elements below quality limits as a set, located and drawn in the marker colour",
     ),
     ready("mesh.verify", "Verify Set", Mesh, "Verify", "Quality metrics and the certified validity check of one set's elements, the worst listed"),
-    ready("mesh.export.stl", "Export STL", Mesh, "Verify", "Write the mesh's outer surface (or a set's faces) as binary STL"),
     ready_more("mesh.tag", "Tag Geometry", Mesh, "Verify", "Tag elements, faces, edges and nodes with the geometry they mesh", &["mesh.tag.clear"]),
+    ready("mesh.export.stl", "Export STL", Mesh, "Export", "Write the mesh's outer surface (or a set's faces) as binary STL"),
+    ready("mesh.export.vol", "Export Netgen Mesh", Mesh, "Export", "Write a linear 2D or 3D mesh with named regions and boundaries as Netgen VOL"),
     // ---- Properties ----
     ready_more(
         "model.material.create",

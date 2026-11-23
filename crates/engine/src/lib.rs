@@ -1269,12 +1269,16 @@ mod tests {
 
     pub(crate) struct TempDir(std::path::PathBuf);
     impl TempDir {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let dir = std::env::temp_dir().join(format!("fieldcraft-engine-{}-{n}", std::process::id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::create_dir(&dir).unwrap();
             TempDir(dir)
+        }
+
+        pub(crate) fn path(&self) -> &std::path::Path {
+            &self.0
         }
     }
     impl Drop for TempDir {

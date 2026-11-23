@@ -333,6 +333,8 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, bounds: Rect, anchor:
             _ => {}
         }
     }
+    let can_browse = app.has_save_picker();
+    let mut browse = false;
     let session = &app.session;
     let selection = &app.pick.selection;
     // The set Use selection will make on OK is offered with the others.
@@ -432,6 +434,9 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, bounds: Rect, anchor:
                     d.refused = None;
                 }
                 d.touched.extend(out.touched);
+                if spec.id == "mesh.export.vol" && can_browse {
+                    browse = kit::button(ui, "Browse…", kit::Button::Normal).backing_on_hover_text("Choose the output mesh file").clicked();
+                }
             }
             _ => {
                 kit::status_line(ui, "These parameters do not fit this form: cancel it and start the command again", kit::StatusTone::Error);
@@ -493,6 +498,8 @@ fn form(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, bounds: Rect, anchor:
     }
     if cancel {
         app.close_dialog();
+    } else if browse {
+        app.browse_vol_path();
     } else if let Some((collection, path)) = create {
         app.create_from_form(collection, path);
     } else if action == kit::Action::Ok && ready {
@@ -965,6 +972,21 @@ mod tests {
             assert_eq!(shown(&mut app, &ctx), ["context:form", "context:reply"], "{report}");
             assert_eq!(typed(&app), before, "{report}: the form stays, with what was typed in it");
         }
+    }
+
+    #[test]
+    fn vol_file_field_accepts_a_pasted_path() {
+        let ctx = egui::Context::default();
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        app.open_form("mesh.export.vol", json!({"path": ""}));
+        shown(&mut app, &ctx);
+        let opening = app.dialog.as_ref().unwrap().opening;
+        let id = egui::Id::unique(("fc_form", egui::Id::unique(("fc_form", "mesh.export.vol", opening)), "path"));
+        ctx.memory_mut(|m| m.request_focus(id));
+        frame(&mut app, &ctx, vec![]);
+        frame(&mut app, &ctx, vec![egui::Event::Paste("/mesh output/coil.vol".into())]);
+        let params: Value = serde_json::from_str(&app.dialog.as_ref().unwrap().text).unwrap();
+        assert_eq!(params["path"], "/mesh output/coil.vol");
     }
 
     /// Show on a row of Check Model selects what it names and the report stays open, its other

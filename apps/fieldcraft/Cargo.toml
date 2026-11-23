@@ -27,7 +27,7 @@ fieldcraft-ui-egui = { workspace = true }
 fieldcraft-io = { workspace = true }
 fieldcraft-update = { workspace = true }
 rfd = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "clipboard", "wayland", "x11"] }
 egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }

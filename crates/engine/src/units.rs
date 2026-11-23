@@ -153,6 +153,7 @@ pub enum Frame {
 pub fn frame(id: &str) -> Frame {
     const INPUT: &[&str] = &["mesh.block", "mesh.export.stl", "mesh.import.orphan"];
     const SI_MESH: &[&str] = &[
+        "mesh.export.vol",
         "mesh.node.add",
         "mesh.node.remove",
         "mesh.element.add",
