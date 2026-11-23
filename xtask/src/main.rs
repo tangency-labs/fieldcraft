@@ -11,7 +11,9 @@ mod assets;
 mod book;
 mod icons;
 mod layers;
+mod libm_calls;
 mod licences;
+mod rust_source;
 mod skill;
 mod test;
 mod unit_factors;
@@ -63,12 +65,14 @@ commands:
                   and the flags CI plans its jobs with: everything (manifest, lock file,
                   toolchain, xtask or workflows changed), solver (the heavy tests or the oracle
                   are affected), wasm (a crate the wasm check builds is affected)
+  libm            check the CPU result crates for std transcendental methods (exp, sin, powf, …) that
+                  must go through libm:: (#1038); the known list of unconverted files is in libm_calls.rs
   unit-factors    check for literal unit-conversion factors (1e-3, 1e6, 273.15, 25.4, …) written
                   outside the unit table, crates/model/src/units (docs/units.md); the geometry
                   frame is reported apart until its change lands
   wasm            cargo check every library crate and the web app for wasm32-unknown-unknown
   ci [--affected REV]
-                  fmt --check, assets, layers, unit-factors, clippy -D warnings, then the tests
+                  fmt --check, assets, layers, unit-factors, libm, clippy -D warnings, then the tests
                   (not the heavy ones) with the wasm check alongside (stops at the first failing
                   step); --affected REV lints and tests only the crates `affected --base REV`
                   lists, and checks wasm only when it flags wasm
@@ -117,6 +121,7 @@ fn main() -> ExitCode {
             run(c, "oracle")
         }
         Some("unit-factors") => unit_factors::run(&root()),
+        Some("libm") => libm_calls::run(&root()),
         Some("wasm") => cmd_wasm(),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");
@@ -247,7 +252,8 @@ fn quick_gates() -> Result<(), String> {
     run(c, "cargo fmt --check")?;
     assets::run(&root())?;
     cmd_layers()?;
-    unit_factors::run(&root())
+    unit_factors::run(&root())?;
+    libm_calls::run(&root())
 }
 
 /// `ci --affected REV`: the quick gates, then clippy and the tests of the affected crates only, and
