@@ -163,13 +163,15 @@ pub static MESHERS: &[(&str, Targets)] = &[
     ("mesh.mirror", super::mirror::image_names),
 ];
 
-/// `body`, the imported `surface`, or every body of the open design.
+/// `body`, or every body of the open design (the volume meshers' retired `surface` is refused,
+/// [`super::hex::refuse_surface`]).
 fn body_or_all(s: &Session, p: &Value) -> Result<Vec<String>> {
-    match (p.get("body"), p.get("surface")) {
-        (Some(b), None) => Ok(vec![b.as_str().ok_or_else(|| EngineError::param("body", crate::schema::ProblemKind::NotAName))?.to_string()]),
-        (None, Some(_)) => Ok(vec![super::hex::surface(s, p)?.0]),
-        (None, None) => design_bodies(s),
-        _ => Err(EngineError::Params("give `body` or `surface`, not both".into())),
+    if p.get("surface").is_some() {
+        return Err(super::hex::refuse_surface(s, p));
+    }
+    match p.get("body") {
+        Some(b) => Ok(vec![b.as_str().ok_or_else(|| EngineError::param("body", crate::schema::ProblemKind::NotAName))?.to_string()]),
+        None => design_bodies(s),
     }
 }
 

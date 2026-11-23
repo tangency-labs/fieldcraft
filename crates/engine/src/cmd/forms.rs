@@ -1513,7 +1513,6 @@ const FEATURE_ANGLE: Field = range("feature_angle", "Feature angle", D::Degree, 
 
 pub const TET: &[Field] = &[
     BODY,
-    SURFACE,
     positive("size", "Element size", D::Length)
         .help("Target element edge length. Several elements through the thinnest wall are needed for accurate stresses.")
         .hint("1/20 of the diagonal"),
@@ -1542,7 +1541,6 @@ const HEX_ORDER: Field =
 
 pub const HEX_GENERATE: &[Field] = &[
     BODY,
-    SURFACE,
     HEX_SIZE,
     HEX_ORDER,
     choice(
@@ -1574,7 +1572,6 @@ const HEX_METHOD_NOTES: &[(&str, &str)] = &[
 
 pub const HEX_SWEEP: &[Field] = &[
     BODY,
-    SURFACE,
     HEX_SIZE,
     HEX_ORDER,
     choice("method", "Method", &[("swept", "Any sweep"), ("extrude", "Extrude"), ("sweep", "Sweep"), ("revolve", "Revolve")])
@@ -1587,7 +1584,7 @@ pub const HEX_SWEEP: &[Field] = &[
     FEATURE_ANGLE,
 ];
 
-pub const HEX_MAPPED: &[Field] = &[BODY, SURFACE, HEX_SIZE, HEX_ORDER, TOLERANCE, WELD, WELD_DISTANCE, FEATURE_ANGLE];
+pub const HEX_MAPPED: &[Field] = &[BODY, HEX_SIZE, HEX_ORDER, TOLERANCE, WELD, WELD_DISTANCE, FEATURE_ANGLE];
 
 pub const HEX_BLOCKS: &[Field] = &[
     references("bodies", "Cells", C::Body)
@@ -1830,7 +1827,6 @@ pub const SYMMETRY: &[Field] = &[
 
 pub const HEX_OCTREE: &[Field] = &[
     BODY,
-    SURFACE,
     HEX_SIZE,
     TOLERANCE,
     int("max_depth", "Refinement levels", 0, 5)

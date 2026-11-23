@@ -1,7 +1,6 @@
 //! Structured hexahedral meshing of the open design's bodies or of imported surfaces.
 
 use crate::schema::ProblemKind;
-use std::borrow::Cow;
 
 use fieldcraft_geometry::{FaceSurface, Shape, SurfaceMesh};
 use fieldcraft_mesh::hex::{BoundaryFace, Cell, HexMesh, HexMethod, HexOptions, MAX_CELLS, Surface, hex_mesh, hex_mesh_cells};
@@ -16,10 +15,10 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const HEX_GENERATE: CommandSpec = CommandSpec {
     id: "mesh.hex.generate",
     label: "Hex Mesh",
-    params: r#"{"body": "Body1" (default: every body of the open design) or "surface": 0 (an imported surface), "size": 2.0 (element size, a length; default 1/25 of the bounding-box diagonal), "order": 1 (hex8) or 2 (hex20, mid-edge nodes on the geometry), "method": "auto" (default) | "swept" (any sweep) | "extrude" | "sweep" | "revolve" | "mapped", "tolerance": 0.05 (chordal tolerance of the tessellation, a length; default 1e-3 of the diagonal)} — replaces the meshes of the bodies it meshes (as mesh.tet.generate; other bodies keep theirs) with structured hexahedra: multi-level sweeps along a direction or around an axis (their cross-section cut into mappable blocks automatically: O-grids round holes, triangle primitives, four-sided blocks; nothing is added to the model), one-to-one sweeps through linking faces, or mapped blocks. Boundary element faces are tagged with their B-rep faces (named as in geometry.bodies; by index when a face has no name; `weld`, `weld_distance` and `feature_angle` as in mesh.tet.generate), so sets by geometry resolve. Edge seeds (mesh.seed.edge) set the counts and spacing of their edges: exact seeds are held, and seeds that cannot all hold (opposite sides of a mapped face, the layers between two levels) are an error naming them. Size controls (mesh.size.set) set the division counts and spacing of the other edges through the graded size field (a structured mesh carries a count across its block, so a control refines the whole layer or row it lies in). Reports per body the method, counts and quality; a body no structured method fits is an error that says why"#,
+    params: r#"{"body": "Body1" (default: every body of the open design; an imported surface, named as a body or by its index as "surface", is refused: triangles without a B-rep are never volume-meshed), "size": 2.0 (element size, a length; default 1/25 of the bounding-box diagonal), "order": 1 (hex8) or 2 (hex20, mid-edge nodes on the geometry), "method": "auto" (default) | "swept" (any sweep) | "extrude" | "sweep" | "revolve" | "mapped", "tolerance": 0.05 (chordal tolerance of the tessellation, a length; default 1e-3 of the diagonal)} — replaces the meshes of the bodies it meshes (as mesh.tet.generate; other bodies keep theirs) with structured hexahedra: multi-level sweeps along a direction or around an axis (their cross-section cut into mappable blocks automatically: O-grids round holes, triangle primitives, four-sided blocks; nothing is added to the model), one-to-one sweeps through linking faces, or mapped blocks. Boundary element faces are tagged with their B-rep faces (named as in geometry.bodies; by index when a face has no name; `weld`, `weld_distance` and `feature_angle` as in mesh.tet.generate), so sets by geometry resolve. Edge seeds (mesh.seed.edge) set the counts and spacing of their edges: exact seeds are held, and seeds that cannot all hold (opposite sides of a mapped face, the layers between two levels) are an error naming them. Size controls (mesh.size.set) set the division counts and spacing of the other edges through the graded size field (a structured mesh carries a count across its block, so a control refines the whole layer or row it lies in). Reports per body the method, counts and quality; a body no structured method fits is an error that says why"#,
     form: Some(super::forms::HEX_GENERATE),
     kind: CommandKind::Model,
-    requires: &[Requirement::Geometry],
+    requires: &[Requirement::Design],
     run: hex_generate,
 };
 
@@ -33,9 +32,9 @@ const DEFAULT_RELATIVE_SIZE: f64 = 1.0 / 25.0;
 pub(super) const DEFAULT_RELATIVE_TOLERANCE: f64 = 1e-3; // unit-factors: relative to the bounding-box diagonal
 
 /// One body to mesh (also the input of `mesh.hex.octree`).
-pub(super) struct Input<'a> {
+pub(super) struct Input {
     pub(super) name: String,
-    pub(super) mesh: Cow<'a, SurfaceMesh>,
+    pub(super) mesh: SurfaceMesh,
     pub(super) surfaces: Vec<Option<Surface>>,
     pub(super) face_names: Vec<String>,
     pub(super) diagonal: f64,
@@ -81,7 +80,7 @@ fn diagonal(lo: [f64; 3], hi: [f64; 3]) -> f64 {
 /// (defaulting to [`DEFAULT_RELATIVE_TOLERANCE`] of the bounding-box diagonal, refused below
 /// [`MIN_RELATIVE_TOLERANCE`]), each face's classification surface, and the B-rep pieces of
 /// its merged faces.
-pub(super) fn shape_input(shape: &Shape, tolerance: Option<f64>) -> Result<Input<'static>> {
+pub(super) fn shape_input(shape: &Shape, tolerance: Option<f64>) -> Result<Input> {
     let diag = shape.size()?;
     let tol = tolerance.unwrap_or(DEFAULT_RELATIVE_TOLERANCE * diag);
     if tol < MIN_RELATIVE_TOLERANCE * diag {
@@ -94,61 +93,56 @@ pub(super) fn shape_input(shape: &Shape, tolerance: Option<f64>) -> Result<Input
     let surfaces = shape.face_surfaces()?.into_iter().map(|f| f.map(analytic)).collect();
     let face_names = shape.faces().iter().map(|f| f.name.clone()).collect();
     let (mesh, pieces) = shape.tessellate_pieces(tol)?;
-    Ok(Input { name: shape.name.clone(), mesh: Cow::Owned(mesh), surfaces, face_names, diagonal: diag, seeds: Vec::new(), pieces })
+    Ok(Input { name: shape.name.clone(), mesh, surfaces, face_names, diagonal: diag, seeds: Vec::new(), pieces })
 }
 
-/// The imported surface `surface` names, with the body name its mesh is tagged with.
-pub(super) fn surface<'a>(s: &'a Session, p: &Value) -> Result<(String, &'a fieldcraft_geometry::tagged_mesh::TaggedSurface)> {
-    let n = s.surfaces.len();
-    let index = p.get("surface").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok()).filter(|&i| i < n);
-    let index = index.ok_or_else(|| EngineError::Params(format!("`surface` must be the index of an imported surface (there are {n})")))?;
-    let t = s.surfaces.get(index).ok_or_else(|| EngineError::Params("no such surface".into()))?;
-    let name = if t.name.trim().is_empty() { format!("Surface{index}") } else { t.name.clone() };
-    Ok((name, t))
+/// The refusal of an imported surface: triangles without a B-rep, never volume-meshed (#1049).
+/// It names the surface's file (its name when it came from no file) and the way out.
+fn no_brep(t: &fieldcraft_geometry::tagged_mesh::TaggedSurface) -> EngineError {
+    EngineError::Params(fieldcraft_geometry::formats::no_brep(if t.file.is_empty() { &t.name } else { &t.file }))
 }
 
-pub(super) fn inputs<'a>(s: &'a Session, p: &Value) -> Result<Vec<Input<'a>>> {
+/// The error for a body name the design lacks: an imported surface of that name is refused
+/// ([`no_brep`]).
+pub(super) fn no_body(s: &Session, name: &str) -> EngineError {
+    match s.surfaces.iter().find(|t| t.name == name) {
+        Some(t) => no_brep(t),
+        None => EngineError::Params(format!("no body `{name}` (open a design first)")),
+    }
+}
+
+/// The refusal of the volume meshers' retired `surface` (an imported surface by index, as scripts
+/// written before #1049 give it): [`no_brep`] for the surface it names.
+pub(super) fn refuse_surface(s: &Session, p: &Value) -> EngineError {
+    let named = p.get("surface").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok()).and_then(|i| s.surfaces.get(i));
+    match named {
+        Some(t) => no_brep(t),
+        None => EngineError::Params(format!(
+            "`surface` names an imported surface (there are {}), and those are triangles without a B-rep: volume meshing takes a design `body`",
+            s.surfaces.len()
+        )),
+    }
+}
+
+pub(super) fn inputs(s: &Session, p: &Value) -> Result<Vec<Input>> {
+    if p.get("surface").is_some() {
+        return Err(refuse_surface(s, p));
+    }
     let tolerance = number(p, "tolerance")?;
-    match (p.get("body"), p.get("surface")) {
-        (Some(b), None) => {
+    match p.get("body") {
+        Some(b) => {
             let name = b.as_str().ok_or_else(|| EngineError::param("body", ProblemKind::NotAName))?;
-            let shape = s
-                .design
-                .as_deref()
-                .and_then(|d| d.body(name))
-                .ok_or_else(|| EngineError::Params(format!("no body `{name}` (open a design first)")))?;
+            let shape = s.design.as_deref().and_then(|d| d.body(name)).ok_or_else(|| no_body(s, name))?;
             Ok(vec![Input { seeds: super::seeds::edge_seeds(s)?, ..shape_input(shape, tolerance)? }])
         }
-        (None, Some(_)) => {
-            let (name, t) = surface(s, p)?;
-            let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-            for q in &t.mesh.positions {
-                for k in 0..3 {
-                    lo[k] = lo[k].min(q[k]);
-                    hi[k] = hi[k].max(q[k]);
-                }
-            }
-            // Faces named by index, as mesh.tet.generate names them.
-            let face_names = (0..t.faces).map(|f| f.to_string()).collect();
-            Ok(vec![Input {
-                name,
-                mesh: Cow::Borrowed(&t.mesh),
-                surfaces: Vec::new(),
-                face_names,
-                diagonal: diagonal(lo, hi),
-                seeds: Vec::new(),
-                pieces: Vec::new(),
-            }])
-        }
-        (None, None) => {
-            let design = s.design.as_deref().ok_or_else(|| EngineError::Params("open a design first, or give `surface`".into()))?;
+        None => {
+            let design = s.design.as_deref().ok_or_else(|| EngineError::Params("open a design first".into()))?;
             if design.bodies.is_empty() || design.bodies.len() > MAX_BODIES {
                 return Err(EngineError::Params(format!("the design has {} bodies; meshing takes 1 to {MAX_BODIES}", design.bodies.len())));
             }
             let seeds = super::seeds::edge_seeds(s)?;
             design.bodies.iter().map(|b| Ok(Input { seeds: seeds.clone(), ..shape_input(b, tolerance)? })).collect()
         }
-        _ => Err(EngineError::Params("give `body` or `surface`, not both".into())),
     }
 }
 
@@ -158,7 +152,7 @@ pub const HEX_SWEEP: CommandSpec = CommandSpec {
     params: r#"the parameters of mesh.hex.generate, with "method": "swept" (default: extrude, sweep or revolve, whichever fits first) | "extrude" | "sweep" | "revolve" — mesh.hex.generate limited to the sweeping methods"#,
     form: Some(super::forms::HEX_SWEEP),
     kind: CommandKind::Model,
-    requires: &[Requirement::Geometry],
+    requires: &[Requirement::Design],
     run: hex_sweep,
 };
 
@@ -168,7 +162,7 @@ pub const HEX_MAPPED: CommandSpec = CommandSpec {
     params: r#"the parameters of mesh.hex.generate without "method" — mesh.hex.generate with the mapped method: a six-sided block (six faces of four edges, three edges at each of eight corners)"#,
     form: Some(super::forms::HEX_MAPPED),
     kind: CommandKind::Model,
-    requires: &[Requirement::Geometry],
+    requires: &[Requirement::Design],
     run: hex_mapped,
 };
 
@@ -415,7 +409,7 @@ pub(super) fn add_hex(model: &mut Model, b: &Input, m: &HexMesh) -> Result<(u32,
 /// (`bodies[cell(element)]`) its element meshes.
 pub(super) fn tag_faces(
     model: &mut Model,
-    bodies: &[Input<'_>],
+    bodies: &[Input],
     cell: impl Fn(u32) -> usize,
     boundary: &[BoundaryFace],
     first_element: u32,

@@ -1770,7 +1770,7 @@ pub(crate) mod tests {
         assert_eq!(mark(&mut app, "interactions"), None);
         assert_eq!(mark(&mut app, "fluids"), None);
         let tip = node_state(&app.setup_stages(), "mesh").map(|(_, tip)| tip).unwrap_or_default();
-        assert!(tip.starts_with("Needs geometry") && tip.ends_with("— Geometry › Open Design"), "{tip}");
+        assert!(tip.starts_with("Needs an open design") && tip.ends_with("— Geometry › Open Design"), "{tip}");
         let next = |app: &mut ModelApp| marks(app).into_iter().filter(|(_, st, _)| *st == Some(Next)).map(|(n, ..)| n).collect::<Vec<_>>();
         assert_eq!(next(&mut app), ["geometry"]);
 

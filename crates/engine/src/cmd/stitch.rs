@@ -138,38 +138,37 @@ mod tests {
         path.to_str().unwrap().to_string()
     }
 
-    /// The gapped cube does not mesh; stitched under a tolerance over the gap it does; the stitch
-    /// is saved and applied again when the model is opened; undo and delete bring the gap back.
+    /// The gapped cube is open; stitched under a tolerance over the gap it closes; the stitch is
+    /// saved and applied again when the model is opened; undo and delete bring the gap back.
     #[test]
-    fn a_stitched_surface_meshes_and_the_stitch_is_replayed() {
+    fn a_stitched_surface_closes_and_the_stitch_is_replayed() {
         let dir = std::env::temp_dir().join(format!("fieldcraft-stitch-{}-{:?}", std::process::id(), std::thread::current().id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut s = Session::default();
         s.execute("geometry.import.mesh", &json!({"path": gapped_cube(&dir)})).unwrap();
-        let tet = json!({"surface": 0, "size": 0.25});
-        assert!(s.execute("mesh.tet.generate", &tet).is_err(), "open: no volume to fill");
+        let check = json!({"surface": 0});
+        assert_eq!(s.execute("mesh.surface.check", &check).unwrap()["valid"], false, "open: no volume to fill");
         assert!(
             s.execute("geometry.stitch", &json!({"name": "Small", "surface": "Cube", "tolerance": 0.001})).unwrap()["open_after"].as_u64() > Some(0)
         );
         let r = s.execute("geometry.stitch", &json!({"name": "Gaps", "surface": "Cube", "tolerance": 0.05})).unwrap();
         assert_eq!((r["open_after"].as_u64(), r["merged"].as_u64()), (Some(0), Some(4)), "{r}");
-        s.execute("mesh.tet.generate", &tet).unwrap();
-        assert!(!s.model.elements().is_empty());
+        assert_eq!(s.execute("mesh.surface.check", &check).unwrap()["valid"], true);
         let file = dir.join("stitched.fieldcraft");
         s.execute("file.save", &json!({"path": file.to_str().unwrap()})).unwrap();
         let mut t = Session::default();
         t.execute("file.open", &json!({"path": file.to_str().unwrap()})).unwrap();
         assert_eq!(t.surfaces[0].mesh, s.surfaces[0].mesh);
         assert!(t.surfaces[0].original.is_some());
-        // Undo the mesh and the stitch: the gap is back.
+        assert_eq!(t.execute("mesh.surface.check", &check).unwrap()["valid"], true);
+        // Undo the stitch: the gap is back.
         s.execute("edit.undo", &json!({})).unwrap();
-        s.execute("edit.undo", &json!({})).unwrap();
-        assert!(s.execute("mesh.tet.generate", &tet).is_err());
+        assert_eq!(s.execute("mesh.surface.check", &check).unwrap()["valid"], false);
         s.execute("edit.redo", &json!({})).unwrap();
-        s.execute("mesh.tet.generate", &tet).unwrap();
+        assert_eq!(s.execute("mesh.surface.check", &check).unwrap()["valid"], true);
         let r = s.execute("geometry.stitch.delete", &json!({"name": "Gaps"})).unwrap();
-        assert!(r["replaced"].is_array(), "{r}");
-        assert!(s.execute("mesh.tet.generate", &tet).is_err());
+        assert_eq!(r["deleted"], "Gaps", "{r}");
+        assert_eq!(s.execute("mesh.surface.check", &check).unwrap()["valid"], false);
         std::fs::remove_dir_all(dir).ok();
     }
 

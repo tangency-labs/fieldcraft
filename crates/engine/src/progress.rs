@@ -258,9 +258,9 @@ mod tests {
         assert_eq!(p.len(), Stage::ALL.len());
         assert_eq!((p[0].stage, p[0].status, p[0].command), (Stage::Geometry, Next, "geometry.open"));
         assert_eq!(status(&s, Stage::Prepare), Optional);
-        // Meshing needs geometry; solving needs a mesh.
+        // Meshing needs a design; solving needs a mesh.
         assert_eq!(status(&s, Stage::Mesh), Blocked);
-        assert!(p[2].detail.as_deref().is_some_and(|d| d.contains("geometry")));
+        assert!(p[2].detail.as_deref().is_some_and(|d| d.contains("an open design")));
         assert_eq!(status(&s, Stage::Material), Todo);
         assert_eq!(status(&s, Stage::Solve), Blocked);
         assert_eq!(statuses(&s).iter().filter(|(_, st)| *st == Next).count(), 1);
