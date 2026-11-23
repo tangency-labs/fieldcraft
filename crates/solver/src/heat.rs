@@ -748,7 +748,7 @@ fn steady_start(faces: &[RadiatingFace], f: &[f64], held: f64) -> f64 {
     let es_area: f64 = faces.iter().map(|face| face.es * face.area).sum();
     let ambient4: f64 = faces.iter().map(|face| face.es * face.area * face.ambient.powi(4)).sum();
     let supplied = f.iter().sum::<f64>().max(0.0);
-    let lumped = if es_area > 0.0 { ((supplied + ambient4) / es_area).powf(0.25) } else { 0.0 };
+    let lumped = if es_area > 0.0 { libm::pow((supplied + ambient4) / es_area, 0.25) } else { 0.0 };
     if lumped.is_finite() { lumped.max(held) } else { held }
 }
 

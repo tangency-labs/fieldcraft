@@ -125,11 +125,11 @@ fn tridiagonal_qr(d: &mut [f64], e: &mut [f64], q: &mut [f64], n: usize) -> Resu
         let dd = (d[h - 1] - d[h]) / 2.0;
         let eh = e[h - 1];
         let sign = if dd >= 0.0 { 1.0 } else { -1.0 };
-        let mu = d[h] - eh * eh / (dd + sign * dd.hypot(eh));
+        let mu = d[h] - eh * eh / (dd + sign * libm::hypot(dd, eh));
         let mut x = d[l] - mu;
         let mut z = e[l];
         for k in l..h {
-            let r = x.hypot(z);
+            let r = libm::hypot(x, z);
             let (c, s) = if r == 0.0 { (1.0, 0.0) } else { (x / r, -z / r) };
             if k > l {
                 e[k - 1] = c * e[k - 1] - s * z;
