@@ -15,6 +15,7 @@ fieldcraft-parallel = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 num-complex = { workspace = true }
+libm = { workspace = true }
 
 [dev-dependencies]
 # The validity gate, to prove the solvers and the meshers share one criterion.

@@ -43,8 +43,6 @@ const KNOWN: &[(&str, usize)] = &[
     ("crates/model/src/pvt.rs", 3),
     ("crates/model/src/sections.rs", 1),
     ("crates/model/src/units/quantity.rs", 1),
-    ("crates/solver/src/eigen.rs", 2),
-    ("crates/solver/src/heat.rs", 1),
 ];
 
 pub fn run(root: &Path) -> Result<(), String> {
