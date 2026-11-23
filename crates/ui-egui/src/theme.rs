@@ -633,7 +633,11 @@ mod tests {
             ])
             .output()
             .expect("cargo metadata runs");
-        assert!(out.status.success(), "cargo metadata: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "cargo metadata --offline needs every locked package downloaded: run `cargo fetch --locked` first ({})",
+            String::from_utf8_lossy(&out.stderr)
+        );
         let metadata: serde_json::Value = serde_json::from_slice(&out.stdout).expect("cargo metadata is JSON");
         // The kit's widgets and the theme's settings (colour vision) both read FieldCraft's catalogue.
         let mut dirs: Vec<std::path::PathBuf> = ["solidcraft-ui-kit", "solidcraft-theme"]
