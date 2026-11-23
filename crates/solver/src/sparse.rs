@@ -6,6 +6,11 @@
 //! mass share it. Sums run in a fixed order (elements by
 //! label, then the element's own node order), so assembled values are the same bit for bit on
 //! every run and platform.
+//!
+//! Assembly is real: elements are real, and [`NodeGraph::zero_matrix`] builds the real pattern.
+//! A complex-symmetric matrix (a harmonic response's K − ω²M + iωC) is built from the real
+//! matrices on that shared pattern with [`Csr::map_values`] and [`Csr::add_scaled`], so the
+//! element code never needs a complex type.
 
 use fieldcraft_fem::{DofLayout, DofSet};
 
