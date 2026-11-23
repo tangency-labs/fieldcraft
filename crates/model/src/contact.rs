@@ -91,7 +91,7 @@ impl Friction {
     /// The coefficient at slip rate `rate` (≥ 0).
     pub fn coefficient(&self, rate: f64) -> f64 {
         let (s, k) = (self.static_coefficient, self.kinetic_coefficient());
-        if self.decay == 0.0 { s } else { k + (s - k) * (-self.decay * rate.abs()).exp() }
+        if self.decay == 0.0 { s } else { k + (s - k) * libm::exp(-self.decay * rate.abs()) }
     }
 
     pub fn validate(&self) -> Result<()> {

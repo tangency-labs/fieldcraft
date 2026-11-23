@@ -189,7 +189,7 @@ pub fn format_number(v: f64) -> String {
     if v == 0.0 || !v.is_finite() {
         return if v == 0.0 { "0".to_string() } else { v.to_string() };
     }
-    let exp = v.abs().log10().floor();
+    let exp = libm::log10(v.abs()).floor();
     if (-4.0..7.0).contains(&exp) {
         let decimals = (5.0 - exp).max(0.0) as usize;
         let s = format!("{v:.decimals$}");

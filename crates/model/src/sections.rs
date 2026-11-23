@@ -198,7 +198,7 @@ pub struct BeamProperties {
 fn rectangle_torsion(width: f64, height: f64) -> f64 {
     let (a, b) = (width.max(height), width.min(height));
     let pi = std::f64::consts::PI;
-    let series: f64 = (0..50).map(|k| f64::from(2 * k + 1)).map(|n| (n * pi * a / (2.0 * b)).tanh() / n.powi(5)).sum();
+    let series: f64 = (0..50).map(|k| f64::from(2 * k + 1)).map(|n| libm::tanh(n * pi * a / (2.0 * b)) / n.powi(5)).sum();
     a * b * b * b / 3.0 * (1.0 - 192.0 * b / (pi.powi(5) * a) * series)
 }
 
