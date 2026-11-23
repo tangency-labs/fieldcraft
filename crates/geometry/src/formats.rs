@@ -90,6 +90,11 @@ pub fn extensions(source: Source) -> Vec<&'static str> {
     out
 }
 
+/// Why the triangle file `file` (its name, `part.stl`) is not volume-meshed, and the way out.
+pub fn no_brep(file: &str) -> String {
+    format!("`{file}` is triangles without a B-rep: open the CAD file (STEP, IGES, .sc) to mesh it; as triangles it can be a fluid obstacle")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

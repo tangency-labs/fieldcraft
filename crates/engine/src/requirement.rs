@@ -291,6 +291,10 @@ impl std::fmt::Display for Missing {
 pub struct Unavailable {
     pub command: &'static str,
     pub missing: Vec<Missing>,
+    /// In place of [`Requirement::Design`]'s line, when the session has imported surfaces and no
+    /// design: why they do not stand in for one (triangles without a B-rep, #1049), naming the
+    /// first surface's file and the way out.
+    pub no_brep: Option<String>,
 }
 
 impl std::fmt::Display for Unavailable {
@@ -301,7 +305,14 @@ impl std::fmt::Display for Unavailable {
 
 impl Unavailable {
     fn joined(&self, separator: &str) -> String {
-        self.missing.iter().map(ToString::to_string).collect::<Vec<_>>().join(separator)
+        self.missing
+            .iter()
+            .map(|m| match (&self.no_brep, m) {
+                (Some(why), Missing(Requirement::Design)) => why.clone(),
+                _ => m.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(separator)
     }
 
     /// The missing pieces, one per line.
@@ -333,7 +344,14 @@ impl Session {
     /// Whether `spec` can run now: `Err` names every requirement it misses.
     pub fn availability(&self, spec: &CommandSpec) -> std::result::Result<(), Unavailable> {
         let missing: Vec<Missing> = spec.requires.iter().filter(|r| !r.met(self)).map(|&r| Missing(r)).collect();
-        if missing.is_empty() { Ok(()) } else { Err(Unavailable { command: spec.id, missing }) }
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let no_brep = (self.design.is_none() && missing.contains(&Missing(Requirement::Design)))
+            .then(|| self.surfaces.first())
+            .flatten()
+            .map(|t| fieldcraft_geometry::formats::no_brep(if t.file.is_empty() { &t.name } else { &t.file }));
+        Err(Unavailable { command: spec.id, missing, no_brep })
     }
 }
 
@@ -434,7 +452,7 @@ mod tests {
         assert_eq!(missing(&empty, "model.material.plasticity"), [Requirement::Material]);
         assert_eq!(missing(&empty, "results.contour"), [Requirement::Result]);
         assert_eq!(missing(&empty, "solve.static"), [Requirement::Analysable, Requirement::Step]);
-        assert_eq!(missing(&empty, "mesh.tet.generate"), [Requirement::Geometry]);
+        assert_eq!(missing(&empty, "mesh.tet.generate"), [Requirement::Design]);
         assert!(missing(&empty, "model.material.create").is_empty());
         assert!(missing(&empty, "model.step.create").is_empty());
 

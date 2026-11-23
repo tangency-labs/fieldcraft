@@ -1,5 +1,4 @@
-//! Unstructured all-hexahedral meshing (`mesh.hex.octree`) of the open design's bodies or of
-//! imported surfaces.
+//! Unstructured all-hexahedral meshing (`mesh.hex.octree`) of the open design's bodies.
 
 use fieldcraft_mesh::octree::{OctreeHexMesh, OctreeOptions, octree_hex_mesh_exact};
 use fieldcraft_mesh::surface::BoundarySurface;
@@ -15,10 +14,10 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const HEX_OCTREE: CommandSpec = CommandSpec {
     id: "mesh.hex.octree",
     label: "Octree Hex Mesh",
-    params: r#"{"body": "Body1" (default: every body of the open design) or "surface": 0 (an imported surface), "size": 2.0 (element size in the interior, a length; default 1/25 of the bounding-box diagonal), "tolerance": 0.05 (chordal tolerance of the tessellation, a length; default 1e-3 of the diagonal), "max_depth": 4 (the most refinement levels below the size, each a third, 0..=5; the levels the part's thinnest wall, narrowest face and smallest local size (mesh.size.set) need are found before meshing, and a part that needs more levels or more than max_elements cells fails at once, naming them), "max_elements": 2000000 (1..=10000000; default the session limit), "attempts": 4 (builds, refining where one failed, 1..=8), "max_sweeps": 300 (optimiser sweeps, 0..=10000), and the boundary options of mesh.tet.generate ("weld", "weld_distance", "feature_angle")} — replaces the meshes of the bodies it meshes (as mesh.tet.generate; other bodies keep theirs) with an unstructured all-hex8 mesh of any part: an adaptive 3-refinement grid (root cells at `size`, refined where the size controls ask for smaller elements) with conforming transition templates, a core inside the part, two boundary layers that capture every B-rep face boundary and sharp edge, and untangling. Every element is proven valid; boundary element faces are tagged with their B-rep faces (named as in geometry.bodies; by index when a face has no name), so sets by geometry resolve. Reports per body the elements, quality, volume and grid statistics (root cell size, levels, the thinnest wall and narrowest face, cells per level after refinement and after closure)"#,
+    params: r#"{"body": "Body1" (default: every body of the open design; an imported surface, named as a body or by its index as "surface", is refused: triangles without a B-rep are never volume-meshed), "size": 2.0 (element size in the interior, a length; default 1/25 of the bounding-box diagonal), "tolerance": 0.05 (chordal tolerance of the tessellation, a length; default 1e-3 of the diagonal), "max_depth": 4 (the most refinement levels below the size, each a third, 0..=5; the levels the part's thinnest wall, narrowest face and smallest local size (mesh.size.set) need are found before meshing, and a part that needs more levels or more than max_elements cells fails at once, naming them), "max_elements": 2000000 (1..=10000000; default the session limit), "attempts": 4 (builds, refining where one failed, 1..=8), "max_sweeps": 300 (optimiser sweeps, 0..=10000), and the boundary options of mesh.tet.generate ("weld", "weld_distance", "feature_angle")} — replaces the meshes of the bodies it meshes (as mesh.tet.generate; other bodies keep theirs) with an unstructured all-hex8 mesh of any part: an adaptive 3-refinement grid (root cells at `size`, refined where the size controls ask for smaller elements) with conforming transition templates, a core inside the part, two boundary layers that capture every B-rep face boundary and sharp edge, and untangling. Every element is proven valid; boundary element faces are tagged with their B-rep faces (named as in geometry.bodies; by index when a face has no name), so sets by geometry resolve. Reports per body the elements, quality, volume and grid statistics (root cell size, levels, the thinnest wall and narrowest face, cells per level after refinement and after closure)"#,
     form: Some(super::forms::HEX_OCTREE),
     kind: CommandKind::Model,
-    requires: &[Requirement::Geometry],
+    requires: &[Requirement::Design],
     run: hex_octree,
 };
 
@@ -65,8 +64,7 @@ fn hex_octree(s: &mut Session, p: &Value) -> Result<Value> {
         let surface = BoundarySurface::new(&b.mesh.positions, &b.mesh.triangles, &b.mesh.tri_face, &surface_options)
             .map_err(|e| EngineError::context(format!("body `{}`", b.name), e))?
             .smooth_inside(&super::mesh::smooth_faces(&analytic));
-        // A design body's boundary vertices go onto its exact faces and curves; an imported
-        // surface keeps to its triangles.
+        // A design body's boundary vertices go onto its exact faces and curves.
         let exact = shape.map(|shape| Tessellation::new(&surface, analytic.clone()).with_pieces(&surface, super::mesh::pieces(shape, &b.pieces)));
         let left = OctreeOptions { max_elements: options.max_elements.saturating_sub(total).max(1), ..options.clone() };
         let field = sizing.field(&b.name, h)?;

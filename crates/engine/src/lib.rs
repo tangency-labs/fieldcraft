@@ -250,9 +250,25 @@ pub fn find_command(id: &str) -> Option<&'static CommandSpec> {
     commands().iter().find(|c| c.id == id)
 }
 
+/// Parameters commands no longer take but still read, so a script written for the earlier
+/// command is refused with the reason rather than "has no parameter": (key, commands). The
+/// volume meshers' `surface`, an imported surface, is triangles without a B-rep (#1049).
+const RETIRED: &[(&str, &[&str])] =
+    &[("surface", &["mesh.tet.generate", "mesh.hex.generate", "mesh.hex.sweep", "mesh.hex.mapped", "mesh.hex.octree"])];
+
 /// Refuse a parameter the command does not take, naming the ones it does: a script that sets
-/// `deformed` on `results.contour` learns it belongs elsewhere instead of being ignored.
+/// `deformed` on `results.contour` learns it belongs elsewhere instead of being ignored. A
+/// [`RETIRED`] parameter is left to the command, which refuses it with the reason.
 fn check_keys(spec: &CommandSpec, params: &Value) -> Result<()> {
+    let retired = |key: &str| RETIRED.iter().any(|(k, ids)| *k == key && ids.contains(&spec.id));
+    let current;
+    let params = match params.as_object() {
+        Some(o) if o.keys().any(|k| retired(k)) => {
+            current = Value::Object(o.iter().filter(|(k, _)| !retired(k)).map(|(k, v)| (k.clone(), v.clone())).collect());
+            &current
+        }
+        _ => params,
+    };
     match spec.form.and_then(|form| schema::unknown_key(form, params)) {
         Some((key, accepted)) if accepted.is_empty() => Err(EngineError::Params(format!("{} takes no parameters (got `{key}`)", spec.id))),
         Some((key, accepted)) => Err(EngineError::Params(format!("{} has no parameter `{key}`; it takes {}", spec.id, accepted.join(", ")))),

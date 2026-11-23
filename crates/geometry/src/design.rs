@@ -121,6 +121,10 @@ pub fn design_file_limit(path: &str) -> usize {
 /// Open a geometry source, including a packed model's in-memory copy. SolidCraft's
 /// import feature carries the exact bodies of each occurrence already placed in world coordinates.
 pub fn open_geometry(path: &str, bytes: &[u8]) -> Result<(Design, Vec<String>)> {
+    if crate::formats::source_of(path) == Some(crate::formats::Source::Triangles) {
+        let name = std::path::Path::new(path).file_name().map_or_else(|| path.into(), |n| n.to_string_lossy());
+        return Err(crate::Error::Invalid(format!("{}; import it with geometry.import.mesh", crate::formats::no_brep(&name))));
+    }
     if !is_exchange_file(path) {
         return open_design(bytes).map(|d| (d, Vec::new()));
     }
