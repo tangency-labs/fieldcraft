@@ -1,4 +1,5 @@
-//! Stitching: closing the gaps of a triangulated surface under a tolerance, for meshing.
+//! Stitching: closing the gaps of a triangulated surface under a tolerance, so it is watertight
+//! (an imported surface as a fluid obstacle; it is never volume-meshed).
 //!
 //! An imported surface (a 3MF from another tool, faces written apart) can be open along seams
 //! where two sides were tessellated separately: their boundary points lie a little apart, or one

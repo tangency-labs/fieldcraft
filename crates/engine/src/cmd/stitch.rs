@@ -1,10 +1,11 @@
-//! Stitching imported surfaces (`geometry.stitch`): their gaps under a tolerance closed for
-//! meshing ([`fieldcraft_geometry::stitch`]).
+//! Stitching imported surfaces (`geometry.stitch`): their gaps under a tolerance closed, so a
+//! triangle surface is watertight and bounds a solid as a fluid obstacle needs
+//! ([`fieldcraft_geometry::stitch`]). Imported surfaces are never volume-meshed (#1049).
 //!
 //! A stitch is part of the model (`fieldcraft_model::virtual_faces::Stitch`), naming the surface
 //! by name. The surfaces keep what was read ([`TaggedSurface::original`]); [`restitch`] stitches
 //! each again from it by the model's stitches, in order, whenever a surface is imported or the
-//! model is opened, and after every stitch or delete, so the meshers always take the stitched
+//! model is opened, and after every stitch or delete, so the solvers always take the stitched
 //! surface. Undo restores the surfaces with the model.
 
 use std::sync::Arc;
@@ -19,7 +20,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const STITCH: CommandSpec = CommandSpec {
     id: "geometry.stitch",
     label: "Stitch Surface",
-    params: r#"{"name": "Gaps", "surface": "Mesh1" (an imported surface, by name), "tolerance": 0.05 (a length)} — closes the gaps of an imported surface under the tolerance, for meshing: points on open edges closer than it become one point (triangles that collapse go), and a point on an open edge within it of the inside of another open edge splits that edge's triangle (a T-junction). Edges that are not open are never touched, so a closed surface is unchanged; triangles keep their face tags. Kept in the model and applied again, in order, whenever the surface is imported or the model opened (the file is not changed). Replies the open edges before and after (`open_before`, `open_after`: 0 means closed), the points `merged`, the triangles `split` and `removed`; the surface loses its mesh (`replaced`). A surface the session lacks is an error. One undo step"#,
+    params: r#"{"name": "Gaps", "surface": "Mesh1" (an imported surface, by name), "tolerance": 0.05 (a length)} — closes the gaps of an imported surface under the tolerance, so it is watertight (as a fluid obstacle needs; mesh.surface.check confirms it): points on open edges closer than it become one point (triangles that collapse go), and a point on an open edge within it of the inside of another open edge splits that edge's triangle (a T-junction). Edges that are not open are never touched, so a closed surface is unchanged; triangles keep their face tags. Kept in the model and applied again, in order, whenever the surface is imported or the model opened (the file is not changed). Replies the open edges before and after (`open_before`, `open_after`: 0 means closed), the points `merged`, the triangles `split` and `removed`; a mesh of the surface (one a model saved before volume meshing needed a B-rep may hold) goes (`replaced`). A surface the session lacks is an error. One undo step"#,
     form: Some(super::forms::STITCH),
     kind: CommandKind::Model,
     requires: &[Requirement::Geometry],
@@ -29,7 +30,7 @@ pub const STITCH: CommandSpec = CommandSpec {
 pub const STITCH_DELETE: CommandSpec = CommandSpec {
     id: "geometry.stitch.delete",
     label: "Delete Stitch",
-    params: r#"{"name": "Gaps"} — removes a stitch: the surface is stitched again by the ones left (as read when none); it loses its mesh (`replaced`)"#,
+    params: r#"{"name": "Gaps"} — removes a stitch: the surface is stitched again by the ones left (as read when none); a mesh of the surface (from a model saved before volume meshing needed a B-rep) goes (`replaced`)"#,
     form: Some(super::forms::STITCH_DELETE),
     kind: CommandKind::Model,
     requires: &[Requirement::Stitch],
@@ -101,6 +102,7 @@ fn stitch(s: &mut Session, p: &Value) -> Result<Value> {
         o.insert("name".into(), json!(name));
         o.insert("surface".into(), json!(surface));
     }
+    // A model saved before #1049 may still hold a mesh of the surface; it no longer matches it.
     let cleared = super::replace::clear(&mut s.model, [surface.as_str()]);
     Ok(cleared.report_if_any(s, reply))
 }

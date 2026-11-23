@@ -84,9 +84,11 @@ The same part also meshes all-hex automatically with the octree mesher (`mesh.he
 
 ## What it does today
 
-- **Geometry in:** Open a SolidCraft design (`.sc` or `.solidcraft`), STEP or IGES file from File → Open or drop it on
-  the viewport. CAD bodies keep their placement and faces for meshing and named sets. FieldCraft
-  also reads face-tagged 3MF meshes and checks surfaces for welding, manifoldness, orientation
+- **Geometry in:** Open what SolidCraft reads, from its format table: a SolidCraft design (`.sc`, `.solidcraft`,
+  `.solvecraft`), STEP, IGES, and FreeCAD and Rhino files in the desktop app, from File → Open or by dropping it on
+  the viewport. CAD bodies keep their placement and faces for meshing and named sets. Triangle files (3MF with or
+  without face tags, STL, OBJ, PLY, glTF) import as surfaces for display, reference and fluid obstacles; volume
+  meshing needs the CAD file. Surfaces are checked for welding, manifoldness, orientation
   and self-intersection. On Linux, choose **All files** in the picker if a mixed-case name such as `part.StP` is hidden.
 - **Meshing:** constrained Delaunay tetrahedra (tet4, tet10) with exact predicates and a
   certified validity gate; Delaunay refinement, smoothing and sliver removal; structured hex by
