@@ -361,7 +361,7 @@ impl Walls {
         let Some(&w) = self.wall_of.get(cell).filter(|w| **w != NONE) else { return 1.0 };
         let (Some(y), Some(wall)) = (self.distance.get(cell), self.walls.get(w as usize)) else { return 1.0 };
         let x = y * wall.friction / self.nu / a_plus;
-        if x.is_finite() && x < UNDAMPED { 1.0 - (-x).exp() } else { 1.0 }
+        if x.is_finite() && x < UNDAMPED { 1.0 - libm::exp(-x) } else { 1.0 }
     }
 
     /// The wall model's sample before a collision: from `velocity(cell)`, the fluid velocity of
@@ -509,7 +509,7 @@ pub fn wall_law(speed: f64, y1: f64, y2: f64, nu: f64) -> (f64, f64) {
     let y_plus = y1 * ut / nu;
     let (u_plus, slope) = musker(y_plus);
     let dudy = ut * ut / nu * slope;
-    let l = MIXING_KAPPA * y1 * (1.0 - (-y_plus / MIXING_A_PLUS).exp());
+    let l = MIXING_KAPPA * y1 * (1.0 - libm::exp(-y_plus / MIXING_A_PLUS));
     let nu_t = l * l * dudy.abs();
     if (ut * u_plus).is_finite() && nu_t.is_finite() { (ut * u_plus, nu_t) } else { (0.0, 0.0) }
 }
@@ -522,7 +522,7 @@ pub fn musker(y_plus: f64) -> (f64, f64) {
     let (a, b) = (2.0 / 16.7, 8.15 / 16.7);
     let t = a * y_plus - b;
     let q = y_plus * y_plus - 8.15 * y_plus + 86.0;
-    let u = 5.424 * t.atan() + 0.434 * (9.6 * (y_plus + 10.6).ln() - 2.0 * q.ln()) - 3.507_279_019_362_648_4;
+    let u = 5.424 * libm::atan(t) + 0.434 * (9.6 * libm::log(y_plus + 10.6) - 2.0 * libm::log(q)) - 3.507_279_019_362_648_4;
     let du = 5.424 * a / (1.0 + t * t) + 0.434 * (9.6 / (y_plus + 10.6) - 2.0 * (2.0 * y_plus - 8.15) / q);
     (u, du)
 }
@@ -626,7 +626,7 @@ pub fn unresolved_wall(y_plus: f64) -> Option<String> {
 /// Spalding's `y⁺(u⁺)` and its slope `dy⁺/du⁺`, with `e = exp(−κB)`.
 fn spalding(u_plus: f64, e: f64, kappa: f64) -> (f64, f64) {
     let k = kappa * u_plus;
-    let rest = k.exp() - 1.0 - k - k * k / 2.0;
+    let rest = libm::exp(k) - 1.0 - k - k * k / 2.0;
     (u_plus + e * (rest - k * k * k / 6.0), 1.0 + kappa * e * rest)
 }
 
@@ -643,11 +643,11 @@ pub(crate) fn spalding_friction(speed: f64, y: f64, nu: f64, kappa: f64, b: f64)
         return 0.0;
     }
     // u⁺ y⁺(u⁺) = Re_y rises with u⁺; the sublayer's root √Re_y bounds it from above.
-    let e = (-kappa * b).exp();
+    let e = libm::exp(-kappa * b);
     let (mut lo, mut hi) = (0.0, re.sqrt());
     // The log law at y⁺ = Re_y lies above the root and near it once Re_y is large; Newton walks
     // down an exponential only a step of 1/κ at a time, so it starts there.
-    let mut up = (re.ln() / kappa + b).clamp(f64::MIN_POSITIVE, hi);
+    let mut up = (libm::log(re) / kappa + b).clamp(f64::MIN_POSITIVE, hi);
     let mut last = f64::INFINITY;
     for _ in 0..SPALDING_ITERATIONS {
         let (y_plus, slope) = spalding(up, e, kappa);
@@ -685,14 +685,14 @@ mod tests {
         let nu = 1e-3;
         for u_plus in [0.5, 1.0, 2.0] {
             let ut = 0.05;
-            let y_plus = spalding(u_plus, (-KAPPA * B).exp(), KAPPA).0;
+            let y_plus = spalding(u_plus, libm::exp(-KAPPA * B), KAPPA).0;
             assert!((y_plus / u_plus - 1.0).abs() < 2e-3, "the sublayer: {y_plus} at u⁺ {u_plus}");
             let got = friction_velocity(ut * u_plus, y_plus * nu / ut, nu);
             assert!((got / ut - 1.0).abs() < 1e-10, "u⁺ {u_plus}: {got}");
         }
         for y_plus in [100.0f64, 500.0, 2000.0] {
             let (ut, y) = (0.02, y_plus * 1e-3 / 0.02);
-            let u = ut * (y_plus.ln() / KAPPA + B);
+            let u = ut * (libm::log(y_plus) / KAPPA + B);
             let got = friction_velocity(u, y, 1e-3);
             // Spalding blends into the log law: 1 % off it at y⁺ 100, less above.
             assert!((got / ut - 1.0).abs() < 0.02, "y⁺ {y_plus}: {got} vs {ut}");
@@ -703,7 +703,7 @@ mod tests {
                 let (mut lo, mut hi) = (0.0, y_plus);
                 for _ in 0..200 {
                     let mid = 0.5 * (lo + hi);
-                    if spalding(mid, (-KAPPA * B).exp(), KAPPA).0 > y_plus { hi = mid } else { lo = mid }
+                    if spalding(mid, libm::exp(-KAPPA * B), KAPPA).0 > y_plus { hi = mid } else { lo = mid }
                 }
                 0.5 * (lo + hi)
             };
@@ -719,7 +719,7 @@ mod tests {
         let (u, du) = musker(0.5);
         assert!((u - 0.5).abs() < 5e-3 && (du - 1.0).abs() < 2e-2, "sublayer: {u} {du}");
         for y_plus in [300.0f64, 1000.0] {
-            let log_law = y_plus.ln() / 0.41 + 5.0;
+            let log_law = libm::log(y_plus) / 0.41 + 5.0;
             assert!((musker(y_plus).0 / log_law - 1.0).abs() < 0.02, "log law at {y_plus}: {}", musker(y_plus).0);
         }
         // The slope against a central difference.

@@ -268,7 +268,7 @@ pub fn shear_rate_at_stress(fluid: &Fluid, stress: f64, kelvin: f64) -> Option<f
         return None;
     }
     let excess = |log_rate: f64| {
-        let rate = 10f64.powf(log_rate);
+        let rate = libm::pow(10f64, log_rate);
         let s = fluid.viscosity(rate, kelvin) * rate;
         if s.is_nan() { f64::INFINITY } else { s - stress }
     };
@@ -302,7 +302,7 @@ pub fn shear_rate_at_stress(fluid: &Fluid, stress: f64, kelvin: f64) -> Option<f
             break;
         }
     }
-    Some(10f64.powf(0.5 * (lo + hi)))
+    Some(libm::pow(10f64, 0.5 * (lo + hi)))
 }
 
 #[cfg(test)]
