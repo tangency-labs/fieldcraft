@@ -9,8 +9,10 @@
 //! A node carries the union of what its elements, constraints and boundary conditions need.
 //!
 //! [`DofLayout`] numbers them: mesh nodes in label order, each node's kinds in [`DofKind`] order,
-//! then extra points (reference points) in the order they are added, so the same model always
-//! gives the same numbering (the convention of T. J. R. Hughes, *The Finite Element Method*,
+//! then the mesh's edges and faces that carry unknowns (edge elements,
+//! docs/rfc/0001-electromagnetics.md §3.1), each by its nodes' sorted labels, then extra points
+//! (reference points) in the order they are added, so the same model always gives the same
+//! numbering (the convention of T. J. R. Hughes, *The Finite Element Method*,
 //! Dover 2000, §2.8–2.10, with the ID array replaced by per-node offsets). Assembly reads a
 //! node's unknowns as one contiguous block, so a node pair is a dense block of the global matrix.
 //!
@@ -40,10 +42,16 @@ pub enum DofKind {
     T,
     /// Pressure (hydrostatic, of a mixed u–p element).
     P,
+    /// The first field unknown of an edge or a face (an edge's Whitney function, a face's first
+    /// function: `fieldcraft_fem::nedelec`).
+    E1,
+    /// The second (an edge's gradient function, a face's second function).
+    E2,
 }
 
 impl DofKind {
-    pub const ALL: [DofKind; 8] = [DofKind::Ux, DofKind::Uy, DofKind::Uz, DofKind::Rx, DofKind::Ry, DofKind::Rz, DofKind::T, DofKind::P];
+    pub const ALL: [DofKind; 10] =
+        [DofKind::Ux, DofKind::Uy, DofKind::Uz, DofKind::Rx, DofKind::Ry, DofKind::Rz, DofKind::T, DofKind::P, DofKind::E1, DofKind::E2];
 
     /// Position in [`DofKind::ALL`].
     pub const fn index(self) -> usize {
@@ -71,18 +79,19 @@ impl DofKind {
     }
 
     /// The model's and decks' 1-based number: 1–3 translations, 4–6 rotations, 8 pressure,
-    /// 11 temperature.
+    /// 11 temperature; 0 for the unknowns of edges and faces, which have none.
     pub fn number(self) -> u8 {
         match self {
             DofKind::T => 11,
             DofKind::P => 8,
+            DofKind::E1 | DofKind::E2 => 0,
             k => k.index() as u8 + 1,
         }
     }
 
     /// The kind of a model degree of freedom number ([`DofKind::number`]).
     pub fn from_number(number: u8) -> Option<DofKind> {
-        DofKind::ALL.into_iter().find(|k| k.number() == number)
+        DofKind::ALL.into_iter().find(|k| number != 0 && k.number() == number)
     }
 
     /// What it is, in the user's terms.
@@ -96,17 +105,19 @@ impl DofKind {
             DofKind::Rz => "rotation about Z",
             DofKind::T => "temperature",
             DofKind::P => "pressure",
+            DofKind::E1 => "its first field unknown",
+            DofKind::E2 => "its second field unknown",
         }
     }
 
-    const fn bit(self) -> u8 {
-        1 << self as u8
+    const fn bit(self) -> u16 {
+        1 << self as u16
     }
 }
 
 /// A set of [`DofKind`]s, iterated in numbering order.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct DofSet(u8);
+pub struct DofSet(u16);
 
 impl DofSet {
     pub const EMPTY: DofSet = DofSet(0);
@@ -122,6 +133,10 @@ impl DofSet {
     pub const STRUCTURAL: DofSet = DofSet(0b0011_1111);
     pub const TEMPERATURE: DofSet = DofSet(DofKind::T.bit());
     pub const PRESSURE: DofSet = DofSet(DofKind::P.bit());
+    /// E1: an edge of a first-order edge element.
+    pub const FIELD: DofSet = DofSet(DofKind::E1.bit());
+    /// E1, E2: the edges and faces of a second-order one.
+    pub const FIELDS: DofSet = DofSet(DofKind::E1.bit() | DofKind::E2.bit());
 
     pub const fn of(kinds: &[DofKind]) -> DofSet {
         let mut bits = 0;
@@ -212,30 +227,48 @@ impl ElementDofs {
     }
 }
 
-/// One numbered node: its label, its kinds and its first global unknown.
+/// What a slot of a layout numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Entity {
+    /// A mesh node, by label.
+    Node(u32),
+    /// A mesh edge, by its nodes' labels, ascending.
+    Edge([u32; 2]),
+    /// A mesh face, by its nodes' labels, ascending.
+    Face([u32; 3]),
+    /// An extra point (a reference point), by label.
+    Point(u32),
+}
+
+/// One numbered entity: what it is, its kinds and its first global unknown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Slot {
-    label: u32,
+    entity: Entity,
     kinds: DofSet,
     first: usize,
 }
 
 /// The global numbering of the unknowns.
 ///
-/// Slots (positions) `0..nodes()` are the mesh nodes in label order; `nodes()..slots()` are the
-/// extra points in the order they were added. A slot's unknowns are contiguous, in
-/// [`DofKind`] order.
+/// Slots (positions) `0..nodes()` are the mesh nodes in label order; then the edges and the
+/// faces that carry unknowns, each in the order of their sorted labels; then the extra points in
+/// the order they were added. A slot's unknowns are contiguous, in [`DofKind`] order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DofLayout {
     slots: Vec<Slot>,
     nodes: usize,
+    edges: usize,
+    faces: usize,
     total: usize,
 }
 
-/// Collects what every node needs before numbering: the union of the kinds asked for.
+/// Collects what every node, edge and face needs before numbering: the union of the kinds asked
+/// for.
 #[derive(Debug, Clone, Default)]
 pub struct LayoutBuilder {
     nodes: BTreeMap<u32, DofSet>,
+    edges: BTreeMap<[u32; 2], DofSet>,
+    faces: BTreeMap<[u32; 3], DofSet>,
     points: Vec<(u32, DofSet)>,
 }
 
@@ -255,7 +288,32 @@ impl LayoutBuilder {
         self
     }
 
-    /// An extra point (a reference point) numbered after every mesh node, in the order added;
+    /// The edge between nodes `a` and `b` (either order) needs `kinds`; no kinds declare
+    /// nothing (an edge or a face is a slot only when it carries unknowns), and neither does a
+    /// node twice, which is no edge (it has no slot, and [`DofLayout::edge`] finds none).
+    pub fn edge(&mut self, [a, b]: [u32; 2], kinds: DofSet) -> &mut Self {
+        if kinds.is_empty() || a == b {
+            return self;
+        }
+        let entry = self.edges.entry([a.min(b), a.max(b)]).or_default();
+        *entry = entry.union(kinds);
+        self
+    }
+
+    /// The face of nodes `nodes` (any order) needs `kinds`; no kinds declare nothing, and
+    /// neither does a node repeated, which is no face.
+    pub fn face(&mut self, mut nodes: [u32; 3], kinds: DofSet) -> &mut Self {
+        nodes.sort_unstable();
+        let [a, b, c] = nodes;
+        if kinds.is_empty() || a == b || b == c {
+            return self;
+        }
+        let entry = self.faces.entry(nodes).or_default();
+        *entry = entry.union(kinds);
+        self
+    }
+
+    /// An extra point (a reference point) numbered after every mesh entity, in the order added;
     /// each call adds one.
     pub fn point(&mut self, label: u32, kinds: DofSet) -> &mut Self {
         self.points.push((label, kinds));
@@ -263,13 +321,19 @@ impl LayoutBuilder {
     }
 
     pub fn build(&self) -> DofLayout {
-        let mut slots = Vec::with_capacity(self.nodes.len() + self.points.len());
+        let entities = (self.nodes.iter().map(|(l, k)| (Entity::Node(*l), *k)))
+            .chain(self.edges.iter().map(|(e, k)| (Entity::Edge(*e), *k)))
+            .chain(self.faces.iter().map(|(f, k)| (Entity::Face(*f), *k)))
+            .chain(self.points.iter().map(|(l, k)| (Entity::Point(*l), *k)));
         let mut total = 0;
-        for (&label, &kinds) in self.nodes.iter().chain(self.points.iter().map(|p| (&p.0, &p.1))) {
-            slots.push(Slot { label, kinds, first: total });
-            total += kinds.len();
-        }
-        DofLayout { slots, nodes: self.nodes.len(), total }
+        let slots = entities
+            .map(|(entity, kinds)| {
+                let slot = Slot { entity, kinds, first: total };
+                total += kinds.len();
+                slot
+            })
+            .collect();
+        DofLayout { slots, nodes: self.nodes.len(), edges: self.edges.len(), faces: self.faces.len(), total }
     }
 }
 
@@ -297,33 +361,72 @@ impl DofLayout {
         self.nodes
     }
 
-    /// Mesh nodes and extra points.
+    /// Mesh edges with unknowns (slots after the nodes).
+    pub fn edges(&self) -> usize {
+        self.edges
+    }
+
+    /// Mesh faces with unknowns (slots after the edges).
+    pub fn faces(&self) -> usize {
+        self.faces
+    }
+
+    /// Mesh entities and extra points.
     pub fn slots(&self) -> usize {
         self.slots.len()
     }
 
-    /// Unknowns of the mesh nodes; the extra points' follow them.
+    /// The first slot after the mesh's entities: the first extra point's.
+    fn mesh_slots(&self) -> usize {
+        self.nodes + self.edges + self.faces
+    }
+
+    /// Unknowns of the mesh's entities (nodes, edges, faces); the extra points' follow them.
     pub fn node_dofs(&self) -> usize {
-        self.slots.get(self.nodes).map_or(self.total, |s| s.first)
+        self.slots.get(self.mesh_slots()).map_or(self.total, |s| s.first)
     }
 
     /// The slot of extra point `k`.
     pub fn point_slot(&self, k: usize) -> usize {
-        self.nodes + k
+        self.mesh_slots() + k
     }
 
     /// The slot of a mesh node label.
     pub fn node(&self, label: u32) -> Option<usize> {
-        self.slots.get(..self.nodes)?.binary_search_by_key(&label, |s| s.label).ok()
+        self.slots.get(..self.nodes)?.binary_search_by(|s| s.entity.cmp(&Entity::Node(label))).ok()
+    }
+
+    /// The slot of the edge between nodes `a` and `b` (either order), if it carries unknowns.
+    pub fn edge(&self, [a, b]: [u32; 2]) -> Option<usize> {
+        let edges = self.slots.get(self.nodes..self.nodes + self.edges)?;
+        edges.binary_search_by(|s| s.entity.cmp(&Entity::Edge([a.min(b), a.max(b)]))).ok().map(|k| self.nodes + k)
+    }
+
+    /// The slot of the face of nodes `nodes` (any order), if it carries unknowns.
+    pub fn face(&self, mut nodes: [u32; 3]) -> Option<usize> {
+        nodes.sort_unstable();
+        let start = self.nodes + self.edges;
+        let faces = self.slots.get(start..start + self.faces)?;
+        faces.binary_search_by(|s| s.entity.cmp(&Entity::Face(nodes))).ok().map(|k| start + k)
     }
 
     /// The slot of a label: a mesh node, else an extra point.
     pub fn slot(&self, label: u32) -> Option<usize> {
-        self.node(label).or_else(|| self.slots.get(self.nodes..)?.iter().position(|s| s.label == label).map(|k| self.nodes + k))
+        let points = self.mesh_slots();
+        self.node(label).or_else(|| self.slots.get(points..)?.iter().position(|s| s.entity == Entity::Point(label)).map(|k| points + k))
     }
 
+    /// What a slot numbers.
+    pub fn entity(&self, slot: usize) -> Option<Entity> {
+        self.slots.get(slot).map(|s| s.entity)
+    }
+
+    /// The label of a node's or an extra point's slot (`None` for an edge or a face).
     pub fn label(&self, slot: usize) -> Option<u32> {
-        self.slots.get(slot).map(|s| s.label)
+        match self.entity(slot)? {
+            Entity::Node(l) | Entity::Point(l) => Some(l),
+            Entity::Edge(_) | Entity::Face(_) => None,
+        }
     }
 
     /// The kinds a slot carries.
@@ -376,8 +479,14 @@ impl DofLayout {
     pub fn describe(&self, dof: usize) -> String {
         match self.locate(dof) {
             Some((slot, kind)) => {
-                let what = if slot < self.nodes { "node" } else { "point" };
-                format!("{what} {} in {}", self.label(slot).unwrap_or(0), kind.describe())
+                let what = match self.entity(slot) {
+                    Some(Entity::Node(l)) => format!("node {l}"),
+                    Some(Entity::Point(l)) => format!("point {l}"),
+                    Some(Entity::Edge([a, b])) => format!("edge {a}–{b}"),
+                    Some(Entity::Face([a, b, c])) => format!("face {a}–{b}–{c}"),
+                    None => String::new(),
+                };
+                format!("{what} in {}", kind.describe())
             }
             None => format!("unknown degree of freedom {dof}"),
         }
@@ -390,7 +499,7 @@ mod tests {
 
     #[test]
     fn kinds_numbers_and_sets() {
-        for k in DofKind::ALL {
+        for k in DofKind::ALL.into_iter().filter(|k| k.number() != 0) {
             assert_eq!(DofKind::from_number(k.number()), Some(k));
         }
         assert_eq!(DofKind::from_number(1), Some(DofKind::Ux));
@@ -409,6 +518,10 @@ mod tests {
         assert!(!DofSet::TRANSLATIONS.includes(DofSet::STRUCTURAL));
         assert_eq!(DofSet::TRANSLATIONS.union(DofSet::ROTATIONS), DofSet::STRUCTURAL);
         assert_eq!(DofSet::PLANE_FRAME.iter().collect::<Vec<_>>(), vec![DofKind::Ux, DofKind::Uy, DofKind::Rz]);
+        // The edge and face unknowns have no model number, and number 0 is none.
+        assert_eq!((DofKind::E1.number(), DofKind::E2.number()), (0, 0));
+        assert_eq!(DofSet::FIELDS.iter().collect::<Vec<_>>(), vec![DofKind::E1, DofKind::E2]);
+        assert_eq!(DofSet::STRUCTURAL.union(DofSet::FIELDS).position(DofKind::E2), Some(7));
         assert_eq!(ElementDofs::SOLID.total(8), 24);
         let hybrid = ElementDofs { node: DofSet::TRANSLATIONS, internal: Internal { incompatible_modes: 0, pressure: 1 } };
         assert_eq!(hybrid.total(8), 25);
@@ -458,5 +571,62 @@ mod tests {
         assert_eq!(u.stride(), Some(3));
         assert_eq!(l.stride(), None);
         assert_eq!(DofLayout::default().stride(), None);
+    }
+
+    #[test]
+    fn edges_and_faces_are_numbered_after_the_nodes_by_their_sorted_labels() {
+        // Two tetrahedra of nodes 1, 4, 6, 9 and 4, 6, 9, 12 with second-order edge unknowns, a
+        // node with a temperature and a reference point.
+        let mut b = DofLayout::builder();
+        b.point(500, DofSet::STRUCTURAL).node(6, DofSet::TEMPERATURE);
+        for tet in [[9, 1, 6, 4], [12, 6, 4, 9]] {
+            for (i, a) in tet.iter().enumerate() {
+                for c in tet.iter().skip(i + 1) {
+                    b.edge([*a, *c], DofSet::FIELDS);
+                }
+            }
+            for skip in 0..4 {
+                let f: Vec<u32> = tet.iter().enumerate().filter(|(k, _)| *k != skip).map(|(_, l)| *l).collect();
+                b.face([f[0], f[1], f[2]], DofSet::FIELDS);
+            }
+        }
+        let l = b.build();
+        // One node, 9 edges (the shared face's 3 once), 7 faces, the point.
+        assert_eq!((l.nodes(), l.edges(), l.faces(), l.slots()), (1, 9, 7, 18));
+        assert_eq!(l.edge([4, 1]), Some(1));
+        assert_eq!(l.edge([1, 4]), Some(1));
+        assert_eq!(l.entity(1), Some(Entity::Edge([1, 4])));
+        assert_eq!(l.edge([1, 12]), None);
+        assert_eq!(l.face([9, 4, 6]), l.face([4, 6, 9]));
+        assert_eq!(l.entity(l.face([9, 6, 4]).unwrap()), Some(Entity::Face([4, 6, 9])));
+        assert_eq!(l.face([1, 4, 12]), None);
+        // Each slot's unknowns follow the previous one's; the node's temperature comes first.
+        assert_eq!(l.range(1), 1..3);
+        assert_eq!(l.dof(1, DofKind::E2), Some(2));
+        assert_eq!((l.node_dofs(), l.dofs()), (1 + 2 * 16, 1 + 2 * 16 + 6));
+        assert_eq!(l.slot(500), Some(17));
+        assert_eq!(l.point_slot(0), 17);
+        assert_eq!((l.label(1), l.label(0), l.label(17)), (None, Some(6), Some(500)));
+        assert_eq!(l.describe(2), "edge 1–4 in its second field unknown");
+        let last_face = l.face([6, 9, 12]).unwrap();
+        assert_eq!(l.describe(l.range(last_face).start), "face 6–9–12 in its first field unknown");
+        for d in 0..l.dofs() {
+            let (slot, kind) = l.locate(d).unwrap();
+            assert_eq!(l.dof(slot, kind), Some(d));
+        }
+        // The same needs in another order give the same layout.
+        let mut c = DofLayout::builder();
+        for f in [[12, 9, 6], [1, 6, 9], [4, 12, 6], [9, 6, 4], [4, 1, 9], [4, 9, 12], [1, 4, 6]] {
+            c.face(f, DofSet::FIELD).face(f, DofSet::FIELDS);
+        }
+        for e in [[12, 9], [6, 1], [9, 4], [12, 6], [4, 6], [9, 1], [4, 12], [1, 4], [6, 9]] {
+            c.edge(e, DofSet::FIELDS);
+        }
+        c.node(6, DofSet::TEMPERATURE).point(500, DofSet::STRUCTURAL);
+        // An edge or a face with no unknowns is no slot, and a repeated node is no edge or face.
+        c.edge([1, 12], DofSet::EMPTY).face([1, 6, 12], DofSet::EMPTY);
+        c.edge([4, 4], DofSet::FIELDS).face([6, 1, 6], DofSet::FIELDS).face([9, 9, 9], DofSet::FIELDS);
+        assert_eq!(c.build(), l);
+        assert_eq!((l.edge([4, 4]), l.face([1, 6, 6])), (None, None));
     }
 }

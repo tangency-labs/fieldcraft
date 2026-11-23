@@ -168,7 +168,7 @@ impl NodeGraph {
 }
 
 /// Most kinds a node carries ([`fieldcraft_fem::DofKind::ALL`]).
-const MAX_KINDS: usize = 8;
+const MAX_KINDS: usize = fieldcraft_fem::DofKind::ALL.len();
 
 /// Where node b's block lies in node a's rows of a matrix built by [`NodeGraph::zero_matrix`],
 /// for the degrees of freedom `kinds` of both: the value index of (row r, column c) is
