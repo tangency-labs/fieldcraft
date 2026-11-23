@@ -8,8 +8,8 @@ specific volume of a polymer against temperature and pressure (two-domain Tait P
 record serves every solver: each takes the parts it can use, warns about the parts it leaves out,
 and refuses by name what it cannot represent. The J2 return map is one implementation shared by
 the implicit and explicit solvers.
-Nine structural metals can be added from a small [cited library](material-library.md) of
-constant room-temperature properties, each value with its source.
+Structural metals and dry air can be added from a small [cited library](material-library.md) of
+constant and temperature-dependent properties, each value with its source.
 
 | | |
 |---|---|

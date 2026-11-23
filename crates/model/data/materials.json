@@ -654,6 +654,662 @@
     }
   },
   {
+    "id": "EN10025-S275",
+    "name": "Structural steel S275",
+    "family": "steel",
+    "designation": {
+      "standard": "EN 10025-2 (elastic/thermal constants from EN 1993-1-1/1-2; strength from published EN 10025-1 DoP)",
+      "grade": "S275JR / 1.0044",
+      "condition": "Hot-rolled strip S275JR; strength minimums limited to nominal thickness at most 16 mm (tensile range 410-560 MPa up to 25.4 mm); normal-temperature design elastic constants."
+    },
+    "properties": {
+      "young": {
+        "value": 210000000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction",
+          "location": "3.2.6(1)",
+          "page": "28"
+        },
+        "applicability": "Elastic design constant at normal temperature."
+      },
+      "poisson": {
+        "value": 0.3,
+        "unit": "1",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction",
+          "location": "3.2.6(1)",
+          "page": "28"
+        },
+        "applicability": "Elastic design constant at normal temperature."
+      },
+      "expansion": {
+        "value": 1.2e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction",
+          "location": "3.2.6(1)",
+          "page": "28"
+        },
+        "applicability": "Constant prescribed for temperatures at or below 100 deg C; not a thermal-strain curve."
+      },
+      "density": {
+        "value": 7850,
+        "unit": "kg/m\u00b3",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-2",
+          "edition": "2005",
+          "location": "3.2.2(1)",
+          "page": "20"
+        },
+        "applicability": "Nominal unit mass of carbon steel; the source treats it as independent of temperature."
+      },
+      "yield": {
+        "value": 275000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "thyssenkrupp Steel Europe AG, Declaration of Performance (DoP) for Hot rolled strip S275JR / 1.0044 (EN 10025-1:2004)",
+          "edition": "DoP No. WB-UKCA-0011-10051-S275JR-TKSE-30102023 (30 October 2023)",
+          "location": "Section 7, Declared performance/s, Yield strength, nominal thickness <= 16 mm",
+          "page": "2",
+          "url": "https://www.thyssenkrupp-steel.com/media/content_1/publikationen/produktinformationen/wb_ukca_okt_23/wb-ukca-0011-10051-s275jr-tkse-30102023.pdf"
+        },
+        "applicability": "Published minimum yield strength for hot-rolled strip S275JR up to 16 mm nominal thickness; informational only, not a selected safety factor, plastic law or failure criterion."
+      },
+      "tensile": {
+        "value": 410000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "thyssenkrupp Steel Europe AG, Declaration of Performance (DoP) for Hot rolled strip S275JR / 1.0044 (EN 10025-1:2004)",
+          "edition": "DoP No. WB-UKCA-0011-10051-S275JR-TKSE-30102023 (30 October 2023)",
+          "location": "Section 7, Declared performance/s, Tensile strength, nominal thickness <= 25.4 mm (410-560 MPa)",
+          "page": "2",
+          "url": "https://www.thyssenkrupp-steel.com/media/content_1/publikationen/produktinformationen/wb_ukca_okt_23/wb-ukca-0011-10051-s275jr-tkse-30102023.pdf"
+        },
+        "applicability": "Published minimum tensile strength (lower bound of 410-560 MPa) for hot-rolled strip S275JR up to 25.4 mm nominal thickness; informational only, not a selected safety factor, plastic law or failure criterion."
+      }
+    },
+    "curves": {
+      "conductivity": {
+        "unit": "W/(m\u00b7K)",
+        "points": [
+          [
+            293.15,
+            53.334
+          ],
+          [
+            373.15,
+            50.67
+          ],
+          [
+            473.15,
+            47.339999999999996
+          ],
+          [
+            573.15,
+            44.01
+          ],
+          [
+            673.15,
+            40.68
+          ],
+          [
+            773.15,
+            37.349999999999994
+          ],
+          [
+            873.15,
+            34.019999999999996
+          ],
+          [
+            973.15,
+            30.689999999999998
+          ],
+          [
+            1072.15,
+            27.393299999999996
+          ],
+          [
+            1073.15,
+            27.3
+          ],
+          [
+            1473.15,
+            27.3
+          ]
+        ],
+        "basis": "design",
+        "source": {
+          "document": "T. Abeysiriwardena, M. Mahendran, Numerical modelling and fire testing of gypsum plasterboard sheathed cold-formed steel walls, Thin-Walled Structures 180 (2022) 109792, doi:10.1016/j.tws.2022.109792 (accepted manuscript), reproducing the carbon-steel equations of EN 1993-1-2:2005, 3.4.1",
+          "edition": "Accepted manuscript, QUT ePrints 234830 (2022)",
+          "location": "Eqs. (31)-(32), thermal conductivity of steel, 20 \u00b0C to 1200 \u00b0C",
+          "page": "19",
+          "url": "https://eprints.qut.edu.au/234830/"
+        },
+        "applicability": "EN 1993-1-2 design curve of carbon steels, lambda = 54 - 3.33e-2 theta (theta in deg C) from 20 deg C to 800 deg C and 27.3 W/(m K) from 800 deg C to 1200 deg C, tabulated at the listed temperatures (the step at 800 deg C taken over its last degree)."
+      },
+      "specific_heat": {
+        "unit": "J/(kg\u00b7K)",
+        "points": [
+          [
+            293.15,
+            439.80176
+          ],
+          [
+            313.15,
+            453.35808000000003
+          ],
+          [
+            333.15,
+            465.77552
+          ],
+          [
+            353.15,
+            477.16064000000006
+          ],
+          [
+            373.15,
+            487.62000000000006
+          ],
+          [
+            393.15,
+            497.26016
+          ],
+          [
+            413.15,
+            506.18768
+          ],
+          [
+            433.15,
+            514.50912
+          ],
+          [
+            453.15,
+            522.33104
+          ],
+          [
+            473.15,
+            529.76
+          ],
+          [
+            493.15,
+            536.9025599999999
+          ],
+          [
+            513.15,
+            543.86528
+          ],
+          [
+            533.15,
+            550.75472
+          ],
+          [
+            553.15,
+            557.67744
+          ],
+          [
+            573.15,
+            564.74
+          ],
+          [
+            593.15,
+            572.04896
+          ],
+          [
+            613.15,
+            579.7108799999999
+          ],
+          [
+            633.15,
+            587.83232
+          ],
+          [
+            653.15,
+            596.51984
+          ],
+          [
+            673.15,
+            605.88
+          ],
+          [
+            693.15,
+            616.01936
+          ],
+          [
+            713.15,
+            627.04448
+          ],
+          [
+            733.15,
+            639.0619199999999
+          ],
+          [
+            753.15,
+            652.17824
+          ],
+          [
+            773.15,
+            666.5
+          ],
+          [
+            793.15,
+            682.13376
+          ],
+          [
+            813.15,
+            699.18608
+          ],
+          [
+            833.15,
+            717.76352
+          ],
+          [
+            853.15,
+            737.97264
+          ],
+          [
+            872.15,
+            758.7797037800001
+          ],
+          [
+            873.15,
+            760.2173913043479
+          ],
+          [
+            893.15,
+            776.1864406779661
+          ],
+          [
+            910.75,
+            795.5019920318725
+          ],
+          [
+            924.85,
+            816.6604866743917
+          ],
+          [
+            936.25,
+            839.5914552736983
+          ],
+          [
+            945.65,
+            864.5038167938931
+          ],
+          [
+            953.55,
+            891.7291666666665
+          ],
+          [
+            960.15,
+            920.9411764705883
+          ],
+          [
+            965.75,
+            952.387665198238
+          ],
+          [
+            970.55,
+            986.246305418719
+          ],
+          [
+            974.65,
+            1022.2191780821918
+          ],
+          [
+            978.25,
+            1061.197568389058
+          ],
+          [
+            981.35,
+            1102.3087248322154
+          ],
+          [
+            984.15,
+            1147.5555555555557
+          ],
+          [
+            986.55,
+            1194.5365853658532
+          ],
+          [
+            988.75,
+            1246.4464285714291
+          ],
+          [
+            990.65,
+            1300.2439024390244
+          ],
+          [
+            992.35,
+            1357.5957446808527
+          ],
+          [
+            993.85,
+            1417.5606936416204
+          ],
+          [
+            995.25,
+            1483.7358490566048
+          ],
+          [
+            996.45,
+            1550.4897959183645
+          ],
+          [
+            997.55,
+            1622.0294117647043
+          ],
+          [
+            998.55,
+            1697.90476190476
+          ],
+          [
+            999.45,
+            1777.282051282047
+          ],
+          [
+            1000.25,
+            1858.8440366972502
+          ],
+          [
+            1001.05,
+            1953.3267326732644
+          ],
+          [
+            1001.75,
+            2049.1914893617054
+          ],
+          [
+            1002.35,
+            2143.5000000000077
+          ],
+          [
+            1002.95,
+            2251.6097560975522
+          ],
+          [
+            1003.45,
+            2354.5714285714184
+          ],
+          [
+            1003.95,
+            2471.833333333322
+          ],
+          [
+            1004.45,
+            2606.59701492536
+          ],
+          [
+            1004.85,
+            2729.809523809539
+          ],
+          [
+            1005.25,
+            2869.7288135593303
+          ],
+          [
+            1005.65,
+            3030.0
+          ],
+          [
+            1005.95,
+            3166.3846153845934
+          ],
+          [
+            1006.25,
+            3319.4693877551144
+          ],
+          [
+            1006.55,
+            3492.521739130421
+          ],
+          [
+            1006.85,
+            3689.72093023259
+          ],
+          [
+            1007.05,
+            3837.2195121951045
+          ],
+          [
+            1007.25,
+            3999.8461538461734
+          ],
+          [
+            1007.45,
+            4180.054054054011
+          ],
+          [
+            1007.65,
+            4380.857142857143
+          ],
+          [
+            1007.85,
+            4606.000000000055
+          ],
+          [
+            1008.05,
+            4860.193548387066
+          ],
+          [
+            1008.15,
+            5000.0
+          ],
+          [
+            1008.35,
+            4787.857142857097
+          ],
+          [
+            1008.55,
+            4595.000000000021
+          ],
+          [
+            1008.85,
+            4336.489361702092
+          ],
+          [
+            1009.15,
+            4109.0
+          ],
+          [
+            1009.45,
+            3907.264150943425
+          ],
+          [
+            1009.75,
+            3727.142857142844
+          ],
+          [
+            1010.05,
+            3565.338983050859
+          ],
+          [
+            1010.45,
+            3373.571428571449
+          ],
+          [
+            1010.85,
+            3204.7014925372955
+          ],
+          [
+            1011.25,
+            3054.8591549295693
+          ],
+          [
+            1011.75,
+            2889.736842105256
+          ],
+          [
+            1012.25,
+            2744.9999999999936
+          ],
+          [
+            1012.75,
+            2617.0930232558085
+          ],
+          [
+            1013.35,
+            2481.956521739121
+          ],
+          [
+            1013.95,
+            2363.367346938784
+          ],
+          [
+            1014.65,
+            2242.142857142857
+          ],
+          [
+            1015.35,
+            2136.071428571422
+          ],
+          [
+            1016.15,
+            2030.0
+          ],
+          [
+            1017.05,
+            1926.3953488372117
+          ],
+          [
+            1018.05,
+            1827.0143884892107
+          ],
+          [
+            1019.05,
+            1740.973154362418
+          ],
+          [
+            1020.15,
+            1658.75
+          ],
+          [
+            1021.35,
+            1581.0465116279042
+          ],
+          [
+            1022.75,
+            1503.064516129031
+          ],
+          [
+            1024.25,
+            1431.5671641791034
+          ],
+          [
+            1025.85,
+            1366.198156682026
+          ],
+          [
+            1027.65,
+            1303.2978723404256
+          ],
+          [
+            1029.65,
+            1243.8235294117649
+          ],
+          [
+            1031.85,
+            1188.321299638988
+          ],
+          [
+            1034.35,
+            1135.0662251655622
+          ],
+          [
+            1037.05,
+            1086.6413373860187
+          ],
+          [
+            1040.15,
+            1040.0
+          ],
+          [
+            1043.65,
+            996.1392405063291
+          ],
+          [
+            1047.55,
+            955.5990783410141
+          ],
+          [
+            1051.95,
+            917.8033472803351
+          ],
+          [
+            1056.95,
+            882.5000000000002
+          ],
+          [
+            1062.65,
+            849.6153846153846
+          ],
+          [
+            1069.25,
+            818.7327188940092
+          ],
+          [
+            1076.85,
+            790.1169188445665
+          ],
+          [
+            1085.75,
+            763.3823529411764
+          ],
+          [
+            1096.15,
+            738.695652173913
+          ],
+          [
+            1108.45,
+            715.8533077660595
+          ],
+          [
+            1123.25,
+            694.6221662468513
+          ],
+          [
+            1141.15,
+            675.07299270073
+          ],
+          [
+            1161.15,
+            658.5031847133758
+          ],
+          [
+            1172.15,
+            651.0714285714286
+          ],
+          [
+            1173.15,
+            650.0
+          ],
+          [
+            1473.15,
+            650.0
+          ]
+        ],
+        "basis": "design",
+        "source": {
+          "document": "T. Abeysiriwardena, M. Mahendran, Numerical modelling and fire testing of gypsum plasterboard sheathed cold-formed steel walls, Thin-Walled Structures 180 (2022) 109792, doi:10.1016/j.tws.2022.109792 (accepted manuscript), reproducing the carbon-steel equations of EN 1993-1-2:2005, 3.4.1",
+          "edition": "Accepted manuscript, QUT ePrints 234830 (2022)",
+          "location": "Eqs. (27)-(30), specific heat of steel, 20 \u00b0C to 1200 \u00b0C",
+          "page": "19",
+          "url": "https://eprints.qut.edu.au/234830/"
+        },
+        "applicability": "EN 1993-1-2 design curve of carbon steels: c = 425 + 7.73e-1 theta - 1.69e-3 theta^2 + 2.22e-6 theta^3 below 600 deg C, 666 + 13002/(738 - theta) to 735 deg C, 545 + 17820/(theta - 731) to 900 deg C and 650 J/(kg K) to 1200 deg C (theta in deg C), with the 5000 J/(kg K) peak of the austenite transformation at 735 deg C; tabulated so that linear interpolation stays within 0.1 % of the equations."
+      }
+    }
+  },
+  {
     "id": "EN10025-S355",
     "name": "Structural steel S355",
     "family": "steel",
@@ -734,6 +1390,662 @@
           "page": "26"
         },
         "applicability": "Nominal strength for this grade/thickness; informational only, not a selected safety factor, plastic law or failure criterion."
+      }
+    },
+    "curves": {
+      "conductivity": {
+        "unit": "W/(m\u00b7K)",
+        "points": [
+          [
+            293.15,
+            53.334
+          ],
+          [
+            373.15,
+            50.67
+          ],
+          [
+            473.15,
+            47.339999999999996
+          ],
+          [
+            573.15,
+            44.01
+          ],
+          [
+            673.15,
+            40.68
+          ],
+          [
+            773.15,
+            37.349999999999994
+          ],
+          [
+            873.15,
+            34.019999999999996
+          ],
+          [
+            973.15,
+            30.689999999999998
+          ],
+          [
+            1072.15,
+            27.393299999999996
+          ],
+          [
+            1073.15,
+            27.3
+          ],
+          [
+            1473.15,
+            27.3
+          ]
+        ],
+        "basis": "design",
+        "source": {
+          "document": "T. Abeysiriwardena, M. Mahendran, Numerical modelling and fire testing of gypsum plasterboard sheathed cold-formed steel walls, Thin-Walled Structures 180 (2022) 109792, doi:10.1016/j.tws.2022.109792 (accepted manuscript), reproducing the carbon-steel equations of EN 1993-1-2:2005, 3.4.1",
+          "edition": "Accepted manuscript, QUT ePrints 234830 (2022)",
+          "location": "Eqs. (31)-(32), thermal conductivity of steel, 20 \u00b0C to 1200 \u00b0C",
+          "page": "19",
+          "url": "https://eprints.qut.edu.au/234830/"
+        },
+        "applicability": "EN 1993-1-2 design curve of carbon steels, lambda = 54 - 3.33e-2 theta (theta in deg C) from 20 deg C to 800 deg C and 27.3 W/(m K) from 800 deg C to 1200 deg C, tabulated at the listed temperatures (the step at 800 deg C taken over its last degree)."
+      },
+      "specific_heat": {
+        "unit": "J/(kg\u00b7K)",
+        "points": [
+          [
+            293.15,
+            439.80176
+          ],
+          [
+            313.15,
+            453.35808000000003
+          ],
+          [
+            333.15,
+            465.77552
+          ],
+          [
+            353.15,
+            477.16064000000006
+          ],
+          [
+            373.15,
+            487.62000000000006
+          ],
+          [
+            393.15,
+            497.26016
+          ],
+          [
+            413.15,
+            506.18768
+          ],
+          [
+            433.15,
+            514.50912
+          ],
+          [
+            453.15,
+            522.33104
+          ],
+          [
+            473.15,
+            529.76
+          ],
+          [
+            493.15,
+            536.9025599999999
+          ],
+          [
+            513.15,
+            543.86528
+          ],
+          [
+            533.15,
+            550.75472
+          ],
+          [
+            553.15,
+            557.67744
+          ],
+          [
+            573.15,
+            564.74
+          ],
+          [
+            593.15,
+            572.04896
+          ],
+          [
+            613.15,
+            579.7108799999999
+          ],
+          [
+            633.15,
+            587.83232
+          ],
+          [
+            653.15,
+            596.51984
+          ],
+          [
+            673.15,
+            605.88
+          ],
+          [
+            693.15,
+            616.01936
+          ],
+          [
+            713.15,
+            627.04448
+          ],
+          [
+            733.15,
+            639.0619199999999
+          ],
+          [
+            753.15,
+            652.17824
+          ],
+          [
+            773.15,
+            666.5
+          ],
+          [
+            793.15,
+            682.13376
+          ],
+          [
+            813.15,
+            699.18608
+          ],
+          [
+            833.15,
+            717.76352
+          ],
+          [
+            853.15,
+            737.97264
+          ],
+          [
+            872.15,
+            758.7797037800001
+          ],
+          [
+            873.15,
+            760.2173913043479
+          ],
+          [
+            893.15,
+            776.1864406779661
+          ],
+          [
+            910.75,
+            795.5019920318725
+          ],
+          [
+            924.85,
+            816.6604866743917
+          ],
+          [
+            936.25,
+            839.5914552736983
+          ],
+          [
+            945.65,
+            864.5038167938931
+          ],
+          [
+            953.55,
+            891.7291666666665
+          ],
+          [
+            960.15,
+            920.9411764705883
+          ],
+          [
+            965.75,
+            952.387665198238
+          ],
+          [
+            970.55,
+            986.246305418719
+          ],
+          [
+            974.65,
+            1022.2191780821918
+          ],
+          [
+            978.25,
+            1061.197568389058
+          ],
+          [
+            981.35,
+            1102.3087248322154
+          ],
+          [
+            984.15,
+            1147.5555555555557
+          ],
+          [
+            986.55,
+            1194.5365853658532
+          ],
+          [
+            988.75,
+            1246.4464285714291
+          ],
+          [
+            990.65,
+            1300.2439024390244
+          ],
+          [
+            992.35,
+            1357.5957446808527
+          ],
+          [
+            993.85,
+            1417.5606936416204
+          ],
+          [
+            995.25,
+            1483.7358490566048
+          ],
+          [
+            996.45,
+            1550.4897959183645
+          ],
+          [
+            997.55,
+            1622.0294117647043
+          ],
+          [
+            998.55,
+            1697.90476190476
+          ],
+          [
+            999.45,
+            1777.282051282047
+          ],
+          [
+            1000.25,
+            1858.8440366972502
+          ],
+          [
+            1001.05,
+            1953.3267326732644
+          ],
+          [
+            1001.75,
+            2049.1914893617054
+          ],
+          [
+            1002.35,
+            2143.5000000000077
+          ],
+          [
+            1002.95,
+            2251.6097560975522
+          ],
+          [
+            1003.45,
+            2354.5714285714184
+          ],
+          [
+            1003.95,
+            2471.833333333322
+          ],
+          [
+            1004.45,
+            2606.59701492536
+          ],
+          [
+            1004.85,
+            2729.809523809539
+          ],
+          [
+            1005.25,
+            2869.7288135593303
+          ],
+          [
+            1005.65,
+            3030.0
+          ],
+          [
+            1005.95,
+            3166.3846153845934
+          ],
+          [
+            1006.25,
+            3319.4693877551144
+          ],
+          [
+            1006.55,
+            3492.521739130421
+          ],
+          [
+            1006.85,
+            3689.72093023259
+          ],
+          [
+            1007.05,
+            3837.2195121951045
+          ],
+          [
+            1007.25,
+            3999.8461538461734
+          ],
+          [
+            1007.45,
+            4180.054054054011
+          ],
+          [
+            1007.65,
+            4380.857142857143
+          ],
+          [
+            1007.85,
+            4606.000000000055
+          ],
+          [
+            1008.05,
+            4860.193548387066
+          ],
+          [
+            1008.15,
+            5000.0
+          ],
+          [
+            1008.35,
+            4787.857142857097
+          ],
+          [
+            1008.55,
+            4595.000000000021
+          ],
+          [
+            1008.85,
+            4336.489361702092
+          ],
+          [
+            1009.15,
+            4109.0
+          ],
+          [
+            1009.45,
+            3907.264150943425
+          ],
+          [
+            1009.75,
+            3727.142857142844
+          ],
+          [
+            1010.05,
+            3565.338983050859
+          ],
+          [
+            1010.45,
+            3373.571428571449
+          ],
+          [
+            1010.85,
+            3204.7014925372955
+          ],
+          [
+            1011.25,
+            3054.8591549295693
+          ],
+          [
+            1011.75,
+            2889.736842105256
+          ],
+          [
+            1012.25,
+            2744.9999999999936
+          ],
+          [
+            1012.75,
+            2617.0930232558085
+          ],
+          [
+            1013.35,
+            2481.956521739121
+          ],
+          [
+            1013.95,
+            2363.367346938784
+          ],
+          [
+            1014.65,
+            2242.142857142857
+          ],
+          [
+            1015.35,
+            2136.071428571422
+          ],
+          [
+            1016.15,
+            2030.0
+          ],
+          [
+            1017.05,
+            1926.3953488372117
+          ],
+          [
+            1018.05,
+            1827.0143884892107
+          ],
+          [
+            1019.05,
+            1740.973154362418
+          ],
+          [
+            1020.15,
+            1658.75
+          ],
+          [
+            1021.35,
+            1581.0465116279042
+          ],
+          [
+            1022.75,
+            1503.064516129031
+          ],
+          [
+            1024.25,
+            1431.5671641791034
+          ],
+          [
+            1025.85,
+            1366.198156682026
+          ],
+          [
+            1027.65,
+            1303.2978723404256
+          ],
+          [
+            1029.65,
+            1243.8235294117649
+          ],
+          [
+            1031.85,
+            1188.321299638988
+          ],
+          [
+            1034.35,
+            1135.0662251655622
+          ],
+          [
+            1037.05,
+            1086.6413373860187
+          ],
+          [
+            1040.15,
+            1040.0
+          ],
+          [
+            1043.65,
+            996.1392405063291
+          ],
+          [
+            1047.55,
+            955.5990783410141
+          ],
+          [
+            1051.95,
+            917.8033472803351
+          ],
+          [
+            1056.95,
+            882.5000000000002
+          ],
+          [
+            1062.65,
+            849.6153846153846
+          ],
+          [
+            1069.25,
+            818.7327188940092
+          ],
+          [
+            1076.85,
+            790.1169188445665
+          ],
+          [
+            1085.75,
+            763.3823529411764
+          ],
+          [
+            1096.15,
+            738.695652173913
+          ],
+          [
+            1108.45,
+            715.8533077660595
+          ],
+          [
+            1123.25,
+            694.6221662468513
+          ],
+          [
+            1141.15,
+            675.07299270073
+          ],
+          [
+            1161.15,
+            658.5031847133758
+          ],
+          [
+            1172.15,
+            651.0714285714286
+          ],
+          [
+            1173.15,
+            650.0
+          ],
+          [
+            1473.15,
+            650.0
+          ]
+        ],
+        "basis": "design",
+        "source": {
+          "document": "T. Abeysiriwardena, M. Mahendran, Numerical modelling and fire testing of gypsum plasterboard sheathed cold-formed steel walls, Thin-Walled Structures 180 (2022) 109792, doi:10.1016/j.tws.2022.109792 (accepted manuscript), reproducing the carbon-steel equations of EN 1993-1-2:2005, 3.4.1",
+          "edition": "Accepted manuscript, QUT ePrints 234830 (2022)",
+          "location": "Eqs. (27)-(30), specific heat of steel, 20 \u00b0C to 1200 \u00b0C",
+          "page": "19",
+          "url": "https://eprints.qut.edu.au/234830/"
+        },
+        "applicability": "EN 1993-1-2 design curve of carbon steels: c = 425 + 7.73e-1 theta - 1.69e-3 theta^2 + 2.22e-6 theta^3 below 600 deg C, 666 + 13002/(738 - theta) to 735 deg C, 545 + 17820/(theta - 731) to 900 deg C and 650 J/(kg K) to 1200 deg C (theta in deg C), with the 5000 J/(kg K) peak of the austenite transformation at 735 deg C; tabulated so that linear interpolation stays within 0.1 % of the equations."
+      }
+    }
+  },
+  {
+    "id": "EN10025-S460N",
+    "name": "Structural steel S460N",
+    "family": "steel",
+    "designation": {
+      "standard": "EN 10025-3 (elastic/thermal constants from EN 1993-1-1/1-2; strength from published EN 10025-1 DoP)",
+      "grade": "S460N / 1.8901",
+      "condition": "Normalized fine-grain steel plate S460N; strength minimums limited to nominal thickness 3 to 16 mm (tensile range 540-720 MPa up to 100 mm); normal-temperature design elastic constants."
+    },
+    "properties": {
+      "young": {
+        "value": 210000000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction",
+          "location": "3.2.6(1)",
+          "page": "28"
+        },
+        "applicability": "Elastic design constant at normal temperature."
+      },
+      "poisson": {
+        "value": 0.3,
+        "unit": "1",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction",
+          "location": "3.2.6(1)",
+          "page": "28"
+        },
+        "applicability": "Elastic design constant at normal temperature."
+      },
+      "expansion": {
+        "value": 1.2e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-1",
+          "edition": "2005, including AC2 correction",
+          "location": "3.2.6(1)",
+          "page": "28"
+        },
+        "applicability": "Constant prescribed for temperatures at or below 100 deg C; not a thermal-strain curve."
+      },
+      "density": {
+        "value": 7850,
+        "unit": "kg/m\u00b3",
+        "basis": "design",
+        "source": {
+          "document": "EN 1993-1-2",
+          "edition": "2005",
+          "location": "3.2.2(1)",
+          "page": "20"
+        },
+        "applicability": "Nominal unit mass of carbon steel; the source treats it as independent of temperature."
+      },
+      "yield": {
+        "value": 460000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "thyssenkrupp Steel Europe AG, Declaration of Performance (DoP) for Plate S460N / 1.8901 (EN 10025-1:2004)",
+          "edition": "DoP No. GBQ-0027-S460N-TKSE-CPR-01042021 (12 April 2021)",
+          "location": "Section 7, Declared performance/s (English section), Yield strength, nominal thickness <= 16 mm",
+          "page": "5",
+          "url": "https://www.thyssenkrupp-steel.com/media/content_1/publikationen/produktinformationen/gbq/april_2021/gbq-0027-s460n-tkse-cpr-01042021.pdf"
+        },
+        "applicability": "Published minimum yield strength for plate S460N up to 16 mm nominal thickness (drops to 440 MPa for > 16 to <= 40 mm); informational only, not a selected safety factor, plastic law or failure criterion."
+      },
+      "tensile": {
+        "value": 540000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "thyssenkrupp Steel Europe AG, Declaration of Performance (DoP) for Plate S460N / 1.8901 (EN 10025-1:2004)",
+          "edition": "DoP No. GBQ-0027-S460N-TKSE-CPR-01042021 (12 April 2021)",
+          "location": "Section 7, Declared performance/s (English section), Tensile strength, nominal thickness 3 to 100 mm (540-720 MPa)",
+          "page": "5",
+          "url": "https://www.thyssenkrupp-steel.com/media/content_1/publikationen/produktinformationen/gbq/april_2021/gbq-0027-s460n-tkse-cpr-01042021.pdf"
+        },
+        "applicability": "Published minimum tensile strength (lower bound of 540-720 MPa) for plate S460N from 3 to 100 mm nominal thickness; informational only, not a selected safety factor, plastic law or failure criterion."
       }
     },
     "curves": {
@@ -1532,6 +2844,118 @@
     }
   },
   {
+    "id": "AA5083-H111",
+    "name": "Aluminium 5083-H111",
+    "family": "aluminium",
+    "designation": {
+      "standard": "EN AW-5083 / AA 5083",
+      "grade": "5083-H111",
+      "condition": "Rolled sheet/plate in H111 temper; strength minimums limited to EN 485-2 thickness 3.0 to 6.3 mm; thermal properties from Hydro 5083 sheet; normal-temperature design elastic constants."
+    },
+    "properties": {
+      "young": {
+        "value": 70000000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1999-1-1",
+          "edition": "2007+A1:2009",
+          "location": "3.2.5(1)",
+          "page": "37"
+        },
+        "applicability": "Nominal constant for covered structural aluminium alloys; not a measured value for a particular production lot."
+      },
+      "poisson": {
+        "value": 0.3,
+        "unit": "1",
+        "basis": "design",
+        "source": {
+          "document": "EN 1999-1-1",
+          "edition": "2007+A1:2009",
+          "location": "3.2.5(1)",
+          "page": "37"
+        },
+        "applicability": "Nominal constant for covered structural aluminium alloys; not a measured value for a particular production lot."
+      },
+      "density": {
+        "value": 2700,
+        "unit": "kg/m\u00b3",
+        "basis": "design",
+        "source": {
+          "document": "EN 1999-1-1",
+          "edition": "2007+A1:2009",
+          "location": "3.2.5(1)",
+          "page": "37"
+        },
+        "applicability": "Nominal constant for covered structural aluminium alloys; not a measured value for a particular production lot."
+      },
+      "expansion": {
+        "value": 2.3e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "design",
+        "source": {
+          "document": "EN 1999-1-1",
+          "edition": "2007+A1:2009",
+          "location": "3.2.5(1)",
+          "page": "37"
+        },
+        "applicability": "Nominal constant for covered structural aluminium alloys; not a measured value for a particular production lot."
+      },
+      "conductivity": {
+        "value": 120,
+        "unit": "W/(m\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Hydro Njordal H111 (AA 5083 / EN AW 5083) data sheet",
+          "edition": "Version 0 / May 2020",
+          "location": "Physical Properties table, +20 deg C column",
+          "page": "1",
+          "url": "https://www.hydro.com/globalassets/01-products--services/rolled-products/ge_h111_njordal_200514.pdf"
+        },
+        "applicability": "Typical thermal conductivity at 20 deg C for rolled AA 5083 / EN AW-5083; converted from 1.20 W/(cm*K). Applied as a constant, not a temperature curve."
+      },
+      "specific_heat": {
+        "value": 1030,
+        "unit": "J/(kg\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Hydro Njordal H111 (AA 5083 / EN AW 5083) data sheet",
+          "edition": "Version 0 / May 2020",
+          "location": "Physical Properties table, Spec. Heat Capacity",
+          "page": "1",
+          "url": "https://www.hydro.com/globalassets/01-products--services/rolled-products/ge_h111_njordal_200514.pdf"
+        },
+        "applicability": "Typical room-temperature specific heat capacity for rolled AA 5083 / EN AW-5083; converted from 1.03 J/(g*K)."
+      },
+      "yield": {
+        "value": 125000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Alumeco A/S, Data Sheet: EN AW 5083, Rolled products for Marine applications",
+          "edition": "Published datasheet referencing EN 485-2 and EN 573-3:2013",
+          "location": "Mechanical properties. EN485 - 2 table, H111 row, thickness 3.0 up to 6.3 mm",
+          "page": "1",
+          "url": "https://www.alumeco.com/media/werpsnii/5083-en-marine.pdf"
+        },
+        "applicability": "Published EN 485-2 minimum 0.2% proof strength for rolled 5083-H111 sheet from 3.0 to 6.3 mm thickness (drops to 115 MPa above 6.3 mm); informational only, not a selected plasticity law or failure criterion."
+      },
+      "tensile": {
+        "value": 275000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Alumeco A/S, Data Sheet: EN AW 5083, Rolled products for Marine applications",
+          "edition": "Published datasheet referencing EN 485-2 and EN 573-3:2013",
+          "location": "Mechanical properties. EN485 - 2 table, H111 row, thickness 3.0 up to 6.3 mm (275-350 MPa)",
+          "page": "1",
+          "url": "https://www.alumeco.com/media/werpsnii/5083-en-marine.pdf"
+        },
+        "applicability": "Published EN 485-2 minimum tensile strength (lower bound of 275-350 MPa) for rolled 5083-H111 sheet from 3.0 to 6.3 mm thickness; informational only, not a selected plasticity law or failure criterion."
+      }
+    }
+  },
+  {
     "id": "AA6061-T6",
     "name": "Aluminium 6061-T6",
     "family": "aluminium",
@@ -1592,6 +3016,118 @@
           "url": "https://ntrs.nasa.gov/api/citations/19720022808/downloads/19720022808.pdf"
         },
         "applicability": "Mean linear expansion over 20-100 deg C, applied as a constant. Conductivity/heat capacity remain unavailable here; their cited handbook values use different test temperatures."
+      }
+    }
+  },
+  {
+    "id": "AA6063-T6",
+    "name": "Aluminium 6063-T6",
+    "family": "aluminium",
+    "designation": {
+      "standard": "EN AW-6063 / AA 6063",
+      "grade": "6063-T6",
+      "condition": "T6 extruded profile; strength row limited to EN 755-2:2016 wall thickness at most 10 mm; normal-temperature design elastic constants."
+    },
+    "properties": {
+      "young": {
+        "value": 70000000000.0,
+        "unit": "Pa",
+        "basis": "design",
+        "source": {
+          "document": "EN 1999-1-1",
+          "edition": "2007+A1:2009",
+          "location": "3.2.5(1)",
+          "page": "37"
+        },
+        "applicability": "Nominal constant for covered structural aluminium alloys; not a measured value for a particular production lot."
+      },
+      "poisson": {
+        "value": 0.3,
+        "unit": "1",
+        "basis": "design",
+        "source": {
+          "document": "EN 1999-1-1",
+          "edition": "2007+A1:2009",
+          "location": "3.2.5(1)",
+          "page": "37"
+        },
+        "applicability": "Nominal constant for covered structural aluminium alloys; not a measured value for a particular production lot."
+      },
+      "density": {
+        "value": 2700,
+        "unit": "kg/m\u00b3",
+        "basis": "design",
+        "source": {
+          "document": "EN 1999-1-1",
+          "edition": "2007+A1:2009",
+          "location": "3.2.5(1)",
+          "page": "37"
+        },
+        "applicability": "Nominal constant for covered structural aluminium alloys; not a measured value for a particular production lot."
+      },
+      "expansion": {
+        "value": 2.3e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "design",
+        "source": {
+          "document": "EN 1999-1-1",
+          "edition": "2007+A1:2009",
+          "location": "3.2.5(1)",
+          "page": "37"
+        },
+        "applicability": "Nominal constant for covered structural aluminium alloys; not a measured value for a particular production lot."
+      },
+      "conductivity": {
+        "value": 201,
+        "unit": "W/(m\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Hydro Technical datasheet - Extruded products, Alloy EN AW-6063 [AlMg0.7Si]",
+          "edition": "Hydro 6063_Rev.4 - 03/2023",
+          "location": "Physical Properties table, T6 row, footnote 5",
+          "page": "2",
+          "url": "https://www.hydro.com/globalassets/08-about-hydro/hydro-worldwide/austria/nenzing/alloy-data-sheets/hydro-en-aw-6063.pdf"
+        },
+        "applicability": "Typical thermal conductivity for T6 at room temperature 20 deg C (citing MNC Handbok nr 12, version 2, SIS, 1989)."
+      },
+      "specific_heat": {
+        "value": 901,
+        "unit": "J/(kg\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Hydro Technical datasheet - Extruded products, Alloy EN AW-6063 [AlMg0.7Si]",
+          "edition": "Hydro 6063_Rev.4 - 03/2023",
+          "location": "Physical Properties table, footnote 5",
+          "page": "2",
+          "url": "https://www.hydro.com/globalassets/08-about-hydro/hydro-worldwide/austria/nenzing/alloy-data-sheets/hydro-en-aw-6063.pdf"
+        },
+        "applicability": "Typical specific heat capacity at room temperature 20 deg C (citing MNC Handbok nr 12, version 2, SIS, 1989)."
+      },
+      "yield": {
+        "value": 170000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Hydro Technical datasheet - Extruded products, Alloy EN AW-6063 [AlMg0.7Si]",
+          "edition": "Hydro 6063_Rev.4 - 03/2023",
+          "location": "Mechanical Properties table, T6 row, t <= 10 mm, footnotes 2-3 and a",
+          "page": "1",
+          "url": "https://www.hydro.com/globalassets/08-about-hydro/hydro-worldwide/austria/nenzing/alloy-data-sheets/hydro-en-aw-6063.pdf"
+        },
+        "applicability": "Published EN 755-2:2016 minimum 0.2% proof strength for extruded profile up to 10 mm wall thickness; informational only, no plasticity or design allowable is inferred."
+      },
+      "tensile": {
+        "value": 215000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Hydro Technical datasheet - Extruded products, Alloy EN AW-6063 [AlMg0.7Si]",
+          "edition": "Hydro 6063_Rev.4 - 03/2023",
+          "location": "Mechanical Properties table, T6 row, t <= 10 mm, footnotes 2-3 and a",
+          "page": "1",
+          "url": "https://www.hydro.com/globalassets/08-about-hydro/hydro-worldwide/austria/nenzing/alloy-data-sheets/hydro-en-aw-6063.pdf"
+        },
+        "applicability": "Published EN 755-2:2016 minimum tensile strength for extruded profile up to 10 mm wall thickness; informational only, no plasticity or design allowable is inferred."
       }
     }
   },
