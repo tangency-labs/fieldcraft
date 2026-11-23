@@ -57,7 +57,7 @@ pub struct Parts {
 type Step = fn(&mut Parts) -> Result<()>;
 
 /// `STEPS[i]` takes format `i + 1` to `i + 2`.
-const STEPS: [Step; FORMAT_VERSION as usize - 1] = [v1_to_v2, v2_to_v3::v2_to_v3];
+const STEPS: [Step; FORMAT_VERSION as usize - 1] = [v1_to_v2, v2_to_v3::v2_to_v3, v3_to_v4];
 
 /// The format version a manifest declares, checked before anything else in it is read: a later
 /// format than this version reads is [`Error::Version`] (naming the program that wrote it), a
@@ -138,6 +138,14 @@ fn v1_to_v2(parts: &mut Parts) -> Result<()> {
     set_format(parts, 2)
 }
 
+/// Format 3 → 4 (#1049). Format 4 adds an optional `unit` to an imported mesh's source (a mesh
+/// file read in a unit of its own); a format 3 file has none, which means millimetres, so only
+/// the tag changes. A later format is how FieldCraft 0.8 refuses a file that may carry one,
+/// with its "update FieldCraft" message.
+fn v3_to_v4(parts: &mut Parts) -> Result<()> {
+    set_format(parts, 4)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -206,6 +214,19 @@ mod tests {
         assert_eq!(p.manifest, json!({"format": "fieldcraft/2", "generator": "FieldCraft 0.7.0"}));
         assert_eq!((&p.model, &p.mesh, &p.journal), (&before.model, &before.mesh, &before.journal));
         assert!(v1_to_v2(&mut Parts { manifest: json!([]), ..before }).is_err());
+    }
+
+    #[test]
+    fn v3_to_v4_changes_only_the_tag() {
+        let mut p = parts("fieldcraft/3");
+        let before = p.clone();
+        v3_to_v4(&mut p).unwrap();
+        assert_eq!(p.manifest["format"], "fieldcraft/4");
+        let mut manifest = p.manifest.clone();
+        manifest["format"] = before.manifest["format"].clone();
+        assert_eq!(manifest, before.manifest);
+        assert_eq!((&p.model, &p.mesh, &p.journal), (&before.model, &before.mesh, &before.journal));
+        assert!(v3_to_v4(&mut Parts { manifest: json!([]), ..before }).is_err());
     }
 
     #[test]
