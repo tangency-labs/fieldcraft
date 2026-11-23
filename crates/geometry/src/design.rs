@@ -358,6 +358,28 @@ mod tests {
     }
 
     #[test]
+    fn step_visibility_warning_names_only_the_hidden_body() {
+        use solidcraft_kernel::{ExportBody, StepHeader, step_export_bodies};
+        let left = crate::block([0.0; 3], [1.0; 3]).unwrap();
+        let right = crate::block([2.0; 3], [3.0; 3]).unwrap();
+        let solids =
+            [ExportBody { name: "Left".into(), body: &left.body, color: None }, ExportBody { name: "Right".into(), body: &right.body, color: None }];
+        let text = guard("write two STEP solids", || step_export_bodies(&solids, &StepHeader::default())).unwrap();
+        let next = text.lines().filter_map(|l| l.split_once('=')?.0.trim().strip_prefix('#')?.parse::<u64>().ok()).max().unwrap() + 1;
+        // Hide each source solid in turn to exercise both positions in the imported body list.
+        for name in ["Left", "Right"] {
+            let solid = text.lines().find(|line| line.contains(&format!("MANIFOLD_SOLID_BREP('{name}',"))).unwrap();
+            let id = solid.split_once('=').unwrap().0.trim();
+            let mut hidden = text.clone();
+            hidden.insert_str(text.rfind("ENDSEC;").unwrap(), &format!("#{next}=INVISIBILITY(({id}));\n"));
+            let (design, warnings) = open_geometry("pair.step", hidden.as_bytes()).unwrap();
+            let names: Vec<_> = design.bodies.iter().map(|body| body.name.as_str()).collect();
+            assert_eq!(names, ["Left", "Right"]);
+            assert_eq!(warnings, [format!("Body `{name}` is marked invisible in the source and was included in the analysis geometry.")]);
+        }
+    }
+
+    #[test]
     fn cad_product_names_with_numeric_suffixes_remain_distinct() {
         use solidcraft_kernel::{ExportBody, StepHeader, step_export_bodies};
         let left = crate::block([0.0; 3], [1.0; 3]).unwrap();
