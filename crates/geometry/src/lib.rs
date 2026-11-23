@@ -23,6 +23,7 @@ mod design;
 mod edges;
 pub mod face_split;
 pub mod features;
+pub mod formats;
 pub mod partition;
 pub mod sample;
 #[cfg(feature = "scripts")]
@@ -36,6 +37,7 @@ pub use features::{BodyFeatures, Curve, FeatureNode, ProfileGeometry, SketchGeom
 pub use partition::{Cut, CutReport};
 pub use virtual_faces::Merge;
 pub mod tagged_mesh;
+pub mod triangles;
 #[cfg(feature = "scripts")]
 pub use script::{MAX_SCRIPT_BYTES, script_design};
 use solidcraft_kernel::{Body, KernelError, guard};

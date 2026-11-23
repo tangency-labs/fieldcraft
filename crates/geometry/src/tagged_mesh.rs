@@ -43,6 +43,8 @@ pub const FACE_TAGS_NS: &str = "https://github.com/bherbruck/solidcraft/formats/
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TaggedSurface {
     pub name: String,
+    /// The name of the file it was read from (`part.stl`), for messages; empty when unknown.
+    pub file: String,
     pub mesh: SurfaceMesh,
     /// Number of faces: `ft:faces` when given, else the largest tag + 1 (1 when untagged).
     pub faces: u32,
@@ -191,7 +193,8 @@ impl Object {
 
 #[derive(Default)]
 struct Model {
-    unit: f64,
+    /// The `unit` the model states, as written and in millimetres; `None` when it states none.
+    unit: Option<(String, f64)>,
     objects: HashMap<u32, Object>,
     build: Vec<(u32, Xf)>,
 }
@@ -208,7 +211,7 @@ fn parse_model(xml: &[u8]) -> Result<Model> {
     let mut rd = NsReader::from_reader(xml);
     rd.config_mut().trim_text(true);
     let mut buf = Vec::new();
-    let mut m = Model { unit: 1.0, ..Default::default() };
+    let mut m = Model::default();
     let mut depth = 0usize;
     let mut cur: Option<(u32, Object)> = None;
     let (mut vertices, mut triangles) = (0usize, 0usize);
@@ -247,7 +250,7 @@ fn parse_model(xml: &[u8]) -> Result<Model> {
             "model" => {
                 seen_model = true;
                 if let Some(u) = get(&a, Ns::Core, "unit") {
-                    m.unit = unit_mm(u).ok_or_else(|| invalid(format!("unknown unit `{u}`")))?;
+                    m.unit = Some((u.to_string(), unit_mm(u).ok_or_else(|| invalid(format!("unknown unit `{u}`")))?));
                 }
             }
             "object" => {
@@ -350,6 +353,7 @@ fn surface(mut o: Object, k: usize, id: u32, xf: &Xf, unit: f64) -> Result<Tagge
     let name = if o.name.is_empty() { format!("Mesh{}", k + 1) } else { o.name };
     Ok(TaggedSurface {
         name,
+        file: String::new(),
         mesh: SurfaceMesh { positions: o.positions, triangles: o.triangles, tri_face: o.tags, weld_distance: 0.0, ..SurfaceMesh::default() },
         faces,
         original: None,
@@ -358,6 +362,13 @@ fn surface(mut o: Object, k: usize, id: u32, xf: &Xf, unit: f64) -> Result<Tagge
 
 /// The surfaces of a 3MF package, one per build item, in millimetres.
 pub fn read_3mf(bytes: &[u8]) -> Result<Vec<TaggedSurface>> {
+    read_3mf_in(bytes, None)
+}
+
+/// [`read_3mf`] of a package whose model states no `unit` read in `unstated` millimetres per unit
+/// (`None`: millimetres, the 3MF default). A package that states its unit is read in it, and
+/// `unstated` given for one is an error: the file's own unit wins.
+pub fn read_3mf_in(bytes: &[u8], unstated: Option<f64>) -> Result<Vec<TaggedSurface>> {
     if bytes.len() > MAX_FILE_BYTES {
         return bad(format!("file too large ({} MB)", bytes.len() >> 20));
     }
@@ -393,6 +404,11 @@ pub fn read_3mf(bytes: &[u8]) -> Result<Vec<TaggedSurface>> {
     if m.build.is_empty() {
         return bad("no build items");
     }
+    let unit = match (&m.unit, unstated) {
+        (Some((stated, _)), Some(_)) => return bad(format!("the file states its own unit (`{stated}`), which it is read in: leave `unit` out")),
+        (Some((_, mm)), None) => *mm,
+        (None, given) => given.unwrap_or(1.0),
+    };
     // An object's last placement takes it; earlier ones copy it. Every placement counts against
     // one budget, so placing a big object many times stops at the cap.
     let mut uses: HashMap<u32, usize> = HashMap::new();
@@ -409,7 +425,7 @@ pub fn read_3mf(bytes: &[u8]) -> Result<Vec<TaggedSurface>> {
         if budget > MAX_ELEMENTS {
             return bad(format!("the build items place more than {MAX_ELEMENTS} vertices or triangles"));
         }
-        out.push(surface(o, k, *id, xf, m.unit)?);
+        out.push(surface(o, k, *id, xf, unit)?);
     }
     Ok(out)
 }
@@ -498,7 +514,7 @@ mod tests {
         assert_eq!(got.len(), 2);
         // The file carries no weld distance and no B-rep edges.
         let mesh = SurfaceMesh { weld_distance: 0.0, edges: Vec::new(), edge_faces: Vec::new(), ..mesh };
-        assert_eq!(got[0], TaggedSurface { name: "Block".into(), mesh: mesh.clone(), faces: 6, original: None });
+        assert_eq!(got[0], TaggedSurface { name: "Block".into(), file: String::new(), mesh: mesh.clone(), faces: 6, original: None });
         assert_eq!(got[1].name, "Again");
         assert_eq!(got[1].mesh, mesh);
     }

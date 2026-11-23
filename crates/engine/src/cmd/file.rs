@@ -11,8 +11,10 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use fieldcraft_geometry::tagged_mesh;
+use fieldcraft_geometry::triangles::read_surfaces;
 use fieldcraft_geometry::{Design, design_file_limit, open_design, open_geometry};
 use fieldcraft_io::{Geometry, ModelFile, SourceFile};
+use fieldcraft_model::units::Unit;
 use serde_json::{Value, json};
 
 use fieldcraft_io::roots::{Access, Roots};
@@ -236,7 +238,7 @@ fn reopen<T>(
             return (None, kept);
         }
     };
-    let Ok(read) = SourceFile::of(path.clone(), &bytes) else { return (None, kept) };
+    let Ok(read) = SourceFile::of(path.clone(), &bytes).and_then(|r| r.with_unit(stored.unit().map(str::to_string))) else { return (None, kept) };
     if read.sha256() != stored.sha256() {
         warnings
             .push(format!("{what} `{path}` changed since the model was saved; sets follow geometry names, so remeshing brings the mesh up to date"));
@@ -381,8 +383,20 @@ impl Session {
         }
         let mut surfaces = Vec::new();
         for stored in &file.geometry.meshes {
-            let (opened, source) =
-                reopen("mesh", stored, base, roots, tagged_mesh::MAX_FILE_BYTES as u64, tagged_mesh::read_3mf, copy(stored), &mut warnings);
+            let (opened, source) = reopen(
+                "mesh",
+                stored,
+                base,
+                roots,
+                tagged_mesh::MAX_FILE_BYTES as u64,
+                |b| {
+                    let unit =
+                        stored.unit().map(Unit::parse).transpose().map_err(|e| fieldcraft_geometry::Error::Invalid(format!("its unit: {e}")))?;
+                    read_surfaces(stored.path(), b, unit.as_ref()).map(|read| read.surfaces)
+                },
+                copy(stored),
+                &mut warnings,
+            );
             surfaces.extend(opened.into_iter().flatten().map(Arc::new));
             sources.meshes.push(source.without_embedded());
         }

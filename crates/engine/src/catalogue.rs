@@ -258,7 +258,7 @@ use Tab::*;
 pub static CATALOGUE: &[Capability] = &[
     // ---- Geometry ----
     ready("geometry.open", "Open Design", Geometry, "Import", "Open SolidCraft, STEP or IGES geometry with named faces and placed bodies"),
-    ready("geometry.import.mesh", "Tagged Mesh", Geometry, "Import", "Read a face-tagged surface mesh (3MF)"),
+    ready("geometry.import.mesh", "Triangle Mesh", Geometry, "Import", "Read a triangle surface (3MF, STL, OBJ, PLY, glTF)"),
     ready_more(
         "geometry.bodies",
         "Bodies",
