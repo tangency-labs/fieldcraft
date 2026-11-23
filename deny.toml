@@ -1,15 +1,7 @@
 [advisories]
 unmaintained = "all"
 yanked = "warn"
-# zip 8.6 (the last of 8, unfixed) comes only through SolidCraft's FreeCAD importer
-# (cadmpeg-codec-freecad, pinned =0.6.1 by solidcraft-io); our own zip and solidcraft-io's are 9,
-# which is fixed. All three are in `ZipArchive::extract` / `ZipStreamReader::extract`, which no
-# crate in the tree calls: 3MF and FCStd parts are read by name into memory. Drop these once
-# SolidCraft moves to a cadmpeg on zip 9 (0.6.2 is).
 ignore = [
-    { id = "RUSTSEC-2026-0367", reason = "zip 8 via cadmpeg-codec-freecad (solidcraft-io); extract() is never called" },
-    { id = "RUSTSEC-2026-0368", reason = "zip 8 via cadmpeg-codec-freecad (solidcraft-io); extract() is never called" },
-    { id = "RUSTSEC-2026-0369", reason = "zip 8 via cadmpeg-codec-freecad (solidcraft-io); extract() is never called" },
     # rsa 0.9 and crypto-bigint 0.5 come only through pgp in solidcraft-io, which verifies the
     # OpenPGP signature of a design's provenance record with a public key. Both advisories concern
     # private-key operations (Marvin timing on RSA decryption, constant-time arithmetic on
