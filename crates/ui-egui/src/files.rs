@@ -136,14 +136,36 @@ const ANY: Filter = Filter {
     ],
 };
 
+// Linux file choosers may match extension globs case-sensitively (for example, part.StP).
+#[cfg(target_os = "linux")]
+const ALL_FILES: Filter = Filter { name: "All files", extensions: &["*"] };
+
 /// The Open picker's filters: everything FieldCraft opens, then each type.
-pub const OPEN_FILTERS: &[Filter] = &[ANY, MODEL, DESIGN, STEP, IGES, MESH, ORPHAN];
+pub const OPEN_FILTERS: &[Filter] = &[
+    ANY,
+    MODEL,
+    DESIGN,
+    STEP,
+    IGES,
+    MESH,
+    ORPHAN,
+    #[cfg(target_os = "linux")]
+    ALL_FILES,
+];
 
 /// The picker's filters when the user asked for this kind (its own type first).
 fn filters(kind: Kind) -> &'static [Filter] {
     match kind {
         Kind::Model => &[MODEL, ANY],
-        Kind::Design => &[GEOMETRY, DESIGN, STEP, IGES, ANY],
+        Kind::Design => &[
+            GEOMETRY,
+            DESIGN,
+            STEP,
+            IGES,
+            ANY,
+            #[cfg(target_os = "linux")]
+            ALL_FILES,
+        ],
         Kind::Mesh => &[MESH, ANY],
         Kind::Orphan => &[ORPHAN, ANY],
     }
@@ -952,7 +974,7 @@ impl ModelApp {
         let Some(kind) = Kind::of(path) else {
             self.set_status(
                 format!(
-                    "{path}: FieldCraft opens .fieldcraft models, .solidcraft designs, STEP/IGES geometry, .3mf tagged meshes and .msh orphan meshes"
+                    "{path}: FieldCraft opens .fieldcraft models, .sc/.solidcraft designs, STEP/IGES geometry, .3mf tagged meshes and .msh orphan meshes"
                 ),
                 true,
             );
@@ -1466,7 +1488,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         let fraction = app.loading.as_ref().and_then(|l| l.progress.snapshot().fraction());
         let text = match app.loading.as_ref() {
             Some(l) => l.line(),
-            None => "Drop to open: .fieldcraft models, .solidcraft designs, STEP/IGES geometry, .3mf tagged meshes, .msh orphan meshes".into(),
+            None => "Drop to open: .fieldcraft models, .sc/.solidcraft designs, STEP/IGES geometry, .3mf tagged meshes, .msh orphan meshes".into(),
         };
         let mut cancel = false;
         // A notification surface (the kit's Toast), independent of the workspace layout, with the
@@ -2268,6 +2290,28 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_open_dialogs_offer_all_files_for_mixed_case_cad_names() {
+        let dir = temp("mixed-case-cad");
+        let path = dir.join("pair.StP");
+        std::fs::write(&path, fieldcraft_geometry::sample::step_assembly(10.0).unwrap()).unwrap();
+        for (kind, first) in [(None, ANY), (Some(Kind::Design), GEOMETRY)] {
+            let mut app = ModelApp::new(Session::default());
+            let chooser = deferred(&mut app);
+            app.open_dialog(kind);
+            let requests = chooser.requests.borrow();
+            let FilePicker::Open { filters } = &requests[0] else { panic!("expected an open dialog") };
+            assert_eq!(filters.first(), Some(&first));
+            assert_eq!(filters.last().unwrap().extensions, &["*"]);
+            *chooser.answer.borrow_mut() = Some(Some(path.to_str().unwrap().to_owned()));
+            app.poll_picker();
+            app.wait_loaded();
+            assert_eq!(app.session.design.as_ref().unwrap().bodies.len(), 2);
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn file_types_dispatch_to_their_command() {
         assert_eq!(Kind::of("a/b.fieldcraft"), Some(Kind::Model));
@@ -2777,12 +2821,14 @@ pub(crate) mod tests {
     #[test]
     fn a_picked_design_meshes_from_the_ribbon_with_the_defaults() {
         let dir = temp("path");
-        let design = dir.join("plate.solidcraft").to_string_lossy().to_string();
+        let design = dir.join("plate.sc").to_string_lossy().to_string();
         std::fs::write(&design, fieldcraft_geometry::sample::plate_design(&fieldcraft_geometry::sample::Plate::default()).unwrap()).unwrap();
         let offered = Rc::new(RefCell::new(Vec::new()));
         let mut app = ModelApp::new(Session::default());
-        app.services.pick_open = Some(answering(Some(design.clone()), offered));
+        app.services.pick_open = Some(answering(Some(design.clone()), offered.clone()));
         app.open_dialog(None);
+        assert!(offered.borrow()[0][0].extensions.contains(&"sc"));
+        assert!(filters(Kind::Design)[0].extensions.contains(&"sc"));
         app.wait_loaded();
         assert_eq!(app.session.design.as_ref().map(|d| d.bodies.len()), Some(1), "{:?}", app.status);
         assert!(!app.display().bounds.is_empty());
