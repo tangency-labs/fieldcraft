@@ -26,7 +26,7 @@ products are run, no documentation text is copied). Status: **done**, **started*
 | Area | Capability | Milestone | HEX | Status |
 |---|---|---|---|---|
 | Geometry | Open SolidCraft designs, bodies, persistent face names, assemblies placed | M1 | | done |
-| Geometry | Face-tagged mesh import (3MF) | M1 | | done |
+| Geometry | Triangle mesh import as surfaces (3MF with face tags, STL, OBJ, PLY, glTF) | M1 | | done |
 | Geometry | Weld, closed/manifold/orientation and self-intersection checks, feature edges | M1 | yes | started |
 | Geometry | Partitions and datums as SolidCraft features (split body/face, construction planes) | M5 | yes | planned |
 | Geometry | Midsurface extraction for shells | M8 | | planned |

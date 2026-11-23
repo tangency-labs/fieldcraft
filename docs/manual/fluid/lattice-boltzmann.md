@@ -196,7 +196,8 @@ vents](fans-and-vents.md)). Open boundaries prescribe the velocity with the half
 
 The grid fills the box: cell (i, j, k) has its centre at min + (i + ½, j + ½, k + ½) Δx. Each
 obstacle body is triangulated at the domain's `tolerance` (default Δx/10) from the open design, or
-taken from an imported surface, and its surface must bound a solid (closed and oriented). A cell is
+taken from an imported surface (a 3MF, STL, OBJ, PLY or glTF file, `geometry.import.mesh`; `geometry.stitch`
+closes small gaps), and its surface must bound a solid (closed and oriented). A cell is
 solid when its centre lies inside an obstacle: the winding number of the surface around the centre,
 counted along the ray in +x, is positive. Every crossing is decided with exact predicates
 (`orient2d`, `orient3d`), and degenerate positions (a ray through an edge or vertex, a centre on a

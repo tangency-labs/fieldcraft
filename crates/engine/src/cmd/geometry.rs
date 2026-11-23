@@ -3,12 +3,13 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use fieldcraft_geometry::tagged_mesh;
+use fieldcraft_geometry::triangles;
 use fieldcraft_geometry::{Design, Shape, SurfaceMesh, design_file_limit, open_geometry};
 use fieldcraft_io::SourceFile;
 use fieldcraft_io::roots::Access;
 use fieldcraft_model::Model;
 use fieldcraft_model::geometry::{Entity, GeometryRef};
-use fieldcraft_model::units::Quantity;
+use fieldcraft_model::units::{Quantity, Unit};
 use serde_json::{Value, json};
 
 use crate::requirement::Requirement;
@@ -83,8 +84,8 @@ pub const TESSELLATE: CommandSpec = CommandSpec {
 
 pub const IMPORT_MESH: CommandSpec = CommandSpec {
     id: "geometry.import.mesh",
-    label: "Import Tagged Mesh",
-    params: r#"{"path": "part.3mf"} — adds each build item of a 3MF package as a surface; triangles keep their B-rep face tags (docs/formats/tagged-mesh.md)"#,
+    label: "Import Triangle Mesh",
+    params: r#"{"path": "part.stl", "unit"?: "in"} — adds a triangle file as surfaces, for display, reference and fluid obstacles: each build item of a 3MF package, whose triangles keep their B-rep face tags (docs/formats/tagged-mesh.md), or each mesh of an STL, OBJ, PLY or glTF file (one face each). `unit` (a length unit of the form's list: micrometres, millimetres, centimetres, metres, inches or feet, by symbol such as µm, in or m; default millimetres) is the unit of a file that states none (STL, OBJ, PLY, a 3MF without one) and is kept with the model, so opening it again reads the file alike; a 3MF that states its unit, and glTF (metres by its specification), are read in their own, and a `unit` for them is an error. An STL is binary of exactly 84 + 50·n bytes for its header's n triangles, or ASCII; every coordinate must be a finite number. Replies the `surfaces` added, the `unit` read in and the bounding box's `size` in the display units (what shows a wrong unit), and passes on what the reader said that left nothing out; a reader that left geometry out (an OBJ line, a PLY face, a glTF part or placement past its caps) refuses the file"#,
     form: Some(super::forms::IMPORT_MESH),
     kind: CommandKind::Model,
     requires: &[],
@@ -570,9 +571,20 @@ fn import_mesh(s: &mut Session, p: &Value) -> Result<Value> {
     if s.sources.meshes.len() >= fieldcraft_io::MAX_MESH_SOURCES {
         return Err(EngineError::Params(format!("a model imports at most {} meshes", fieldcraft_io::MAX_MESH_SOURCES)));
     }
+    let unit = match super::opt::<String>(p, "unit")? {
+        None => None,
+        Some(symbol) => {
+            let unit = Unit::parse(&symbol).map_err(|e| EngineError::invalid("unit", e.to_string()))?;
+            triangles::mm_per(&unit)?;
+            Some(unit)
+        }
+    };
     let bytes = super::file::read_file(&path, tagged_mesh::MAX_FILE_BYTES as u64)?;
-    let source = SourceFile::of(super::file::absolute(&path), &bytes)?;
-    let surfaces = tagged_mesh::read_3mf(&bytes)?;
+    let source = SourceFile::of(super::file::absolute(&path), &bytes)?.with_unit(unit.as_ref().map(|u| u.symbol().to_string()))?;
+    let triangles::Read { surfaces, mut warnings } = triangles::read_surfaces(&path, &bytes, unit.as_ref())?;
+    // The unit read in and the size it gives, in the display units: what shows a wrong unit.
+    let used = unit.as_ref().map_or("mm", Unit::symbol).to_string();
+    let size = extent(&surfaces);
     let first = s.surfaces.len();
     let added: Vec<Value> = surfaces
         .iter()
@@ -583,15 +595,26 @@ fn import_mesh(s: &mut Session, p: &Value) -> Result<Value> {
     s.sources.meshes.push(source);
     // The model's stitches of surfaces by these names apply to them too.
     let (_, failed) = super::stitch::restitch(s);
-    let mut reply = json!({"path": path, "surfaces": added});
-    let warnings: Vec<String> =
-        failed.into_iter().filter(|(_, why)| !why.starts_with("no surface")).map(|(n, why)| format!("stitch `{n}`: {why}")).collect();
+    let mut reply = json!({"path": path, "surfaces": added, "unit": used, "size": size});
+    warnings.extend(failed.into_iter().filter(|(_, why)| !why.starts_with("no surface")).map(|(n, why)| format!("stitch `{n}`: {why}")));
     if !warnings.is_empty()
         && let Some(o) = reply.as_object_mut()
     {
         o.insert("warnings".into(), json!(warnings));
     }
     Ok(reply)
+}
+
+/// The bounding box's sides of `surfaces`, in millimetres.
+fn extent(surfaces: &[fieldcraft_geometry::tagged_mesh::TaggedSurface]) -> [f64; 3] {
+    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for p in surfaces.iter().flat_map(|t| &t.mesh.positions) {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    std::array::from_fn(|k| (hi[k] - lo[k]).max(0.0))
 }
 
 #[cfg(test)]
@@ -898,6 +921,83 @@ pub(crate) mod tests {
         }
         assert_eq!(s.surfaces.len(), 1);
         assert_eq!(s.journal.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// STL, OBJ and PLY import as one-face surfaces through SolidCraft's readers and reopen with
+    /// the model; truncated and garbage files are errors that change nothing.
+    #[test]
+    fn import_reads_stl_obj_ply_and_hostile_files_change_nothing() {
+        let dir = std::env::temp_dir().join(format!("fieldcraft-import-triangles-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let t = [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]];
+        let mut stl = String::from("solid tet\n");
+        for tri in t {
+            stl.push_str("facet normal 0 0 0\nouter loop\n");
+            for v in tri {
+                let q: [f64; 3] = p[v];
+                stl.push_str(&format!("vertex {} {} {}\n", q[0], q[1], q[2]));
+            }
+            stl.push_str("endloop\nendfacet\n");
+        }
+        stl.push_str("endsolid tet\n");
+        let vertices: String = p.iter().map(|q| format!("{} {} {}\n", q[0], q[1], q[2])).collect();
+        let obj = format!(
+            "o Tet\n{}{}",
+            vertices.lines().map(|l| format!("v {l}\n")).collect::<String>(),
+            t.iter().map(|f| format!("f {} {} {}\n", f[0] + 1, f[1] + 1, f[2] + 1)).collect::<String>()
+        );
+        let ply = format!(
+            "ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nelement face 4\nproperty list uchar int vertex_indices\nend_header\n{vertices}{}",
+            t.iter().map(|f| format!("3 {} {} {}\n", f[0], f[1], f[2])).collect::<String>()
+        );
+        let random: Vec<u8> = (0..4096u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8).collect();
+        let files: [(&str, Vec<u8>); 7] = [
+            ("tet.stl", stl.into_bytes()),
+            ("tet.obj", obj.into_bytes()),
+            ("tet.ply", ply.into_bytes()),
+            ("junk.stl", random.clone()),
+            ("junk.obj", random),
+            ("cut.ply", b"ply\nformat ascii 1.0\nelement vertex 3\n".to_vec()),
+            ("empty.stl", Vec::new()),
+        ];
+        let path = |name: &str| dir.join(name).to_str().unwrap().to_string();
+        for (name, bytes) in &files {
+            std::fs::write(dir.join(name), bytes).unwrap();
+        }
+        let mut s = Session::default();
+        for name in ["tet.stl", "tet.obj", "tet.ply"] {
+            let r = s.execute("geometry.import.mesh", &json!({"path": path(name)})).unwrap();
+            assert_eq!((r["surfaces"][0]["triangles"].clone(), r["surfaces"][0]["faces"].clone()), (json!(4), json!(1)), "{name}: {r}");
+            assert_eq!((r["unit"].clone(), r["size"].clone(), r.get("warnings")), (json!("mm"), json!([1.0, 1.0, 1.0]), None), "{name}: {r}");
+        }
+        // Read in inches, the same file is 25.4 mm (the display unit) at a side, and stays so
+        // when the model is opened again.
+        let r = s.execute("geometry.import.mesh", &json!({"path": path("tet.stl"), "unit": "in"})).unwrap();
+        assert_eq!((r["unit"].clone(), r["size"].clone()), (json!("in"), json!([25.4, 25.4, 25.4])), "{r}");
+        // Read in micrometres it is 0.001 mm at a side: the reply says what unit gave what size.
+        let r = s.execute("geometry.import.mesh", &json!({"path": path("tet.obj"), "unit": "µm"})).unwrap();
+        assert_eq!((r["unit"].clone(), r["size"].clone(), r.get("warnings")), (json!("µm"), json!([0.001, 0.001, 0.001]), None), "{r}");
+        assert_eq!(s.surfaces.iter().map(|x| x.file.as_str()).collect::<Vec<_>>(), ["tet.stl", "tet.obj", "tet.ply", "tet.stl", "tet.obj"]);
+        assert_eq!(s.surfaces[1].name, "Tet");
+        assert_eq!(s.journal.len(), 5);
+        for (name, unit) in
+            [("junk.stl", None), ("junk.obj", None), ("cut.ply", None), ("empty.stl", None), ("tet.stl", Some("s")), ("tet.stl", Some("furlong"))]
+        {
+            let mut p = json!({"path": path(name)});
+            if let Some(u) = unit {
+                p["unit"] = json!(u);
+            }
+            assert!(s.execute("geometry.import.mesh", &p).is_err(), "{p}");
+        }
+        assert_eq!((s.surfaces.len(), s.journal.len()), (5, 5));
+        let model = path("m.fieldcraft");
+        s.execute("file.save", &json!({"path": model})).unwrap();
+        let mut reopened = Session::default();
+        reopened.execute("file.open", &json!({"path": model})).unwrap();
+        let of = |s: &Session| s.surfaces.iter().map(|x| (x.name.clone(), x.file.clone(), x.mesh.clone())).collect::<Vec<_>>();
+        assert_eq!(of(&reopened), of(&s));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

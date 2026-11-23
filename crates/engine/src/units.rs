@@ -707,6 +707,7 @@ const GEOMETRY_REPLIES: &[(&str, Numbers)] = &[
         ],
     ),
     ("geometry.centre", &[("/point", Dim::Length)]),
+    ("geometry.import.mesh", &[("/size", Dim::Length)]),
     (
         "geometry.check",
         &[("/size", Dim::Length), ("/findings/*/value", Dim::Finding), ("/findings/*/limit", Dim::Finding), ("/findings/*/at", Dim::Length)],

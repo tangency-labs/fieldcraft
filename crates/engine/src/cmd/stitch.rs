@@ -82,7 +82,7 @@ pub(crate) fn restitch_surfaces(
             }
         }
         let original = (!model.stitches().iter().all(|st| st.surface != name)).then_some(raw);
-        *slot = Arc::new(TaggedSurface { name: slot.name.clone(), mesh, faces: slot.faces, original });
+        *slot = Arc::new(TaggedSurface { name: slot.name.clone(), file: slot.file.clone(), mesh, faces: slot.faces, original });
     }
     (reports, failed)
 }
