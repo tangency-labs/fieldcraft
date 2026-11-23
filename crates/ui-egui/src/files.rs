@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Sender, TryRecvError};
 use std::task::{Context, Poll, Waker};
 
+use fieldcraft_geometry::formats::{self, Source};
 use fieldcraft_model::progress::Progress;
 
 pub use fieldcraft_engine::OpenFileKind as Kind;
@@ -32,10 +33,28 @@ use crate::{ModelApp, Prebuilt};
 use solidcraft_ui_kit::BackingTooltipExt as _;
 
 /// A file type a picker offers: a name and its extensions (without the dot).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Filter {
     pub name: &'static str,
-    pub extensions: &'static [&'static str],
+    pub extensions: Vec<String>,
+}
+
+impl Filter {
+    /// A filter with exactly these extensions.
+    pub fn new(name: &'static str, extensions: &[&str]) -> Filter {
+        Filter { name, extensions: extensions.iter().map(|e| (*e).to_string()).collect() }
+    }
+
+    /// A filter whose extensions each appear in lower and upper case: the file choosers match
+    /// extension globs case-sensitively on some platforms.
+    fn cased(name: &'static str, extensions: &[&str]) -> Filter {
+        let mut out = Vec::with_capacity(extensions.len() * 2);
+        for e in extensions {
+            out.push((*e).to_string());
+            out.push(e.to_ascii_uppercase());
+        }
+        Filter { name, extensions: out }
+    }
 }
 
 /// The host picks a file to open from the filters (the first is selected), or `None` when the
@@ -98,76 +117,79 @@ pub(crate) struct PendingPicker {
     document: u64,
 }
 
-const MODEL: Filter = Filter { name: "FieldCraft model", extensions: &["fieldcraft"] };
-const DESIGN: Filter = Filter { name: "SolidCraft design", extensions: &["sc", "SC", "solidcraft", "SOLIDCRAFT"] };
-const GEOMETRY: Filter = Filter {
-    name: "SolidCraft, STEP and IGES geometry",
-    extensions: &["sc", "SC", "solidcraft", "SOLIDCRAFT", "step", "STEP", "stp", "STP", "iges", "IGES", "igs", "IGS"],
-};
-const STEP: Filter = Filter { name: "STEP geometry", extensions: &["step", "stp", "STEP", "STP"] };
-const IGES: Filter = Filter { name: "IGES geometry", extensions: &["iges", "igs", "IGES", "IGS"] };
-const MESH: Filter = Filter { name: "Face-tagged mesh (3MF)", extensions: &["3mf", "3MF"] };
-const ORPHAN: Filter = Filter { name: "Orphan mesh (Gmsh MSH 4.1)", extensions: &["msh", "MSH"] };
+fn model() -> Filter {
+    Filter::new("FieldCraft model", &["fieldcraft"])
+}
+fn orphan() -> Filter {
+    Filter::cased("Orphan mesh (Gmsh MSH 4.1)", &["msh"])
+}
 /// The Delete confirmation's icon: the kit's bin, as its delete buttons draw.
 pub(crate) const DELETE_ICON: &str = "delete";
-const SCRIPT: Filter = Filter { name: "FieldCraft script (JSON)", extensions: &["json", "JSON"] };
+fn script() -> Filter {
+    Filter::cased("FieldCraft script (JSON)", &["json"])
+}
 /// Largest script File › Run Script… reads (bytes), as `fieldcraft-cli run`.
 const MAX_SCRIPT_BYTES: u64 = 256 * 1024 * 1024;
-const ANY: Filter = Filter {
-    name: "Models, designs and meshes",
-    extensions: &[
-        "fieldcraft",
-        "sc",
-        "SC",
-        "solidcraft",
-        "SOLIDCRAFT",
-        "step",
-        "stp",
-        "STEP",
-        "STP",
-        "iges",
-        "igs",
-        "IGES",
-        "IGS",
-        "3mf",
-        "3MF",
-        "msh",
-        "MSH",
-    ],
-};
+
+/// The format table's rows this build opens as geometry (designs and CAD), for the pickers.
+fn geometry_formats() -> Vec<formats::Format> {
+    formats::formats().into_iter().filter(|f| f.source != Source::Triangles).collect()
+}
+
+/// SolidCraft's designs and CAD: one filter for the geometry the Design picker opens.
+fn geometry() -> Filter {
+    let exts = formats::extensions(Source::Design).into_iter().chain(formats::extensions(Source::Brep)).collect::<Vec<_>>();
+    Filter::cased("CAD geometry and SolidCraft designs", &exts)
+}
+
+/// One filter per format row that opens as geometry (SolidCraft design, STEP, IGES, FreeCAD, Rhino).
+fn per_format() -> Vec<Filter> {
+    geometry_formats().into_iter().map(|f| Filter::cased(f.label, &f.extensions)).collect()
+}
+
+fn triangles() -> Filter {
+    Filter::cased("Triangle meshes (3MF, STL, OBJ, PLY, glTF)", &formats::extensions(Source::Triangles))
+}
+
+/// Everything FieldCraft opens: a model, then every format of the table, then the orphan mesh.
+fn any() -> Filter {
+    let mut exts = vec!["fieldcraft"];
+    exts.extend(formats::formats().iter().flat_map(|f| f.extensions.iter().copied()));
+    exts.push("msh");
+    Filter::cased("Models, designs and meshes", &exts)
+}
 
 // Linux file choosers may match extension globs case-sensitively (for example, part.StP).
 #[cfg(target_os = "linux")]
-const ALL_FILES: Filter = Filter { name: "All files", extensions: &["*"] };
+fn all_files() -> Filter {
+    Filter::new("All files", &["*"])
+}
 
 /// The Open picker's filters: everything FieldCraft opens, then each type.
-pub const OPEN_FILTERS: &[Filter] = &[
-    ANY,
-    MODEL,
-    DESIGN,
-    STEP,
-    IGES,
-    MESH,
-    ORPHAN,
+pub fn open_filters() -> Vec<Filter> {
+    let mut out = vec![any(), model()];
+    out.extend(per_format());
+    out.push(triangles());
+    out.push(orphan());
     #[cfg(target_os = "linux")]
-    ALL_FILES,
-];
+    out.push(all_files());
+    out
+}
 
 /// The picker's filters when the user asked for this kind (its own type first).
-fn filters(kind: Kind) -> &'static [Filter] {
+fn filters(kind: Kind) -> Vec<Filter> {
     match kind {
-        Kind::Model => &[MODEL, ANY],
-        Kind::Design => &[
-            GEOMETRY,
-            DESIGN,
-            STEP,
-            IGES,
-            ANY,
+        Kind::Model => vec![model(), any()],
+        Kind::Design => {
+            let mut out = vec![geometry()];
+            out.extend(per_format());
+            out.push(any());
             #[cfg(target_os = "linux")]
-            ALL_FILES,
-        ],
-        Kind::Mesh => &[MESH, ANY],
-        Kind::Orphan => &[ORPHAN, ANY],
+            out.push(all_files());
+            out
+        }
+        Kind::Mesh => vec![triangles(), any()],
+        Kind::Orphan => vec![orphan(), any()],
     }
 }
 
@@ -931,7 +953,7 @@ impl ModelApp {
             self.open_form(kind.unwrap_or(Kind::Model).command(), json!({}));
             return;
         }
-        self.pick_file(FilePicker::Open { filters: kind.map_or(OPEN_FILTERS, filters).to_vec() }, PickerAction::Open);
+        self.pick_file(FilePicker::Open { filters: kind.map_or_else(open_filters, filters) }, PickerAction::Open);
     }
 
     /// File › Run Script…: pick a JSON script (an array of `{"command", "params"}`, or a journal)
@@ -941,7 +963,7 @@ impl ModelApp {
             self.set_status("Run Script needs a file chooser; scripts also run with fieldcraft-cli run", true);
             return;
         }
-        self.pick_file(FilePicker::Open { filters: vec![SCRIPT] }, PickerAction::Script);
+        self.pick_file(FilePicker::Open { filters: vec![script()] }, PickerAction::Script);
     }
 
     /// Read the script at `path` (bounded in size) and run it; the status says what happened.
@@ -1284,7 +1306,7 @@ impl ModelApp {
             return false;
         }
         self.pick_file(
-            FilePicker::Save { name: format!("{}.fieldcraft", self.model_name()), filters: vec![MODEL] },
+            FilePicker::Save { name: format!("{}.fieldcraft", self.model_name()), filters: vec![model()] },
             PickerAction::Save { params, next },
         )
     }
@@ -1306,7 +1328,7 @@ impl ModelApp {
             "k" => &["k", "key", "dyn"],
             _ => &[],
         };
-        let filter = Filter { name: "Solver deck", extensions: exts };
+        let filter = Filter::new("Solver deck", exts);
         self.pick_file(
             FilePicker::Save { name: format!("{}.{}", self.model_name(), f.extension), filters: vec![filter] },
             PickerAction::Export { command: "deck.write".into(), params: json!({"format": format}), extension: f.extension, alternatives: exts },
@@ -1335,7 +1357,7 @@ impl ModelApp {
         };
         let name = format!("{}-{}-{what}.csv", self.model_name(), part("step"));
         self.pick_file(
-            FilePicker::Save { name, filters: vec![Filter { name: "CSV", extensions: &["csv"] }] },
+            FilePicker::Save { name, filters: vec![Filter::new("CSV", &["csv"])] },
             PickerAction::Export { command: command.into(), params, extension: "csv", alternatives: &["csv"] },
         );
     }
@@ -1826,7 +1848,7 @@ pub(crate) mod tests {
         app.save_as();
         app.open_dialog(Some(Kind::Design));
         assert_eq!(chooser.requests.borrow().len(), 1);
-        assert_eq!(chooser.requests.borrow()[0], FilePicker::Open { filters: OPEN_FILTERS.to_vec() });
+        assert_eq!(chooser.requests.borrow()[0], FilePicker::Open { filters: open_filters() });
         let ctx = egui::Context::default();
         for _ in 0..8 {
             let mut output = ctx.run_ui(Default::default(), |ui| app.logic(ui.ctx()));
@@ -1978,7 +2000,7 @@ pub(crate) mod tests {
         assert!(std::fs::read_to_string(deck).unwrap().to_ascii_uppercase().contains("*NODE"));
         assert_eq!(
             chooser.requests.borrow()[0],
-            FilePicker::Save { name: "Cantilever (sample).inp".into(), filters: vec![Filter { name: "Solver deck", extensions: &["inp"] }] }
+            FilePicker::Save { name: "Cantilever (sample).inp".into(), filters: vec![Filter::new("Solver deck", &["inp"])] }
         );
         app.export_csv(json!({"what": "reactions", "step": "Load"}));
         let csv = dir.join("reactions.CSV");
@@ -1988,7 +2010,7 @@ pub(crate) mod tests {
         assert!(text.starts_with("set,nodes,fx [N]") && text.contains("\r\ntotal,"));
         assert_eq!(
             chooser.requests.borrow()[1],
-            FilePicker::Save { name: "Cantilever (sample)-Load-reactions.csv".into(), filters: vec![Filter { name: "CSV", extensions: &["csv"] }] }
+            FilePicker::Save { name: "Cantilever (sample)-Load-reactions.csv".into(), filters: vec![Filter::new("CSV", &["csv"])] }
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -2286,7 +2308,7 @@ pub(crate) mod tests {
         let requests = chooser.requests.borrow();
         let FilePicker::Open { filters } = &requests[0] else { panic!("expected an open dialog") };
         for suffix in ["sc", "SC", "solidcraft", "SOLIDCRAFT", "step", "STEP", "stp", "STP", "iges", "IGES", "igs", "IGS"] {
-            assert!(filters[0].extensions.contains(&suffix), "{suffix}");
+            assert!(filters[0].extensions.iter().any(|x| x == suffix), "{suffix}");
         }
     }
 
@@ -2296,14 +2318,14 @@ pub(crate) mod tests {
         let dir = temp("mixed-case-cad");
         let path = dir.join("pair.StP");
         std::fs::write(&path, fieldcraft_geometry::sample::step_assembly(10.0).unwrap()).unwrap();
-        for (kind, first) in [(None, ANY), (Some(Kind::Design), GEOMETRY)] {
+        for (kind, first) in [(None, any()), (Some(Kind::Design), geometry())] {
             let mut app = ModelApp::new(Session::default());
             let chooser = deferred(&mut app);
             app.open_dialog(kind);
             let requests = chooser.requests.borrow();
             let FilePicker::Open { filters } = &requests[0] else { panic!("expected an open dialog") };
             assert_eq!(filters.first(), Some(&first));
-            assert_eq!(filters.last().unwrap().extensions, &["*"]);
+            assert_eq!(filters.last().unwrap().extensions, ["*"]);
             *chooser.answer.borrow_mut() = Some(Some(path.to_str().unwrap().to_owned()));
             app.poll_picker();
             app.wait_loaded();
@@ -2324,10 +2346,26 @@ pub(crate) mod tests {
         for path in ["part.step", "part.StP", "part.IGES", "part.igs"] {
             assert_eq!(Kind::of(path).map(Kind::command), Some("geometry.open"));
         }
+        for path in ["part.FCStd", "part.3dm", "old.solvecraft"] {
+            assert_eq!(Kind::of(path).map(Kind::command), Some("geometry.open"), "{path}");
+        }
+        for path in ["part.stl", "part.OBJ", "scan.ply", "part.glb"] {
+            assert_eq!(Kind::of(path).map(Kind::command), Some("geometry.import.mesh"), "{path}");
+        }
         assert_eq!(Kind::of("part.unknown"), None);
         assert_eq!(Kind::of("noext"), None);
         assert_eq!(with_extension("a/b".into(), "fieldcraft"), "a/b.fieldcraft");
         assert_eq!(with_extension("a/b.FIELDCRAFT".into(), "fieldcraft"), "a/b.FIELDCRAFT");
+    }
+
+    #[test]
+    fn open_filters_follow_the_format_table() {
+        let any = &open_filters()[0];
+        for e in ["fieldcraft", "sc", "solvecraft", "step", "IGES", "fcstd", "3dm", "stl", "STL", "obj", "ply", "3mf", "glb", "msh"] {
+            assert!(any.extensions.iter().any(|x| x == e), "{e}");
+        }
+        assert!(filters(Kind::Mesh)[0].extensions.iter().any(|x| x == "stl"));
+        assert!(filters(Kind::Design).iter().any(|f| f.name == "FreeCAD"));
     }
 
     #[test]
@@ -2339,7 +2377,7 @@ pub(crate) mod tests {
         let mut app = ModelApp::new(Session::default());
         app.services.pick_open = Some(answering(Some(path.clone()), offered.clone()));
         app.open_dialog(None);
-        assert!(offered.borrow()[0].contains(&STEP));
+        assert!(offered.borrow()[0].iter().any(|f| f.name == "STEP"));
         assert_eq!(app.busy(), Some("Opening assembly.STP"));
         app.wait_loaded();
         assert_eq!(app.session.design.as_ref().unwrap().bodies.len(), 2);
@@ -2364,7 +2402,7 @@ pub(crate) mod tests {
         app.services.pick_open = Some(answering(Some(path.clone()), offered.clone()));
         app.start("mesh.import.orphan").unwrap();
         assert!(app.dialog.is_none());
-        assert_eq!(offered.borrow()[0][0], ORPHAN);
+        assert_eq!(offered.borrow()[0][0], orphan());
         assert_eq!(app.busy(), Some("Importing input.msh"));
         app.wait_loaded();
         assert_eq!(app.session.model.elements().len(), 1);
@@ -2394,7 +2432,10 @@ pub(crate) mod tests {
         // Save As through the save picker: the extension is added, the file becomes the model's.
         let bare = dir.join("beam").to_string_lossy().to_string();
         first.services.pick_save = Some(Box::new(move |name: &str, f: &[Filter]| {
-            assert_eq!((name, f.first().map(|f| f.extensions)), ("Untitled.fieldcraft", Some(&["fieldcraft"][..])));
+            assert_eq!(
+                (name, f.first().map(|f| f.extensions.iter().map(String::as_str).collect::<Vec<_>>())),
+                ("Untitled.fieldcraft", Some(vec!["fieldcraft"]))
+            );
             Some(bare.clone())
         }));
         first.start("file.save_as").unwrap();
@@ -2408,7 +2449,7 @@ pub(crate) mod tests {
         app.services.pick_open = Some(answering(Some(saved.clone()), offered.clone()));
         app.start("file.open").unwrap();
         assert!(app.dialog.is_none(), "a picker, not the form");
-        assert_eq!(offered.borrow()[0][0], MODEL, "Open Model offers models first");
+        assert_eq!(offered.borrow()[0][0], model(), "Open Model offers models first");
         assert_eq!(app.busy(), Some("Opening beam.fieldcraft"));
         app.wait_loaded();
         assert_eq!(app.session.model.elements().len(), first.session.model.elements().len());
@@ -2464,7 +2505,7 @@ pub(crate) mod tests {
         let mut app = ModelApp::new(Session::default());
         app.services.pick_open = Some(answering(Some(script.to_string_lossy().into_owned()), offered.clone()));
         app.run_script_dialog();
-        assert_eq!(offered.borrow()[0][0], SCRIPT, "a script picker offers JSON scripts");
+        assert_eq!(offered.borrow()[0][0], super::script(), "a script picker offers JSON scripts");
         assert!(!app.session.model.elements().is_empty(), "the script built the model");
         assert_eq!(app.status.as_ref().map(|s| (s.text.as_str(), s.error)), Some(("Script done", false)));
         let journal = app.session.journal.len();
@@ -2482,7 +2523,7 @@ pub(crate) mod tests {
         let offered = Rc::new(RefCell::new(Vec::new()));
         app.services.pick_open = Some(answering(None, offered.clone()));
         app.open_dialog(None);
-        assert_eq!(offered.borrow()[0], OPEN_FILTERS.to_vec(), "File > Open offers every type");
+        assert_eq!(offered.borrow()[0], open_filters(), "File > Open offers every type");
         assert!(app.loading.is_none());
         // A file that does not open: the model stays, the error is shown.
         let dir = temp("broken");
@@ -2649,7 +2690,7 @@ pub(crate) mod tests {
         app.run_script(&fieldcraft_engine::sample::cantilever()).unwrap();
         let t = target.clone();
         app.services.pick_save = Some(Box::new(move |name: &str, f: &[Filter]| {
-            assert_eq!((name, f.first().map(|f| f.extensions)), ("Untitled.inp", Some(&["inp"][..])));
+            assert_eq!((name, f.first().map(|f| f.extensions.iter().map(String::as_str).collect::<Vec<_>>())), ("Untitled.inp", Some(vec!["inp"])));
             Some(t.clone())
         }));
         app.start("deck.write.abaqus").unwrap();
@@ -2675,7 +2716,10 @@ pub(crate) mod tests {
         app.dialog = None;
         let t = target.clone();
         app.services.pick_save = Some(Box::new(move |name: &str, f: &[Filter]| {
-            assert_eq!((name, f.first().map(|f| f.extensions)), ("Cantilever (sample)-Load-reactions.csv", Some(&["csv"][..])));
+            assert_eq!(
+                (name, f.first().map(|f| f.extensions.iter().map(String::as_str).collect::<Vec<_>>())),
+                ("Cantilever (sample)-Load-reactions.csv", Some(vec!["csv"]))
+            );
             Some(t.clone())
         }));
         app.export_csv(params);
@@ -2827,8 +2871,8 @@ pub(crate) mod tests {
         let mut app = ModelApp::new(Session::default());
         app.services.pick_open = Some(answering(Some(design.clone()), offered.clone()));
         app.open_dialog(None);
-        assert!(offered.borrow()[0][0].extensions.contains(&"sc"));
-        assert!(filters(Kind::Design)[0].extensions.contains(&"sc"));
+        assert!(offered.borrow()[0][0].extensions.iter().any(|x| x == "sc"));
+        assert!(filters(Kind::Design)[0].extensions.iter().any(|x| x == "sc"));
         app.wait_loaded();
         assert_eq!(app.session.design.as_ref().map(|d| d.bodies.len()), Some(1), "{:?}", app.status);
         assert!(!app.display().bounds.is_empty());

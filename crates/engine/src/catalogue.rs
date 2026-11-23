@@ -257,7 +257,13 @@ use Tab::*;
 /// Every capability in toolbar order: grouped by tab (in [`Tab::ALL`] order), then by panel.
 pub static CATALOGUE: &[Capability] = &[
     // ---- Geometry ----
-    ready("geometry.open", "Open Design", Geometry, "Import", "Open SolidCraft, STEP or IGES geometry with named faces and placed bodies"),
+    ready(
+        "geometry.open",
+        "Open Design",
+        Geometry,
+        "Import",
+        "Open a SolidCraft design or CAD file (STEP, IGES, FreeCAD, Rhino) with named faces and placed bodies",
+    ),
     ready("geometry.import.mesh", "Triangle Mesh", Geometry, "Import", "Read a triangle surface (3MF, STL, OBJ, PLY, glTF)"),
     ready_more(
         "geometry.bodies",

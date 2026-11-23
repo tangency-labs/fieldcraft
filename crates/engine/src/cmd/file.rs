@@ -22,14 +22,16 @@ use fieldcraft_io::roots::{Access, Roots};
 use super::{file_param, opt, req};
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session, next_revision};
 
-/// What opening a file does with it, from its extension.
+/// What opening a file does with it, from its extension: geometry follows SolidCraft's format
+/// table ([`fieldcraft_geometry::formats`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpenFileKind {
     /// A `.fieldcraft` model replaces the session (`file.open`).
     Model,
-    /// A SolidCraft design (`.sc` or `.solidcraft`) or STEP/IGES file becomes the geometry (`geometry.open`).
+    /// A SolidCraft design or B-rep CAD file (STEP, IGES; FreeCAD and Rhino in native builds)
+    /// becomes the geometry (`geometry.open`).
     Design,
-    /// A `.3mf` face-tagged mesh is added as a surface (`geometry.import.mesh`).
+    /// A triangle file (3MF, STL, OBJ, PLY, glTF) is added as surfaces (`geometry.import.mesh`).
     Mesh,
     /// A `.msh` orphan mesh replaces the mesh (`mesh.import.orphan`).
     Orphan,
@@ -38,14 +40,14 @@ pub enum OpenFileKind {
 impl OpenFileKind {
     /// The kind of a file by its extension (any case); `None` for a file FieldCraft does not open.
     pub fn of(path: &str) -> Option<OpenFileKind> {
-        if fieldcraft_geometry::is_exchange_file(path) {
-            return Some(OpenFileKind::Design);
+        use fieldcraft_geometry::formats::{Source, source_of};
+        match source_of(path) {
+            Some(Source::Design | Source::Brep) => return Some(OpenFileKind::Design),
+            Some(Source::Triangles) => return Some(OpenFileKind::Mesh),
+            None => {}
         }
-        let ext = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
-        match ext.as_str() {
+        match Path::new(path).extension()?.to_str()?.to_ascii_lowercase().as_str() {
             "fieldcraft" => Some(OpenFileKind::Model),
-            "sc" | "solidcraft" => Some(OpenFileKind::Design),
-            "3mf" => Some(OpenFileKind::Mesh),
             "msh" => Some(OpenFileKind::Orphan),
             _ => None,
         }

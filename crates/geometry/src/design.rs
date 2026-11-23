@@ -107,9 +107,10 @@ impl Design {
 /// The newest design format the pinned SolidCraft reads (and the one it writes).
 pub const DESIGN_FORMAT: u32 = solidcraft_doc::format::FORMAT;
 
-/// STEP and IGES paths supported by FieldCraft. SolidCraft also handles native CAD through this reader.
+/// B-rep CAD files this build reads as one import feature ([`crate::formats::Source::Brep`]):
+/// STEP and IGES, and FreeCAD and Rhino in native builds.
 pub fn is_exchange_file(path: &str) -> bool {
-    solidcraft_io::is_step_path(path) && !solidcraft_io::is_native_cad_path(path)
+    crate::formats::source_of(path) == Some(crate::formats::Source::Brep)
 }
 
 /// Byte limit for a design source, applied before reading its contents.
