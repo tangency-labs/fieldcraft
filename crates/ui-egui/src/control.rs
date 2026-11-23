@@ -1110,17 +1110,17 @@ mod tests {
     fn dropped_files_open_as_a_drop_does() {
         let dir = std::env::temp_dir().join(format!("fieldcraft-drop-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let design = dir.join("plate.solidcraft");
+        let design = dir.join("plate.sc");
         std::fs::write(&design, fieldcraft_geometry::sample::plate_design(&fieldcraft_geometry::sample::Plate::default()).unwrap()).unwrap();
         let mut app = ModelApp::new(Session::default());
         let r = call(&mut app, "ui.drop", json!({"paths": [design.to_string_lossy()]}));
         assert_eq!(r["result"]["dropped"], 1, "{r}");
         assert!(app.session.design.is_none(), "nothing opens before the next frame");
         app.logic(&egui::Context::default());
-        assert_eq!(app.busy(), Some("Opening plate.solidcraft"));
+        assert_eq!(app.busy(), Some("Opening plate.sc"));
         app.wait_loaded();
         assert_eq!(app.session.design.as_ref().map(|d| d.bodies.len()), Some(1));
-        assert_eq!(app.status.as_ref().map(|s| s.text.as_str()), Some("Opened plate.solidcraft"));
+        assert_eq!(app.status.as_ref().map(|s| s.text.as_str()), Some("Opened plate.sc"));
         for bad in [json!({}), json!({"paths": []}), json!({"paths": [""]}), json!({"paths": [3]}), json!({"paths": vec!["a.solidcraft"; 17]})] {
             assert_eq!(call(&mut app, "ui.drop", bad.clone())["ok"], false, "{bad}");
         }
