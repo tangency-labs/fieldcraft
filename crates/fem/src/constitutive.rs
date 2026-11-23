@@ -239,7 +239,7 @@ impl MaterialModel {
             }
         };
         let j = jacobian(f)?;
-        let scale = j.powf(-2.0 / 3.0);
+        let scale = libm::pow(j, -2.0 / 3.0);
         let b = mul(f, &transpose(f));
         let bbar = voigt(&b).map(|v| scale * v);
         let tr = bbar[0] + bbar[1] + bbar[2];
@@ -293,7 +293,7 @@ impl MaterialModel {
 fn polynomial_isochoric(c: &[f64; 4], f: &Mat3) -> Result<Response> {
     let [c10, c01, c20, c30] = *c;
     let j = jacobian(f)?;
-    let scale = j.powf(-2.0 / 3.0);
+    let scale = libm::pow(j, -2.0 / 3.0);
     let b = mul(f, &transpose(f)).map(|row| row.map(|v| scale * v));
     let b2 = mul(&b, &b);
     let i1 = b[0][0] + b[1][1] + b[2][2];
@@ -353,7 +353,7 @@ pub fn logarithmic_strain(f: &Mat3) -> Option<[f64; 6]> {
     if !l.iter().all(|x| *x > 0.0) {
         return None;
     }
-    let ln = l.map(|x| 0.5 * x.ln());
+    let ln = l.map(|x| 0.5 * libm::log(x));
     let e = |i: usize, j: usize| (0..3).map(|k| ln[k] * v[i][k] * v[j][k]).sum::<f64>();
     Some([e(0, 0), e(1, 1), e(2, 2), 2.0 * e(0, 1), 2.0 * e(0, 2), 2.0 * e(1, 2)])
 }

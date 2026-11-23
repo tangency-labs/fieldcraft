@@ -147,18 +147,18 @@ impl Flow {
             }
             Flow::Table(ref points) => table(points, e),
             Flow::JohnsonCook { a, b, n, c, m, rate0, room, melt } => {
-                let hardening = a + b * e.max(0.0).powf(n);
+                let hardening = a + b * libm::pow(e.max(0.0), n);
                 let d_hardening = if e > 0.0 {
-                    b * n * e.powf(n - 1.0)
+                    b * n * libm::pow(e, n - 1.0)
                 } else if n < 1.0 && b > 0.0 {
                     f64::INFINITY
                 } else {
                     b * n
                 };
                 let ratio = rate / rate0;
-                let (rate_term, d_rate) = if ratio > 1.0 && dt > 0.0 { (1.0 + c * ratio.ln(), c / (rate * dt)) } else { (1.0, 0.0) };
+                let (rate_term, d_rate) = if ratio > 1.0 && dt > 0.0 { (1.0 + c * libm::log(ratio), c / (rate * dt)) } else { (1.0, 0.0) };
                 let homologous = ((t - room) / (melt - room)).clamp(0.0, 1.0);
-                let thermal = if homologous > 0.0 { 1.0 - homologous.powf(m) } else { 1.0 };
+                let thermal = if homologous > 0.0 { 1.0 - libm::pow(homologous, m) } else { 1.0 };
                 (hardening * rate_term * thermal, (d_hardening * rate_term + hardening * d_rate) * thermal)
             }
         }
@@ -276,8 +276,8 @@ impl J2 {
             let triaxiality = if q > 0.0 { pressure / q } else { 0.0 };
             let (rate0, homologous) = flow.rate_and_temperature(state.temperature);
             let rate = if dt > 0.0 { out.plastic_strain / dt / rate0 } else { 0.0 };
-            let log_rate = if rate > 1.0 { rate.ln() } else { 0.0 };
-            let fracture = (d[0] + d[1] * (d[2] * triaxiality).exp()) * (1.0 + d[3] * log_rate) * (1.0 + d[4] * homologous);
+            let log_rate = if rate > 1.0 { libm::log(rate) } else { 0.0 };
+            let fracture = (d[0] + d[1] * libm::exp(d[2] * triaxiality)) * (1.0 + d[3] * log_rate) * (1.0 + d[4] * homologous);
             state.damage += out.plastic_strain / fracture.max(MIN_FRACTURE_STRAIN);
         }
         out
@@ -510,7 +510,7 @@ mod tests {
         for w in curve.windows(2).skip(20) {
             let (_, s, p) = w[1];
             let rate = (p - w[0].2) / dt;
-            let want = (a + b * p.powf(n)) * (1.0 + c * rate.ln());
+            let want = (a + b * libm::pow(p, n)) * (1.0 + c * libm::log(rate));
             worst = worst.max((s - want).abs() / want);
         }
         eprintln!("Johnson–Cook uniaxial: largest relative error of the flow stress {worst:.2e}");

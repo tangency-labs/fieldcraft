@@ -1950,6 +1950,7 @@ name = "fieldcraft-fem"
 version = "0.8.1"
 dependencies = [
  "fieldcraft-model",
+ "libm",
  "serde",
  "thiserror 2.0.21",
 ]
@@ -2099,6 +2100,7 @@ dependencies = [
  "fieldcraft-mesh",
  "fieldcraft-model",
  "fieldcraft-parallel",
+ "libm",
  "num-complex",
  "serde",
  "thiserror 2.0.21",

@@ -108,9 +108,9 @@ pub fn principal(s: &[f64; 6]) -> [f64; 3] {
     // det(A − qI) / (2 p³), the cosine of three times the angle, within [−1, 1].
     let det = a * (b * c - yz * yz) - xy * (xy * c - yz * xz) + xz * (xy * yz - b * xz);
     let r = (det / (2.0 * p * p * p)).clamp(-1.0, 1.0);
-    let phi = r.acos() / 3.0;
-    let first = q + 2.0 * p * phi.cos();
-    let third = q + 2.0 * p * (phi + 2.0 * std::f64::consts::FRAC_PI_3).cos();
+    let phi = libm::acos(r) / 3.0;
+    let first = q + 2.0 * p * libm::cos(phi);
+    let third = q + 2.0 * p * libm::cos(phi + 2.0 * std::f64::consts::FRAC_PI_3);
     [first, 3.0 * q - first - third, third]
 }
 

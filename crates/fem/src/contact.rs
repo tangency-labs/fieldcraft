@@ -236,7 +236,7 @@ impl Grid {
             let dims = [0, 1, 2].map(|k| ((highest[k] - lowest[k]) / cell).floor() + 1.0);
             let cells = dims[0] * dims[1] * dims[2];
             if !(cells <= max_cells as f64) {
-                cell *= (cells / max_cells as f64).cbrt().max(1.01) * 1.01;
+                cell *= libm::cbrt(cells / max_cells as f64).max(1.01) * 1.01;
                 continue;
             }
             let dims = dims.map(|d| d as usize);
