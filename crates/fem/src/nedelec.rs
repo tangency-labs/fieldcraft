@@ -51,23 +51,24 @@
 //! not here yet.
 
 use crate::dense::{Matrix, inverse3};
+use crate::dof::{DofKind, DofLayout, DofSet, Entity, LayoutBuilder};
 use crate::frame::{Vec3, add, cross, dot, scale};
 use crate::{Error, Result};
 
 /// Barycentric coordinates λ₀..λ₃ of a point of a tetrahedron (they sum to 1).
 pub type Barycentric = [f64; 4];
 
-/// An edge by its two nodes (local corners or global labels), the lower first.
-pub type EdgeKey = [usize; 2];
+/// A mesh edge by its nodes' labels, the lower first ([`Entity::Edge`]).
+pub type EdgeKey = [u32; 2];
 
-/// A face by its three nodes, ascending.
-pub type FaceKey = [usize; 3];
+/// A mesh face by its nodes' labels, ascending ([`Entity::Face`]).
+pub type FaceKey = [u32; 3];
 
 /// The local edges: edge k joins corners `EDGES[k]`, lower first.
-pub const EDGES: [EdgeKey; 6] = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]];
+pub const EDGES: [[usize; 2]; 6] = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]];
 
 /// The local faces: face f has corners `FACES[f]`, ascending.
-pub const FACES: [FaceKey; 4] = [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]];
+pub const FACES: [[usize; 3]; 4] = [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]];
 
 /// The order of an edge element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -101,6 +102,14 @@ impl Order {
         match self {
             Order::One => 0,
             Order::Two => 2,
+        }
+    }
+
+    /// The unknowns each of its edges and faces carries.
+    pub fn kinds(self) -> DofSet {
+        match self {
+            Order::One => DofSet::FIELD,
+            Order::Two => DofSet::FIELDS,
         }
     }
 
@@ -286,9 +295,9 @@ fn realise_curl(terms: &[Term], g: &[Vec3; 4]) -> Poly {
 /// The order in which a tetrahedron's corners are listed for [`EdgeTet::new`]: by ascending
 /// global label, so `sorted[k]` is the position in `labels` of the k-th lowest. Refused when two
 /// labels are the same.
-pub fn sort_corners(labels: [usize; 4]) -> Result<[usize; 4]> {
+pub fn sort_corners(labels: [u32; 4]) -> Result<[usize; 4]> {
     let mut order = [0, 1, 2, 3];
-    order.sort_by_key(|&k| labels.get(k).copied().unwrap_or(usize::MAX));
+    order.sort_by_key(|&k| labels.get(k).copied().unwrap_or(u32::MAX));
     let ascending = order.windows(2).all(|w| labels.get(w[0]) < labels.get(w[1]));
     if !ascending {
         return Err(Error::Invalid(format!("a tetrahedron's corners must be four different nodes, got {labels:?}")));
@@ -299,10 +308,99 @@ pub fn sort_corners(labels: [usize; 4]) -> Result<[usize; 4]> {
 /// The global edges and faces of a tetrahedron's local ones ([`EDGES`], [`FACES`] of its sorted
 /// corners), as sorted pairs and triples of its corners' labels: what a numbering of the mesh's
 /// edges and faces is looked up by.
-pub fn entity_keys(labels: [usize; 4]) -> Result<([EdgeKey; 6], [FaceKey; 4])> {
+pub fn entity_keys(labels: [u32; 4]) -> Result<([EdgeKey; 6], [FaceKey; 4])> {
     let sorted = sort_corners(labels)?.map(|k| labels.get(k).copied().unwrap_or_default());
     let at = |i: usize| sorted.get(i).copied().unwrap_or_default();
     Ok((EDGES.map(|e| e.map(at)), FACES.map(|f| f.map(at))))
+}
+
+/// Declares what a tetrahedron of nodes `labels` needs of a layout: its edges, and at order 2
+/// its faces, each with [`Order::kinds`]. A mesh's elements are all of one order: [`slots`]
+/// refuses one whose edge or face an element of the other order shares.
+pub fn declare(layout: &mut LayoutBuilder, labels: [u32; 4], order: Order) -> Result<()> {
+    let (edges, faces) = entity_keys(labels)?;
+    for e in edges {
+        layout.edge(e, order.kinds());
+    }
+    if order.per_face() > 0 {
+        for f in faces {
+            layout.face(f, order.kinds());
+        }
+    }
+    Ok(())
+}
+
+/// The layout slots of a tetrahedron's edges, then (order 2) its faces, in the element's local
+/// order ([`Order::role`]): with [`Order::kinds`], what `add_block` assembles its matrices by.
+/// `None` when the layout lacks one of them, or one carries field unknowns other than this
+/// order's: an element of the other order shares it, and the field would not be continuous
+/// across it (an order-1 element has no second unknown on the edge to match). Unknowns of
+/// other kinds on a slot are no concern of the element.
+pub fn slots(layout: &DofLayout, labels: [u32; 4], order: Order) -> Option<Vec<usize>> {
+    let (edges, faces) = entity_keys(labels).ok()?;
+    let faces = faces.iter().take(if order.per_face() > 0 { FACES.len() } else { 0 }).map(|f| layout.face(*f));
+    let slots: Vec<usize> = edges.iter().map(|e| layout.edge(*e)).chain(faces).collect::<Option<_>>()?;
+    let fields = |slot: &usize| layout.kinds(*slot).iter().filter(|k| DofSet::FIELDS.contains(*k)).collect::<DofSet>();
+    slots.iter().all(|s| fields(s) == order.kinds()).then_some(slots)
+}
+
+/// What a column of the discrete gradient ([`gradient`]) is: a nodal potential's function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Potential {
+    /// The linear function of a node, by label.
+    Node(u32),
+    /// The quadratic function λ_aλ_b of an edge, by its layout slot (order 2).
+    Edge(usize),
+}
+
+/// The discrete gradient G of a layout's edge unknowns (RFC §8.2, §8.4): the edge-element field
+/// of ∇φ, φ a sum of nodal potentials, is G φ, with
+/// - the Whitney unknown (E1) of edge a → b taking φ_b − φ_a: w_ab's integral along its edge is
+///   1, so ∫_ab ∇φ · t = φ(b) − φ(a) for a linear φ;
+/// - its gradient unknown (E2) taking the coefficient of its own edge function: ∇(λ_aλ_b) is
+///   that function at order 2.
+///
+/// As (row: the unknown, column, coefficient) triples, by row. The curl–curl matrix K has
+/// K G = 0, the cheapest strong test of a numbering (a wrong orientation or incidence breaks it),
+/// and G's columns span the gradients in K's kernel, which a cavity's eigen step projects out.
+/// They are all of the kernel unless the domain has a handle (a ring) and walls left without a
+/// conductor, where fields that are no gradient also lie in it.
+pub fn gradient(layout: &DofLayout) -> Vec<(usize, Potential, f64)> {
+    (0..layout.slots())
+        .filter_map(|slot| match layout.entity(slot) {
+            Some(Entity::Edge([a, b])) => Some((slot, a, b)),
+            _ => None,
+        })
+        .flat_map(|(slot, a, b)| {
+            let whitney = layout.dof(slot, DofKind::E1).into_iter().flat_map(move |r| [(r, Potential::Node(a), -1.0), (r, Potential::Node(b), 1.0)]);
+            let own = layout.dof(slot, DofKind::E2).map(|r| (r, Potential::Edge(slot), 1.0));
+            whitney.chain(own)
+        })
+        .collect()
+}
+
+fn flat() -> Error {
+    Error::Degenerate("a tetrahedron is flat".into())
+}
+
+/// The unsigned volume of a tetrahedron and its barycentric gradients ∇λᵢ, its corners in the
+/// order given.
+fn geometry(corners: &[Vec3; 4]) -> Result<(f64, [Vec3; 4])> {
+    // The rows are the edges from corner 0, so ∇λ₁, ∇λ₂, ∇λ₃ are the columns of J⁻¹.
+    let j = fieldcraft_model::tet4_jacobian(corners);
+    let (inv, det) = inverse3(&j).ok_or_else(flat)?;
+    let column = |a: usize| inv.map(|row| row.get(a).copied().unwrap_or_default());
+    let (g1, g2, g3) = (column(0), column(1), column(2));
+    Ok((det.abs() / 6.0, [scale(add(add(g1, g2), g3), -1.0), g1, g2, g3]))
+}
+
+/// Coordinates that are finite numbers in range, and a tetrahedron that is not flat by
+/// FieldCraft's validity criterion with its corners in the order given (the criterion is taken
+/// at corner 0).
+fn check(corners: &[Vec3; 4]) -> Result<()> {
+    fieldcraft_model::check_coordinates(corners.as_flattened()).map_err(|e| Error::Invalid(e.to_string()))?;
+    let j = fieldcraft_model::tet4_jacobian(corners);
+    if fieldcraft_model::normalized_jacobian(&j).abs() > fieldcraft_model::MIN_NORMALIZED_JACOBIAN { Ok(()) } else { Err(flat()) }
 }
 
 /// A straight tetrahedron with its edge-element basis and the curls of its functions.
@@ -318,32 +416,42 @@ pub struct EdgeTet {
 
 impl EdgeTet {
     /// The element on `corners`, which must be sorted by global label (see the module notes; or
-    /// use [`EdgeTet::of_labels`]). Refused when a coordinate is not a finite number in range, or
-    /// when the tetrahedron is flat by FieldCraft's validity criterion.
+    /// use [`EdgeTet::of_labels`]). Refused when a coordinate is not a finite number in range,
+    /// when the tetrahedron, its corners in this order, is flat by FieldCraft's validity
+    /// criterion, or when its basis is not finite.
     pub fn new(order: Order, corners: [Vec3; 4]) -> Result<EdgeTet> {
-        fieldcraft_model::check_coordinates(corners.as_flattened()).map_err(|e| Error::Invalid(e.to_string()))?;
-        // The rows are the edges from corner 0, so ∇λ₁, ∇λ₂, ∇λ₃ are the columns of J⁻¹.
-        let j = fieldcraft_model::tet4_jacobian(&corners);
-        let flat = || Error::Degenerate("a tetrahedron is flat".into());
-        if !(fieldcraft_model::normalized_jacobian(&j).abs() > fieldcraft_model::MIN_NORMALIZED_JACOBIAN) {
-            return Err(flat());
-        }
-        let (inv, det) = inverse3(&j).ok_or_else(flat)?;
-        let column = |a: usize| inv.map(|row| row.get(a).copied().unwrap_or_default());
-        let (g1, g2, g3) = (column(0), column(1), column(2));
-        let grads = [scale(add(add(g1, g2), g3), -1.0), g1, g2, g3];
-        let terms = terms(order);
-        let basis = terms.iter().map(|t| realise(t, &grads)).collect();
-        let curls = terms.iter().map(|t| realise_curl(t, &grads)).collect();
-        Ok(EdgeTet { order, corners, volume: det.abs() / 6.0, grads, basis, curls })
+        check(&corners)?;
+        let (volume, grads) = geometry(&corners)?;
+        EdgeTet::on(order, corners, volume, grads)
     }
 
     /// The element of a mesh's tetrahedron, its corners at `xyz` with global node labels
     /// `labels`, sorted here; the order of its corners is returned with it ([`sort_corners`]).
-    pub fn of_labels(order: Order, xyz: [Vec3; 4], labels: [usize; 4]) -> Result<(EdgeTet, [usize; 4])> {
+    /// The validity criterion is applied to the corners in mesh order, as the meshers' gate
+    /// applies it (`fieldcraft_model::Mesh`), and the volume and the gradients ∇λᵢ are computed
+    /// in that order too, then listed in the sorted one (each belongs to its corner), so whether
+    /// an element is accepted, and its matrices, do not depend on its nodes' labels.
+    pub fn of_labels(order: Order, xyz: [Vec3; 4], labels: [u32; 4]) -> Result<(EdgeTet, [usize; 4])> {
         let sorted = sort_corners(labels)?;
+        check(&xyz)?;
+        let (volume, grads) = geometry(&xyz)?;
         let corners = sorted.map(|k| xyz.get(k).copied().unwrap_or_default());
-        Ok((EdgeTet::new(order, corners)?, sorted))
+        let grads = sorted.map(|k| grads.get(k).copied().unwrap_or_default());
+        Ok((EdgeTet::on(order, corners, volume, grads)?, sorted))
+    }
+
+    /// The element on `corners` with their gradients ∇λᵢ, already checked. Refused when its
+    /// basis is not finite: edges of 1e-155 m pass the validity criterion, which does not depend
+    /// on size, but their gradients' cross products overflow.
+    fn on(order: Order, corners: [Vec3; 4], volume: f64, grads: [Vec3; 4]) -> Result<EdgeTet> {
+        let terms = terms(order);
+        let basis: Vec<Poly> = terms.iter().map(|t| realise(t, &grads)).collect();
+        let curls: Vec<Poly> = terms.iter().map(|t| realise_curl(t, &grads)).collect();
+        let finite = |p: &Poly| p.terms.iter().flat_map(|(_, c)| c).all(|c| c.is_finite());
+        if !(grads.as_flattened().iter().all(|g| g.is_finite()) && basis.iter().chain(&curls).all(finite)) {
+            return Err(Error::Degenerate("a tetrahedron is too small or too thin for its matrices to be represented".into()));
+        }
+        Ok(EdgeTet { order, corners, volume, grads, basis, curls })
     }
 
     pub fn order(&self) -> Order {
@@ -366,12 +474,14 @@ impl EdgeTet {
     }
 
     /// ∫ curl Nᵢ · diag(ν) curl Nⱼ dV, ν (1/μᵣ) constant and diagonal in the global axes.
-    pub fn curl_curl(&self, nu: Vec3) -> Matrix {
+    /// Refused when an entry is not finite (a tetrahedron too small or too thin, or ν too large).
+    pub fn curl_curl(&self, nu: Vec3) -> Result<Matrix> {
         gram(&self.curls, nu, self.volume)
     }
 
-    /// ∫ Nᵢ · diag(ε) Nⱼ dV, ε (εᵣ) constant and diagonal in the global axes.
-    pub fn mass(&self, eps: Vec3) -> Matrix {
+    /// ∫ Nᵢ · diag(ε) Nⱼ dV, ε (εᵣ) constant and diagonal in the global axes. Refused when an
+    /// entry is not finite.
+    pub fn mass(&self, eps: Vec3) -> Result<Matrix> {
         gram(&self.basis, eps, self.volume)
     }
 
@@ -400,22 +510,28 @@ impl EdgeTet {
     }
 }
 
-/// [∫ pᵢ · diag(w) pⱼ dV]: the upper triangle computed once, row by row, and mirrored.
-fn gram(p: &[Poly], w: Vec3, volume: f64) -> Matrix {
+/// [∫ pᵢ · diag(w) pⱼ dV]: the upper triangle computed once, row by row, and mirrored. Refused
+/// when an entry is not finite.
+fn gram(p: &[Poly], w: Vec3, volume: f64) -> Result<Matrix> {
     let n = p.len();
     let upper: Vec<f64> = p.iter().enumerate().flat_map(|(i, pi)| p.iter().skip(i).map(move |pj| pi.inner(pj, w, volume))).collect();
+    if !upper.iter().all(|v| v.is_finite()) {
+        return Err(Error::Degenerate(
+            "an element's matrix is not finite: its tetrahedron is too small or too thin, or its material too large, for it to be represented".into(),
+        ));
+    }
     // Row i of the upper triangle starts after the n + (n − 1) + … + (n − i + 1) entries above it.
     let at = |i: usize, j: usize| {
         let (i, j) = (i.min(j), i.max(j));
         i * n - i * i.saturating_sub(1) / 2 + (j - i)
     };
-    Matrix { n, data: (0..n * n).map(|k| upper.get(at(k / n, k % n)).copied().unwrap_or(0.0)).collect() }
+    Ok(Matrix { n, data: (0..n * n).map(|k| upper.get(at(k / n, k % n)).copied().unwrap_or(0.0)).collect() })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dense::Cholesky;
+    use crate::dense::{Cholesky, det3};
     use crate::frame::sub;
     use crate::quadrature::{Rule, gauss_legendre};
     use crate::shape::tet4;
@@ -475,8 +591,8 @@ mod tests {
         for order in [Order::One, Order::Two] {
             let unit = EdgeTet::new(order, tet()).unwrap();
             let tiny = EdgeTet::new(order, tet().map(|p| scale(p, h))).unwrap();
-            let (k, m) = (unit.curl_curl([1.0; 3]), unit.mass([1.0; 3]));
-            let (kt, mt) = (tiny.curl_curl([1.0; 3]), tiny.mass([1.0; 3]));
+            let (k, m) = (unit.curl_curl([1.0; 3]).unwrap(), unit.mass([1.0; 3]).unwrap());
+            let (kt, mt) = (tiny.curl_curl([1.0; 3]).unwrap(), tiny.mass([1.0; 3]).unwrap());
             for i in 0..order.functions() {
                 let close = |a: f64, b: f64| a.is_finite() && (a - b).abs() <= 1e-9 * b.abs();
                 assert!(close(kt.get(i, i) * h, k.get(i, i)), "{order:?} {i}: {} against {}", kt.get(i, i) * h, k.get(i, i));
@@ -514,7 +630,7 @@ mod tests {
         // curl w_ij = 2 ∇λ_i × ∇λ_j (Whitney 1957) and ∫ λ_a λ_b = V (1 + δ_ab)/20
         // (Zienkiewicz & Taylor, vol. 1, §8.8).
         let e = EdgeTet::new(Order::One, tet()).unwrap();
-        let (s, m) = (e.curl_curl(ONE), e.mass(ONE));
+        let (s, m) = (e.curl_curl(ONE).unwrap(), e.mass(ONE).unwrap());
         let (g, v) = (e.grads(), e.volume());
         let ll = |a: usize, b: usize| v * if a == b { 2.0 } else { 1.0 } / 20.0;
         for (p, [i, j]) in EDGES.iter().enumerate() {
@@ -538,7 +654,8 @@ mod tests {
             w[d] = 1.0;
             w
         };
-        for build in [EdgeTet::curl_curl, EdgeTet::mass] {
+        for matrix in [EdgeTet::curl_curl, EdgeTet::mass] {
+            let build = |e: &EdgeTet, w: Vec3| matrix(e, w).unwrap();
             let (whole, parts) = (build(&e, a), [0, 1, 2].map(|d| build(&e, axis(d))));
             let (iso, unit) = (build(&e, [2.5; 3]), build(&e, ONE));
             for k in 0..whole.data.len() {
@@ -556,7 +673,7 @@ mod tests {
     fn order_two_matrices_agree_with_quadrature() {
         // The mass integrand has degree 4: four points per direction integrate degree 5.
         let e = EdgeTet::new(Order::Two, tet()).unwrap();
-        let (s, m) = (e.curl_curl(ONE), e.mass(ONE));
+        let (s, m) = (e.curl_curl(ONE).unwrap(), e.mass(ONE).unwrap());
         let n = Order::Two.functions();
         let (mut sq, mut mq) = (vec![0.0; n * n], vec![0.0; n * n]);
         for (l, w) in rule(&e, 4) {
@@ -604,7 +721,7 @@ mod tests {
                 *r += w * dot(v, fl);
             }
         }
-        Cholesky::new(&e.mass(ONE)).unwrap().solve(&mut x);
+        Cholesky::new(&e.mass(ONE).unwrap()).unwrap().solve(&mut x);
         [[0.25; 4], [0.7, 0.1, 0.1, 0.1], [0.0, 0.5, 0.5, 0.0], [0.1, 0.2, 0.3, 0.4]]
             .into_iter()
             .map(|l| sub(field(&x, e.values(l)), f(e.point(l))).iter().fold(0.0f64, |a, b| a.max(b.abs())))
@@ -646,7 +763,7 @@ mod tests {
         let (phi, psi) = ([0.3, -1.0, 2.0, 0.5], [0.7, -0.2, 0.1, 1.5, -0.9, 0.4]);
         for order in [Order::One, Order::Two] {
             let e = EdgeTet::new(order, tet()).unwrap();
-            let s = e.curl_curl(ONE);
+            let s = e.curl_curl(ONE).unwrap();
             let x: Vec<f64> = (0..order.functions())
                 .map(|k| match order.role(k) {
                     Some(Role::Whitney { edge }) => EDGES.get(edge).map_or(0.0, |&[i, j]| phi[j] - phi[i]),
@@ -667,7 +784,7 @@ mod tests {
         // orders of its own, the face in a different vertex order from each side: sorting by
         // label makes the face's functions the same global ones on both (RFC §8.1), at order 2
         // where a sign per entity would not.
-        let xyz = |n: usize| match n {
+        let xyz = |n: u32| match n {
             5 => [0.0, 0.0, 0.0],
             12 => [1.0, 0.1, 0.0],
             31 => [0.1, 1.0, 0.2],
@@ -716,7 +833,7 @@ mod tests {
         let (r, l) = (EdgeTet::new(Order::One, c).unwrap(), EdgeTet::new(Order::One, [c[0], c[2], c[1], c[3]]).unwrap());
         assert!((r.volume() - l.volume()).abs() < 1e-15);
         let map = [(0, 1, 1.0), (1, 0, 1.0), (2, 2, 1.0), (3, 3, -1.0), (4, 5, 1.0), (5, 4, 1.0)];
-        let (sr, sl, mr, ml) = (r.curl_curl(ONE), l.curl_curl(ONE), r.mass(ONE), l.mass(ONE));
+        let (sr, sl, mr, ml) = (r.curl_curl(ONE).unwrap(), l.curl_curl(ONE).unwrap(), r.mass(ONE).unwrap(), l.mass(ONE).unwrap());
         for (p, pl, sp) in map {
             for (q, ql, sq) in map {
                 assert!((sr.get(p, q) - sp * sq * sl.get(pl, ql)).abs() < 1e-12, "S {p} {q}");
@@ -744,5 +861,127 @@ mod tests {
         // A tiny but sound tetrahedron is accepted: the criterion does not depend on size.
         let tiny = tet().map(|p| scale(p, 1e-9));
         assert!(EdgeTet::new(Order::Two, tiny).is_ok());
+        // Edges of 1e-155, 1e-155 and 1e-5 pass it too, but ∇λ₁ × ∇λ₂ overflows: refused, not a
+        // matrix of infinities.
+        let thin = [[0.0; 3], [1e-155, 0.0, 0.0], [0.0, 1e-155, 0.0], [0.0, 0.0, 1e-5]];
+        for order in [Order::One, Order::Two] {
+            assert!(matches!(EdgeTet::new(order, thin), Err(Error::Degenerate(_))), "{order:?}");
+            assert!(matches!(EdgeTet::of_labels(order, thin, [1, 2, 3, 4]), Err(Error::Degenerate(_))), "{order:?}");
+            // A sound element whose material makes its matrix overflow (each curl coefficient is
+            // of order 1 here, so ν · c · V · c and their sum pass f64::MAX): refused too.
+            let e = EdgeTet::new(order, tet()).unwrap();
+            assert!(matches!(e.curl_curl([f64::MAX; 3]), Err(Error::Degenerate(_))), "{order:?}");
+        }
+    }
+
+    #[test]
+    fn whether_a_tetrahedron_is_accepted_does_not_depend_on_its_labels() {
+        // Sound at o (normalized Jacobian 1), nearly flat at a (8.3e-13 < 1e-12): the meshers'
+        // gate takes corner 0 in mesh order, so the element must too, whichever node is lowest.
+        let (o, a, b, c) = ([0.0; 3], [1.1, 0.0, 0.0], [0.0, 1e-6, 0.0], [0.0, 0.0, 1e-6]);
+        let j = |p: [Vec3; 4]| fieldcraft_model::normalized_jacobian(&fieldcraft_model::tet4_jacobian(&p)).abs();
+        assert!(j([o, a, b, c]) > fieldcraft_model::MIN_NORMALIZED_JACOBIAN);
+        assert!(j([a, o, b, c]) < fieldcraft_model::MIN_NORMALIZED_JACOBIAN);
+        let volumes: Vec<f64> = [[2, 1, 3, 4], [1, 2, 3, 4], [4, 3, 2, 1]]
+            .into_iter()
+            .map(|labels| EdgeTet::of_labels(Order::Two, [o, a, b, c], labels).unwrap().0.volume())
+            .collect();
+        assert!(volumes.iter().all(|v| (v - 1.1e-12 / 6.0).abs() < 1e-24), "{volumes:?}");
+        // Refused in mesh order whatever the labels: flat at its own corner 0.
+        assert!(matches!(EdgeTet::of_labels(Order::One, [a, o, b, c], [1, 2, 3, 4]), Err(Error::Degenerate(_))));
+        // Sound in mesh order (determinant 3d², exact), but listed from (1, 1, 1) its Jacobian's
+        // determinant rounds to exactly 0: the volume and the gradients are taken in mesh order.
+        let d = 2f64.powi(-28);
+        let xyz = [[0.0; 3], [1.0; 3], [-d, d, 0.0], [0.0, -d, d]];
+        assert_eq!(det3(&fieldcraft_model::tet4_jacobian(&[xyz[1], xyz[0], xyz[2], xyz[3]])), 0.0);
+        for order in [Order::One, Order::Two] {
+            let (e, _) = EdgeTet::of_labels(order, xyz, [1, 2, 3, 4]).unwrap();
+            let (f, sorted) = EdgeTet::of_labels(order, xyz, [2, 1, 3, 4]).unwrap();
+            assert_eq!((e.volume(), f.volume()), (d * d / 2.0, d * d / 2.0));
+            // Each gradient is its corner's: Σ ∇λᵢ = 0 and ∇λᵢ · (xⱼ − x₀) = δᵢⱼ − δᵢ₀ in either order.
+            assert_eq!(sorted, [1, 0, 2, 3]);
+            for (g, corners) in [(e.grads(), e.corners()), (f.grads(), f.corners())] {
+                for (i, gi) in g.into_iter().enumerate() {
+                    for (j, xj) in corners.into_iter().enumerate() {
+                        let expected = f64::from(u8::from(i == j)) - f64::from(u8::from(i == 0));
+                        assert!((dot(gi, sub(xj, corners[0])) - expected).abs() < 1e-6, "{order:?} {i} {j}");
+                    }
+                }
+            }
+            assert!(f.curl_curl([1.0; 3]).is_ok() && f.mass([1.0; 3]).is_ok());
+        }
+    }
+
+    #[test]
+    fn a_layout_numbers_the_elements_unknowns_and_its_gradient_is_in_the_kernel() {
+        // Two tetrahedra sharing a face, declared to a layout: its slots give each element's
+        // unknowns in local order, and the assembled curl–curl matrix annihilates the discrete
+        // gradient of every potential (RFC §8.2), which a wrong orientation or slot would break.
+        let xyz = |n: u32| match n {
+            2 => [0.0, 0.0, 0.0],
+            8 => [1.0, 0.1, 0.0],
+            3 => [0.1, 1.0, 0.2],
+            5 => [0.2, 0.3, 1.0],
+            _ => [1.0, 1.0, 1.1],
+        };
+        let tets = [[5, 2, 8, 3], [3, 9, 8, 5]];
+        for order in [Order::One, Order::Two] {
+            let mut b = DofLayout::builder();
+            for t in tets {
+                declare(&mut b, t, order).unwrap();
+            }
+            let layout = b.build();
+            assert_eq!((layout.edges(), layout.faces()), (9, if order == Order::Two { 7 } else { 0 }));
+            let n = layout.dofs();
+            let mut k = vec![0.0; n * n];
+            for t in tets {
+                let s = slots(&layout, t, order).unwrap();
+                assert_eq!(s.len() * order.kinds().len(), order.functions());
+                let dofs = layout.element_dofs(&s, order.kinds()).unwrap();
+                let (e, _) = EdgeTet::of_labels(order, t.map(xyz), t).unwrap();
+                let m = e.curl_curl(ONE).unwrap();
+                for (i, r) in dofs.iter().enumerate() {
+                    for (j, c) in dofs.iter().enumerate() {
+                        k[r * n + c] += m.get(i, j);
+                    }
+                }
+            }
+            let g = gradient(&layout);
+            let mut columns: Vec<Potential> = g.iter().map(|t| t.1).collect();
+            columns.sort();
+            columns.dedup();
+            // Order 1: the five nodes; order 2: and the nine edges.
+            assert_eq!(columns.len(), if order == Order::Two { 14 } else { 5 });
+            let scale = k.iter().fold(0.0f64, |a, b| a.max(b.abs()));
+            for column in columns {
+                let mut x = vec![0.0; n];
+                for (r, _, v) in g.iter().filter(|t| t.1 == column) {
+                    x[*r] += v;
+                }
+                for row in 0..n {
+                    let kx: f64 = (0..n).map(|c| k[row * n + c] * x[c]).sum();
+                    assert!(kx.abs() < 1e-13 * scale, "{order:?} {column:?} row {row}: {kx}");
+                }
+            }
+        }
+        // A layout that lacks an entity gives no slots.
+        let mut b = DofLayout::builder();
+        declare(&mut b, tets[0], Order::One).unwrap();
+        assert_eq!(slots(&b.build(), tets[1], Order::One), None);
+        assert!(declare(&mut DofLayout::builder(), [1, 1, 2, 3], Order::One).is_err());
+        // Orders 1 and 2 sharing a face: the order-1 element is refused (its shared edges carry
+        // a second unknown it has no function for); the order-2 one finds its own.
+        let mut b = DofLayout::builder();
+        declare(&mut b, tets[0], Order::Two).unwrap();
+        declare(&mut b, tets[1], Order::One).unwrap();
+        b.edge([2, 8], DofSet::TEMPERATURE);
+        let mixed = b.build();
+        assert_eq!(slots(&mixed, tets[1], Order::One), None);
+        assert_eq!(slots(&mixed, tets[0], Order::Two).map(|s| s.len()), Some(10));
+        // Another kind on a slot (the temperature on edge 2–8) is no concern of the element.
+        let mut b = DofLayout::builder();
+        declare(&mut b, tets[0], Order::One).unwrap();
+        b.edge([2, 8], DofSet::TEMPERATURE);
+        assert_eq!(slots(&b.build(), tets[0], Order::One).map(|s| s.len()), Some(6));
     }
 }
