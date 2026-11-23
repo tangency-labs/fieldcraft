@@ -93,7 +93,7 @@ struct Block {
     two_by_two: usize,
 }
 
-impl Supernode for Block {
+impl Supernode<f64> for Block {
     #[inline]
     fn values(&self) -> &[f64] {
         &self.values
@@ -338,7 +338,7 @@ impl Block {
 }
 
 /// Factor supernode `j` into `own`; its descendants are `done[k - base]`.
-fn supernode(context: &Context, j: usize, done: &[Block], base: usize, own: &mut Block) -> std::result::Result<(), FactorError> {
+fn supernode(context: &Context<f64>, j: usize, done: &[Block], base: usize, own: &mut Block) -> std::result::Result<(), FactorError> {
     context.assemble(j, done, base, &mut own.values)?;
     let (m, cols) = (context.s.rows(j).len(), context.s.cols(j));
     let (w, f) = (cols.len(), cols.start);

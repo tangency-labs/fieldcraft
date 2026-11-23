@@ -9,44 +9,46 @@
 
 use fieldcraft_fem::{DofLayout, DofSet};
 
+use crate::scalar::Scalar;
 use crate::{Error, Result};
 
 /// Rows per parallel block of a product.
 const ROWS: usize = 4096;
 
-/// A square sparse matrix in compressed rows with sorted column indices.
+/// A square sparse matrix in compressed rows with sorted column indices; `f64` unless the
+/// matrix is complex symmetric.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Csr {
+pub struct Csr<T = f64> {
     pub n: usize,
     pub ptr: Vec<usize>,
     pub idx: Vec<usize>,
-    pub val: Vec<f64>,
+    pub val: Vec<T>,
 }
 
-impl Csr {
+impl<T: Scalar> Csr<T> {
     /// The row's column indices and values.
-    pub fn row(&self, r: usize) -> (&[usize], &[f64]) {
+    pub fn row(&self, r: usize) -> (&[usize], &[T]) {
         let (a, b) = (self.ptr.get(r).copied().unwrap_or(0), self.ptr.get(r + 1).copied().unwrap_or(0));
         (self.idx.get(a..b).unwrap_or_default(), self.val.get(a..b).unwrap_or_default())
     }
 
     /// y = A x.
     /// Rows are computed in parallel blocks; each row's sum runs in column order.
-    pub fn mul(&self, x: &[f64], y: &mut [f64]) {
+    pub fn mul(&self, x: &[T], y: &mut [T]) {
         let n = self.n.min(y.len());
         fieldcraft_parallel::chunks_mut(y.get_mut(..n).unwrap_or_default(), ROWS, |b, block| {
             for (i, yr) in block.iter_mut().enumerate() {
                 let (cols, vals) = self.row(b * ROWS + i);
-                *yr = cols.iter().zip(vals).map(|(c, v)| v * x.get(*c).copied().unwrap_or(0.0)).sum();
+                *yr = cols.iter().zip(vals).map(|(c, v)| *v * x.get(*c).copied().unwrap_or(T::ZERO)).sum();
             }
         });
     }
 
-    pub fn diagonal(&self) -> Vec<f64> {
+    pub fn diagonal(&self) -> Vec<T> {
         (0..self.n)
             .map(|r| {
                 let (cols, vals) = self.row(r);
-                cols.binary_search(&r).ok().and_then(|i| vals.get(i)).copied().unwrap_or(0.0)
+                cols.binary_search(&r).ok().and_then(|i| vals.get(i)).copied().unwrap_or(T::ZERO)
             })
             .collect()
     }
@@ -71,12 +73,18 @@ impl Csr {
     }
 
     /// `self + a·other` on the same pattern.
-    pub fn add_scaled(&self, a: f64, other: &Csr) -> Result<Csr> {
+    pub fn add_scaled(&self, a: T, other: &Csr<T>) -> Result<Csr<T>> {
         if self.ptr != other.ptr || self.idx != other.idx {
             return Err(Error::Internal("matrices with different patterns".into()));
         }
-        let val = self.val.iter().zip(&other.val).map(|(x, y)| x + a * y).collect();
+        let val = self.val.iter().zip(&other.val).map(|(x, y)| *x + a * *y).collect();
         Ok(Csr { n: self.n, ptr: self.ptr.clone(), idx: self.idx.clone(), val })
+    }
+
+    /// The same pattern with every value mapped, e.g. a real stiffness as the real part of a
+    /// complex matrix.
+    pub fn map_values<U: Scalar>(&self, f: impl Fn(T) -> U) -> Csr<U> {
+        Csr { n: self.n, ptr: self.ptr.clone(), idx: self.idx.clone(), val: self.val.iter().map(|v| f(*v)).collect() }
     }
 }
 
@@ -167,7 +175,7 @@ struct Block {
 }
 
 impl Block {
-    fn new(k: &Csr, layout: &DofLayout, a: usize, b: usize, kinds: DofSet) -> Result<Block> {
+    fn new<T>(k: &Csr<T>, layout: &DofLayout, a: usize, b: usize, kinds: DofSet) -> Result<Block> {
         let first = layout.range(a).start;
         let (start, end) = (k.ptr.get(first).copied().unwrap_or(0), k.ptr.get(first + 1).copied().unwrap_or(0));
         let pattern = k.idx.get(start..end).ok_or_else(|| Error::Internal("pattern".into()))?;
@@ -183,7 +191,7 @@ impl Block {
     }
 }
 
-fn add_at(k: &mut Csr, at: usize, v: f64) {
+fn add_at<T: Scalar>(k: &mut Csr<T>, at: usize, v: T) {
     if let Some(x) = k.val.get_mut(at) {
         *x += v;
     }
@@ -192,7 +200,7 @@ fn add_at(k: &mut Csr, at: usize, v: f64) {
 /// Add an element matrix into a matrix built by [`NodeGraph::zero_matrix`]: row-major over the
 /// element's degrees of freedom, node by node and `kinds` in order within a node; `nodes` are
 /// the element's layout slots.
-pub fn add_block(k: &mut Csr, layout: &DofLayout, nodes: &[usize], kinds: DofSet, data: &[f64]) -> Result<()> {
+pub fn add_block<T: Scalar>(k: &mut Csr<T>, layout: &DofLayout, nodes: &[usize], kinds: DofSet, data: &[T]) -> Result<()> {
     let per = kinds.len();
     let width = per * nodes.len();
     if data.len() != width * width {
@@ -203,7 +211,7 @@ pub fn add_block(k: &mut Csr, layout: &DofLayout, nodes: &[usize], kinds: DofSet
             let block = Block::new(k, layout, a, b, kinds)?;
             for r in 0..per {
                 for c in 0..per {
-                    add_at(k, block.rows[r] + block.cols[c], data.get((per * i + r) * width + per * j + c).copied().unwrap_or(0.0));
+                    add_at(k, block.rows[r] + block.cols[c], data.get((per * i + r) * width + per * j + c).copied().unwrap_or(T::ZERO));
                 }
             }
         }
@@ -213,7 +221,7 @@ pub fn add_block(k: &mut Csr, layout: &DofLayout, nodes: &[usize], kinds: DofSet
 
 /// Add an n × n element matrix to the block of each of `kinds` (a solid's consistent mass on its
 /// translations).
-pub fn add_scalar(k: &mut Csr, layout: &DofLayout, nodes: &[usize], kinds: DofSet, data: &[f64]) -> Result<()> {
+pub fn add_scalar<T: Scalar>(k: &mut Csr<T>, layout: &DofLayout, nodes: &[usize], kinds: DofSet, data: &[T]) -> Result<()> {
     let n = nodes.len();
     if data.len() != n * n {
         return Err(Error::Internal("element matrix size".into()));
@@ -221,7 +229,7 @@ pub fn add_scalar(k: &mut Csr, layout: &DofLayout, nodes: &[usize], kinds: DofSe
     for (i, &a) in nodes.iter().enumerate() {
         for (j, &b) in nodes.iter().enumerate() {
             let block = Block::new(k, layout, a, b, kinds)?;
-            let v = data.get(i * n + j).copied().unwrap_or(0.0);
+            let v = data.get(i * n + j).copied().unwrap_or(T::ZERO);
             for c in 0..kinds.len() {
                 add_at(k, block.rows[c] + block.cols[c], v);
             }
@@ -231,7 +239,7 @@ pub fn add_scalar(k: &mut Csr, layout: &DofLayout, nodes: &[usize], kinds: DofSe
 }
 
 /// Add a per-node diagonal to each of `kinds` (a solid's lumped mass on its translations).
-pub fn add_diagonal(k: &mut Csr, layout: &DofLayout, nodes: &[usize], kinds: DofSet, diagonal: &[f64]) -> Result<()> {
+pub fn add_diagonal<T: Scalar>(k: &mut Csr<T>, layout: &DofLayout, nodes: &[usize], kinds: DofSet, diagonal: &[T]) -> Result<()> {
     for (&a, v) in nodes.iter().zip(diagonal) {
         let block = Block::new(k, layout, a, a, kinds)?;
         for c in 0..kinds.len() {
@@ -242,7 +250,7 @@ pub fn add_diagonal(k: &mut Csr, layout: &DofLayout, nodes: &[usize], kinds: Dof
 }
 
 /// Add `v` to entry (`i`, `j`), which must be in the pattern.
-pub fn add_entry(k: &mut Csr, i: usize, j: usize, v: f64) -> Result<()> {
+pub fn add_entry<T: Scalar>(k: &mut Csr<T>, i: usize, j: usize, v: T) -> Result<()> {
     let (start, end) = (k.ptr.get(i).copied().unwrap_or(0), k.ptr.get(i + 1).copied().unwrap_or(0));
     let at = k.idx.get(start..end).and_then(|cols| cols.binary_search(&j).ok()).ok_or_else(|| Error::Internal("entry outside the pattern".into()))?;
     add_at(k, start + at, v);
