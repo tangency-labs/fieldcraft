@@ -32,11 +32,6 @@ const KNOWN: &[(&str, usize)] = &[
     ("crates/fem/src/material.rs", 3),
     ("crates/fem/src/plasticity.rs", 6),
     ("crates/fem/src/uniform.rs", 2),
-    ("crates/model/src/contact.rs", 1),
-    ("crates/model/src/materials.rs", 5),
-    ("crates/model/src/pvt.rs", 3),
-    ("crates/model/src/sections.rs", 1),
-    ("crates/model/src/units/quantity.rs", 1),
 ];
 
 pub fn run(root: &Path) -> Result<(), String> {

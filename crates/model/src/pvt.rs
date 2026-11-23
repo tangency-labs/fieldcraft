@@ -133,11 +133,11 @@ impl Pvt {
                 let (domain, c, vt) = if temperature > transition {
                     (PvtDomain::Melt, melt, 0.0)
                 } else {
-                    (PvtDomain::Solid, solid, b7 * (b8 * dt - b9 * pressure).exp())
+                    (PvtDomain::Solid, solid, b7 * libm::exp(b8 * dt - b9 * pressure))
                 };
                 let v0 = c.b1 + c.b2 * dt;
-                let b = c.b3 * (-c.b4 * dt).exp();
-                let v = v0 * (1.0 - TAIT_C * (pressure / b).ln_1p()) + vt;
+                let b = c.b3 * libm::exp(-c.b4 * dt);
+                let v = v0 * (1.0 - TAIT_C * libm::log1p(pressure / b)) + vt;
                 if !(v0 > 0.0 && b > 0.0 && b.is_finite() && v > 0.0 && v.is_finite()) {
                     return Err(Error::Invalid(format!(
                         "the Tait equation has no positive, finite specific volume at {temperature} K and {pressure} Pa (outside its range)"

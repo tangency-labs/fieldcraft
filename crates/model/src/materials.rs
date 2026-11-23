@@ -250,16 +250,16 @@ impl Fluid {
         match *self {
             Fluid::Newtonian { viscosity } => viscosity,
             Fluid::PowerLaw { consistency, index, reference_shear_rate } => {
-                consistency * (rate / reference_shear_rate.unwrap_or(POWER_LAW_REFERENCE_RATE)).powf(index - 1.0)
+                consistency * libm::pow(rate / reference_shear_rate.unwrap_or(POWER_LAW_REFERENCE_RATE), index - 1.0)
             }
             Fluid::CarreauYasuda { zero_shear_viscosity, infinite_shear_viscosity, time_constant, a, index } => {
-                let shape = (1.0 + (time_constant * rate).powf(a)).powf((index - 1.0) / a);
+                let shape = libm::pow(1.0 + libm::pow(time_constant * rate, a), (index - 1.0) / a);
                 infinite_shear_viscosity + (zero_shear_viscosity - infinite_shear_viscosity) * shape
             }
             Fluid::Cross { zero_shear_viscosity, time_constant, index } => cross(zero_shear_viscosity, time_constant * rate, index),
             Fluid::CrossWlf { d1, d2, a1, a2, critical_stress, index } => {
                 let above = temperature - d2;
-                let eta0 = if a2 + above > 0.0 { d1 * (-a1 * above / (a2 + above)).exp() } else { f64::INFINITY };
+                let eta0 = if a2 + above > 0.0 { d1 * libm::exp(-a1 * above / (a2 + above)) } else { f64::INFINITY };
                 if eta0.is_finite() { cross(eta0, eta0 * rate / critical_stress, index) } else { f64::INFINITY }
             }
         }
@@ -321,7 +321,7 @@ impl Fluid {
 
 /// Cross's `η₀ / (1 + x^(1−n))` at `x` = λγ̇.
 fn cross(eta0: f64, x: f64, n: f64) -> f64 {
-    eta0 / (1.0 + x.powf(1.0 - n))
+    eta0 / (1.0 + libm::pow(x, 1.0 - n))
 }
 
 /// Most points of a plastic hardening table.
