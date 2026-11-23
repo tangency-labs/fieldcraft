@@ -352,7 +352,8 @@ pub enum WallModel {
     /// doi:10.1088/1873-7005/ac1782). A cell in a velocity inlet's layer that touches two walls (a box
     /// edge, a staircase step on an obstacle's rim) is a wall cell, plain bounce-back with no inlet
     /// condition and no wall law, because the inlet and the law together grow a density mode there; the
-    /// inlet's velocity is raised to keep its volume flow. Other wall treatments are unchanged.
+    /// inlet's velocity is raised to keep its volume flow, by flux (wall row and corner cells), not by
+    /// cell count; an inlet left with no flux is refused. Other wall treatments are unchanged.
     SpaldingBounce,
     /// Our halfway variant of a wall-function bounce, not Han, Ooka and Kikumoto's scheme: a
     /// plane no-slip box face at rest lies halfway along the links and reflects its populations

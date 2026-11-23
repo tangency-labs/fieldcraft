@@ -72,8 +72,15 @@ fn an_inlet_cell_touching_two_walls_is_a_wall_cell() {
     let flow = fieldcraft_lbm::Flow::new(&setup, &obstacles).unwrap();
     let report = flow.inlet_corner_report();
     assert_eq!((report.cells, report.inlet_cells), (4, 64), "{report:?}");
-    assert!((report.area_lost - 4.0 / 64.0).abs() < 1e-12);
-    assert!(report.flux_rescale > 1.0 && report.flux_rescale < 1.3, "{report:?}");
+    // Only the cells on no wall's row deliver: the inner 6 x 6 of the 8 x 8 layer. The rescale is the whole parabolic
+    // flux over that of the inner cells, per axis squared.
+    let w = |i: usize| {
+        let s = (i as f64 + 0.5) / 8.0;
+        4.0 * s * (1.0 - s)
+    };
+    let (all, inner): (f64, f64) = ((0..8).map(w).sum(), (1..7).map(w).sum());
+    let expected = (all / inner).powi(2);
+    assert!((report.flux_rescale / expected - 1.0).abs() < 1e-12, "{report:?}, expected {expected}");
     let g = flow.grid();
     for (j, k) in [(0, 0), (7, 0), (0, 7), (7, 7)] {
         assert!(!Backend::is_fluid(&flow, g.index([0, j, k])), "corner ({j},{k}) is a wall cell");
@@ -83,13 +90,13 @@ fn an_inlet_cell_touching_two_walls_is_a_wall_cell() {
     }
 }
 
-/// A solved run reports the count and the area lost, and a run without the rule reports nothing.
+/// A solved run reports the count and the factor the inlet was raised by, and a run without the rule reports nothing.
 #[test]
-fn a_run_prints_the_reclassified_cells_and_the_area_lost() {
+fn a_run_prints_the_reclassified_cells_and_the_raise() {
     let m = channel_model((16, 8, 8), false, false, Some(WallModel::SpaldingBounce), vec![]);
     let r = fieldcraft_lbm::solve_fluid(&m, None, &[], &Limits::default()).unwrap();
     let line = r.warnings.iter().find(|w| w.starts_with("inlet corner rule:")).expect("the run reports the corner rule");
-    assert!(line.contains("4 of 64 inlet-layer cells") && line.contains("6.2 % of its area"), "{line}");
+    assert!(line.contains("4 of 64 inlet-layer cells") && line.contains("raised by up to 1.") && line.contains("by flux"), "{line}");
     let m = channel_model((16, 8, 8), false, false, None, vec![]);
     let r = fieldcraft_lbm::solve_fluid(&m, None, &[], &Limits::default()).unwrap();
     assert!(r.warnings.iter().all(|w| !w.starts_with("inlet corner rule:")), "{:?}", r.warnings);
@@ -139,8 +146,8 @@ fn without_a_wall_law_the_corner_cells_are_unchanged() {
 /// The section's shape: a triangle of solid cells in the inlet's corner (j + k < 6), built as one cuboid per row, leaves a
 /// diagonal staircase rim. Every cell on the rim touches two walls (a solid cell below and one beside it), so the 7 cells
 /// on j + k = 6 are wall cells, with the 3 free box corners of the 12 x 12 section; the other cells keep the inlet.
-#[test]
-fn a_staircased_inlet_rim_is_wall_cells_with_the_flow_rescaled() {
+/// A 12 x 12 inlet whose lower rim is a staircase of six steps (21 solid cells in the layer).
+fn staircase() -> (Setup, Vec<fieldcraft_lbm::Obstacle>, usize) {
     let section = 12;
     let mut names = Vec::new();
     let mut obstacles = Vec::new();
@@ -151,6 +158,12 @@ fn a_staircased_inlet_rim_is_wall_cells_with_the_flow_rescaled() {
         names.push(name);
     }
     let (setup, obstacles) = channel((16, section, section), false, false, Some(WallModel::SpaldingBounce), names, obstacles);
+    (setup, obstacles, section)
+}
+
+#[test]
+fn a_staircased_inlet_rim_is_wall_cells_with_the_flow_rescaled() {
+    let (setup, obstacles, section) = staircase();
     let flow = fieldcraft_lbm::Flow::new(&setup, &obstacles).unwrap();
     let report = flow.inlet_corner_report();
     let fluid_in_layer = section * section - 21;
@@ -196,33 +209,113 @@ fn the_slotted_channel_with_wall_laws_holds_with_the_corner_rule() {
         Backend::advance(&mut flow, 600).unwrap_or_else(|e| panic!("{law:?}, four walls {four_walls}: {e}"));
         let f = Backend::fields(&mut flow).unwrap();
         let ok = (0..f.density.len()).filter(|&c| Backend::is_fluid(&flow, c)).all(|c| f.density[c].is_finite() && (f.density[c] - 1.0).abs() < 0.3);
+        // What this guards: the density mode the rule removes (1 +- 1.1 before the run stopped). A healthy run at this
+        // lattice speed varies the density by about Ma^2, a few thousandths, so 0.3 only has to separate the two.
         assert!(ok, "{law:?}, four walls {four_walls}: a density left 1 +- 0.3");
     }
 }
 
-/// The velocity the inlet delivers is the one it was asked for: with the edge cells walls and the row beside them on the
-/// walls' plane (at rest), the cells that keep the inlet carry the whole requested flow, parabolic profile included.
-#[test]
-fn the_inlet_delivers_the_requested_flow() {
-    let (nx, n) = (16, 8);
-    let (setup, obstacles) = channel((nx, n, n), false, false, Some(WallModel::SpaldingBounce), vec![], vec![]);
-    let flow = fieldcraft_lbm::Flow::new(&setup, &obstacles).unwrap();
-    let u0 = setup.to_lattice([0.1, 0.0, 0.0])[0];
-    let profile = |i: usize| {
-        let s = (i as f64 + 0.5) / n as f64;
-        4.0 * s * (1.0 - s)
-    };
-    let requested: f64 = (0..n).flat_map(|j| (0..n).map(move |k| (j, k))).map(|(j, k)| u0 * profile(j) * profile(k)).sum();
-    let delivered: f64 = flow
-        .open_cells()
+/// The flow the inlet layer delivers (the x component of the velocity every inlet cell is driven with, lattice units).
+fn delivered(flow: &fieldcraft_lbm::Flow) -> f64 {
+    flow.open_cells()
         .iter()
         .filter(|o| o.axis == 0 && o.inward > 0.0)
         .map(|o| match o.target {
             fieldcraft_lbm::Target::Velocity(v) => v[0],
             _ => 0.0,
         })
-        .sum();
-    assert!((delivered / requested - 1.0).abs() < 1e-12, "delivered {delivered}, requested {requested}");
+        .sum()
+}
+
+/// What bounds the inlet's y axis: walls, a periodic span, or a wall at y min and a symmetry plane at y max (the half of a
+/// channel, whose profile peaks at the plane).
+#[derive(Clone, Copy, PartialEq)]
+enum Span {
+    Walls,
+    Periodic,
+    SymmetryAtMax,
+}
+
+/// The flow the setup asked of an inlet on a `ny` x `nz` section with a parabolic profile across the axes that are not
+/// periodic, over the cells that are not `solid` in the layer (lattice units, the profile counted at cell centres).
+fn requested(setup: &Setup, (ny, nz): (usize, usize), y: Span, solid: impl Fn(usize, usize) -> bool) -> f64 {
+    let u0 = setup.to_lattice([0.1, 0.0, 0.0])[0];
+    let profile = |i: usize, n: usize| {
+        let s = (i as f64 + 0.5) / n as f64;
+        4.0 * s * (1.0 - s)
+    };
+    let profile_y = |j: usize| match y {
+        Span::Walls => profile(j, ny),
+        Span::Periodic => 1.0,
+        Span::SymmetryAtMax => profile(j, 2 * ny) * 1.0,
+    };
+    (0..ny).flat_map(|j| (0..nz).map(move |k| (j, k))).filter(|&(j, k)| !solid(j, k)).map(|(j, k)| u0 * profile_y(j) * profile(k, nz)).sum()
+}
+
+/// The velocity the inlet delivers is the one it was asked for, to round-off: with the edge cells walls and the row
+/// beside them on the walls' plane (at rest), the cells that keep the inlet carry the whole requested flow, parabolic
+/// profile included. Four walls (corner cells), a duct with a periodic span (wall rows and no corner cell), and a
+/// staircased rim (corner cells made by corner cells).
+#[test]
+fn the_inlet_delivers_the_requested_flow() {
+    let n = 8;
+    for (what, y_periodic) in [("four walls", false), ("duct with a periodic span", true)] {
+        let (setup, obstacles) = channel((16, n, n), y_periodic, false, Some(WallModel::SpaldingBounce), vec![], vec![]);
+        let flow = fieldcraft_lbm::Flow::new(&setup, &obstacles).unwrap();
+        let (d, r) = (delivered(&flow), requested(&setup, (n, n), if y_periodic { Span::Periodic } else { Span::Walls }, |_, _| false));
+        assert!((d / r - 1.0).abs() < 1e-12, "{what}: delivered {d}, requested {r}");
+    }
+    // A symmetry plane at y max: the profile is the half of a channel (s / 2), so the plane's end is its peak.
+    let mut d = domain([0.0; 3], [16.0 * DX, n as f64 * DX, n as f64 * DX], DX);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [0.1, 0.0, 0.0], profile: Profile::Parabolic };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
+    d.faces.y_max = FaceCondition::Symmetry {};
+    let m = model(1.0, 1.0e-3, d, procedure(Some(WallModel::SpaldingBounce), 10, 0.01));
+    let setup = Setup::new(&m, None, &[], &Limits::default()).unwrap();
+    let flow = fieldcraft_lbm::Flow::new(&setup, &[]).unwrap();
+    let (d, r) = (delivered(&flow), requested(&setup, (n, n), Span::SymmetryAtMax, |_, _| false));
+    assert!((d / r - 1.0).abs() < 1e-12, "symmetry plane: delivered {d}, requested {r}");
+    let (setup, obstacles, section) = staircase();
+    let flow = fieldcraft_lbm::Flow::new(&setup, &obstacles).unwrap();
+    let (d, r) = (delivered(&flow), requested(&setup, (section, section), Span::Walls, |j, k| j < 6 && k < 6 - j));
+    assert!((d / r - 1.0).abs() < 1e-12, "staircase: delivered {d}, requested {r}");
+}
+
+/// A uniform inlet that meets one wall (periodic span, z max slip) delivers the requested flow, to round-off: the wall's
+/// row takes the wall's velocity and delivers nothing, an eighth of an 8-cell section, so without the raise the inlet
+/// delivered 0.875 of it (a parabolic one, 0.956).
+#[test]
+fn a_uniform_inlet_meeting_a_wall_delivers_its_flow() {
+    let n = 8;
+    let mut d = domain([0.0; 3], [16.0 * DX, n as f64 * DX, n as f64 * DX], DX);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [0.1, 0.0, 0.0], profile: Profile::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
+    d.faces.y_min = FaceCondition::Periodic {};
+    d.faces.y_max = FaceCondition::Periodic {};
+    d.faces.z_max = FaceCondition::Slip {};
+    let m = model(1.0, 1.0e-3, d, procedure(Some(WallModel::SpaldingBounce), 10, 0.01));
+    let setup = Setup::new(&m, None, &[], &Limits::default()).unwrap();
+    let flow = fieldcraft_lbm::Flow::new(&setup, &[]).unwrap();
+    let requested = setup.to_lattice([0.1, 0.0, 0.0])[0] * (n * n) as f64;
+    let d = delivered(&flow);
+    assert!((d / requested - 1.0).abs() < 1e-12, "delivered {d}, requested {requested}");
+    let report = flow.inlet_corner_report();
+    assert!((report.flux_rescale - 8.0 / 7.0).abs() < 1e-12, "{report:?}");
+}
+
+/// An inlet with no cell that can deliver flow (a bar across the middle of a 3-cell section leaves only cells that touch
+/// the box wall and the bar) is refused: its flow cannot be delivered at any velocity.
+#[test]
+fn an_inlet_with_no_cell_left_to_deliver_its_flow_is_refused() {
+    let bar = obstacle("Bar", cuboid([0.0, DX, -DX], [0.5, 2.0 * DX, 4.0 * DX]), &CUBOID_FACES);
+    let m = channel_model((16, 3, 3), false, false, Some(WallModel::SpaldingBounce), vec!["Bar".to_string()]);
+    let obstacles = vec![bar];
+    let setup = Setup::new(&m, None, &obstacles, &Limits::default()).unwrap();
+    let e = match fieldcraft_lbm::Flow::new(&setup, &obstacles) {
+        Ok(_) => panic!("no inlet cell can deliver flow"),
+        Err(e) => e.to_string(),
+    };
+    assert!(e.contains("none left to deliver its flow"), "{e}");
 }
 
 /// A wall cell the rule makes is a wall of its neighbours' force groups: no link bounces into the inlet's own group.
@@ -237,4 +330,26 @@ fn the_corner_cells_bounce_into_the_walls_they_touch() {
             assert!(group != 0, "cell {} direction {} bounces into the inlet's group", l.cell, l.q);
         }
     }
+}
+
+/// The Mach check covers the raised velocity. On four walls the 8 x 8 parabolic inlet is raised by 1.2 (see
+/// `an_inlet_cell_touching_two_walls_is_a_wall_cell`), so a lattice speed of 0.16 (Mach 0.277, inside the limit of
+/// 0.3) is refused, naming the raise, and 0.14 (raised to 0.168, Mach 0.291) is accepted.
+#[test]
+fn a_raise_that_takes_the_inlet_past_the_mach_limit_is_refused() {
+    // A velocity of v m/s with a time step of 0.01 s on 0.05 m cells is v / 5 in lattice units.
+    let build = |v: f64| {
+        let mut d = domain([0.0; 3], [16.0 * DX, 8.0 * DX, 8.0 * DX], DX);
+        d.faces.x_min = FaceCondition::Velocity { velocity: [v, 0.0, 0.0], profile: Profile::Parabolic };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
+        let m = model(1.0, 1.0e-3, d, procedure(Some(WallModel::SpaldingBounce), 10, 0.01));
+        let setup = Setup::new(&m, None, &[], &Limits::default()).unwrap();
+        fieldcraft_lbm::Flow::new(&setup, &[])
+    };
+    let e = match build(0.8) {
+        Ok(_) => panic!("the raised inlet is past the Mach limit"),
+        Err(e) => e.to_string(),
+    };
+    assert!(e.contains("must be raised by") && e.contains("Mach"), "{e}");
+    build(0.7).unwrap();
 }

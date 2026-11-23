@@ -194,7 +194,8 @@ Each time step, before the collision:
    because the inlet and the law together grow a density mode there. Its links count in the force
    group of the wall it touches. The inlet's velocity is raised so that the cells that keep the
    inlet deliver the requested flow (the row on a wall's plane takes the wall's velocity, at
-   rest, and delivers nothing).
+   rest, and delivers nothing); the raise is by flux (wall row and corner cells), not by cell count, and an inlet left with no flux is
+   refused.
 3. **Collision.** For each fluid cell: the flux P from its populations; the cell's constant C,
    scaled by `1 − exp(−y⁺/A⁺)` with damping (taken as 1 from y⁺/A⁺ = 40, where it rounds to 1);
    the cell's rate from the closed form above, or the fluid's own rate where the result is not a

@@ -585,25 +585,22 @@ pub struct InletCornerReport {
     pub cells: usize,
     /// The inlet-layer cells that were fluid before, over the inlets that lost some.
     pub inlet_cells: usize,
-    /// The largest share of one inlet's cells that was lost.
-    pub area_lost: f64,
-    /// The largest factor an inlet's velocity was raised by to keep its volume flow.
+    /// The largest factor an inlet's velocity was raised by to keep its volume flow: the flux of the
+    /// inlet's cells before over the flux of the cells that still deliver (flux, not a cell count: the
+    /// cells on a wall's row deliver nothing either).
     pub flux_rescale: f64,
 }
 
 impl InletCornerReport {
-    /// The line a run prints: how many inlet cells became wall cells, the inlet area lost and the velocity factor;
-    /// None when the rule changed nothing.
+    /// The line a run prints: how many inlet cells became wall cells and the factor the inlet's velocity was raised
+    /// by (by flux); None when the rule changed nothing.
     pub fn message(&self) -> Option<String> {
         if self.cells == 0 && !(self.flux_rescale > 1.0) {
             return None;
         }
         Some(format!(
-            "inlet corner rule: {} of {} inlet-layer cells became wall cells; the inlet loses {:.1} % of its area at most and its velocity is raised by up to {:.3} to deliver the requested flow",
-            self.cells,
-            self.inlet_cells,
-            100.0 * self.area_lost,
-            self.flux_rescale
+            "inlet corner rule: {} of {} inlet-layer cells became wall cells; the inlet velocity is raised by up to {:.3} (by flux) to deliver the requested flow",
+            self.cells, self.inlet_cells, self.flux_rescale
         ))
     }
 }
@@ -855,6 +852,24 @@ impl Flow {
         // A symmetry plane is a slip face to the flow (and adiabatic: the model holds it so).
         let is_slip = |face: BoxFace| domain.faces.get(face).is_slip();
         let is_symmetry = |face: BoxFace| domain.faces.get(face).is_symmetry();
+        // The parabolic profile's scale at a cell of an inlet layer, across the in-plane axes `t1` and `t2` that are not
+        // periodic. A symmetry plane at one end is the middle of the whole model's profile (the half of a channel); at
+        // both, the direction is unbounded, as a periodic one. One rule for the targets and for the flux the corner rule
+        // keeps.
+        let parabolic_scale = |ijk: [usize; 3], t1: usize, t2: usize| -> f64 {
+            let mut scale = 1.0;
+            for t in [t1, t2].into_iter().filter(|t| !periodic[*t]) {
+                let s = (ijk[t] as f64 + 0.5) / grid.cells[t] as f64;
+                let s = match (is_symmetry(BoxFace::of(t, false)), is_symmetry(BoxFace::of(t, true))) {
+                    (false, false) => s,
+                    (false, true) => s / 2.0,
+                    (true, false) => 0.5 + s / 2.0,
+                    (true, true) => 0.5,
+                };
+                scale *= 4.0 * s * (1.0 - s);
+            }
+            scale
+        };
         // An inlet cell that touches two walls (a solid cell or a wall face in its plane) is a wall cell under the
         // on-node wall: with the inlet rule on it a density mode grows. Decided once on the layer as it stands. The
         // inlet's velocity is raised to deliver the requested flow; an inlet left with no flux is refused.
@@ -870,17 +885,8 @@ impl Flow {
                 let a = face.axis();
                 let layer = if face.is_max() { grid.cells[a] - 1 } else { 0 };
                 let (t1, t2) = ((a + 1) % 3, (a + 2) % 3);
-                let weight = |ijk: [usize; 3]| -> f64 {
-                    let mut w = 1.0;
-                    if profile == Profile::Parabolic {
-                        for t in [t1, t2].into_iter().filter(|t| !periodic[*t]) {
-                            let s = (ijk[t] as f64 + 0.5) / grid.cells[t] as f64;
-                            w *= 4.0 * s * (1.0 - s);
-                        }
-                    }
-                    w
-                };
-                let is_wall = |ijk: [usize; 3], t: usize, up: bool| -> bool {
+                let weight = |ijk: [usize; 3]| -> f64 { if profile == Profile::Parabolic { parabolic_scale(ijk, t1, t2) } else { 1.0 } };
+                let is_wall = |fluid: &[bool], ijk: [usize; 3], t: usize, up: bool| -> bool {
                     let i = ijk[t] as i64 + if up { 1 } else { -1 };
                     let n_t = grid.cells[t] as i64;
                     let mut q = ijk;
@@ -894,27 +900,59 @@ impl Flow {
                     }
                     !fluid.get(grid.index(q)).copied().unwrap_or(false)
                 };
-                let (mut cells_before, mut flux_before, mut flux_after, mut wall_row) = (0usize, 0.0f64, 0.0f64, 0usize);
+                let at = |i: usize, j: usize| -> [usize; 3] {
+                    let mut ijk = [0usize; 3];
+                    ijk[a] = layer;
+                    ijk[t1] = i;
+                    ijk[t2] = j;
+                    ijk
+                };
+                let walls_of = |ijk: [usize; 3], fluid: &[bool]| -> usize {
+                    [t1, t2]
+                        .into_iter()
+                        .map(|t| usize::from(is_wall(fluid, ijk, t, false)) + usize::from(is_wall(fluid, ijk, t, true)))
+                        .sum::<usize>()
+                };
+                let (mut cells_before, mut flux_before) = (0usize, 0.0f64);
+                for j in 0..grid.cells[t2] {
+                    for i in 0..grid.cells[t1] {
+                        let ijk = at(i, j);
+                        if fluid.get(grid.index(ijk)).copied().unwrap_or(false) {
+                            cells_before += 1;
+                            flux_before += weight(ijk);
+                        }
+                    }
+                }
+                // The corner cells are decided once on the layer as it stands. A wall cell made here is a wall to the
+                // cells beside it, which then lie on its row at rest and deliver nothing: the flow that is left is
+                // counted on the final cell set.
                 let mut corner: Vec<usize> = Vec::new();
                 for j in 0..grid.cells[t2] {
                     for i in 0..grid.cells[t1] {
-                        let mut ijk = [0usize; 3];
-                        ijk[a] = layer;
-                        ijk[t1] = i;
-                        ijk[t2] = j;
+                        let ijk = at(i, j);
                         let cell = grid.index(ijk);
-                        if !fluid.get(cell).copied().unwrap_or(false) {
+                        if fluid.get(cell).copied().unwrap_or(false) && walls_of(ijk, &fluid) >= 2 {
+                            corner.push(cell);
+                        }
+                    }
+                }
+                for c in &corner {
+                    if let Some(x) = fluid.get_mut(*c) {
+                        *x = false;
+                    }
+                    if let Some(x) = owner.get_mut(*c) {
+                        *x = NONE;
+                    }
+                }
+                let (mut flux_after, mut wall_row) = (0.0f64, 0usize);
+                for j in 0..grid.cells[t2] {
+                    for i in 0..grid.cells[t1] {
+                        let ijk = at(i, j);
+                        if !fluid.get(grid.index(ijk)).copied().unwrap_or(false) {
                             continue;
                         }
-                        cells_before += 1;
-                        let w = weight(ijk);
-                        flux_before += w;
-                        let walls =
-                            [t1, t2].into_iter().map(|t| usize::from(is_wall(ijk, t, false)) + usize::from(is_wall(ijk, t, true))).sum::<usize>();
-                        if walls >= 2 {
-                            corner.push(cell);
-                        } else if walls == 0 {
-                            flux_after += w;
+                        if walls_of(ijk, &fluid) == 0 {
+                            flux_after += weight(ijk);
                         } else {
                             // A cell on a wall's row takes the wall's velocity (at rest): it delivers nothing.
                             wall_row += 1;
@@ -926,7 +964,6 @@ impl Flow {
                 if corner.is_empty() && wall_row == 0 {
                     continue;
                 }
-                let lost = corner.len() as f64 / cells_before.max(1) as f64;
                 if !(flux_after > 0.0) {
                     return Err(Error::Invalid(format!(
                         "the velocity inlet on box face {} has {} of its {cells_before} cells touching two walls (wall cells under the on-node wall law) and {wall_row} on a wall's row, and none left to deliver its flow: the spacing ({}) is too coarse for its shape; refine it",
@@ -936,18 +973,23 @@ impl Flow {
                     )));
                 }
                 corner_cells.extend(&corner);
-                for c in &corner {
-                    if let Some(x) = fluid.get_mut(*c) {
-                        *x = false;
-                    }
-                    if let Some(x) = owner.get_mut(*c) {
-                        *x = NONE;
+                inlet_rescale[face.index()] = flux_before / flux_after;
+                // The setup checked the Mach number on the requested velocity; the raised one must pass too.
+                if let FaceCondition::Velocity { velocity, .. } = *domain.faces.get(face) {
+                    let v = setup.to_lattice(velocity);
+                    let mach = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt() * (flux_before / flux_after) / crate::lattice::CS2.sqrt();
+                    if !(mach <= crate::setup::MAX_MACH) {
+                        return Err(Error::Invalid(format!(
+                            "the velocity inlet on box face {} must be raised by {:.3} to deliver its flow around its wall cells, which makes the lattice Mach number {mach:.3}, above {}: lower the time step or refine the spacing ({})",
+                            face.name(),
+                            flux_before / flux_after,
+                            crate::setup::MAX_MACH,
+                            grid.spacing
+                        )));
                     }
                 }
-                inlet_rescale[face.index()] = flux_before / flux_after;
                 inlet_corners.cells += corner.len();
                 inlet_corners.inlet_cells += cells_before;
-                inlet_corners.area_lost = inlet_corners.area_lost.max(lost);
                 inlet_corners.flux_rescale = inlet_corners.flux_rescale.max(flux_before / flux_after);
             }
         }
@@ -1301,22 +1343,7 @@ impl Flow {
                     let target = match *domain.faces.get(face) {
                         FaceCondition::Velocity { .. } if on_wall_row.binary_search(&cell).is_ok() => Target::Velocity([0.0; 3]),
                         FaceCondition::Velocity { velocity, profile } => {
-                            let mut scale = 1.0;
-                            if profile == Profile::Parabolic {
-                                for t in [t1, t2].into_iter().filter(|t| !periodic[*t]) {
-                                    let s = (ijk[t] as f64 + 0.5) / grid.cells[t] as f64;
-                                    // A symmetry plane at one end is the middle of the whole
-                                    // model's profile (the half of a channel); at both, the
-                                    // direction is unbounded, as a periodic one.
-                                    let s = match (is_symmetry(BoxFace::of(t, false)), is_symmetry(BoxFace::of(t, true))) {
-                                        (false, false) => s,
-                                        (false, true) => s / 2.0,
-                                        (true, false) => 0.5 + s / 2.0,
-                                        (true, true) => 0.5,
-                                    };
-                                    scale *= 4.0 * s * (1.0 - s);
-                                }
-                            }
+                            let scale = if profile == Profile::Parabolic { parabolic_scale(ijk, t1, t2) } else { 1.0 };
                             Target::Velocity(setup.to_lattice(velocity).map(|v| v * scale * inlet_rescale[face.index()]))
                         }
                         // A characteristic outlet starts as a uniform one ([`Flow::characteristic_outlet`]).
