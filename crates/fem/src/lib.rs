@@ -35,6 +35,8 @@
 //!   bucket grid of the global search;
 //! - [`mortar`]: mortar segmentation of a secondary face against a main face and the integration
 //!   points on the overlap, over [`dual`]'s automatic differentiation for the exact tangent;
+//! - [`nedelec`]: Nédélec edge elements on tetrahedra (orders 1 and 2) for the electric field,
+//!   their curl–curl and mass matrices (docs/rfc/0001-electromagnetics.md);
 //! - [`heat`]: heat conduction (conductivity, capacity, sources, surface flux and convection,
 //!   heat flux); thermal strain loads and stresses are in [`element`];
 //! - [`uniform`]: uniform-strain (one-point) hexahedron and tetrahedron kinematics, hourglass
@@ -79,6 +81,7 @@ pub mod jet;
 pub mod locate;
 pub mod material;
 pub mod mortar;
+pub mod nedelec;
 pub mod pipe;
 pub mod plane;
 pub mod plasticity;
