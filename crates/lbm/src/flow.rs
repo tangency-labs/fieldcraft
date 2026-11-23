@@ -595,7 +595,7 @@ impl InletCornerReport {
     /// The line a run prints: how many inlet cells became wall cells, the inlet area lost and the velocity factor;
     /// None when the rule changed nothing.
     pub fn message(&self) -> Option<String> {
-        if self.cells == 0 {
+        if self.cells == 0 && !(self.flux_rescale > 1.0) {
             return None;
         }
         Some(format!(
@@ -894,7 +894,7 @@ impl Flow {
                     }
                     !fluid.get(grid.index(q)).copied().unwrap_or(false)
                 };
-                let (mut cells_before, mut flux_before, mut flux_after) = (0usize, 0.0f64, 0.0f64);
+                let (mut cells_before, mut flux_before, mut flux_after, mut wall_row) = (0usize, 0.0f64, 0.0f64, 0usize);
                 let mut corner: Vec<usize> = Vec::new();
                 for j in 0..grid.cells[t2] {
                     for i in 0..grid.cells[t1] {
@@ -914,18 +914,22 @@ impl Flow {
                         if walls >= 2 {
                             corner.push(cell);
                         } else if walls == 0 {
-                            // A cell on a wall's row takes the wall's velocity (at rest): it delivers nothing.
                             flux_after += w;
+                        } else {
+                            // A cell on a wall's row takes the wall's velocity (at rest): it delivers nothing.
+                            wall_row += 1;
                         }
                     }
                 }
-                if corner.is_empty() {
+                // The raise is by flux: the corner cells and the cells on a wall's row deliver nothing, so an inlet
+                // that meets a wall without a corner cell needs it too.
+                if corner.is_empty() && wall_row == 0 {
                     continue;
                 }
                 let lost = corner.len() as f64 / cells_before.max(1) as f64;
                 if !(flux_after > 0.0) {
                     return Err(Error::Invalid(format!(
-                        "the velocity inlet on box face {} has {} of its {cells_before} cells in the on-node wall law's corner rule (a cell touching two walls is a wall cell) and none left to deliver its flow: the spacing ({}) is too coarse for its shape; refine it",
+                        "the velocity inlet on box face {} has {} of its {cells_before} cells touching two walls (wall cells under the on-node wall law) and {wall_row} on a wall's row, and none left to deliver its flow: the spacing ({}) is too coarse for its shape; refine it",
                         face.name(),
                         corner.len(),
                         grid.spacing

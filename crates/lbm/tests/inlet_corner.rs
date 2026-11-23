@@ -90,21 +90,41 @@ fn a_run_prints_the_reclassified_cells_and_the_area_lost() {
     let r = fieldcraft_lbm::solve_fluid(&m, None, &[], &Limits::default()).unwrap();
     let line = r.warnings.iter().find(|w| w.starts_with("inlet corner rule:")).expect("the run reports the corner rule");
     assert!(line.contains("4 of 64 inlet-layer cells") && line.contains("6.2 % of its area"), "{line}");
-    let m = channel_model((16, 8, 8), true, true, Some(WallModel::SpaldingBounce), vec![]);
+    let m = channel_model((16, 8, 8), false, false, None, vec![]);
     let r = fieldcraft_lbm::solve_fluid(&m, None, &[], &Limits::default()).unwrap();
     assert!(r.warnings.iter().all(|w| !w.starts_with("inlet corner rule:")), "{:?}", r.warnings);
 }
 
-/// Walls on one side only (periodic span, z max slip): the inlet cells touch one wall, none is reclassified, and the
-/// inlet is not rescaled.
+/// Walls on one side only (periodic span, z max slip): the inlet's cells on the z min wall's row touch one wall, none
+/// touches two, so none is reclassified; the row takes the wall's velocity (at rest) and delivers nothing, so the inlet's
+/// velocity is raised and the requested flow is delivered to round-off. (Before, the inlet delivered less.)
 #[test]
-fn an_inlet_cell_touching_one_wall_keeps_the_inlet() {
-    let (setup, obstacles) = channel((16, 8, 8), true, true, Some(WallModel::SpaldingBounce), vec![], vec![]);
+fn an_inlet_meeting_a_wall_without_a_corner_cell_delivers_its_flow() {
+    let (nx, ny, nz) = (16, 8, 8);
+    let (setup, obstacles) = channel((nx, ny, nz), true, true, Some(WallModel::SpaldingBounce), vec![], vec![]);
     let flow = fieldcraft_lbm::Flow::new(&setup, &obstacles).unwrap();
-    assert_eq!(flow.inlet_corner_report(), Default::default());
+    let report = flow.inlet_corner_report();
+    assert_eq!(report.cells, 0, "{report:?}");
+    assert!(report.flux_rescale > 1.0, "the wall row's flux is made up: {report:?}");
     let g = flow.grid();
     assert!(Backend::is_fluid(&flow, g.index([0, 0, 0])));
     assert!(Backend::is_fluid(&flow, g.index([0, 3, 0])));
+    let u0 = setup.to_lattice([0.1, 0.0, 0.0])[0];
+    let profile = |k: usize| {
+        let s = (k as f64 + 0.5) / nz as f64;
+        4.0 * s * (1.0 - s)
+    };
+    let requested: f64 = (0..ny).flat_map(|j| (0..nz).map(move |k| (j, k))).map(|(_, k)| u0 * profile(k)).sum();
+    let delivered: f64 = flow
+        .open_cells()
+        .iter()
+        .filter(|o| o.axis == 0 && o.inward > 0.0)
+        .map(|o| match o.target {
+            fieldcraft_lbm::Target::Velocity(v) => v[0],
+            _ => 0.0,
+        })
+        .sum();
+    assert!((delivered / requested - 1.0).abs() < 1e-12, "delivered {delivered}, requested {requested}");
 }
 
 /// Without a wall law nothing changes: the corner cells are inlet cells as before.
