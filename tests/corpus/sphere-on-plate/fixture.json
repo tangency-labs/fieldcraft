@@ -1,10 +1,6 @@
 {
   "note": "The corpus part's accepted results, written by `cargo xtask corpus --bless` (docs/meshing/corpus.md). A stage whose outcome changes, or a value outside its band, fails the corpus run and CI's heavy job. `platforms` lists what each platform blessed measured differently.",
   "platforms": {
-    "linux-x86_64": {
-      "stages": {},
-      "values": {}
-    },
     "macos-aarch64": {
       "stages": {},
       "values": {}
@@ -66,19 +62,19 @@
     },
     "octree.hexes": {
       "band": 0,
-      "value": 25716
+      "value": 43501
     },
     "octree.mean_sj": {
-      "band": 9.389399974639326e-10,
-      "value": 0.9379399974639324
+      "band": 9.42070258214748e-10,
+      "value": 0.9410702582147479
     },
     "octree.min_sj": {
-      "band": 7.45993593972311e-11,
-      "value": 0.0735993593972311
+      "band": 3.198170725563814e-10,
+      "value": 0.31881707255638136
     },
     "octree.volume_mm3": {
-      "band": 0.00007236392434820278,
-      "value": 72363.92334820278
+      "band": 0.00006992215310640874,
+      "value": 69922.15210640873
     },
     "quality.max_dihedral_deg": {
       "band": 1.4064676151016975e-7,

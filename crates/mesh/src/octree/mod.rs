@@ -52,7 +52,11 @@
 //!    rebuild extends Gao et al. 2019, §3.3, which refines and rebuilds only where a stage
 //!    fails, to a valid mesh with poor elements; its thresholds and the rule that a rebuild
 //!    must raise the smallest scaled Jacobian are FieldCraft's own, measured on the meshing
-//!    corpus (docs/meshing/corpus.md).
+//!    corpus (docs/meshing/corpus.md). Refining around every poor element at once can ask for
+//!    far more cells than the cap holds (closure spreads a refined region to its orthogonal
+//!    hull), so the hints are ordered newest and poorest first and, when the closed grid would
+//!    pass the cap, the largest prefix of them that fits is used; a build that fits is
+//!    unchanged. That ordering and the prefix rule are FieldCraft's own.
 //!
 //! # Why 3-refinement templates
 //! The dual schemes of M. Livesu, L. Pitzalis, G. Cherchi, *Optimal dual schemes for adaptive
@@ -318,12 +322,12 @@ fn rebuilt(attempts: usize, cap: &dyn Fn(usize) -> usize, build: &mut dyn FnMut(
                     return Ok(kept(m, attempt + 1, retries));
                 }
                 retries.push(message![format!("{} elements have a scaled Jacobian under {REFINE_BELOW}", weak.len())]);
-                hints.extend(weak);
+                hints.splice(0..0, weak);
                 best = Some(m);
             }
             Attempt::Retry(r) => {
                 retries.push(r.why);
-                hints.extend(r.at);
+                hints.splice(0..0, r.at);
             }
         }
     }
@@ -822,8 +826,7 @@ impl Context<'_> {
         {
             return Ok(t);
         }
-        let kept = self.refined.borrow().clone();
-        let mut tree = match kept {
+        let base = match self.refined.borrow().clone() {
             Some(t) => t,
             None => match self.refine(max_leaves)? {
                 Refined::Within(t) => t,
@@ -832,17 +835,45 @@ impl Context<'_> {
                 }
             },
         };
-        tree.set_max_leaves(max_leaves)?;
-        if !hints.is_empty() {
-            let near: Vec<HashSet<grid::Key>> = (0..tree.depth).map(|l| self.hint_cells(hints, l)).collect();
-            let split: Vec<grid::Key> =
-                tree.sorted_leaves().into_iter().filter(|k| near.get(usize::from(k.0)).is_some_and(|s| s.contains(k))).collect();
-            for key in split {
-                tree.split(key)?;
+        // The leaves near the first `n` hints are split and the grid closed. Where that does not
+        // fit `max_leaves`, the most hints that do are used: a closure spreads a refined
+        // region to its orthogonal hull, so a few hints far apart can ask for far more cells than
+        // the sum of their own. The hints come most urgent first (the latest failures, the
+        // poorest elements), so the rest wait for the next build.
+        let with = |n: usize| -> Result<(Tree, Vec<usize>)> {
+            let mut tree = base.clone();
+            tree.set_max_leaves(max_leaves)?;
+            if let Some(used) = hints.get(..n).filter(|h| !h.is_empty()) {
+                let near: Vec<HashSet<grid::Key>> = (0..tree.depth).map(|l| self.hint_cells(used, l)).collect();
+                let split: Vec<grid::Key> =
+                    tree.sorted_leaves().into_iter().filter(|k| near.get(usize::from(k.0)).is_some_and(|s| s.contains(k))).collect();
+                for key in split {
+                    tree.split(key)?;
+                }
             }
-        }
-        *self.refined_cells.borrow_mut() = tree.level_counts();
-        tree.close(CLOSURE_ROUNDS, &|k| self.outside(k))?;
+            let refined = tree.level_counts();
+            tree.close(CLOSURE_ROUNDS, &|k| self.outside(k))?;
+            Ok((tree, refined))
+        };
+        let (tree, refined) = match with(hints.len()) {
+            Err(e) if e.is_limit() && !hints.is_empty() => {
+                // The most hints that fit, found by bisection: `fit` hints do (none always do),
+                // `over` do not.
+                let (mut fit, mut over) = (0, hints.len());
+                let mut best = with(0)?;
+                while over - fit > 1 {
+                    let mid = fit + (over - fit) / 2;
+                    match with(mid) {
+                        Ok(t) => (fit, best) = (mid, t),
+                        Err(e) if e.is_limit() => over = mid,
+                        Err(e) => return Err(e),
+                    }
+                }
+                best
+            }
+            other => other?,
+        };
+        *self.refined_cells.borrow_mut() = refined;
         Ok(tree)
     }
 
@@ -1031,7 +1062,7 @@ impl Context<'_> {
         let mut bad: Vec<P> = Vec::new();
         let mut checks = Vec::with_capacity(w.hexes.len());
         let (mut sj_min, mut sj_sum) = (f64::INFINITY, 0.0);
-        let mut poor: Vec<P> = Vec::new();
+        let mut poor: Vec<(f64, P)> = Vec::new();
         for (e, hx) in w.hexes.iter().enumerate() {
             let q = element_quality(ElementKind::Hex8, &hx.map(|v| w.points[v as usize]))?;
             let check = q.jacobian.ok_or_else(|| Error::Failed("an element was not certified".into()))?;
@@ -1042,7 +1073,7 @@ impl Context<'_> {
             sj_min = sj_min.min(sj);
             sj_sum += sj;
             if sj < REFINE_BELOW {
-                poor.push(centroid(&w.points, hx));
+                poor.push((sj, centroid(&w.points, hx)));
             }
             checks.push((e as u32 + 1, check));
         }
@@ -1114,7 +1145,8 @@ impl Context<'_> {
             retries: Vec::new(),
         };
         // Refining where the elements are poor may raise them.
-        let weak = if sj_min < RETRY_BELOW { poor } else { Vec::new() };
+        poor.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let weak = if sj_min < RETRY_BELOW { poor.into_iter().map(|x| x.1).collect() } else { Vec::new() };
         Ok(Attempt::Done(Box::new(OctreeHexMesh { nodes, hexes, boundary, report }), weak))
     }
 }

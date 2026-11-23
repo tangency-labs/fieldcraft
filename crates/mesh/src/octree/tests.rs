@@ -368,3 +368,28 @@ fn a_rebuild_is_kept_only_while_it_raises_the_worst_element() {
     let e = rebuild_with(vec![retry(), retry(), retry(), retry()]).unwrap_err().to_string();
     assert!(e.contains("failed after 4 builds") && e.matches("inverted").count() == 4, "{e}");
 }
+
+#[test]
+fn hints_beyond_the_leaf_cap_refine_with_the_most_that_fit() {
+    // Hints far apart on a coarse grid, most urgent first. Each splits the leaves around it and
+    // the closure grows them, so every further hint adds cells. With a cap that holds the first
+    // two but not all of them, the grid takes the most hints that fit instead of failing.
+    let s = box_surface([0.0; 3], [60.0; 3]);
+    let g = Geometry::new(&s, 30.0, 160.0).unwrap();
+    let field = UniformSize(3.0);
+    let o = OctreeOptions::default();
+    let thickness = triangle_thickness(&g, &field);
+    let needs = Needs::of(&g, &thickness, &o);
+    let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let ctx = Context::new(&g, &field, &o, &thickness, identity, 3.0, ([0.0; 3], [60.0; 3]), needs).unwrap();
+    let hints: Vec<P> = vec![[10.0, 10.0, 10.0], [50.0, 10.0, 10.0], [10.0, 50.0, 10.0], [50.0, 50.0, 50.0]];
+    let uncapped = |n: usize| ctx.tree(&hints[..n], usize::MAX / 2).unwrap().leaf_count();
+    let leaves: Vec<usize> = (0..=hints.len()).map(uncapped).collect();
+    assert!(leaves.windows(2).all(|w| w[0] < w[1]), "every hint adds cells: {leaves:?}");
+    let cap = leaves[2];
+    let tree = ctx.tree(&hints, cap).unwrap();
+    assert_eq!(tree.leaf_count(), leaves[2], "{leaves:?}");
+    // Under the cap for even one hint, the grid without hints is what is left.
+    let tree = ctx.tree(&hints, leaves[1] - 1).unwrap();
+    assert_eq!(tree.leaf_count(), leaves[0], "{leaves:?}");
+}
