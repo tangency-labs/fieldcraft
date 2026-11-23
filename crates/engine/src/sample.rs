@@ -424,7 +424,7 @@ pub fn drop_test() -> Value {
     let step = json!({
         "type": "explicit_dynamic", "end_time": "1 ms", "output_interval": "50 µs", "history_interval": "5 µs", "history_nodes": "top",
         "initial_velocities": [{"set": "bracket", "velocity": [0, 0, -speed]}],
-        "rigid_walls": [{"set": "bracket", "point": [60, 0, -0.1], "normal": [-tilt.sin(), 0, tilt.cos()]}],
+        "rigid_walls": [{"set": "bracket", "point": [60, 0, -0.1], "normal": [-libm::sin(tilt), 0, libm::cos(tilt)]}],
         "hourglass": {"type": "stiffness", "coefficient": 0.05}
     });
     json!([
@@ -453,7 +453,7 @@ pub fn rubber_seal() -> Value {
     let mut steps = vec![json!({"command": "model.units", "params": {"system": "mm-t-s-N-MPa"}})];
     for quarter in 0..4u8 {
         let (a0, a1) = (f64::from(quarter) * std::f64::consts::FRAC_PI_2, f64::from(quarter + 1) * std::f64::consts::FRAC_PI_2);
-        let at = |r: f64, a: f64, z: f64| [r * a.cos(), r * a.sin(), z];
+        let at = |r: f64, a: f64, z: f64| [r * libm::cos(a), r * libm::sin(a), z];
         let corners = [
             at(inner, a0, 0.0),
             at(outer, a0, 0.0),
@@ -669,12 +669,12 @@ fn crank_faces(bodies: &[Shape]) -> [Vec<Value>; 2] {
                     spindle.push(member)
                 }
                 Some(FaceSurface::Cylinder { origin, axis, radius })
-                    if vertical(axis) && (radius - 1.5).abs() < on && origin[0].hypot(origin[1]) < 8.0 =>
+                    if vertical(axis) && (radius - 1.5).abs() < on && libm::hypot(origin[0], origin[1]) < 8.0 =>
                 {
                     spindle.push(member)
                 }
                 Some(FaceSurface::Cylinder { origin, axis, radius })
-                    if vertical(axis) && (radius - 7.0).abs() < on && (origin[0] - 170.0).hypot(origin[1]) < on =>
+                    if vertical(axis) && (radius - 7.0).abs() < on && libm::hypot(origin[0] - 170.0, origin[1]) < on =>
                 {
                     pedal.push(member)
                 }
@@ -815,7 +815,7 @@ mod tests {
             b["volume"].as_f64().unwrap_or_else(|| panic!("{b}"))
         };
         let half = volume(&mut s, "CrankArm/b");
-        let (sin, cos) = (32f64.to_radians().sin(), 32f64.to_radians().cos());
+        let (sin, cos) = (libm::sin(32f64.to_radians()), libm::cos(32f64.to_radians()));
         for (name, by) in [
             ("X110", json!({"type": "offset", "plane": "yz", "offset": 110})),
             ("X148", json!({"type": "offset", "plane": "yz", "offset": 148})),

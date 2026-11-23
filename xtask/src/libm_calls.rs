@@ -25,10 +25,6 @@ const MARKER: &str = "// libm: not a result:";
 
 /// Files with std calls still to convert, and how many. Removed as each crate converts.
 const KNOWN: &[(&str, usize)] = &[
-    ("crates/engine/src/cmd/render.rs", 1),
-    ("crates/engine/src/path.rs", 2),
-    ("crates/engine/src/sample.rs", 6),
-    ("crates/engine/src/view.rs", 3),
     ("crates/fem/src/constitutive.rs", 3),
     ("crates/fem/src/contact.rs", 1),
     ("crates/fem/src/elastoplastic.rs", 5),

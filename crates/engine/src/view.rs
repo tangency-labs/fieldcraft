@@ -847,8 +847,8 @@ fn aimed(pic: &Picture, aim: &Aim, mut cam: Camera, aspect: f64) -> Result<Camer
         // The half height the sphere needs, then the distance that shows it.
         let half = radius / aspect.min(1.0);
         let d = if cam.fov > 0.0 {
-            let half_angle = ((cam.fov * 0.5).tan() * aspect.min(1.0)).atan();
-            radius / half_angle.sin().max(MIN_SINE)
+            let half_angle = libm::atan(libm::tan(cam.fov * 0.5) * aspect.min(1.0));
+            radius / libm::sin(half_angle).max(MIN_SINE)
         } else {
             half / Camera { distance: 1.0, ..cam }.half_height()
         };

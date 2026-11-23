@@ -441,7 +441,7 @@ pub fn stations(points: &[[f64; 3]], samples: usize) -> Result<(Vec<f64>, Vec<[f
     let mut total = 0.0;
     for pair in points.windows(2) {
         if let [a, b] = pair {
-            total += (b[0] - a[0]).hypot(b[1] - a[1]).hypot(b[2] - a[2]);
+            total += libm::hypot(libm::hypot(b[0] - a[0], b[1] - a[1]), b[2] - a[2]);
             length.push(total);
         }
     }
