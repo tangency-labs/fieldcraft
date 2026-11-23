@@ -1,4 +1,4 @@
-//! Interface localization (`en` / `he`) and BCP 47 / legacy `iw` tag normalization.
+//! Interface localization (`en` / `fr` / `he`) and BCP 47 / legacy `iw` tag normalization.
 //!
 //! `egui 0.37` and `solidcraft-ui-text` handle visual UAX #9 BiDi line formatting inside
 //! `Catalog::shown()`, so `locales/he.json` stores logical Hebrew text.
@@ -7,6 +7,8 @@
 pub const SYSTEM: &str = solidcraft_ui_text::SYSTEM;
 /// English catalog id (fallback).
 pub const ENGLISH: &str = "en";
+/// French catalog id (`Français`).
+pub const FRENCH: &str = "fr";
 /// Hebrew catalog id (`עברית`, right-to-left).
 pub const HEBREW: &str = "he";
 
@@ -37,7 +39,8 @@ pub fn normalize_language_tag(tag: &str) -> String {
     out
 }
 
-/// Normalize and validate a saved or requested language preference (`system`, `en`, `he`, `iw`).
+/// Normalize and validate a saved or requested language preference (`system`, `en`, `fr`, `he`,
+/// `iw`).
 pub fn validate_preference(pref: &str) -> Result<String, String> {
     let trimmed = pref.trim();
     if trimmed.eq_ignore_ascii_case(SYSTEM) {
@@ -47,15 +50,17 @@ pub fn validate_preference(pref: &str) -> Result<String, String> {
     let primary = normalized.split('-').next().unwrap_or_default();
     match primary {
         "en" => Ok(ENGLISH.into()),
+        "fr" => Ok(FRENCH.into()),
         "he" => Ok(HEBREW.into()),
-        _ => Err(format!("unknown language {pref:?} (expected system, en, or he)")),
+        _ => Err(format!("unknown language {pref:?} (expected system, en, fr, or he)")),
     }
 }
 
-/// Resolve a stored/requested preference (`system`, `en`, `he`, `iw`) to an installed catalog id.
+/// Resolve a stored/requested preference ([`validate_preference`]) to an installed catalog id.
 pub fn resolve_preference(pref: &str) -> &'static str {
     match validate_preference(pref).as_deref() {
         Ok(SYSTEM) => solidcraft_ui_text::system_language(),
+        Ok(FRENCH) => FRENCH,
         Ok(HEBREW) => HEBREW,
         _ => ENGLISH,
     }
@@ -69,7 +74,7 @@ pub fn scope(pref: &str) -> solidcraft_ui_text::LanguageScope {
 
 /// Language options shown in Settings: the system's, then each catalogue's own name.
 pub fn selectable_languages() -> Vec<LanguageChoice> {
-    [ENGLISH, HEBREW].into_iter().fold(
+    [ENGLISH, FRENCH, HEBREW].into_iter().fold(
         vec![LanguageChoice { pref: SYSTEM, label: solidcraft_ui_text::tr("settings.language_system").to_owned() }],
         |mut choices, id| {
             choices.push(LanguageChoice { pref: id, label: solidcraft_ui_text::Locale::for_language(id).display_name().into_owned() });
@@ -148,6 +153,23 @@ mod tests {
     }
 
     #[test]
+    fn french_catalog_covers_all_english_and_workspace_keys() {
+        assert_catalog_covers_english(FRENCH, &["ui.navigation", "ui.ok"]);
+    }
+
+    #[test]
+    fn scoped_french_translation() {
+        assert_eq!(resolve_preference("fr-CA"), "fr");
+        let _guard = scope("fr");
+        assert_eq!(solidcraft_ui_text::language(), "fr");
+        assert_eq!(solidcraft_ui_text::tr("settings.title"), "Paramètres");
+        assert_eq!(solidcraft_ui_text::tr("settings.language"), "Langue");
+        assert_eq!(solidcraft_ui_text::tr("workspace.prepare.about"), "Ouvrir la géométrie et la mailler");
+        let formatted = solidcraft_ui_text::format("search.no_match", &[("query", "maillage")]);
+        assert_eq!(formatted, "Aucune commande ne correspond à «\u{a0}maillage\u{a0}»");
+    }
+
+    #[test]
     fn scoped_hebrew_translation() {
         crate::theme::install_look();
         assert_eq!(resolve_preference("iw-IL"), "he");
@@ -160,9 +182,10 @@ mod tests {
             let formatted = solidcraft_ui_text::format("settings.updates_skipped_version", &[("version", "0.8.1")]);
             assert!(formatted.contains("0.8.1") && formatted.contains("FieldCraft"), "got {formatted:?}");
             let labels: Vec<(&str, String)> = selectable_languages().into_iter().map(|c| (c.pref, c.label)).collect();
-            assert_eq!(labels.iter().map(|(p, _)| *p).collect::<Vec<_>>(), [SYSTEM, ENGLISH, HEBREW]);
+            assert_eq!(labels.iter().map(|(p, _)| *p).collect::<Vec<_>>(), [SYSTEM, ENGLISH, FRENCH, HEBREW]);
             assert_eq!(labels[1].1, "English");
-            assert_eq!(labels[2].1, "עברית");
+            assert_eq!(labels[2].1, "Français");
+            assert_eq!(labels[3].1, "עברית");
         }
     }
 }
