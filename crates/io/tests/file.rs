@@ -93,6 +93,27 @@ fn with_manifest(bytes: &[u8], edit: impl FnOnce(&mut Value)) -> Vec<u8> {
     package(&ps)
 }
 
+/// Format 4: a mesh read in a unit of its own keeps it; millimetres write nothing; a unit symbol
+/// that cannot be one is refused.
+#[test]
+fn a_mesh_unit_round_trips() {
+    let mut f = sample();
+    f.geometry.meshes = vec![
+        SourceFile::of("/abs/part.stl", b"stl bytes").unwrap().with_unit(Some("in".into())).unwrap(),
+        SourceFile::of("/abs/tet.3mf", b"3mf bytes").unwrap(),
+    ];
+    let bytes = bytes_of(&f);
+    let back = read(&bytes).unwrap();
+    assert_eq!(back.geometry.meshes[0].unit(), Some("in"));
+    assert_eq!(back.geometry.meshes[1].unit(), None);
+    assert_eq!(back.geometry.meshes[0].with_path("moved/part.stl").unwrap().unit(), Some("in"), "a moved file keeps its unit");
+    let manifest = String::from_utf8(parts(&bytes)[0].1.clone()).unwrap();
+    assert_eq!(manifest.matches("\"unit\"").count(), 1, "{manifest}");
+    for bad in ["", "a b", "x\n", &"m".repeat(17)] {
+        assert!(SourceFile::of("p.stl", b"x").unwrap().with_unit(Some(bad.to_string())).is_err(), "{bad:?}");
+    }
+}
+
 #[test]
 fn round_trip_keeps_everything_and_bytes_are_stable() {
     let f = sample();

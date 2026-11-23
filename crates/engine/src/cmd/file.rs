@@ -1738,4 +1738,33 @@ mod tests {
         assert!(v.execute("file.save", &json!({"geometry": "zip"})).is_err());
         let _ = std::fs::remove_dir_all(&d);
     }
+
+    /// The models FieldCraft 0.8.0 and 0.8.1 wrote (format 3, crates/io/tests/formats/v3) open
+    /// through the 3 → 4 step and say so, with their design, imported surface and results; saving
+    /// writes format 4 and keeps the format 3 file as it was.
+    #[test]
+    fn format_3_models_open_migrated() {
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../io/tests/formats/v3");
+        for release in ["0.8.0", "0.8.1"] {
+            let dir = std::env::temp_dir().join(format!("fieldcraft-format3-{release}-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            for name in ["design-mesh-results.fieldcraft", "hollow-box.solidcraft", "probe.3mf"] {
+                std::fs::copy(fixtures.join(release).join(name), dir.join(name)).unwrap();
+            }
+            let path = dir.join("design-mesh-results.fieldcraft");
+            let original = std::fs::read(&path).unwrap();
+            let mut s = Session::default();
+            let r = s.execute("file.open", &json!({"path": path.to_str().unwrap()})).unwrap();
+            assert_eq!(r["migrated_from"], 3, "{release}: {r}");
+            assert!(r["warnings"].as_array().is_none_or(|w| w.is_empty()), "{release}: {r}");
+            assert!(s.design.as_ref().is_some_and(|d| d.body("Case").is_some()), "{release}");
+            assert_eq!(s.surfaces.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["Probe"], "{release}");
+            assert!(!s.model.elements().is_empty() && s.result_steps().next().is_some(), "{release}");
+            assert_eq!(std::fs::read(&path).unwrap(), original, "{release}: opening writes nothing");
+            s.execute("file.save", &json!({})).unwrap();
+            assert_eq!(fieldcraft_io::fs::format_of_file(&path), Some(fieldcraft_io::FORMAT_VERSION), "{release}");
+            assert_eq!(std::fs::read(dir.join("design-mesh-results.v3.fieldcraft")).unwrap(), original, "{release}: the format 3 file is kept");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
 }

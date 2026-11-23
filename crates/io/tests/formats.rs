@@ -399,6 +399,32 @@ fn every_format_1_fixture_opens_as_its_writer_read_it() {
     }
 }
 
+/// Every format 3 file (0.8.0, 0.8.1) opens through the tag-only step 3 → 4 as its writer read
+/// it, with its results and its embedded geometry: the parts format 3 and later may list.
+#[test]
+fn every_format_3_fixture_opens_as_its_writer_read_it() {
+    let all = fixtures(3);
+    let writers: std::collections::BTreeSet<&str> = all.iter().map(|f| f.writer.as_str()).collect();
+    assert_eq!(writers.into_iter().collect::<Vec<_>>(), ["0.8.0", "0.8.1"]);
+    for f in &all {
+        let name = f.name();
+        let bytes = std::fs::read(&f.path).unwrap();
+        assert_eq!(format_of(Cursor::new(&bytes)), Some(3), "{name}");
+        let (file, format) = read_versioned(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(format, 3, "{name}");
+        let got = as_recorded(&file);
+        let want = expected(f.recorded.clone(), 3);
+        for key in ["model", "geometry", "journal", "view"] {
+            assert!(got[key] == want[key], "{name}: {key} differs from what its writer read at {}", first_difference(&got[key], &want[key], ""));
+        }
+        assert_eq!(json!(file.results.len()), want["results"], "{name}");
+        assert!(!file.results.is_empty(), "{name}: the fixture keeps a solved step");
+        assert_eq!(json!(file.embedded.keys().collect::<Vec<_>>()), want["embedded"], "{name}");
+        assert_eq!(file.geometry.meshes.len(), 1, "{name}");
+        assert_eq!(file.geometry.meshes[0].unit(), None, "{name}: a format 3 mesh is read in millimetres");
+    }
+}
+
 /// The step 1 → 2 on every real format 1 file: only the tag changes; every part's content is
 /// the same.
 #[test]

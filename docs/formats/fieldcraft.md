@@ -1,4 +1,4 @@
-# The `.fieldcraft` file (format `fieldcraft/3`)
+# The `.fieldcraft` file (format `fieldcraft/4`)
 
 A `.fieldcraft` file holds one model: its definition, its mesh, the geometry it is built on, the
 commands that built it and, unless a save leaves them out, its solved results. It is written and read by `fieldcraft-io` (`write`, `read`; bytes in,
@@ -12,7 +12,7 @@ uncompressed (so any unzip tool reads them: `unzip -p bracket.fieldcraft model.j
 
 | Part | Content |
 |---|---|
-| `fieldcraft.json` | Manifest: `format` (`"fieldcraft/3"`, [Versions](#versions-and-migration)), `generator` (`"FieldCraft 0.7.0"`), `geometry`, `view` (left out when empty), `run` (left out when empty), and `parts`: the byte size and SHA-256 of each other part. |
+| `fieldcraft.json` | Manifest: `format` (`"fieldcraft/4"`, [Versions](#versions-and-migration)), `generator` (`"FieldCraft 0.7.0"`), `geometry`, `view` (left out when empty), `run` (left out when empty), and `parts`: the byte size and SHA-256 of each other part. |
 | `model.json` | The model definition, every quantity in SI (docs/units.md): its display units (`display_units`, left out when the model has none of its own), sets, materials, sections, reference points, couplings, boundary conditions, loads, steps, datum planes, axes and points, and the partitions that cut the geometry (in order; applied again when the design is opened). Pretty-printed JSON with a fixed key order (maps sorted by name), so a change shows as a line diff. Its form is the model's own JSON form, which commands take as parameters. |
 | `mesh.bin` | Nodes, elements and geometry tags, binary (below). |
 | `journal.json` | The commands that built the model, `{"units": system, "commands": [{"command": id, "params": {...}}, ...]}`, one command per line, as they were typed: `units` names the display system their bare numbers are in (a number typed in another system carries its unit, `{"value", "unit"}`); a migrated journal also names `model_units`, the system its model-level numbers were in. It is a script `fieldcraft-cli run` replays (a plain list of commands is a script in the session's units). |
@@ -30,12 +30,15 @@ line, the mesh part as binary.
 ```json
 "geometry": {
   "design": {"path": "plate.solidcraft", "sha256": "…"},
-  "meshes": [{"path": "/parts/tet.3mf", "sha256": "…"}]
+  "meshes": [{"path": "/parts/tet.3mf", "sha256": "…"}, {"path": "part.stl", "sha256": "…", "unit": "in"}]
 }
 ```
 
-`design` is the SolidCraft design (`geometry.open`), `meshes` the face-tagged 3MF files
-(`geometry.import.mesh`) in import order. Each records the SHA-256 of the bytes that were opened.
+`design` is the SolidCraft design (`geometry.open`), `meshes` the triangle files
+(`geometry.import.mesh`) in import order. Each records the SHA-256 of the bytes that were opened. A
+mesh read in a unit of its own (`geometry.import.mesh`'s `unit`, for files that state none) records
+that unit's symbol in `unit` (format 4), and is read in it again; without `unit` it is read in
+millimetres.
 Paths inside the model file's folder are stored relative to it (with `/`), others absolute.
 Opening the model opens each file again: a missing, unreadable or changed file (its hash differs)
 is reported as a warning and the model still opens; sets bind to geometry names, so a remesh
@@ -189,7 +192,7 @@ Every file is treated as hostile:
 - The file is at most 8 GiB; the manifest, definition and journal parts at most 256 MiB each. No
   allocation is larger than the input.
 - Only the parts the manifest lists, each once: the four, and `results.bin` and `geometry/<file>`
-  parts when they are listed (format 3; older formats list exactly the four). The ZIP CRC and the manifest's size and
+  parts when they are listed (format 3 and later; older formats list exactly the four). The ZIP CRC and the manifest's size and
   SHA-256 are checked for every part.
 - The `format` is read first, before anything else in the file: a later `fieldcraft/N` is refused
   as a version error naming the program that wrote it, any value that is not `fieldcraft/<N>` as
@@ -220,6 +223,7 @@ format.
 | `fieldcraft/1` | FieldCraft 0.4.0 to 0.7.0 | the first format |
 | `fieldcraft/2` | FieldCraft after 0.7.0 | versioning and migration; the parts hold the same as format 1 |
 | `fieldcraft/3` | FieldCraft after 0.7.0 | SI storage (#579): `model.json` in SI with `display_units` in place of `units`, `mesh.bin` `MCMESH02` (coordinates in metres), the journal with a header naming its units. Step 2 → 3 scales by the file's declared `units` (`unspecified` as mm-t-s-N-MPa) with its own frozen field map and MCMESH01 codec; the journal's numbers are kept as typed. Before its first release it also gained optional parts and fields, each absent in a file without it (so every format 3 file written before them reads as it did): `results.bin` (#644), saved views (#645) and renders (#646) in `view`, embedded geometry parts (#647), `run` in the manifest (#648), and shear-dependent fluid viscosity in a material's `fluid` (`power_law`, `carreau_yasuda`, `cross`, `cross_wlf`, #156). |
+| `fieldcraft/4` | FieldCraft after 0.8.1 | an imported mesh's optional `unit` (#1049): the length unit a unitless mesh file (STL, OBJ, PLY) was read in. A format 3 file has none, which means millimetres, so step 3 → 4 changes only the tag. Format 3 was released (0.8.0), so the field comes with a new format: FieldCraft 0.8 refuses a file that may carry it with its "update FieldCraft" message rather than an unknown-field error. |
 
 Format 3 was not yet written by a release when its optional parts were added, and every addition
 is optional (absent means what a file without it always meant), so they are part of format 3

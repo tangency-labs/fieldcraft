@@ -3,9 +3,10 @@
 //! A `.fieldcraft` file ([`write`], [`read`]; docs/formats/fieldcraft.md) is a ZIP package of four
 //! parts and the optional ones, stored uncompressed so each can be read with any unzip tool:
 //!
-//! - `fieldcraft.json`: the manifest. The format tag (`fieldcraft/3`), the program that wrote
-//!   it, the geometry the model is built on (the SolidCraft design and the imported 3MF meshes,
-//!   each a path and the SHA-256 of its content, opened again when the model is), the view state
+//! - `fieldcraft.json`: the manifest. The format tag (`fieldcraft/4`), the program that wrote
+//!   it, the geometry the model is built on (the SolidCraft design and the imported meshes,
+//!   each a path, the SHA-256 of its content and, for a mesh read in a unit of its own, that
+//!   unit; opened again when the model is), the view state
 //!   ([`View`]: what the viewport hides, saved views and renders), the steps' preferred run
 //!   settings ([`RunSettings`]), and the size and SHA-256 of every other part.
 //! - `model.json`: the model definition (display system, sets, materials, sections, reference
@@ -56,10 +57,10 @@ use sha2::{Digest, Sha256};
 
 /// The format version of the files this version writes, and the latest it reads (it reads every
 /// earlier one through [`migrate`]).
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 
 /// The format tag of the files this version writes: `fieldcraft/<FORMAT_VERSION>`.
-pub const FORMAT: &str = "fieldcraft/3";
+pub const FORMAT: &str = "fieldcraft/4";
 
 /// The file name extension.
 pub const EXTENSION: &str = "fieldcraft";
@@ -141,7 +142,14 @@ pub struct SourceFile {
     path: String,
     sha256: String,
     embedded: Option<String>,
+    /// The length unit a unitless mesh file (STL, OBJ, PLY) was read in, a unit symbol of
+    /// `fieldcraft_model::units` (`in`); `None` for millimetres, and for every file of format 3
+    /// and older.
+    unit: Option<String>,
 }
+
+/// Longest unit symbol a [`SourceFile`] keeps.
+const MAX_UNIT_LEN: usize = 16;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -150,12 +158,15 @@ struct SourceFileRepr {
     sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     embedded: Option<String>,
+    /// Format 4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unit: Option<String>,
 }
 
 impl TryFrom<SourceFileRepr> for SourceFile {
     type Error = Error;
     fn try_from(r: SourceFileRepr) -> Result<SourceFile> {
-        let s = SourceFile::new(r.path, r.sha256)?;
+        let s = SourceFile::new(r.path, r.sha256)?.with_unit(r.unit)?;
         if let Some(part) = &r.embedded {
             check_geometry_part(part)?;
         }
@@ -165,7 +176,7 @@ impl TryFrom<SourceFileRepr> for SourceFile {
 
 impl From<SourceFile> for SourceFileRepr {
     fn from(s: SourceFile) -> Self {
-        SourceFileRepr { path: s.path, sha256: s.sha256, embedded: s.embedded }
+        SourceFileRepr { path: s.path, sha256: s.sha256, embedded: s.embedded, unit: s.unit }
     }
 }
 
@@ -221,7 +232,7 @@ impl SourceFile {
         if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
             return invalid(format!("`{}` is not a SHA-256 (64 lower-case hexadecimal digits)", sha256.chars().take(80).collect::<String>()));
         }
-        Ok(SourceFile { path, sha256, embedded: None })
+        Ok(SourceFile { path, sha256, embedded: None, unit: None })
     }
 
     /// The file `path`, with the hash of `bytes` (what was read from it).
@@ -237,9 +248,9 @@ impl SourceFile {
         &self.sha256
     }
 
-    /// The same content at another path (an embedded copy stays).
+    /// The same content at another path (an embedded copy and the unit stay).
     pub fn with_path(&self, path: impl Into<String>) -> Result<SourceFile> {
-        Ok(SourceFile { embedded: self.embedded.clone(), ..SourceFile::new(path, self.sha256.clone())? })
+        Ok(SourceFile { embedded: self.embedded.clone(), unit: self.unit.clone(), ..SourceFile::new(path, self.sha256.clone())? })
     }
 
     /// The package part holding a copy of the file, when the file it was read from embeds it.
@@ -250,6 +261,22 @@ impl SourceFile {
     /// The same, with no embedded copy named.
     pub fn without_embedded(&self) -> SourceFile {
         SourceFile { embedded: None, ..self.clone() }
+    }
+
+    /// The length unit the file was read in ([`SourceFile::unit`]): `None` is millimetres.
+    pub fn unit(&self) -> Option<&str> {
+        self.unit.as_deref()
+    }
+
+    /// The same, read in `unit` (a unit symbol of 1 to 16 printable characters; `None` for
+    /// millimetres). Which symbols name a length is the reader's to check.
+    pub fn with_unit(self, unit: Option<String>) -> Result<SourceFile> {
+        if let Some(u) = &unit
+            && (u.is_empty() || u.len() > MAX_UNIT_LEN || u.chars().any(|c| c.is_control() || c.is_whitespace()))
+        {
+            return invalid(format!("a mesh's unit is a unit symbol of 1 to {MAX_UNIT_LEN} bytes"));
+        }
+        Ok(SourceFile { unit, ..self })
     }
 }
 
@@ -677,10 +704,10 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     if required.iter().any(|n| !listed.contains_key(*n)) {
         return invalid(format!("`{MANIFEST}` must list the parts {MODEL}, {MESH} and {JOURNAL}"));
     }
-    // Format 3 may also hold results and embedded geometry, each listed.
-    let optional = |name: &str| format == FORMAT_VERSION && (name == results::PART || check_geometry_part(name).is_ok());
+    // Format 3 and later may also hold results and embedded geometry, each listed.
+    let optional = |name: &str| format >= 3 && (name == results::PART || check_geometry_part(name).is_ok());
     if let Some(extra) = listed.keys().find(|n| !required.contains(&n.as_str()) && !optional(n)) {
-        return invalid(if format == FORMAT_VERSION {
+        return invalid(if format >= 3 {
             format!("`{MANIFEST}` lists an unexpected part `{}`", extra.chars().filter(|c| !c.is_control()).take(80).collect::<String>())
         } else {
             format!("`{MANIFEST}` must list exactly the parts {MODEL}, {MESH} and {JOURNAL}")
