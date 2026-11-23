@@ -109,6 +109,29 @@ fn rc3(p: &Point3) -> robust::Coord3D<f64> {
     robust::Coord3D { x: p.0[0], y: p.0[1], z: p.0[2] }
 }
 
+#[test]
+fn finite_volume_orientation_handles_subnormals_and_zero() {
+    let origin = [0.; 3];
+    let x = [1., 0., 0.];
+    let y = [0., 1., 0.];
+    let z = [0., 0., f64::from_bits(1)];
+    assert_eq!(tet_volume_sign_finite(origin, x, y, z).unwrap(), Sign::Positive);
+    assert_eq!(tet_volume_sign_finite(origin, y, x, z).unwrap(), Sign::Negative);
+    assert_eq!(tet_volume_sign_finite(origin, x, y, y).unwrap(), Sign::Zero);
+    assert!(tet_volume_sign_finite(origin, x, y, [0., 0., f64::INFINITY]).is_err());
+}
+
+#[test]
+fn finite_planar_orientation_preserves_subnormal_coordinates() {
+    let a = [0., 0.];
+    let b = [1., 0.];
+    let c = [0., f64::from_bits(1)];
+    assert_eq!(orient2d_finite(a, b, c).unwrap(), Sign::Positive);
+    assert_eq!(orient2d_finite(a, c, b).unwrap(), Sign::Negative);
+    assert_eq!(orient2d_finite(a, c, c).unwrap(), Sign::Zero);
+    assert!(orient2d_finite([f64::INFINITY, 0.], b, c).is_err());
+}
+
 /// Every stage agrees with every oracle, and the filter, when it answers, agrees too.
 fn check2(a: &Point2, b: &Point2, c: &Point2, d: &Point2) {
     let want = o2(a, b, c);

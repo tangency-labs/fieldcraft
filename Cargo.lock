@@ -2105,6 +2105,7 @@ version = "0.8.1"
 dependencies = [
  "fieldcraft-explicit",
  "fieldcraft-lbm",
+ "fieldcraft-mesh",
  "fieldcraft-model",
  "fieldcraft-solver",
  "log",

@@ -49,6 +49,38 @@ pub use indirect::{Axis, GenericPoint, Lnc, Lpi, Tpi, generic_compare, generic_i
 pub use sos::{generic_insphere_sos, generic_lex, incircle_sos, insphere_sos};
 
 use crate::{Error, Result};
+use dyadic::Dyadic;
+use ring::{Ring, Signed};
+
+/// The orientation of three finite points, including coordinates outside the expansion domain.
+/// Use the adaptive predicate when its domain accepts the points and exact dyadics otherwise.
+pub fn orient2d_finite(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> Result<Sign> {
+    if let (Ok(a), Ok(b), Ok(c)) = (Point2::try_from(a), Point2::try_from(b), Point2::try_from(c)) {
+        return Ok(orient2d(&a, &b, &c));
+    }
+    if !a.into_iter().chain(b).chain(c).all(f64::is_finite) {
+        return Err(Error::Invalid("orientation requires finite point coordinates".into()));
+    }
+    let [ax, ay] = a.map(Dyadic::from_f64);
+    let [bx, by] = b.map(Dyadic::from_f64);
+    let [cx, cy] = c.map(Dyadic::from_f64);
+    let det = (bx - ax.clone()) * (cy - ay.clone()) - (by - ay) * (cx - ax);
+    Ok(det.sign().unwrap_or(Sign::Zero))
+}
+
+/// The exact sign of the signed volume in FieldCraft's tetrahedron node order.
+pub fn tet_volume_sign_finite(a: [f64; 3], b: [f64; 3], c: [f64; 3], d: [f64; 3]) -> Result<Sign> {
+    let points = [a, b, c, d];
+    if let [Ok(a), Ok(b), Ok(c), Ok(d)] = points.map(Point3::try_from) {
+        return Ok(tet_volume_sign(&a, &b, &c, &d));
+    }
+    if !points.as_flattened().iter().all(|x| x.is_finite()) {
+        return Err(Error::Invalid("orientation requires finite point coordinates".into()));
+    }
+    let origin = a.map(Dyadic::from_f64);
+    let rows = [b, c, d].map(|p| std::array::from_fn(|i| Dyadic::from_f64(p[i]) - origin[i].clone()));
+    Ok(ring::det3(&rows).sign().unwrap_or(Sign::Zero))
+}
 
 /// The smallest nonzero coordinate magnitude a point may have: 2⁻¹²⁰ ≈ 7.5e-37.
 pub const MIN_MAGNITUDE: f64 = f64::from_bits((1023 - 120) << 52);
