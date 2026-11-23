@@ -661,7 +661,10 @@ B1.4 §3.3, which refines and rebuilds only where a stage fails. What is FieldCr
 on the meshing corpus (docs/meshing/corpus.md): a valid mesh with an element under a scaled
 Jacobian of 0.1 is also rebuilt, with the leaves around every element under 0.2 split once more,
 within the same attempt and growth caps; a rebuild is kept only while it raises the smallest
-scaled Jacobian, and once a valid mesh is in hand a failed rebuild returns it.
+scaled Jacobian, and once a valid mesh is in hand a failed rebuild returns it. The cells to
+split are ordered newest build first and, within a build, poorest element first; where the closed
+grid would pass the leaf cap, the largest prefix of them that fits (found by bisection) is used.
+That ordering and the budget are also our own; no paper prescribes them.
 
 ---
 
