@@ -73,6 +73,14 @@ parallelism task):* the factorization is now our own supernodal left-looking Cho
 1994), multithreaded with a fixed operation order (below). Its rounding differs from the old
 up-looking factor in the last digits; every oracle fixture stays within its band.
 
+**Complex scalars: `num-complex`** (MIT OR Apache-2.0). *Decided 2026-11-22 (RFC 0001 phase 1, #881):*
+the sparse matrix and the LDLᵀ factor are generic over a scalar trait, implemented for `f64` and
+`num_complex::Complex64`, for the complex-symmetric systems of a harmonic response (K − ω²M + iωC):
+every step transposes and never conjugates. `num-complex` is pure Rust with no `unsafe`, builds for
+wasm, and adds no reduction order of its own (sums stay in the fixed order of the f64 kernels).
+Rejected: a hand-written complex type (a second arithmetic to verify for no gain) and `faer` (see
+above).
+
 **Threads: rayon** (MIT OR Apache-2.0), in `fieldcraft-parallel` only (an L0 crate with no
 workspace dependencies; *decided 2026-10-13*). The solvers keep the bit-for-bit rule on any
 number of threads by construction: work is cut into blocks whose sizes are constants of the
