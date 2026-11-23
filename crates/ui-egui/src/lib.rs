@@ -2263,6 +2263,7 @@ impl ModelApp {
 
     /// Per-frame logic before layout: theme, camera projection, control requests, screenshots.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        let _lang = crate::i18n::scope(&self.prefs.language);
         self.now = ctx.input(|i| i.time);
         if self.styled != Some(self.ui.dark) {
             theme::apply(ctx, self.ui.dark);
@@ -2456,6 +2457,7 @@ impl ModelApp {
 
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        let _lang = crate::i18n::scope(&self.prefs.language);
         // The kit's widgets publish where they are drawn into its registry every frame; last
         // frame's entries go first (the registry's contract), or they pile up for the session.
         solidcraft_ui_registry::clear_handles();
@@ -2534,6 +2536,15 @@ impl ModelApp {
         self.prefs.units = units;
         self.prefs.save(self.services.prefs.as_ref());
         self.follow_units();
+    }
+
+    /// Set the interface language preference (`system`, `en`, `he`) and save preferences.
+    pub fn set_language(&mut self, language: String) {
+        let normalized = crate::i18n::validate_preference(&language).unwrap_or_else(|_| crate::i18n::ENGLISH.into());
+        if self.prefs.language != normalized {
+            self.prefs.language = normalized;
+            self.prefs.save(self.services.prefs.as_ref());
+        }
     }
 
     pub(crate) fn save_prefs(&mut self) {

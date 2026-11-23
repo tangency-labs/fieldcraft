@@ -98,7 +98,7 @@
   "settings.updates_offer_again": "Offer It Again",
   "settings.updates_unavailable": "This build does not check for updates.",
   "settings.general": "General",
-  "settings.general_note": "How numbers are shown, and where the window's bars and cards stand.",
+  "settings.general_note": "The interface language, how numbers are shown, and where the window's bars and cards stand.",
   "settings.language": "Language",
   "settings.language_hint": "Interface language",
   "settings.language_system": "System",

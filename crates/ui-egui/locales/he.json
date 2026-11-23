@@ -98,7 +98,7 @@
   "settings.updates_offer_again": "הצע אותה שוב",
   "settings.updates_unavailable": "בנייה זו אינה בודקת עדכונים.",
   "settings.general": "כללי",
-  "settings.general_note": "כיצד מוצגים מספרים, והיכן ממוקמים הסרגלים והכרטיסים בחלון.",
+  "settings.general_note": "שפת הממשק, כיצד מוצגים מספרים, והיכן ממוקמים הסרגלים והכרטיסים בחלון.",
   "settings.language": "שפה",
   "settings.language_hint": "שפת הממשק",
   "settings.language_system": "מערכת",
