@@ -30,7 +30,7 @@ Trunk on every merge to `develop` that touches code, without deploying it.
 
 ## What works
 
-Everything that runs on a model: opening samples, opening SolidCraft designs and 3MF tagged
+Everything that runs on a model: opening samples, opening SolidCraft designs and CAD files and importing triangle
 meshes, every mesher, materials, sections, steps, loads and boundary conditions, the implicit,
 explicit and lattice Boltzmann solvers, the results display (contours, deformed shape, probe,
 reaction sums), undo and redo, the command search, and writing Abaqus, Nastran
