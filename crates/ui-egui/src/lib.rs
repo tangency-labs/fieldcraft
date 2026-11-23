@@ -41,6 +41,7 @@ pub mod form;
 pub mod frame;
 pub mod framing;
 pub mod gpu;
+pub mod i18n;
 pub mod icons;
 pub mod inbox;
 pub mod links;
