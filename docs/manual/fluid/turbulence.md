@@ -13,7 +13,7 @@ wall cells can be rebuilt from a law of the wall for grids that do not resolve t
 | **Step procedure** | `"fluid"` with `"turbulence": {"type": "smagorinsky", …}` or `{"type": "vreman", …}` |
 | **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (GPU, f32) for both models, Van Driest's damping and the wall models |
 | **Method** | Smagorinsky 1963 with Hou et al.'s local relaxation time (1996); Vreman 2004; Van Driest damping (1956) with Spalding's law (1961); wall model of Malaspinas & Sagaut (2014) |
-| **Verified by** | `crates/lbm/tests/turbulence.rs`, `crates/lbm/tests/mrt.rs`, `crates/lbm/tests/vreman.rs`, `crates/lbm-gpu/tests/verification.rs`; Re_τ 180 channel study (docs/verification.md) |
+| **Verified by** | `crates/lbm/tests/turbulence.rs`, `crates/lbm/tests/mrt.rs`, `crates/lbm/tests/vreman.rs`, `crates/lbm-gpu/tests/verification.rs`, `crates/lbm/tests/sa_channel.rs` (Spalart–Allmaras); Re_τ 180 channel studies (docs/verification.md) |
 
 ## Synopsis
 
@@ -169,7 +169,10 @@ exact distance to the nearest no-slip wall (a separable distance transform, Felz
 Huttenlocher 2012; it crosses periodic faces). ν̃ is part of a checkpoint.
 
 The model adds no wall law: walls are halfway bounce-back, ν̃ = 0 on them, and the boundary layer
-must be resolved (the first cell's centre at y⁺ 1 or below). The fluid keeps the laminar floor on
+must be resolved (the first cell's centre at y⁺ 1 or below). In a wall-resolved channel at Re_τ 180 the lattice
+solution converges at second order to the model's own 1-D solution, which differs from Moser, Kim
+and Mansour's DNS by +1.1 % in bulk velocity, +0.8 % at the centre line and −2.1 % in skin
+friction: the model's error, not the solver's ([verification](../../verification.md)). The fluid keeps the laminar floor on
 τ⁺ (0.505): ν_t goes to 0 at a wall, so it does not hold the wall cells stable as a subgrid model's
 does. It does not add to a subgrid model, it replaces one.
 

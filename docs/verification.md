@@ -214,6 +214,34 @@ What it does not establish yet:
   average (about 1 % at 12 cells per δ, from the two platforms above); no confidence interval is
   stated.
 
+### Spalart–Allmaras: wall-resolved channel against its 1-D solution and Moser, Kim & Mansour
+
+The Spalart–Allmaras model (no wall law) in a channel at Re_τ 178.12, one cell along x and z (the
+flow is fully developed), halfway walls, the body force u_τ²/δ, the lattice viscosity fixed at
+0.002 (τ⁺ 0.506) so that Δt ∝ Δx² (`crates/lbm/tests/sa_channel.rs`).
+
+- **Theory (asserted).** The steady 1-D SA solution with the same constants, solved in the test by
+  second-order finite volumes and pseudo-transient Newton, Richardson-extrapolated from 1728 and
+  3456 cells (U_b⁺ 15.850273, U_c⁺ 18.447753, largest correction 7.9e-6 u_τ). The lattice u⁺
+  profile must converge to it at second order: the observed order on the finest pair in [1.8, 2.2],
+  `sa_mms.rs`'s band (heavy test). The trunk test checks the reference's own order and that the
+  coarsest lattice run settles on the turbulent branch.
+- **Benchmark (reported, not asserted).** R. D. Moser, J. Kim, N. N. Mansour, Phys. Fluids
+  11:943–945, 1999, `chan180.means`: U_b⁺ 15.68, U_c⁺ 18.301, C_f 8.135 × 10⁻³. No published
+  SA-against-DNS comparison at this Re_τ gives a tolerance, so the gap is reported as the model's
+  error: the converged 1-D SA solution is +1.09 % in U_b, +0.80 % in U_c and −2.1 % in C_f.
+
+| cells across 2δ | first cell y⁺ | L2 / L∞ of u⁺ against 1-D | U_b⁺ | U_c⁺ | C_f | U_b, U_c, C_f against MKM |
+|---|---|---|---|---|---|---|
+| 96 | 1.86 | 0.130 / 0.138 | 15.726 | 18.310 | 8.087e-3 | +0.30 %, +0.05 %, −0.59 % |
+| 144 | 1.24 | 0.0592 / 0.0628 | 15.794 | 18.385 | 8.018e-3 | +0.73 %, +0.46 %, −1.43 % |
+| 216 | 0.82 | 0.0265 / 0.0280 | 15.825 | 18.420 | 7.986e-3 | +0.92 %, +0.65 %, −1.82 % |
+| 1-D (converged) | — | — | 15.850 | 18.448 | 7.961e-3 | +1.09 %, +0.80 %, −2.1 % |
+
+Observed orders (L2, L∞): 1.937, 1.941 (96→144) and 1.982, 1.996 (144→216). The coarse grids sit
+closer to MKM only because their discretisation error has the opposite sign to the model's.
+The heavy study took 245 s.
+
 ### Wall-modelled LES: Malaspinas & Sagaut reproduced at Re_τ 950
 
 Malaspinas & Sagaut's channel run exactly as their paper sets it up (Re_τ 950, Re_m 37 042, N 10,
