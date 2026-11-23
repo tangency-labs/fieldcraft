@@ -65,6 +65,7 @@ use crate::cholesky::{
     Context, Factor, FactorError, PANEL, PIVOT_TOLERANCE, Panel, Pivot, Structure, Supernode, Symbolic, UpperColumns, offset, products,
     solve_supernodes, subtract, times_d,
 };
+use crate::scalar::Scalar;
 use crate::sparse::Csr;
 
 /// (1 + √17)/8: the growth bound of Bunch and Kaufman.
@@ -82,20 +83,25 @@ pub struct Inertia {
 }
 
 /// One supernode of an LDLᵀ factor.
-#[derive(Debug, Clone, Default)]
-struct Block {
+#[derive(Debug, Clone)]
+struct Block<T> {
     /// L below the pivots and D on them, the lower trapezoid by columns in pivot order.
-    values: Vec<f64>,
+    values: Vec<T>,
     pivots: Vec<Pivot>,
     /// `order[c]`: the supernode's own column (0..w, in the symbolic order) at pivot position c.
     order: Vec<usize>,
-    inertia: Inertia,
     two_by_two: usize,
 }
 
-impl Supernode<f64> for Block {
+impl<T> Default for Block<T> {
+    fn default() -> Self {
+        Block { values: Vec::new(), pivots: Vec::new(), order: Vec::new(), two_by_two: 0 }
+    }
+}
+
+impl<T: Scalar> Supernode<T> for Block<T> {
     #[inline]
-    fn values(&self) -> &[f64] {
+    fn values(&self) -> &[T] {
         &self.values
     }
     #[inline]
@@ -117,7 +123,7 @@ enum Choice {
 /// Symmetric interchange of local columns p < q (both among the supernode's own columns) in an
 /// m-row lower trapezoid: the rows of the columns before p, the diagonals, the strip between them
 /// and the rows below q.
-fn interchange(v: &mut [f64], m: usize, p: usize, q: usize) {
+fn interchange<T>(v: &mut [T], m: usize, p: usize, q: usize) {
     let at = |r: usize, c: usize| offset(m, c) + r - c;
     for c in 0..p {
         v.swap(at(p, c), at(q, c));
@@ -133,13 +139,13 @@ fn interchange(v: &mut [f64], m: usize, p: usize, q: usize) {
 
 /// The largest magnitude of `v[i]` over `range` except `skip`, with the lowest such index; NaN
 /// when an entry is not a number.
-fn largest(v: &[f64], range: std::ops::Range<usize>, skip: Option<usize>) -> (usize, f64) {
+fn largest<T: Scalar>(v: &[T], range: std::ops::Range<usize>, skip: Option<usize>) -> (usize, f64) {
     let mut best = (range.start, 0.0f64);
     for i in range {
         if Some(i) == skip {
             continue;
         }
-        let x = v.get(i).copied().unwrap_or(0.0).abs();
+        let x = v.get(i).copied().unwrap_or(T::ZERO).modulus();
         if x.is_nan() {
             return (i, f64::NAN);
         }
@@ -151,18 +157,18 @@ fn largest(v: &[f64], range: std::ops::Range<usize>, skip: Option<usize>) -> (us
 }
 
 /// The work buffers of one supernode's panels.
-struct Scratch {
+struct Scratch<T> {
     /// The current values of the column being searched and of a candidate, by local row.
-    a: Vec<f64>,
-    b: Vec<f64>,
+    a: Vec<T>,
+    b: Vec<T>,
     /// A row of L D over the panel's factored columns.
-    w: Vec<f64>,
+    w: Vec<T>,
 }
 
-impl Block {
+impl<T: Scalar> Block<T> {
     /// Column `c` (local, ≥ k) of the part still to factor, rows k..m, into `out`: the trapezoid's
     /// entries less the products with the panel's factored columns c0..k.
-    fn current(&self, m: usize, c0: usize, k: usize, c: usize, out: &mut [f64], w: &mut Vec<f64>) {
+    fn current(&self, m: usize, c0: usize, k: usize, c: usize, out: &mut [T], w: &mut Vec<T>) {
         let t = Panel { m, data: &self.values };
         for r in k..m {
             if let Some(o) = out.get_mut(r) {
@@ -174,14 +180,14 @@ impl Block {
         times_d(w, &t, c0, self.pivots.get(c0..k).unwrap_or_default());
         for (q, wq) in (c0..k).zip(w.iter()) {
             for (o, l) in out.get_mut(k..m).unwrap_or_default().iter_mut().zip(t.column(q, k, m - k)) {
-                *o -= l * wq;
+                *o -= *l * *wq;
             }
         }
     }
 
     /// Swap local columns p and q (pivot positions ≥ k) in the trapezoid, the order and the
     /// current columns.
-    fn swap(&mut self, m: usize, p: usize, q: usize, scratch: &mut Scratch) {
+    fn swap(&mut self, m: usize, p: usize, q: usize, scratch: &mut Scratch<T>) {
         if p == q {
             return;
         }
@@ -193,30 +199,25 @@ impl Block {
     }
 
     /// Store a 1 × 1 pivot at k from the current column `col`.
-    fn one(&mut self, m: usize, k: usize, col: &[f64]) {
-        let d = col.get(k).copied().unwrap_or(0.0);
+    fn one(&mut self, m: usize, k: usize, col: &[T]) {
+        let d = col.get(k).copied().unwrap_or(T::ZERO);
         let start = offset(m, k);
         if let Some(x) = self.values.get_mut(start) {
             *x = d;
         }
         for r in k + 1..m {
             if let Some(x) = self.values.get_mut(start + r - k) {
-                *x = col.get(r).copied().unwrap_or(0.0) / d;
+                *x = col.get(r).copied().unwrap_or(T::ZERO) / d;
             }
         }
         if let Some(p) = self.pivots.get_mut(k) {
             *p = Pivot::One;
         }
-        if d > 0.0 {
-            self.inertia.positive += 1;
-        } else {
-            self.inertia.negative += 1;
-        }
     }
 
     /// Store a 2 × 2 pivot at k, k + 1 from the current columns `a` (k) and `b` (k + 1).
-    fn two(&mut self, m: usize, k: usize, a: &[f64], b: &[f64]) {
-        let get = |v: &[f64], r: usize| v.get(r).copied().unwrap_or(0.0);
+    fn two(&mut self, m: usize, k: usize, a: &[T], b: &[T]) {
+        let get = |v: &[T], r: usize| v.get(r).copied().unwrap_or(T::ZERO);
         let (d11, d21, d22) = (get(a, k), get(a, k + 1), get(b, k + 1));
         let det = d11 * d22 - d21 * d21;
         let (s0, s1) = (offset(m, k), offset(m, k + 1));
@@ -240,15 +241,6 @@ impl Block {
         if let Some(p) = self.pivots.get_mut(k + 1) {
             *p = Pivot::Second;
         }
-        // The eigenvalues' signs: one of each when det < 0, else both the sign of the trace.
-        if det < 0.0 {
-            self.inertia.positive += 1;
-            self.inertia.negative += 1;
-        } else if d11 + d22 > 0.0 {
-            self.inertia.positive += 2;
-        } else {
-            self.inertia.negative += 2;
-        }
         self.two_by_two += 1;
     }
 
@@ -263,17 +255,17 @@ impl Block {
         c0: usize,
         scale: &dyn Fn(usize) -> f64,
         column: &dyn Fn(usize) -> usize,
-        scratch: &mut Scratch,
+        scratch: &mut Scratch<T>,
     ) -> std::result::Result<usize, FactorError> {
         let end = (c0 + PANEL).min(w);
         let mut k = c0;
         while k < end {
-            let singular = |b: &Block, at: usize| FactorError::Singular { column: column(b.order.get(at).copied().unwrap_or(at)) };
-            let negligible = |b: &Block, at: usize, x: f64| !(x > PIVOT_TOLERANCE * scale(b.order.get(at).copied().unwrap_or(at)));
+            let singular = |b: &Block<T>, at: usize| FactorError::Singular { column: column(b.order.get(at).copied().unwrap_or(at)) };
+            let negligible = |b: &Block<T>, at: usize, x: f64| !(x > PIVOT_TOLERANCE * scale(b.order.get(at).copied().unwrap_or(at)));
             let mut a = std::mem::take(&mut scratch.a);
             self.current(m, c0, k, k, &mut a, &mut scratch.w);
             scratch.a = a;
-            let akk = scratch.a.get(k).copied().unwrap_or(0.0).abs();
+            let akk = scratch.a.get(k).copied().unwrap_or(T::ZERO).modulus();
             let (r0, omega_k) = largest(&scratch.a, k + 1..w, None);
             if !akk.is_finite() || !omega_k.is_finite() {
                 return Err(singular(self, k));
@@ -289,7 +281,7 @@ impl Block {
                     self.current(m, c0, k, r, &mut b, &mut scratch.w);
                     scratch.b = b;
                     let (s, omega_r) = largest(&scratch.b, k..w, Some(r));
-                    let arr = scratch.b.get(r).copied().unwrap_or(0.0).abs();
+                    let arr = scratch.b.get(r).copied().unwrap_or(T::ZERO).modulus();
                     if !arr.is_finite() || !omega_r.is_finite() {
                         return Err(singular(self, k));
                     }
@@ -308,7 +300,7 @@ impl Block {
             match choice {
                 Choice::One(p) => {
                     self.swap(m, k, p, scratch);
-                    if negligible(self, k, scratch.a.get(k).copied().unwrap_or(0.0).abs()) {
+                    if negligible(self, k, scratch.a.get(k).copied().unwrap_or(T::ZERO).modulus()) {
                         return Err(singular(self, k));
                     }
                     let a = std::mem::take(&mut scratch.a);
@@ -321,7 +313,7 @@ impl Block {
                     self.swap(m, k, i, scratch);
                     let r = if r == k { i } else { r };
                     self.swap(m, k + 1, r, scratch);
-                    let offdiagonal = scratch.a.get(k + 1).copied().unwrap_or(0.0).abs();
+                    let offdiagonal = scratch.a.get(k + 1).copied().unwrap_or(T::ZERO).modulus();
                     let size = scale(self.order.get(k).copied().unwrap_or(k)).max(scale(self.order.get(k + 1).copied().unwrap_or(k + 1)));
                     if !(offdiagonal > PIVOT_TOLERANCE * size) {
                         return Err(singular(self, k));
@@ -338,17 +330,16 @@ impl Block {
 }
 
 /// Factor supernode `j` into `own`; its descendants are `done[k - base]`.
-fn supernode(context: &Context<f64>, j: usize, done: &[Block], base: usize, own: &mut Block) -> std::result::Result<(), FactorError> {
+fn supernode<T: Scalar>(context: &Context<T>, j: usize, done: &[Block<T>], base: usize, own: &mut Block<T>) -> std::result::Result<(), FactorError> {
     context.assemble(j, done, base, &mut own.values)?;
     let (m, cols) = (context.s.rows(j).len(), context.s.cols(j));
     let (w, f) = (cols.len(), cols.start);
     own.pivots = vec![Pivot::One; w];
     own.order = (0..w).collect();
-    own.inertia = Inertia::default();
     own.two_by_two = 0;
     let scale = |local: usize| context.a.scale.get(f + local).copied().unwrap_or(0.0);
     let column = |local: usize| f + local;
-    let mut scratch = Scratch { a: vec![0.0; m], b: vec![0.0; m], w: Vec::with_capacity(PANEL + 1) };
+    let mut scratch = Scratch { a: vec![T::ZERO; m], b: vec![T::ZERO; m], w: Vec::with_capacity(PANEL + 1) };
     let mut c0 = 0;
     while c0 < w {
         let c1 = own.panel(m, w, c0, &scale, &column, &mut scratch)?;
@@ -362,41 +353,34 @@ fn supernode(context: &Context<f64>, j: usize, done: &[Block], base: usize, own:
     Ok(())
 }
 
-/// A symmetric indefinite factor P A Pᵀ = L D Lᵀ in supernodes.
+/// A symmetric indefinite factor P A Pᵀ = L D Lᵀ in supernodes (complex symmetric for
+/// `Complex64`: the transpose, never the conjugate transpose, in every step).
 #[derive(Debug, Clone)]
-pub struct LdltFactor {
+pub struct LdltFactor<T = f64> {
     pub n: usize,
     perm: Vec<usize>,
     structure: Structure,
-    blocks: Vec<Block>,
+    blocks: Vec<Block<T>>,
     entries: usize,
-    inertia: Inertia,
     two_by_two: usize,
 }
 
-impl LdltFactor {
-    pub fn new(a: &UpperColumns, max_entries: usize) -> std::result::Result<LdltFactor, FactorError> {
+impl<T: Scalar> LdltFactor<T> {
+    pub fn new(a: &UpperColumns<T>, max_entries: usize) -> std::result::Result<LdltFactor<T>, FactorError> {
         LdltFactor::from_symbolic(&Symbolic::new(a, max_entries)?, a)
     }
 
-    pub(crate) fn from_symbolic(symbolic: &Symbolic, a: &UpperColumns) -> std::result::Result<LdltFactor, FactorError> {
+    pub(crate) fn from_symbolic(symbolic: &Symbolic, a: &UpperColumns<T>) -> std::result::Result<LdltFactor<T>, FactorError> {
         let lower = symbolic.numeric(a)?;
-        let mut blocks = symbolic.allocate()?.into_iter().map(|values| Block { values, ..Block::default() }).collect::<Vec<_>>();
+        let mut blocks = symbolic.allocate::<T>()?.into_iter().map(|values| Block { values, ..Block::default() }).collect::<Vec<_>>();
         symbolic.factor(&lower, &mut blocks, supernode)?;
-        let mut inertia = Inertia::default();
-        let mut two_by_two = 0;
-        for b in &blocks {
-            inertia.positive += b.inertia.positive;
-            inertia.negative += b.inertia.negative;
-            two_by_two += b.two_by_two;
-        }
+        let two_by_two = blocks.iter().map(|b| b.two_by_two).sum();
         Ok(LdltFactor {
             n: symbolic.n,
             perm: symbolic.perm.clone(),
             structure: symbolic.structure.clone(),
             blocks,
             entries: symbolic.entries,
-            inertia,
             two_by_two,
         })
     }
@@ -406,18 +390,51 @@ impl LdltFactor {
         self.entries
     }
 
-    pub fn inertia(&self) -> Inertia {
-        self.inertia
-    }
-
     /// The number of 2 × 2 pivots.
     pub fn two_by_two(&self) -> usize {
         self.two_by_two
     }
 
-    /// Solve A x = b in place.
-    pub fn solve(&self, b: &mut [f64]) -> Result<()> {
+    /// Solve A x = b in place (the transpose, not the conjugate transpose, for complex A).
+    pub fn solve(&self, b: &mut [T]) -> Result<()> {
         solve_supernodes(self.n, &self.perm, &self.structure, &self.blocks, b)
+    }
+}
+
+impl LdltFactor<f64> {
+    /// The counts of positive and negative eigenvalues (Sylvester's law, on D): a 1 × 1 pivot is
+    /// its own sign; a 2 × 2 pivot has one of each sign when its determinant is negative, else
+    /// both have the sign of the trace. Real only: the complex factor has no inertia.
+    pub fn inertia(&self) -> Inertia {
+        let mut inertia = Inertia::default();
+        for (k, block) in self.blocks.iter().enumerate() {
+            let m = self.structure.rows(k).len();
+            let d = |r: usize, c: usize| block.values.get(offset(m, c) + r - c).copied().unwrap_or(0.0);
+            let mut c = 0;
+            while c < block.pivots.len() {
+                if block.pivots.get(c) == Some(&Pivot::First) {
+                    let (d11, d21, d22) = (d(c, c), d(c + 1, c), d(c + 1, c + 1));
+                    let det = d11 * d22 - d21 * d21;
+                    if det < 0.0 {
+                        inertia.positive += 1;
+                        inertia.negative += 1;
+                    } else if d11 + d22 > 0.0 {
+                        inertia.positive += 2;
+                    } else {
+                        inertia.negative += 2;
+                    }
+                    c += 2;
+                } else {
+                    if d(c, c) > 0.0 {
+                        inertia.positive += 1;
+                    } else {
+                        inertia.negative += 1;
+                    }
+                    c += 1;
+                }
+            }
+        }
+        inertia
     }
 }
 
@@ -688,7 +705,7 @@ mod tests {
         // The cap is checked before the numeric factorization; empty and 1 × 1 matrices.
         let (a, _) = shifted_grid([3, 3, 3], 2.0);
         assert!(matches!(LdltFactor::new(&UpperColumns::from_symmetric(&a), 10), Err(FactorError::TooLarge { .. })));
-        let empty = Csr { n: 0, ptr: vec![0], idx: vec![], val: vec![] };
+        let empty: Csr = Csr { n: 0, ptr: vec![0], idx: vec![], val: vec![] };
         LdltFactor::new(&UpperColumns::from_symmetric(&empty), 10).unwrap().solve(&mut []).unwrap();
         let f = LdltFactor::new(&UpperColumns::from_symmetric(&csr(&[vec![(0, -4.0)]])), 10).unwrap();
         let mut b = [2.0];
