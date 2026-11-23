@@ -176,7 +176,7 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
         // are asynchronous), so the call itself picks nothing.
         pick_open: Some(Box::new(move |filters: &[Filter]| {
             let (inbox, ctx) = (inbox.clone(), ctx.clone());
-            let dialog = filters.iter().fold(rfd::AsyncFileDialog::new(), |d, f| d.add_filter(f.name, f.extensions));
+            let dialog = filters.iter().fold(rfd::AsyncFileDialog::new(), |d, f| d.add_filter(f.name, f.extensions.as_slice()));
             wasm_bindgen_futures::spawn_local(async move {
                 let Some(files) = dialog.pick_files().await else { return };
                 let mut batch = Vec::with_capacity(files.len());

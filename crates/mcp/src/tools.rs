@@ -165,14 +165,14 @@ pub fn tool_definitions() -> Vec<Value> {
             "open",
             "Open a file",
             "Open by extension: a .fieldcraft model (file.open: replaces the model; its design and meshes open again), a \
-             SolidCraft (.sc/.solidcraft), STEP (.step/.stp) or IGES (.iges/.igs) design (geometry.open: its bodies become the geometry; `model` \"keep\", the default, \
+             SolidCraft design or CAD file (STEP, IGES, FreeCAD, Rhino) (geometry.open: its bodies become the geometry; `model` \"keep\", the default, \
              keeps the mesh and definitions for a reopen after an edit, \"new\" starts a new model; the reply's `related` \
-             and `stale` say what no longer resolves on another part) or a face-tagged .3mf mesh (geometry.import.mesh: \
+             and `stale` say what no longer resolves on another part) or a triangle mesh (3MF, STL, OBJ, PLY, glTF) (geometry.import.mesh: \
              added as a surface), or a .msh orphan mesh (mesh.import.orphan).",
             obj(
                 json!({
-                    "path": string("Path to a .fieldcraft model, SolidCraft, STEP or IGES geometry, a .3mf mesh, or a .msh orphan mesh"),
-                    "model": {"type": "string", "enum": ["keep", "new"], "description": "For SolidCraft, STEP or IGES geometry: keep the current model (default) or start a new one"},
+                    "path": string("Path to a .fieldcraft model, a SolidCraft design, a CAD file (STEP, IGES, FreeCAD, Rhino), a triangle mesh (3MF, STL, OBJ, PLY, glTF), or a .msh orphan mesh"),
+                    "model": {"type": "string", "enum": ["keep", "new"], "description": "For a design or CAD file: keep the current model (default) or start a new one"},
                 }),
                 &["path"],
             ),
@@ -505,12 +505,12 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
         "open" => {
             let path = str_arg(a, "path").ok_or("`path` is required")?;
             let kind = fieldcraft_engine::OpenFileKind::of(path)
-                .ok_or("open: expected a .fieldcraft model, a SolidCraft, STEP or IGES design, a .3mf mesh, or a .msh orphan mesh")?;
+                .ok_or("open: expected a .fieldcraft model, a SolidCraft design, a CAD file (STEP, IGES, FreeCAD, Rhino), a triangle mesh (3MF, STL, OBJ, PLY, glTF) or a .msh orphan mesh")?;
             let command = kind.command();
             let mut params = json!({"path": path});
             if let Some(model) = a.get("model").filter(|m| !m.is_null()) {
                 if kind != fieldcraft_engine::OpenFileKind::Design {
-                    return Err("open: `model` applies to SolidCraft, STEP and IGES geometry only".into());
+                    return Err("open: `model` applies to designs and CAD files only".into());
                 }
                 params["model"] = model.clone();
             }

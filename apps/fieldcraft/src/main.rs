@@ -22,7 +22,7 @@ use fieldcraft_engine::autosave::{self, Autosaver};
 use fieldcraft_engine::{Session, crash, logfile};
 use fieldcraft_ui_egui::{FilePicker, ModelApp, Services};
 
-const USAGE: &str = "usage: fieldcraft [--sample [NAME]] [--control PORT] [FILE…]  (NAME: a sample, docs/examples.md; FILE: .fieldcraft, .sc, .solidcraft, STEP, IGES, .3mf or .msh)";
+const USAGE: &str = "usage: fieldcraft [--sample [NAME]] [--control PORT] [FILE…]  (NAME: a sample, docs/examples.md; FILE: .fieldcraft, a SolidCraft design, a CAD file (STEP, IGES, FreeCAD, Rhino), a triangle mesh (3MF, STL, OBJ, PLY, glTF) or .msh)";
 const DEPTH_BITS: u8 = 24;
 /// The window draws its own caption buttons where the OS ones would sit apart from the app bar.
 const CUSTOM_TITLEBAR: bool = !cfg!(target_os = "macos");
@@ -160,7 +160,7 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                     FilePicker::Open { filters } => (filters, None),
                     FilePicker::Save { filters, name } => (filters, Some(name)),
                 };
-                let dialog = filters.iter().fold(dialog, |d, f| d.add_filter(f.name, f.extensions));
+                let dialog = filters.iter().fold(dialog, |d, f| d.add_filter(f.name, f.extensions.as_slice()));
                 let file = match name {
                     Some(name) => dialog.set_file_name(name).save_file().await,
                     None => dialog.pick_file().await,

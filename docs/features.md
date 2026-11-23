@@ -12,7 +12,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
 | Panel | Capability | Status | Command |
 |---|---|---|---|
-| Import | Open Design — Open SolidCraft, STEP or IGES geometry with named faces and placed bodies | ready | `geometry.open` |
+| Import | Open Design — Open a SolidCraft design or CAD file (STEP, IGES, FreeCAD, Rhino) with named faces and placed bodies | ready | `geometry.open` |
 | Import | Triangle Mesh — Read a triangle surface (3MF, STL, OBJ, PLY, glTF) | ready | `geometry.import.mesh` |
 | Inspect | Bodies — List the open design's bodies, volumes and named faces, edges and vertices | ready | `geometry.bodies`, `geometry.centre`, `geometry.features` |
 | Inspect | Tessellate — Tessellate a body into a face-tagged boundary surface | ready | `geometry.tessellate` |
