@@ -17,7 +17,7 @@ use crate::{Error, Result};
 fn first(a: f64, b: f64) -> f64 {
     let mean = 0.5 * a + 0.5 * b;
     let r = (0.5 * a - 0.5 * b) / mean;
-    if r.abs() < 0.5 { log_divided_difference(r) / mean } else { (a.ln() - b.ln()) / (a - b) }
+    if r.abs() < 0.5 { log_divided_difference(r) / mean } else { (libm::log(a) - libm::log(b)) / (a - b) }
 }
 
 /// Symmetric `log[a,b,c]`. Sort so the recurrence divides by the widest gap;
@@ -59,7 +59,7 @@ pub(super) fn isochoric(j2: &J2, f: &Mat3, temperature: Option<f64>, committed: 
     let qt = transpose(&q);
     let global = |a: &Mat3| mul(&mul(&q, a), &qt);
     let local = |a: &Mat3| mul(&mul(&qt, a), &q);
-    let eps: Mat3 = std::array::from_fn(|a| std::array::from_fn(|b| if a == b { 0.5 * l[a].ln() } else { 0.0 }));
+    let eps: Mat3 = std::array::from_fn(|a| std::array::from_fn(|b| if a == b { 0.5 * libm::log(l[a]) } else { 0.0 }));
     let mut history: [f64; HISTORY] = std::array::from_fn(|k| value(committed, k));
     let r = small(j2, &engineering(&global(&eps)), temperature, committed, &mut history, false)?;
     let t = local(&tensor(&r.stress));

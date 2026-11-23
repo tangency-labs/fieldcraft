@@ -346,7 +346,7 @@ pub fn largest_eigenvalue(a: &[[f64; 3]; 3]) -> f64 {
         }
     }
     let r = (crate::dense::det3(&b) / 2.0).clamp(-1.0, 1.0);
-    q + 2.0 * p * (r.acos() / 3.0).cos()
+    q + 2.0 * p * libm::cos(libm::acos(r) / 3.0)
 }
 
 /// A bound k of a material's strain energy density per squared displacement gradient:

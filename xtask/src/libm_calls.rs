@@ -24,15 +24,7 @@ const CPU_CRATES: &[&str] = &["decks", "engine", "explicit", "fem", "lbm", "mesh
 const MARKER: &str = "// libm: not a result:";
 
 /// Files with std calls still to convert, and how many. Removed as each crate converts.
-const KNOWN: &[(&str, usize)] = &[
-    ("crates/fem/src/constitutive.rs", 3),
-    ("crates/fem/src/contact.rs", 1),
-    ("crates/fem/src/elastoplastic.rs", 5),
-    ("crates/fem/src/elastoplastic/logarithmic.rs", 3),
-    ("crates/fem/src/material.rs", 3),
-    ("crates/fem/src/plasticity.rs", 6),
-    ("crates/fem/src/uniform.rs", 2),
-];
+const KNOWN: &[(&str, usize)] = &[];
 
 pub fn run(root: &Path) -> Result<(), String> {
     let dirs: Vec<String> = CPU_CRATES.iter().map(|c| format!("crates/{c}")).collect();

@@ -90,7 +90,7 @@ fn log_divided_difference(r: f64) -> f64 {
         let r2 = r * r;
         1.0 + r2 * (1.0 / 3.0 + r2 * (1.0 / 5.0 + r2 / 7.0))
     } else {
-        r.atanh() / r
+        libm::atanh(r) / r
     }
 }
 
@@ -127,7 +127,7 @@ pub fn finite_isochoric(j2: &J2, f: &Mat3, temperature: Option<f64>, committed: 
     let (l, q) = symmetric_eigen(&b)
         .filter(|(l, _)| l.iter().all(|x| *x > 0.0))
         .ok_or_else(|| Error::Degenerate("the elastic stretch of a plastic material point is not positive (the material is inverted)".into()))?;
-    let eps = l.map(|x| 0.5 * x.ln());
+    let eps = l.map(|x| 0.5 * libm::log(x));
     let mut state = start(j2, committed, temperature);
     let mut trial = trial_deviator(j2, &[eps[0], eps[1], eps[2], 0.0, 0.0, 0.0]);
     let ret: Option<Return> = j2.radial_return(&mut state, &mut trial, 0.0);
@@ -167,7 +167,7 @@ pub fn finite_isochoric(j2: &J2, f: &Mat3, temperature: Option<f64>, committed: 
     if let Some(r) = ret {
         // bₑ = Σ exp(2 εₑ,A) q_A ⊗ q_A with εₑ = ε − √(3/2) Δε̄ₚ n, and Cₚ⁻¹ = F⁻¹ bₑ F⁻ᵀ.
         let dg = (1.5f64).sqrt() * r.plastic_strain;
-        let be = spectral(std::array::from_fn(|a| (2.0 * (eps[a] - dg * r.normal[a])).exp()));
+        let be = spectral(std::array::from_fn(|a| libm::exp(2.0 * (eps[a] - dg * r.normal[a]))));
         let (inv, _) = inverse3(f).ok_or_else(|| Error::Degenerate("the deformation gradient is singular".into()))?;
         store_plastic_stretch(&mul(&mul(&inv, &be), &transpose(&inv)), updated);
         if let Some(slot) = updated.get_mut(PLASTIC_STRAIN) {
@@ -184,7 +184,7 @@ pub fn volumetric(j2: &J2, j: f64, small: bool) -> Option<(f64, f64)> {
         return None;
     }
     let k = j2.bulk;
-    Some(if small { (k * (j - 1.0), k) } else { (k * j.ln() / j, k * (1.0 - j.ln()) / (j * j)) })
+    Some(if small { (k * (j - 1.0), k) } else { (k * libm::log(j) / j, k * (1.0 - libm::log(j)) / (j * j)) })
 }
 
 /// Small strain: the stress and the consistent tangent at total (mechanical) strain `strain`
@@ -470,7 +470,7 @@ mod tests {
         let (y0, h) = (250.0, 2000.0);
         let m = bilinear(h, Hardening::Isotropic);
         let strain: f64 = 0.2;
-        let lam = strain.exp();
+        let lam = libm::exp(strain);
         let sigma = |l: f64| {
             let f = [[lam, 0.0, 0.0], [0.0, l, 0.0], [0.0, 0.0, l]];
             let mut u = vec![0.0; HISTORY];

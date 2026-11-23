@@ -9,6 +9,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+libm = { workspace = true }
 fieldcraft-model = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
