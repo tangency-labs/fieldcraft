@@ -63,6 +63,7 @@ pub const PAGES: &[Page<ModelApp>] = &[
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Snapshot {
     units: DisplaySystem,
+    language: String,
     history_dock: HistoryDock,
     browser_float: bool,
     browser_eye_left: bool,
@@ -78,6 +79,7 @@ impl Snapshot {
     fn of(app: &ModelApp) -> Snapshot {
         Snapshot {
             units: app.prefs.units.clone(),
+            language: app.prefs.language.clone(),
             history_dock: app.ui.history_dock,
             browser_float: app.ui.browser_float,
             browser_eye_left: app.ui.browser_eye_left,
@@ -93,6 +95,9 @@ impl Snapshot {
     fn put_back(&self, app: &mut ModelApp) {
         if app.prefs.units != self.units {
             app.set_default_units(self.units.clone());
+        }
+        if app.prefs.language != self.language {
+            app.set_language(self.language.clone());
         }
         app.ui.history_dock = self.history_dock;
         app.ui.browser_float = self.browser_float;
@@ -205,6 +210,7 @@ pub fn describe(app: &ModelApp) -> Value {
 #[serde(deny_unknown_fields)]
 struct Change {
     units: Option<DisplaySystem>,
+    language: Option<String>,
     history_dock: Option<HistoryDock>,
     browser_float: Option<bool>,
     browser_eye_left: Option<bool>,
@@ -242,6 +248,9 @@ pub fn from_control(app: &mut ModelApp, p: &Value) -> Result<Value, String> {
         Some(_) => return Err("`press` must be ok, cancel, apply or defaults".into()),
     };
     if let Some(change) = &change {
+        if let Some(language) = &change.language {
+            crate::i18n::validate_preference(language)?;
+        }
         let usage = change.usage_sharing.is_some() || change.usage_automation.is_some();
         if usage && !app.usage_available() {
             return Err("this run cannot share usage (no analytics key, or FIELDCRAFT_TELEMETRY=0, CI or automation)".into());
@@ -277,6 +286,9 @@ pub fn from_control(app: &mut ModelApp, p: &Value) -> Result<Value, String> {
 fn change_to(app: &mut ModelApp, c: Change) {
     if let Some(units) = c.units {
         app.set_default_units(units);
+    }
+    if let Some(language) = c.language {
+        app.set_language(language);
     }
     if let Some(dock) = c.history_dock {
         app.ui.history_dock = dock;
@@ -339,6 +351,20 @@ fn general(ui: &mut egui::Ui, app: &mut ModelApp) {
             }
             note(ui, "settings.history_dock_hint");
         });
+        kit::settings_section(ui, "language", tr("settings.language"), |ui| {
+            let choices = crate::i18n::selectable_languages();
+            let initial = choices.iter().position(|c| c.pref == app.prefs.language).unwrap_or_default();
+            let labels: Vec<&str> = choices.iter().map(|c| c.label.as_str()).collect();
+            let mut selected = initial;
+            kit::row(ui, tr("settings.language"), |ui| {
+                kit::dropdown(ui, "fc_settings_language", &mut selected, &labels).backing_on_hover_text(tr("settings.language_hint"))
+            });
+            if selected != initial
+                && let Some(choice) = choices.get(selected)
+            {
+                app.set_language(choice.pref.into());
+            }
+        });
         kit::settings_section(ui, "window", tr("settings.window"), |ui| {
             check(ui, "settings.browser_float", "settings.browser_float_hint", &mut app.ui.browser_float);
             check(ui, "settings.browser_eye_left", "settings.browser_eye_left_hint", &mut app.ui.browser_eye_left);
@@ -351,6 +377,9 @@ fn general_defaults(app: &mut ModelApp) {
     let d = Prefs::default();
     if app.prefs.units != d.units {
         app.set_default_units(d.units);
+    }
+    if app.prefs.language != d.language {
+        app.set_language(d.language);
     }
     app.ui.history_dock = d.history_dock;
     app.ui.browser_float = d.browser_float;

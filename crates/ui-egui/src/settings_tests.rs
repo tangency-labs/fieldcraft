@@ -381,3 +381,34 @@ fn counting_scripts_does_not_answer_the_usage_question() {
     assert!(!usage::enabled(), "nothing is recorded");
     usage::disable();
 }
+
+/// Selecting Hebrew (or legacy `iw`) in Settings persists `"he"`, renders Hebrew headings,
+/// restores `"en"` on Cancel, and rejects unknown language tags without mutating state.
+#[test]
+fn language_preference_switches_to_hebrew_and_restores_on_cancel() {
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let prefs = Temp::new("language");
+    let ctx = egui::Context::default();
+    let mut app = ModelApp::new(Session::default()).with_services(Services { prefs: Some(prefs.store()), ..Default::default() });
+    assert_eq!(app.prefs.language, "en");
+    let before = Snapshot::of(&app);
+
+    app.open_settings();
+    frames(&mut app, &ctx, 2);
+    assert!(from_control(&mut app, &json!({"set": {"language": "xx"}})).is_err());
+    assert_eq!(Snapshot::of(&app), before);
+
+    from_control(&mut app, &json!({"set": {"language": "iw"}})).unwrap();
+    assert_eq!(app.prefs.language, "he");
+    assert_eq!(prefs.saved().language, "he");
+    let drawn = frames(&mut app, &ctx, 2);
+    let he_heading = {
+        let _lang = crate::i18n::scope("he");
+        solidcraft_ui_text::tr("settings.general").to_owned()
+    };
+    assert!(drawn.iter().any(|d| d.label == he_heading), "expected Hebrew heading {he_heading:?} in drawn labels");
+
+    click(&mut app, &ctx, "prefs:cancel");
+    assert_eq!(app.prefs.language, "en");
+    assert_eq!(prefs.saved().language, "en");
+}
