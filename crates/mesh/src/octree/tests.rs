@@ -284,3 +284,87 @@ fn a_wedges_wall_does_not_depend_on_its_tessellation() {
         assert!(*w >= h * (1.0 - 1e-9), "tessellation {k}: the thinnest wall is {w}, under {h}: {thinnest:?}");
     }
 }
+
+/// A stand-in for a build's mesh: only its smallest scaled Jacobian matters to [`rebuilt`].
+fn mesh_with(min_scaled_jacobian: f64) -> Box<OctreeHexMesh> {
+    let report = OctreeReport {
+        attempts: 0,
+        grid_cells: 0,
+        root_size: 1.0,
+        levels: 0,
+        thinnest_wall: f64::INFINITY,
+        narrowest_patch: f64::INFINITY,
+        refined_cells: Vec::new(),
+        closed_cells: Vec::new(),
+        core_elements: 0,
+        layer_elements: 0,
+        frame: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        corners: 0,
+        curves: 0,
+        patches: 0,
+        sweeps: 0,
+        min_scaled_jacobian,
+        mean_scaled_jacobian: min_scaled_jacobian,
+        volume: 0.0,
+        surface_volume: 0.0,
+        boundary_distance: 0.0,
+        retries: Vec::new(),
+    };
+    Box::new(OctreeHexMesh { nodes: Vec::new(), hexes: Vec::new(), boundary: Vec::new(), report })
+}
+
+/// What [`rebuilt`] returns when its builds return `builds` in turn, with four attempts: the
+/// kept mesh's smallest scaled Jacobian, builds and reasons, or the error.
+fn rebuild_with(builds: Vec<Result<Attempt>>) -> std::result::Result<(f64, usize, Vec<String>), Error> {
+    let mut builds = std::collections::VecDeque::from(builds);
+    let mut build = |_: &[P], _: usize| builds.pop_front().unwrap_or_else(|| Err(Error::Failed("no more builds".into())));
+    let m = rebuilt(4, &|attempt| 10 * (attempt + 1), &mut build)?;
+    Ok((m.report.min_scaled_jacobian, m.report.attempts, m.report.retries.iter().map(|r| r.to_string()).collect()))
+}
+
+#[test]
+fn a_rebuild_is_kept_only_while_it_raises_the_worst_element() {
+    let done = |sj: f64| Ok(Attempt::Done(mesh_with(sj), Vec::new()));
+    let poor = |sj: f64| Ok(Attempt::Done(mesh_with(sj), vec![[0.0; 3]]));
+    let retry = || Ok(Attempt::Retry(Retry { at: vec![[0.0; 3]], why: message!["2 elements stay inverted"] }));
+    let failed = || Err(Error::Failed("the pad layer folds".into()));
+    let limit = || Err(Error::Limit("the grid needs 99 cells".into()));
+    let cancelled = || Err(Error::Model(fieldcraft_model::Error::Cancelled));
+
+    // A mesh without poor elements is returned at once.
+    assert_eq!(rebuild_with(vec![done(0.5)]).unwrap(), (0.5, 1, vec![]));
+    // A rebuild that raises the worst element is kept, one that does not returns the earlier mesh.
+    let (sj, builds, why) = rebuild_with(vec![poor(0.05), done(0.3)]).unwrap();
+    assert_eq!((sj, builds, why.len()), (0.3, 2, 1));
+    assert!(why[0].contains("1 elements have a scaled Jacobian under 0.2"), "{why:?}");
+    let (sj, builds, _) = rebuild_with(vec![poor(0.05), poor(0.04)]).unwrap();
+    assert_eq!((sj, builds), (0.05, 2));
+    // Rebuilds continue while each raises it, up to the last attempt, whose mesh is returned.
+    let (sj, builds, why) = rebuild_with(vec![poor(0.05), poor(0.06), poor(0.07), poor(0.08)]).unwrap();
+    assert_eq!((sj, builds, why.len()), (0.08, 4, 3));
+
+    // Once a valid mesh is in hand, a rebuild that fails keeps it and says why: over the grid
+    // cap, any other error, or after a failure it retried.
+    let (sj, builds, why) = rebuild_with(vec![poor(0.05), limit()]).unwrap();
+    assert_eq!((sj, builds), (0.05, 2));
+    assert!(why[1].contains("needs more than 20 grid cells") && why[1].contains("99 cells"), "{why:?}");
+    let (sj, builds, why) = rebuild_with(vec![poor(0.05), failed()]).unwrap();
+    assert_eq!((sj, builds), (0.05, 2));
+    assert!(why[1].contains("the rebuild failed") && why[1].contains("the pad layer folds"), "{why:?}");
+    let (sj, builds, why) = rebuild_with(vec![poor(0.05), retry(), failed()]).unwrap();
+    assert_eq!((sj, builds, why.len()), (0.05, 3, 3));
+    assert!(why[1].contains("inverted"), "{why:?}");
+    let (sj, builds, _) = rebuild_with(vec![poor(0.05), retry(), retry(), retry()]).unwrap();
+    assert_eq!((sj, builds), (0.05, 4));
+    // Cancellation is never swallowed.
+    assert!(matches!(rebuild_with(vec![poor(0.05), cancelled()]), Err(Error::Model(fieldcraft_model::Error::Cancelled))));
+
+    // Without a valid mesh: a failure propagates, a grid over its cap ends the retries, and
+    // retries that never mesh fail with every reason.
+    assert!(matches!(rebuild_with(vec![failed()]), Err(Error::Failed(_))));
+    assert!(matches!(rebuild_with(vec![retry(), failed()]), Err(Error::Failed(m)) if m == "the pad layer folds"));
+    let e = rebuild_with(vec![retry(), limit()]).unwrap_err().to_string();
+    assert!(e.contains("failed after 2 builds") && e.contains("needs more than 20 grid cells"), "{e}");
+    let e = rebuild_with(vec![retry(), retry(), retry(), retry()]).unwrap_err().to_string();
+    assert!(e.contains("failed after 4 builds") && e.matches("inverted").count() == 4, "{e}");
+}

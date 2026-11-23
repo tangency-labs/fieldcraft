@@ -45,7 +45,14 @@
 //!    2020); elements that are not are repaired locally first. A failure in 4–8 names where the
 //!    grid is too coarse; the leaves there are split once more and the mesh is rebuilt, at most
 //!    [`OctreeOptions::attempts`] times, and a rebuild may not grow the grid more than
-//!    [`RETRY_GROWTH`] times (Gao et al. 2019, §3.3).
+//!    [`RETRY_GROWTH`] times (Gao et al. 2019, §3.3). A valid mesh with elements under
+//!    [`RETRY_BELOW`] is rebuilt the same way, the grid split where elements are under
+//!    [`REFINE_BELOW`], and the rebuild is kept only while it raises the smallest scaled
+//!    Jacobian; once a valid mesh is in hand, a rebuild that fails returns it. This quality
+//!    rebuild extends Gao et al. 2019, §3.3, which refines and rebuilds only where a stage
+//!    fails, to a valid mesh with poor elements; its thresholds and the rule that a rebuild
+//!    must raise the smallest scaled Jacobian are FieldCraft's own, measured on the meshing
+//!    corpus (docs/meshing/corpus.md).
 //!
 //! # Why 3-refinement templates
 //! The dual schemes of M. Livesu, L. Pitzalis, G. Cherchi, *Optimal dual schemes for adaptive
@@ -158,9 +165,9 @@ impl Default for OctreeOptions {
 /// What [`octree_hex_mesh`] did.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OctreeReport {
-    /// Builds run (1 + rebuilds after a failure).
+    /// Builds run (1 + rebuilds after a failure or poor elements; the kept mesh may be an earlier one).
     pub attempts: usize,
-    /// Grid leaves of the last build.
+    /// Grid leaves of the build that made the mesh.
     pub grid_cells: usize,
     /// The root cells' edge and the deepest level of the grid (see [`octree_hex_mesh`]).
     pub root_size: f64,
@@ -168,7 +175,7 @@ pub struct OctreeReport {
     /// The thinnest wall and the narrowest patch the grid was chosen for (`∞` when none).
     pub thinnest_wall: f64,
     pub narrowest_patch: f64,
-    /// Grid leaves per level (root level first) of the last build: after the refinement
+    /// Grid leaves per level (root level first) of the build that made the mesh: after the refinement
     /// criteria (size, curvature, thickness, narrow patches and retry hints), and after balance
     /// and closure.
     pub refined_cells: Vec<usize>,
@@ -182,7 +189,7 @@ pub struct OctreeReport {
     pub corners: usize,
     pub curves: usize,
     pub patches: usize,
-    /// Optimiser sweeps of the last build.
+    /// Optimiser sweeps of the build that made the mesh.
     pub sweeps: usize,
     /// Smallest and mean corner scaled Jacobian.
     pub min_scaled_jacobian: f64,
@@ -225,6 +232,10 @@ const IMPROVE_BELOW: f64 = 0.3;
 /// `2 d tan(30°) ≈ 1.15 d`, so the cells that resolve the edge do not resolve its thickness; at
 /// blunter edges they do, and the edge is a feature, not a wall.
 const WALL_OPENING: f64 = 60.0;
+/// A mesh with elements below this scaled Jacobian is rebuilt with the grid refined
+/// where they are under [`REFINE_BELOW`], and the better of the two kept.
+const RETRY_BELOW: f64 = 0.1;
+const REFINE_BELOW: f64 = 0.2;
 /// Closure rounds of the grid (each splits at least one leaf; the cell cap bounds them too).
 const CLOSURE_ROUNDS: usize = 1000;
 /// Rounds of the core clean-up (each drops at least one element).
@@ -237,7 +248,8 @@ struct Retry {
 }
 
 enum Attempt {
-    Done(Box<OctreeHexMesh>),
+    /// A mesh, and where its elements are poor (refining there may raise them).
+    Done(Box<OctreeHexMesh>, Vec<P>),
     Retry(Retry),
 }
 
@@ -261,27 +273,53 @@ pub fn octree_hex_mesh_exact(
     let g = Geometry::new(surface, options.sharp_angle, options.blade_angle)?.with_exact(exact);
     let thickness = triangle_thickness(&g, field);
     let ctx = plan(&g, field, options, &thickness)?;
-    let mut hints: Vec<P> = Vec::new();
-    let mut retries: Vec<Message> = Vec::new();
-    for attempt in 0..options.attempts {
-        fieldcraft_model::progress::check()?;
-        let cap = if attempt == 0 {
+    let cap = |attempt: usize| {
+        if attempt == 0 {
             options.max_elements
         } else {
             options.max_elements.min(RETRY_GROWTH.saturating_mul(ctx.last_leaves.get()).max(RETRY_MIN_CELLS))
-        };
-        let built = match ctx.build(&hints, cap) {
+        }
+    };
+    rebuilt(options.attempts, &cap, &mut |hints, max_leaves| ctx.build(hints, max_leaves))
+}
+
+/// Run `build` (with the points to refine at and the most grid leaves `cap` allows for the
+/// attempt) up to `attempts` times: again after a failure it names the cure for, and again after
+/// a valid mesh with poor elements while each rebuild raises the smallest scaled Jacobian. Once a
+/// valid mesh is in hand, a rebuild that fails in any way but cancellation is recorded and the
+/// valid mesh returned.
+fn rebuilt(attempts: usize, cap: &dyn Fn(usize) -> usize, build: &mut dyn FnMut(&[P], usize) -> Result<Attempt>) -> Result<OctreeHexMesh> {
+    let mut hints: Vec<P> = Vec::new();
+    let mut retries: Vec<Message> = Vec::new();
+    // A valid mesh with poor elements, kept while a rebuild refined there is tried.
+    let mut best: Option<Box<OctreeHexMesh>> = None;
+    for attempt in 0..attempts {
+        fieldcraft_model::progress::check()?;
+        let cap = cap(attempt);
+        let built = match build(&hints, cap) {
+            Ok(a) => a,
+            Err(e @ Error::Model(fieldcraft_model::Error::Cancelled)) => return Err(e),
             Err(e) if attempt > 0 && e.is_limit() => {
                 retries.push(message![format!("refining for another build needs more than {cap} grid cells (")].then(e.detail()).then(message![")"]));
                 break;
             }
-            other => other?,
+            Err(e) if best.is_some() => {
+                retries.push(message!["the rebuild failed ("].then(e.message()).then(message![")"]));
+                break;
+            }
+            Err(e) => return Err(e),
         };
         match built {
-            Attempt::Done(mut m) => {
-                m.report.attempts = attempt + 1;
-                m.report.retries = retries;
-                return Ok(*m);
+            Attempt::Done(m, weak) => {
+                if let Some(b) = best.take_if(|b| b.report.min_scaled_jacobian >= m.report.min_scaled_jacobian) {
+                    return Ok(kept(b, attempt + 1, retries));
+                }
+                if weak.is_empty() || attempt + 1 == attempts {
+                    return Ok(kept(m, attempt + 1, retries));
+                }
+                retries.push(message![format!("{} elements have a scaled Jacobian under {REFINE_BELOW}", weak.len())]);
+                hints.extend(weak);
+                best = Some(m);
             }
             Attempt::Retry(r) => {
                 retries.push(r.why);
@@ -289,7 +327,18 @@ pub fn octree_hex_mesh_exact(
             }
         }
     }
+    // Every build that did not return pushed one reason.
+    if let Some(b) = best {
+        return Ok(kept(b, retries.len(), retries));
+    }
     Err(Error::failed(message![format!("octree hex meshing failed after {} builds: ", retries.len())].then(Message::join(retries, "; "))))
+}
+
+/// The mesh returned after `builds` builds, with why the earlier ones were refined.
+fn kept(mut m: Box<OctreeHexMesh>, builds: usize, retries: Vec<Message>) -> OctreeHexMesh {
+    m.report.attempts = builds;
+    m.report.retries = retries;
+    *m
 }
 
 /// What the part's walls and narrow patches ask of the grid, measured before it is built.
@@ -982,6 +1031,7 @@ impl Context<'_> {
         let mut bad: Vec<P> = Vec::new();
         let mut checks = Vec::with_capacity(w.hexes.len());
         let (mut sj_min, mut sj_sum) = (f64::INFINITY, 0.0);
+        let mut poor: Vec<P> = Vec::new();
         for (e, hx) in w.hexes.iter().enumerate() {
             let q = element_quality(ElementKind::Hex8, &hx.map(|v| w.points[v as usize]))?;
             let check = q.jacobian.ok_or_else(|| Error::Failed("an element was not certified".into()))?;
@@ -991,6 +1041,9 @@ impl Context<'_> {
             let sj = q.get(Metric::ScaledJacobian).unwrap_or(-1.0);
             sj_min = sj_min.min(sj);
             sj_sum += sj;
+            if sj < REFINE_BELOW {
+                poor.push(centroid(&w.points, hx));
+            }
             checks.push((e as u32 + 1, check));
         }
         if !bad.is_empty() {
@@ -1060,7 +1113,9 @@ impl Context<'_> {
             boundary_distance,
             retries: Vec::new(),
         };
-        Ok(Attempt::Done(Box::new(OctreeHexMesh { nodes, hexes, boundary, report })))
+        // Refining where the elements are poor may raise them.
+        let weak = if sj_min < RETRY_BELOW { poor } else { Vec::new() };
+        Ok(Attempt::Done(Box::new(OctreeHexMesh { nodes, hexes, boundary, report }), weak))
     }
 }
 

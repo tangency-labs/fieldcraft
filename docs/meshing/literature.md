@@ -656,6 +656,13 @@ the grid is built, from the thinnest wall (measured to a facing wall only: a ray
 through the face beyond a convex edge measures how near the edge it started, not a wall) and the
 narrowest patch; a part beyond the levels or cells allowed fails at once with the numbers.
 
+**Quality rebuild in `fieldcraft-mesh::octree` (extends published work, #536).** An extension of
+B1.4 §3.3, which refines and rebuilds only where a stage fails. What is FieldCraft's own, measured
+on the meshing corpus (docs/meshing/corpus.md): a valid mesh with an element under a scaled
+Jacobian of 0.1 is also rebuilt, with the leaves around every element under 0.2 split once more,
+within the same attempt and growth caps; a rebuild is kept only while it raises the smallest
+scaled Jacobian, and once a valid mesh is in hand a failed rebuild returns it.
+
 ---
 
 ### B2. Polycube maps
