@@ -54,6 +54,11 @@
 //! directions. A pivot that would be zero stops the factorization (above), so the count of zero
 //! eigenvalues is never reported as anything but a located error.
 //!
+//! **Complex symmetric.** The factor is generic over [`crate::scalar::Scalar`]: `Complex64`
+//! matrices (K − ω²M + iωC) factor as A = Aᵀ, with the transpose in every step and never the
+//! conjugate. Pivots are compared on their moduli. Sylvester's law needs an order, so the inertia
+//! exists for the real factor only.
+//!
 //! **Threads and determinism.** Every pivot decision and every entry is computed by one task in
 //! an order fixed by the matrix, ties in the search broken by the lowest index, so the factor,
 //! its pivots and its inertia are the same bit for bit on any number of threads.
@@ -545,8 +550,9 @@ mod tests {
     use super::*;
     use crate::Error;
     use fieldcraft_parallel as parallel;
+    use num_complex::Complex64;
 
-    fn csr(rows: &[Vec<(usize, f64)>]) -> Csr {
+    fn csr<T: Scalar>(rows: &[Vec<(usize, T)>]) -> Csr<T> {
         let mut ptr = vec![0];
         let mut idx = Vec::new();
         let mut val = Vec::new();
@@ -990,5 +996,178 @@ mod tests {
                 indefinite.two_by_two()
             );
         }
+    }
+
+    /// The complex-symmetric entry (i, j) of a matrix (0 when absent).
+    fn at(a: &Csr<Complex64>, i: usize, j: usize) -> Complex64 {
+        let (cols, vals) = a.row(i);
+        cols.binary_search(&j).ok().and_then(|k| vals.get(k)).copied().unwrap_or(Complex64::ZERO)
+    }
+
+    /// The largest modulus of r − A x over the largest modulus of r.
+    fn complex_residual(a: &Csr<Complex64>, x: &[Complex64], rhs: &[Complex64]) -> f64 {
+        let mut ax = vec![Complex64::ZERO; a.n];
+        a.mul(x, &mut ax);
+        let err = rhs.iter().zip(&ax).map(|(p, q)| (*p - *q).norm()).fold(0.0, f64::max);
+        err / rhs.iter().map(|p| p.norm()).fold(0.0, f64::max)
+    }
+
+    /// A complex-symmetric grid K + 0.3 i K₀ on the pattern of a real grid: its Hermitian part
+    /// differs from its symmetric part, so a conjugate anywhere in the factorization is a wrong
+    /// answer, not a rounding change.
+    fn complex_grid(n: [usize; 3], sigma: f64) -> Csr<Complex64> {
+        let real = |v: f64| Complex64::new(v, 0.0);
+        let k = shifted_grid(n, sigma).0.map_values(real);
+        let k0 = shifted_grid(n, 0.0).0.map_values(real);
+        k.add_scaled(Complex64::new(0.0, 0.3), &k0).unwrap()
+    }
+
+    fn sample_solution(n: usize) -> Vec<Complex64> {
+        (0..n).map(|i| Complex64::new((i as f64 * 0.37).sin(), (i as f64 * 0.11).cos())).collect()
+    }
+
+    #[test]
+    fn complex_symmetric_systems_solve_with_the_transpose() {
+        let a = complex_grid([5, 4, 4], 2.1);
+        // Symmetric, not Hermitian: a(0, 3) = a(3, 0) but a(0, 3) ≠ conj a(3, 0).
+        assert_eq!(at(&a, 0, 3), at(&a, 3, 0));
+        assert!((at(&a, 0, 3) - at(&a, 3, 0).conj()).norm() > 0.1);
+        let x = sample_solution(a.n);
+        let mut b = vec![Complex64::ZERO; a.n];
+        a.mul(&x, &mut b);
+        let rhs = b.clone();
+        // One analysis of the real pattern serves the complex matrix.
+        let symbolic = Symbolic::new(&UpperColumns::from_symmetric(&a.map_values(|v| v.re)), usize::MAX).unwrap();
+        let f = LdltFactor::from_symbolic(&symbolic, &UpperColumns::from_symmetric(&a)).unwrap();
+        f.solve(&mut b).unwrap();
+        let err = b.iter().zip(&x).map(|(p, q)| (*p - *q).norm()).fold(0.0, f64::max);
+        let residual = complex_residual(&a, &b, &rhs);
+        assert!(err < 1e-10 && residual < 1e-12, "error {err}, relative residual {residual}");
+    }
+
+    #[test]
+    fn complex_solve_matches_the_real_two_by_two_block_form() {
+        // (K + iC)(x + iy) = b_r + i b_i is the real symmetric [[K, −C], [−C, −K]] acting on (x, y)
+        // with the right-hand side (b_r, −b_i). K is positive definite here.
+        let (k, _) = shifted_grid([4, 3, 3], -0.5);
+        let (c, _) = shifted_grid([4, 3, 3], 0.0);
+        let n = k.n;
+        let a = k.map_values(|v| Complex64::new(v, 0.0)).add_scaled(Complex64::new(0.0, 1.0), &c.map_values(|v| Complex64::new(v, 0.0))).unwrap();
+        let mut rows: Vec<Vec<(usize, f64)>> = vec![Vec::new(); 2 * n];
+        for i in 0..n {
+            let (kc, kv) = k.row(i);
+            for (j, v) in kc.iter().zip(kv) {
+                rows[i].push((*j, *v));
+                rows[n + i].push((n + *j, -*v));
+            }
+            let (cc, cv) = c.row(i);
+            for (j, v) in cc.iter().zip(cv) {
+                rows[i].push((n + *j, -*v));
+                rows[n + i].push((*j, -*v));
+            }
+        }
+        let block = csr(&rows);
+        let b_re: Vec<f64> = (0..n).map(|i| ((i + 1) as f64 * 0.7).sin()).collect();
+        let b_im: Vec<f64> = (0..n).map(|i| (i as f64 * 0.4).cos()).collect();
+        let mut real_rhs: Vec<f64> = b_re.clone();
+        real_rhs.extend(b_im.iter().map(|v| -v));
+        let real = LdltFactor::new(&UpperColumns::from_symmetric(&block), usize::MAX).unwrap();
+        real.solve(&mut real_rhs).unwrap();
+        let mut z: Vec<Complex64> = b_re.iter().zip(&b_im).map(|(r, i)| Complex64::new(*r, *i)).collect();
+        let rhs = z.clone();
+        let complex = LdltFactor::<Complex64>::new(&UpperColumns::from_symmetric(&a), usize::MAX).unwrap();
+        complex.solve(&mut z).unwrap();
+        let scale = z.iter().map(|v| v.norm()).fold(0.0, f64::max);
+        let gap = (0..n).map(|i| (z[i] - Complex64::new(real_rhs[i], real_rhs[n + i])).norm()).fold(0.0, f64::max);
+        assert!(gap < 1e-10 * scale, "gap {gap} against a solution of {scale}");
+        assert!(complex_residual(&a, &z, &rhs) < 1e-12);
+    }
+
+    #[test]
+    fn damped_oscillators_match_the_closed_form() {
+        // Dynamic stiffness K − ω²M + iωC with m = 1, k = 4, c = 0.5, ω = 1.3.
+        let (k, c, w) = (4.0f64, 0.5f64, 1.3f64);
+        let d = Complex64::new(2.0 * k - w * w, w * c);
+        // One mass on a spring and damper: x = F / (k − ω²m + iωc).
+        let sdof = Csr::<Complex64> { n: 1, ptr: vec![0, 1], idx: vec![0], val: vec![Complex64::new(k - w * w, w * c)] };
+        let f = LdltFactor::<Complex64>::new(&UpperColumns::from_symmetric(&sdof), usize::MAX).unwrap();
+        let mut x = [Complex64::new(1.0, 0.0)];
+        f.solve(&mut x).unwrap();
+        let expected = Complex64::new(1.0, 0.0) / Complex64::new(k - w * w, w * c);
+        assert!((x[0] - expected).norm() < 1e-12 * expected.norm());
+        // Two masses, each grounded by k and coupled by k: [[d, −k], [−k, d]] x = F, solved by
+        // Cramer's rule: x₁ = (d F₁ + k F₂)/(d² − k²), x₂ = (k F₁ + d F₂)/(d² − k²).
+        let two =
+            Csr::<Complex64> { n: 2, ptr: vec![0, 2, 4], idx: vec![0, 1, 0, 1], val: vec![d, Complex64::new(-k, 0.0), Complex64::new(-k, 0.0), d] };
+        let (f1, f2) = (Complex64::new(1.0, 0.0), Complex64::new(0.5, 0.0));
+        let det = d * d - Complex64::new(k * k, 0.0);
+        let kc = Complex64::new(k, 0.0);
+        let expected = [(d * f1 + kc * f2) / det, (kc * f1 + d * f2) / det];
+        let factor = LdltFactor::<Complex64>::new(&UpperColumns::from_symmetric(&two), usize::MAX).unwrap();
+        let mut x = [f1, f2];
+        factor.solve(&mut x).unwrap();
+        for (got, want) in x.iter().zip(&expected) {
+            assert!((*got - *want).norm() < 1e-12 * want.norm(), "{got} against {want}");
+        }
+    }
+
+    #[test]
+    fn complex_saddle_point_forces_two_by_two_pivots() {
+        let a = saddle(8, 3).map_values(|v| Complex64::new(v, 0.3 * v));
+        let f = LdltFactor::<Complex64>::new(&UpperColumns::from_symmetric(&a), usize::MAX).unwrap();
+        assert!(f.two_by_two() > 0);
+        let x = sample_solution(a.n);
+        let mut rhs = vec![Complex64::ZERO; a.n];
+        a.mul(&x, &mut rhs);
+        let mut solved = rhs.clone();
+        f.solve(&mut solved).unwrap();
+        let residual = complex_residual(&a, &solved, &rhs);
+        assert!(residual < 1e-12, "relative residual {residual}");
+    }
+
+    #[test]
+    fn complex_factor_is_the_same_on_any_number_of_threads() {
+        let a = complex_grid([10, 9, 8], 2.7);
+        let upper = UpperColumns::from_symmetric(&a);
+        let one = parallel::with_threads(1, || LdltFactor::<Complex64>::new(&upper, usize::MAX)).unwrap();
+        let x = sample_solution(a.n);
+        let mut rhs = vec![Complex64::ZERO; a.n];
+        a.mul(&x, &mut rhs);
+        let mut reference = rhs.clone();
+        one.solve(&mut reference).unwrap();
+        let same = |p: &Complex64, q: &Complex64| p.re.to_bits() == q.re.to_bits() && p.im.to_bits() == q.im.to_bits();
+        for threads in [2, 7] {
+            let other = parallel::with_threads(threads, || LdltFactor::<Complex64>::new(&upper, usize::MAX)).unwrap();
+            for (p, q) in one.blocks.iter().zip(&other.blocks) {
+                assert!(p.values.iter().zip(&q.values).all(|(u, v)| same(u, v)) && p.order == q.order, "{threads} threads");
+            }
+            let mut solved = rhs.clone();
+            other.solve(&mut solved).unwrap();
+            assert!(solved.iter().zip(&reference).all(|(u, v)| same(u, v)), "solution on {threads} threads");
+        }
+        assert!(complex_residual(&a, &reference, &rhs) < 1e-11);
+    }
+
+    #[test]
+    fn singular_complex_matrices_are_located_errors() {
+        // A complex Laplacian with the constant vector in its null space.
+        let n = 10;
+        let rows: Vec<Vec<(usize, Complex64)>> = (0..n)
+            .map(|i: usize| {
+                let mut r = vec![];
+                let mut d = 0.0;
+                for j in [i.wrapping_sub(1), i + 1] {
+                    if j < n {
+                        r.push((j, Complex64::new(-1.0, 0.0)));
+                        d += 1.0;
+                    }
+                }
+                r.push((i, Complex64::new(d, 0.0)));
+                r
+            })
+            .collect();
+        let laplacian = csr(&rows);
+        let e = LdltFactor::<Complex64>::new(&UpperColumns::from_symmetric(&laplacian), usize::MAX).unwrap_err();
+        assert!(matches!(e, FactorError::Singular { column } if column < n), "{e:?}");
     }
 }
