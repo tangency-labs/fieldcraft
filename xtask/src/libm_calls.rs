@@ -8,11 +8,9 @@
 //! dependency). `sqrt` and `abs` are correctly rounded by IEEE 754 and are not flagged.
 //!
 //! A call that provably feeds no result (a diagnostic, a log line) is marked on its line with
-//! `// libm: not a result: <why>`. A file that still has calls to convert is on [`KNOWN`] with
-//! its count: the count may only go down (the list is a ratchet), and a file not on the list
-//! must have none. The list empties as the crates are converted.
+//! `// libm: not a result: <why>`. Every CPU result crate is converted, so the check has no
+//! list of files still to do.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::rust_source;
@@ -23,35 +21,29 @@ const CPU_CRATES: &[&str] = &["decks", "engine", "explicit", "fem", "lbm", "mesh
 /// The per-line exemption for a call that feeds no result.
 const MARKER: &str = "// libm: not a result:";
 
-/// Files with std calls still to convert, and how many. Removed as each crate converts.
-const KNOWN: &[(&str, usize)] = &[];
-
 pub fn run(root: &Path) -> Result<(), String> {
     let dirs: Vec<String> = CPU_CRATES.iter().map(|c| format!("crates/{c}")).collect();
     let dir_refs: Vec<&str> = dirs.iter().map(String::as_str).collect();
     let (sources, mut errors) = rust_source::read_tree(root, &dir_refs)?;
 
-    // The calls per file that carry no exemption: (line, method).
-    let mut calls: BTreeMap<&str, Vec<(usize, &str)>> = BTreeMap::new();
+    let mut total = 0usize;
     for source in &sources {
         let lines: Vec<&str> = source.text.lines().collect();
-        let mut exempt = BTreeSet::new();
-        for (line, _) in &source.calls {
+        let marked = |line: usize| {
             let text = lines.get(line.wrapping_sub(1)).copied().unwrap_or("");
-            match rust_source::marker_reason(text, MARKER) {
-                Some("") => errors.push(format!("{}:{line}: `{MARKER}` needs a reason", source.rel)),
-                Some(_) => {
-                    exempt.insert(*line);
-                }
-                None => {}
-            }
-        }
+            rust_source::marker_reason(text, MARKER)
+        };
         for (line, method) in &source.calls {
-            if !exempt.contains(line) {
-                calls.entry(source.rel.as_str()).or_default().push((*line, method.as_str()));
+            match marked(*line) {
+                Some("") => errors.push(format!("{}:{line}: `{MARKER}` needs a reason", source.rel)),
+                Some(_) => {}
+                None => {
+                    total += 1;
+                    errors.push(format!("{}:{line}: `{method}` is a platform maths call: use libm:: (#1038)", source.rel));
+                }
             }
         }
-        let called: BTreeSet<usize> = source.calls.iter().map(|(line, _)| *line).collect();
+        let called: Vec<usize> = source.calls.iter().map(|(line, _)| *line).collect();
         for (n, text) in lines.iter().enumerate() {
             if rust_source::marker_reason(text, MARKER).is_some() && !called.contains(&(n + 1)) {
                 errors.push(format!("{}:{}: `{MARKER}` on a line without a transcendental call; remove it", source.rel, n + 1));
@@ -59,29 +51,10 @@ pub fn run(root: &Path) -> Result<(), String> {
         }
     }
 
-    let known: BTreeMap<&str, usize> = KNOWN.iter().copied().collect();
-    let files: BTreeSet<&str> = calls.keys().copied().chain(known.keys().copied()).collect();
-    let mut total = 0usize;
-    for file in files {
-        let found = calls.get(file).map_or(&[][..], Vec::as_slice);
-        let expected = known.get(file).copied().unwrap_or(0);
-        total += found.len();
-        if found.len() > expected {
-            let detail: Vec<String> = found.iter().map(|(line, m)| format!("{line} `{m}`")).collect();
-            errors.push(format!(
-                "{file}: {} std transcendental call(s), the known list allows {expected}: {} (use libm::, or mark `{MARKER} <why>`)",
-                found.len(),
-                detail.join(", ")
-            ));
-        } else if found.len() < expected {
-            errors.push(format!("{file}: {} call(s) left, the known list says {expected}: lower its entry", found.len()));
-        }
-    }
-
     for e in &errors {
         println!("{e}");
     }
-    println!("libm: {total} std transcendental call(s) in the CPU crates all on the known list");
+    println!("libm: {total} platform maths call(s) in the CPU crates");
     if errors.is_empty() {
         Ok(())
     } else {
