@@ -80,8 +80,6 @@ pub fn selectable_languages() -> Vec<LanguageChoice> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeSet, HashMap};
-
     use super::*;
 
     fn placeholder_names(text: &str) -> Vec<String> {
@@ -114,30 +112,39 @@ mod tests {
         assert!(validate_preference("xx").is_err());
     }
 
+    /// Messages that hold a product name, the same in every language.
+    const NAMES: &[&str] = &["settings.group_app", "settings.updates_skipped_version", "links.discord_label", "links.discord_name"];
+
+    /// The catalogue installed for `id` carries every English message (`locales/en.json` and the
+    /// `workspace.*` ones), non-empty, with English's placeholders, and translated except for
+    /// [`NAMES`] and the words the language spells as English does (`same_as_english`).
+    fn assert_catalog_covers_english(id: &str, same_as_english: &[&str]) {
+        crate::theme::install_look();
+        let catalog = solidcraft_ui_text::Locale::for_language(id).catalog();
+        assert_eq!(catalog.id, id, "no catalogue is installed for {id}");
+        let messages: solidcraft_ui_text::Messages =
+            serde_json::from_str(catalog.source).unwrap_or_else(|e| panic!("locales/{id}.json is not a catalogue: {e}"));
+
+        let (mut english, mut missing) = (0, Vec::new());
+        solidcraft_ui_text::each_english_message(|key, en_val| {
+            english += 1;
+            let Some(value) = messages.get(key) else {
+                missing.push(key.to_owned());
+                return;
+            };
+            assert!(!value.trim().is_empty(), "{key} has an empty translation in locales/{id}.json");
+            assert_eq!(placeholder_names(en_val), placeholder_names(value), "placeholder mismatch for {key} in locales/{id}.json");
+            if !NAMES.contains(&key) && !same_as_english.contains(&key) {
+                assert_ne!(en_val, value, "{key} was left untranslated in locales/{id}.json");
+            }
+        });
+        assert!(english > 0, "no English messages are installed");
+        assert!(missing.is_empty(), "missing translations in locales/{id}.json: {missing:?}");
+    }
+
     #[test]
     fn hebrew_catalog_covers_all_english_and_workspace_keys() {
-        let en: HashMap<String, String> = serde_json::from_str(include_str!("../locales/en.json")).expect("valid en.json");
-        let he: HashMap<String, String> = serde_json::from_str(include_str!("../locales/he.json")).expect("valid he.json");
-
-        let mut expected_keys: BTreeSet<String> = en.keys().cloned().collect();
-        for w in fieldcraft_engine::catalogue::Workspace::ALL {
-            let (about, tabs) = crate::toolbar::workspace_ids(w);
-            expected_keys.insert(about.to_owned());
-            expected_keys.insert(tabs.to_owned());
-        }
-
-        let missing: Vec<&String> = expected_keys.iter().filter(|k| !he.contains_key(k.as_str())).collect();
-        assert!(missing.is_empty(), "missing Hebrew translations in locales/he.json: {missing:?}");
-
-        for (key, he_val) in &he {
-            assert!(!he_val.trim().is_empty(), "{key} has empty Hebrew translation");
-            if let Some(en_val) = en.get(key) {
-                assert_eq!(placeholder_names(en_val), placeholder_names(he_val), "placeholder mismatch for {key}");
-                if !matches!(key.as_str(), "settings.group_app" | "settings.updates_skipped_version" | "links.discord_label" | "links.discord_name") {
-                    assert_ne!(en_val, he_val, "{key} was left untranslated in locales/he.json");
-                }
-            }
-        }
+        assert_catalog_covers_english(HEBREW, &[]);
     }
 
     #[test]
