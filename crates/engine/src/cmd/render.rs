@@ -99,7 +99,7 @@ fn number(v: f64) -> String {
     if !v.is_finite() {
         return "–".into();
     }
-    let digits = if v == 0.0 { 0 } else { (3 - v.abs().log10().floor() as i32).clamp(0, 12) as usize };
+    let digits = if v == 0.0 { 0 } else { (3 - libm::log10(v.abs()).floor() as i32).clamp(0, 12) as usize };
     let text = format!("{v:.digits$}");
     let text = if text.contains('.') { text.trim_end_matches('0').trim_end_matches('.').to_string() } else { text };
     if text == "-0" { "0".into() } else { text }
