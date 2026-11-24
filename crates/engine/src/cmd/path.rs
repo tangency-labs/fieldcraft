@@ -12,7 +12,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session, StepResult};
 pub const PATH: CommandSpec = CommandSpec {
     id: "results.path",
     label: "Path Plot",
-    params: r#"{"step":"Load","field":"stress_xx","points":[[20,5,20],[80,5,20]],"samples":101,"frame":null,"mode":null,"path":"top-fibre.csv"} — interpolate the existing nodal scalar field with the containing solid element's shape functions along 2 to 1000 reference-coordinate polyline points, at equally spaced arc-length stations (2 to 10000 samples, default 101). Supports tet4/tet10/wedge6/pyramid5/hex8/hex20, including curved quadratic geometry; shell, beam, rod and 2D elements in the model are left out. Outside elements gives null, never nearest-node values; unresolved inverse searches are errors. Shared faces use the lowest element label. Stale results, unavailable intermediate fields and categorical contact_status are refused. Nonlinear stored frames give displacements, and stress and contact fields where the step saved them; temperature requires omitted/null frame. `frame` is from 0 and `mode` from 1; omitted/null frame selects the final state, and omitted/null mode selects mode 1. Optional CSV is distance,x,y,z,value in the same display units as the reply, with empty values at gaps. Replies {step,field,distance,xyz,values,elements,units}. The index is cached per exact result/definition; caps are 500000 mesh elements, 2000000 result nodes, 96 MiB index allocations, 4096 candidates per station, 2000000 total BVH visits, 14000000 separately capped construction basis/enclosure work units and 4000000 query basis/enclosure work units. Construction and sampling report progress and support cancellation."#,
+    params: r#"{"step":"Load","field":"stress_xx","points":[[20,5,20],[80,5,20]],"samples":101,"frame":null,"mode":null,"path":"top-fibre.csv"} — interpolate the existing nodal scalar field with the containing solid element's shape functions along 2 to 1000 reference-coordinate polyline points, at equally spaced arc-length stations (2 to 10000 samples, default 101). Supports tet4/tet10/wedge6/pyramid5/hex8/hex20, including curved quadratic geometry; shell, beam, rod and 2D elements in the model are left out. Outside elements gives null, never nearest-node values; unresolved inverse searches are errors. Shared faces use the lowest element label. Stale results, unavailable intermediate fields and categorical contact_status are refused. The fatigue fields of a linear static step with a fatigue assessment (fatigue_log_life, fatigue_damage, fatigue_safety_factor) plot too. Nonlinear stored frames give displacements, and stress and contact fields where the step saved them; temperature requires omitted/null frame. `frame` is from 0 and `mode` from 1; omitted/null frame selects the final state, and omitted/null mode selects mode 1. Optional CSV is distance,x,y,z,value in the same display units as the reply, with empty values at gaps. Replies {step,field,distance,xyz,values,elements,units}. The index is cached per exact result/definition; caps are 500000 mesh elements, 2000000 result nodes, 96 MiB index allocations, 4096 candidates per station, 2000000 total BVH visits, 14000000 separately capped construction basis/enclosure work units and 4000000 query basis/enclosure work units. Construction and sampling report progress and support cancellation."#,
     form: Some(super::forms::RESULTS_PATH),
     kind: CommandKind::Session,
     requires: &[crate::requirement::Requirement::Result],
@@ -30,7 +30,7 @@ fn optional_index(p: &Value, key: &str) -> Result<Option<usize>> {
     }
 }
 
-fn pick(result: &StepResult, field: Field, p: &Value) -> Result<Pick> {
+fn pick(model: &fieldcraft_model::Model, result: &StepResult, field: Field, p: &Value) -> Result<Pick> {
     if field == Field::ContactStatus {
         return Err(EngineError::invalid(
             "field",
@@ -94,7 +94,7 @@ fn pick(result: &StepResult, field: Field, p: &Value) -> Result<Pick> {
         }
         Kind::Fluid(_) => return Err(EngineError::invalid("step", "path plots currently interpolate solid nodal fields; fluid fields are per cell")),
     }
-    if !Field::available(result).any(|f| f == field) {
+    if !Field::available(result).any(|f| f == field) && !(field.is_fatigue() && crate::results::available_in(model, result).contains(&field)) {
         return Err(EngineError::invalid("field", "field is not available for this solved step"));
     }
     Ok(pick)
@@ -120,7 +120,7 @@ fn path(s: &mut Session, p: &Value) -> Result<Value> {
     let result = current_result(s, &step)?;
     let field_id = p.get("field").filter(|v| !v.is_null()).ok_or_else(|| EngineError::param("field", crate::schema::ProblemKind::Required))?;
     let field = field_id.as_str().and_then(Field::parse).ok_or_else(|| EngineError::invalid("field", "use a supported nodal contour field id"))?;
-    let pick = pick(&result, field, p)?;
+    let pick = pick(&s.model, &result, field, p)?;
     let points = super::points(p, "points", MAX_POINTS)?;
     let samples = super::opt::<usize>(p, "samples")?.unwrap_or(101);
     // Check limits/arclength before a potentially expensive index build or field allocation.
@@ -134,6 +134,15 @@ fn path(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let index = path_index(s, &step, &result)?;
     let values = field_values(&s.model, &result, field, pick)?;
+    // An infinite fatigue life interpolates to no number: say where the plot is infinite (a mark
+    // sampled the same way, at least one half) so that it is not read as "outside the part".
+    let infinite: Option<Vec<Option<bool>>> = if field == Field::FatigueLogLife {
+        let marks: Vec<f64> = values.iter().map(|v| if *v == f64::INFINITY { 1.0 } else { 0.0 }).collect();
+        let m = index.sample(&s.model, &result, field, pick, points.clone(), samples, &marks)?;
+        Some(m.values.iter().map(|v| v.map(|v| v >= 0.5)).collect())
+    } else {
+        None
+    };
     let plot = Arc::new(index.sample(&s.model, &result, field, pick, points, samples, &values)?);
     let shown = |q, v| s.units().express(q, v).map_err(|e| EngineError::Params(e.to_string()));
     let distance = plot.distance.iter().map(|v| shown(Quantity::Length, *v)).collect::<Result<Vec<_>>>()?;
@@ -157,17 +166,31 @@ fn path(s: &mut Session, p: &Value) -> Result<Value> {
     let mut reply = json!({"step":step,"field":field.id(),"frame":pick.frame,"mode":shown_mode,"distance":distance,"xyz":xyz,"values":values,"elements":plot.elements,
         "units":{"distance":s.units().symbol(Quantity::Length),"xyz":s.units().symbol(Quantity::Length),"value":field.unit(&result,s.units())},
         "field_title":field.title(&result,s.units()),"configuration":"reference","samples":samples});
+    if let Some(infinite) = &infinite {
+        reply["infinite_life"] = json!(infinite);
+    }
     if let Some(path) = path {
         fieldcraft_model::progress::check()?;
         let rows = distance
             .iter()
             .zip(&xyz)
             .zip(&values)
-            .map(|((d, p), value)| {
-                vec![Cell::Number(*d), Cell::Number(p[0]), Cell::Number(p[1]), Cell::Number(p[2]), value.map_or(Cell::Empty, Cell::Number)]
+            .enumerate()
+            .map(|(i, ((d, p), value))| {
+                let mut row =
+                    vec![Cell::Number(*d), Cell::Number(p[0]), Cell::Number(p[1]), Cell::Number(p[2]), value.map_or(Cell::Empty, Cell::Number)];
+                if let Some(infinite) = &infinite {
+                    // 1 where the life is infinite (the value is then blank), 0 where it is not.
+                    row.push(infinite.get(i).copied().flatten().map_or(Cell::Empty, |b| Cell::Number(if b { 1.0 } else { 0.0 })));
+                }
+                row
             })
             .collect();
-        let table = Table { header: ["distance", "x", "y", "z", "value"].map(str::to_owned).to_vec(), rows };
+        let mut header = ["distance", "x", "y", "z", "value"].map(str::to_owned).to_vec();
+        if infinite.is_some() {
+            header.push("infinite_life".to_owned());
+        }
+        let table = Table { header, rows };
         fieldcraft_io::fs::write_output(std::path::Path::new(&path), table.csv().as_bytes())?;
         reply["path"] = json!(path);
     }

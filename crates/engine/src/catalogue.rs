@@ -517,6 +517,13 @@ pub static CATALOGUE: &[Capability] = &[
         ],
     ),
     ready("model.material.plasticity", "Plasticity", Properties, "Materials", "Von Mises plasticity: bilinear, hardening table or Johnson–Cook"),
+    ready(
+        "model.material.fatigue",
+        "Fatigue Data",
+        Properties,
+        "Materials",
+        "Stress-life (S-N) data: a Basquin or tabulated curve, endurance limit and strengths, for fatigue post-processing",
+    ),
     variant(
         "model.material.hyperelastic",
         "Hyperelastic",
@@ -779,6 +786,14 @@ pub static CATALOGUE: &[Capability] = &[
         Results,
         "Query",
         "Membrane, bending and peak stresses along a path through a wall (ASME VIII-2 Annex 5-A)",
+    ),
+    ready_more(
+        "results.fatigue",
+        "Fatigue",
+        Results,
+        "Query",
+        "Stress-life fatigue of a linear static step: life, damage and safety factor under a cycled load or a rainflow-counted history",
+        &["model.fatigue.set", "model.fatigue.delete"],
     ),
     soon("results.free_body", "Free Body", Results, "Query", "M9", "Free-body forces across a cut"),
     ready("results.xy", "XY Plot", Results, "Plots", "Plot a quantity against the load factor, time or mode"),

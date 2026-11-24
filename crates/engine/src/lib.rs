@@ -17,6 +17,7 @@ pub mod bug_report;
 pub mod catalogue;
 pub mod cmd;
 pub mod crash;
+pub mod fatigue;
 pub mod flow;
 pub mod logfile;
 pub mod machine;

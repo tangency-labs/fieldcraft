@@ -24,7 +24,7 @@ pub const DEFORMED: CommandSpec = CommandSpec {
 pub const CONTOUR: CommandSpec = CommandSpec {
     id: "results.contour",
     label: "Contours",
-    params: r#"{"step": "Load", "field": "von_mises", "bands": 12, "range"?: {"min"?: 0, "max"?: 80} | "auto"} — contours of a nodal field: displacement, displacement_x/y/z, velocity (explicit and fluid steps), pressure (fluid steps), temperature (thermal frames), wall_heat_flux (signed face average on thermal fluid obstacles), von_mises, max/mid/min_principal, stress_xx/yy/zz/xy/xz/yz (stresses for static steps), contact_pressure, contact_gap, contact_status (0 open, 1 closed or stick, 2 slip), contact_shear, contact_slip (friction; nonlinear static steps with contact, at the contacts' secondary surfaces); "none" turns them off; 2 to 24 bands; `range` clamps the legend (a bound left out, null or "auto" follows the field; values above `max` are drawn in the over colour), kept until the field changes"#,
+    params: r#"{"step": "Load", "field": "von_mises", "bands": 12, "range"?: {"min"?: 0, "max"?: 80} | "auto"} — contours of a nodal field: displacement, displacement_x/y/z, velocity (explicit and fluid steps), pressure (fluid steps), temperature (thermal frames), wall_heat_flux (signed face average on thermal fluid obstacles), von_mises, max/mid/min_principal, stress_xx/yy/zz/xy/xz/yz (stresses for static steps), contact_pressure, contact_gap, contact_status (0 open, 1 closed or stick, 2 slip), contact_shear, contact_slip (friction; nonlinear static steps with contact, at the contacts' secondary surfaces), fatigue_log_life, fatigue_damage, fatigue_safety_factor (linear static steps with a fatigue assessment, model.fatigue.set: log₁₀ of the life in cycles or blocks, Miner damage per cycle or block, safety factor against the endurance limit; infinite life drawn in the top band); "none" turns them off; 2 to 24 bands; `range` clamps the legend (a bound left out, null or "auto" follows the field; values above `max` are drawn in the over colour), kept until the field changes"#,
     form: Some(super::forms::CONTOUR),
     kind: CommandKind::Session,
     requires: &[Requirement::Result],
@@ -247,8 +247,16 @@ fn contour(s: &mut Session, p: &Value) -> Result<Value> {
         ),
     };
     if let (Some(f), Some((r, _))) = (field, s.latest_result(&step))
-        && !Field::available(r).any(|a| a == f)
+        && !crate::results::available_in(&s.model, r).contains(&f)
     {
+        if f.is_fatigue() {
+            // Say why: no assessment, a step that is not linear static, no fatigue data.
+            let e = crate::fatigue::evaluate(&s.model, r, Some(&[]))?;
+            if f == Field::FatigueLogLife && e.once {
+                return Err(EngineError::Params(crate::fatigue::ONCE_HAS_NO_LIFE.into()));
+            }
+            return Err(EngineError::Params(format!("{} is not available for step `{step}`: no material in use has an endurance limit", f.label())));
+        }
         if f == Field::Temperature && matches!(r.kind(), Kind::Fluid(_)) {
             return Err(EngineError::Params(format!(
                 "temperature is not available for fluid step `{step}`: its frames have no complete temperature field (isothermal flow)"
