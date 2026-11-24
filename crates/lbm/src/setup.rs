@@ -657,6 +657,14 @@ impl Setup {
                 "wall_model `spalding_bounce_halfway` is disabled because its wall-row checkerboard mode grows; remove `wall_model` for resolved no-slip walls, or explicitly choose and validate another wall treatment. `spalding_bounce` uses a different, on-node wall location".into(),
             ));
         }
+        if turbulence
+            .as_ref()
+            .is_some_and(|t| t.wall_model() == Some(WallModel::SpalartAllmarasBounce) && !matches!(t, Turbulence::SpalartAllmaras { .. }))
+        {
+            return Err(Error::Invalid(
+                "wall_model `spalart_allmaras_bounce` is the Spalart–Allmaras model's own wall law: use it with `spalart_allmaras` turbulence, or `spalding_bounce` with a subgrid model".into(),
+            ));
+        }
         // Interpolated walls replace the bounce-back of the obstacles' links; the wall models and
         // the free surface rebuild or reflect those populations their own way.
         if walls.is_interpolated() {
@@ -719,15 +727,7 @@ impl Setup {
                                 SA_INFLOW_RATIO.end()
                             )));
                         }
-                        // A wall law's rate would replace ν_t at the wall cell while ν̃ keeps its own
-                        // wall condition (ν̃ = 0, d = ½) at a cell the law means for y⁺ 30 to 100:
-                        // the two disagree until a wall law is chosen for the model.
-                        if t.wall_model().is_some() {
-                            return Err(Error::Invalid(
-                                "not supported yet: a wall model (`wall_model`) with the Spalart–Allmaras model (`spalart_allmaras`); resolve the wall (the first cell at y⁺ 1 or below) and leave `wall_model` out".into(),
-                            ));
-                        }
-                        (0.0, 0.0, Some(SaSetup { inflow_ratio }), prandtl, None, None)
+                        (0.0, 0.0, Some(SaSetup { inflow_ratio }), prandtl, None, t.wall_model())
                     }
                 }
             }
@@ -1001,8 +1001,10 @@ impl Setup {
             tau_plus.clamp(r.tau[0], r.tau[1])
         } else {
             // The Spalart–Allmaras model keeps the laminar floor: its ν_t goes to 0 at a wall
-            // (ν̃ = 0 there), so the wall cells, the most sheared, keep the fluid's own τ⁺.
-            let eddy = turbulence.as_ref().is_some_and(|t| !matches!(t, Turbulence::SpalartAllmaras { .. }));
+            // (ν̃ = 0 there), so the wall cells, the most sheared, keep the fluid's own τ⁺. With a
+            // wall model the first fluid node's ν_t is the wall law's (the wall function), so the
+            // eddy floor applies.
+            let eddy = turbulence.as_ref().is_some_and(|t| !matches!(t, Turbulence::SpalartAllmaras { .. }) || t.wall_model().is_some());
             let min_tau = if eddy { MIN_TAU_TURBULENT } else { MIN_TAU };
             if !(tau_plus >= min_tau) {
                 let model = if turbulence.is_none() { ", or add a turbulence model (`turbulence`)" } else { "" };
