@@ -96,7 +96,7 @@ impl Type {
             Family::Shell => SectionKind::Shell { thickness, offset: 0.0, points: 5 },
             Family::Stress => SectionKind::PlaneStress { thickness },
             Family::Strain => SectionKind::PlaneStrain { thickness },
-            Family::Axis => SectionKind::Axisymmetric {},
+            Family::Axis => SectionKind::Axisymmetric { twist: false },
             Family::Rod | Family::PlanarRod => SectionKind::Rod { area: thickness },
             Family::Beam | Family::PlanarBeam => {
                 SectionKind::Beam { profile: fieldcraft_model::BeamProfile::Circle { radius: thickness }, orientation: [0., 0., -1.] }

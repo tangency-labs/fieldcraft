@@ -149,7 +149,7 @@ impl Quantities for Section {
     fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
         let Section { set: _, material: _, kind, formulation: _ } = self;
         match kind {
-            SectionKind::Solid {} | SectionKind::Axisymmetric {} => {}
+            SectionKind::Solid {} | SectionKind::Axisymmetric { .. } => {}
             SectionKind::Shell { thickness, offset: _, points: _ } => f(Q::Length, thickness),
             SectionKind::Beam { profile, orientation: _ } => match profile {
                 BeamProfile::Rectangle { width, height } => {

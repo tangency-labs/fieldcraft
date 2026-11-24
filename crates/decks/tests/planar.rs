@@ -42,7 +42,7 @@ fn plate(kind: SectionKind, element: ElementKind, formulation: Formulation) -> M
     m.add_section("plate", Section { set: "all".into(), material: "Steel".into(), kind, formulation }).unwrap();
     m.add_boundary_condition("hold", BoundaryCondition::Fixed { target: Target::Set("left".into()) }).unwrap();
     m.add_load("press", Load::Pressure { set: "right".into(), magnitude: 5.0 }).unwrap();
-    let axis = if kind == (SectionKind::Axisymmetric {}) { [0.0, 1.0, 0.0] } else { [0.0, 0.0, 1.0] };
+    let axis = if kind == (SectionKind::Axisymmetric { twist: false }) { [0.0, 1.0, 0.0] } else { [0.0, 0.0, 1.0] };
     m.add_load("spin", Load::Centrifugal { angular_velocity: 100.0, point: [0.0; 3], axis, set: None }).unwrap();
     let mut s = Step::new("Load", Procedure::Static {});
     s.boundary_conditions.insert("hold".into());
@@ -61,7 +61,8 @@ fn unsupported(r: Result<String, Error>) -> String {
 #[test]
 fn production_reader_retains_planar_sections_and_edge_surfaces() {
     use fieldcraft_model::units::Preset;
-    for kind in [SectionKind::PlaneStress { thickness: 2.0 }, SectionKind::PlaneStrain { thickness: 2.0 }, SectionKind::Axisymmetric {}] {
+    for kind in [SectionKind::PlaneStress { thickness: 2.0 }, SectionKind::PlaneStrain { thickness: 2.0 }, SectionKind::Axisymmetric { twist: false }]
+    {
         for integration in [Integration::Full, Integration::Reduced] {
             let m = plate(kind, ElementKind::Quad4, Formulation { integration, ..Formulation::default() });
             let written = abaqus::write(&m).unwrap();
@@ -82,7 +83,7 @@ fn abaqus_writes_plane_and_axisymmetric_elements() {
         (SectionKind::PlaneStress { thickness: 2.0 }, full, "CPS4"),
         (SectionKind::PlaneStress { thickness: 2.0 }, im, "CPS4I"),
         (SectionKind::PlaneStrain { thickness: 1.0 }, red, "CPE4R"),
-        (SectionKind::Axisymmetric {}, im, "CAX4I"),
+        (SectionKind::Axisymmetric { twist: false }, im, "CAX4I"),
     ] {
         let deck = abaqus::write(&plate(kind, ElementKind::Quad4, f)).unwrap();
         assert!(deck.contains(&format!("*ELEMENT, TYPE={want}\n")), "{want}\n{deck}");
@@ -91,7 +92,7 @@ fn abaqus_writes_plane_and_axisymmetric_elements() {
         assert!(deck.contains("right, P, 5.0\n"), "{deck}");
         assert!(deck.contains("all, CENTRIF, 10000.0, 0.0, 0.0, 0.0, "), "{deck}");
         let section = match kind {
-            SectionKind::Axisymmetric {} => "*SOLID SECTION, ELSET=all, MATERIAL=Steel\n,\n",
+            SectionKind::Axisymmetric { .. } => "*SOLID SECTION, ELSET=all, MATERIAL=Steel\n,\n",
             SectionKind::PlaneStress { .. } => "*SOLID SECTION, ELSET=all, MATERIAL=Steel\n2.0\n",
             _ => "*SOLID SECTION, ELSET=all, MATERIAL=Steel\n1.0\n",
         };
@@ -100,7 +101,7 @@ fn abaqus_writes_plane_and_axisymmetric_elements() {
     let deck = abaqus::write(&plate(SectionKind::PlaneStrain { thickness: 1.0 }, ElementKind::Tri3, full)).unwrap();
     assert!(deck.contains("*ELEMENT, TYPE=CPE3\n") && deck.contains("3, S2\n"), "{deck}");
     // Axisymmetric body forces are radial and axial.
-    let mut m = plate(SectionKind::Axisymmetric {}, ElementKind::Quad4, full);
+    let mut m = plate(SectionKind::Axisymmetric { twist: false }, ElementKind::Quad4, full);
     m.add_load("swell", Load::BodyForce { set: "all".into(), vector: [1.0, 2.0, 0.0] }).unwrap();
     m.set_load_active("Load", "swell", true).unwrap();
     let deck = abaqus::write(&m).unwrap();
@@ -130,7 +131,7 @@ fn nastran_writes_plane_stress_membranes_and_refuses_the_rest() {
     let forces: Vec<&str> = deck.lines().filter(|l| l.starts_with("FORCE")).collect();
     assert_eq!(forces.len(), 2, "{deck}");
     assert!(deck.contains("RFORCE"), "{deck}");
-    for kind in [SectionKind::PlaneStrain { thickness: 1.0 }, SectionKind::Axisymmetric {}] {
+    for kind in [SectionKind::PlaneStrain { thickness: 1.0 }, SectionKind::Axisymmetric { twist: false }] {
         let why = unsupported(nastran::write(&plate(kind, ElementKind::Quad4, Formulation::default())));
         assert!(why.contains("differ between dialects"), "{why}");
     }
@@ -156,7 +157,7 @@ fn lsdyna_writes_one_point_plane_forms_and_refuses_the_rest() {
         other => panic!("{other:?}"),
     };
     assert!(why(&plate(SectionKind::PlaneStress { thickness: 2.0 }, ElementKind::Quad4, Formulation::default())).contains("one point"));
-    assert!(why(&plate(SectionKind::Axisymmetric {}, ElementKind::Tri3, red)).contains("axisymmetric"));
+    assert!(why(&plate(SectionKind::Axisymmetric { twist: false }, ElementKind::Tri3, red)).contains("axisymmetric"));
     assert!(why(&plate(SectionKind::PlaneStrain { thickness: 2.0 }, ElementKind::Tri3, red)).contains("per unit thickness"));
     assert!(why(&plate(SectionKind::PlaneStrain { thickness: 1.0 }, ElementKind::Tri3, red)).contains("centrifugal"));
 }
@@ -258,7 +259,7 @@ fn edge_pressures_are_the_consistent_nodal_forces() {
     let f = edge_pressure_loads(&m, &r, ["press"]).unwrap();
     assert_eq!(f.len(), 2);
     assert!(f.values().all(|v| (v + 5.0).abs() < 1e-12), "{f:?}");
-    let m = plate(SectionKind::Axisymmetric {}, ElementKind::Quad4, Formulation::default());
+    let m = plate(SectionKind::Axisymmetric { twist: false }, ElementKind::Quad4, Formulation::default());
     let r = m.resolve().unwrap();
     let total: f64 = edge_pressure_loads(&m, &r, ["press"]).unwrap().values().sum();
     assert!((total + 5.0 * 6.0 * std::f64::consts::PI).abs() < 1e-10, "{total}");

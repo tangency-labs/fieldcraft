@@ -652,7 +652,9 @@ fn parts(d: &mut Deck, plan: &Plan) -> Result<()> {
                 d.header(&["t1", "t2", "t3", "t4"]);
                 d.card([Field::from(thickness), Field::from(thickness), Field::from(thickness), Field::from(thickness)]);
             }
-            SectionKind::Axisymmetric {} => return Err(broken(format!("section `{}`: axisymmetric sections have no LS-DYNA formulation", p.name))),
+            SectionKind::Axisymmetric { .. } => {
+                return Err(broken(format!("section `{}`: axisymmetric sections have no LS-DYNA formulation", p.name)));
+            }
         }
     }
     for (h, hgid) in &plan.hourglasses {

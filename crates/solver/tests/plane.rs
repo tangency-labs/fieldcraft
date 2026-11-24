@@ -149,7 +149,7 @@ fn variants() -> Vec<(ElementKind, Formulation, &'static str)> {
 
 const STRESS: SectionKind = SectionKind::PlaneStress { thickness: 0.5 };
 const STRAIN: SectionKind = SectionKind::PlaneStrain { thickness: 1.0 };
-const AXI: SectionKind = SectionKind::Axisymmetric {};
+const AXI: SectionKind = SectionKind::Axisymmetric { twist: false };
 
 /// Displacement patch test on a distorted 2 × 2 patch over [1, 2] × [0, 1]: a linear
 /// displacement prescribed on the boundary is reproduced inside, with exactly constant strain
@@ -589,8 +589,10 @@ fn thermal_expansion_in_every_theory() {
     // σzz = −EαΔT and the in-plane strain is (1 + ν)αΔT.
     let (e, nu, alpha, dt) = (2e5, 0.3, 1.2e-5, 80.0);
     for (kind, f, name) in variants() {
-        for section in [SectionKind::PlaneStress { thickness: 0.5 }, SectionKind::PlaneStrain { thickness: 0.5 }, SectionKind::Axisymmetric {}] {
-            let axisymmetric = matches!(section, SectionKind::Axisymmetric {});
+        for section in
+            [SectionKind::PlaneStress { thickness: 0.5 }, SectionKind::PlaneStrain { thickness: 0.5 }, SectionKind::Axisymmetric { twist: false }]
+        {
+            let axisymmetric = matches!(section, SectionKind::Axisymmetric { .. });
             let mut g = grid([2, 2], kind, |p| [0.5 + 2.0 * p[0] + 0.2 * p[1], p[1]]);
             g.define(section, e, nu, None, f, Procedure::Static {});
             heat(&mut g, alpha, dt);

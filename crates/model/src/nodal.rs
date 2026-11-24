@@ -263,6 +263,31 @@ impl Model {
         Ok(out)
     }
 
+    /// The nodal weights `∫ N_i r e dL` of a set of 2D element edges of an axisymmetric model
+    /// (r = x, e = 2πr), summed per node: the consistent nodal hoop forces of a hoop shear
+    /// traction equal to the radius. Their sum weighted by the nodes' radii is the polar moment
+    /// `∫ r² dA` of the surface the edges stand for.
+    pub fn edge_torque_weights(&self, edges: &[ElementEdge], planar: &BTreeMap<u32, Extent>) -> Result<BTreeMap<u32, f64>> {
+        let mut out: BTreeMap<u32, f64> = BTreeMap::new();
+        for &g in edges {
+            let extent = planar.get(&g.element).copied().ok_or_else(|| Error::Invalid(format!("element {} is not a 2D element", g.element)))?;
+            let labels = self.edge_nodes(g).ok_or_else(|| Error::NotFound(format!("element {} edge {}", g.element, g.edge)))?;
+            let xyz: Vec<[f64; 3]> =
+                labels.iter().map(|n| self.node(*n).map(|p| p.xyz).ok_or_else(|| Error::NotFound(format!("node {n}")))).collect::<Result<_>>()?;
+            integrate_edge(&xyz, |n, x, t| {
+                let dl = (t[0] * t[0] + t[1] * t[1] + t[2] * t[2]).sqrt() * extent.at(x);
+                for (label, ni) in labels.iter().zip(n) {
+                    *out.entry(*label).or_default() += ni * x[0] * dl;
+                }
+            })
+            .map_err(|e| match e {
+                Error::Invalid(m) => Error::Invalid(format!("element {} edge {}: {m}", g.element, g.edge)),
+                e => e,
+            })?;
+        }
+        Ok(out)
+    }
+
     /// The nodal weights `∫ N_i dA` of a set of element faces, summed per node. Their sum is the
     /// faces' area.
     pub fn surface_weights(&self, faces: &[ElementFace]) -> Result<BTreeMap<u32, f64>> {

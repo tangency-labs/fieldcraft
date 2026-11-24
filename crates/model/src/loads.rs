@@ -3,7 +3,9 @@
 //! In a 2D model (plane stress, plane strain, axisymmetric sections) loads lie in the XY plane:
 //! surface loads act on the element edges of the set, forces are totals over the thickness (or
 //! over the full circumference for axisymmetric models), and a vector with a Z component is an
-//! error.
+//! error. In an axisymmetric model with twist a force or traction may have a Z (hoop) component,
+//! and a moment on a set is a torque about the Y axis, spread over element edges by the weights
+//! of a shear that grows with the radius (about r² ds per edge).
 
 use std::collections::BTreeMap;
 
@@ -43,7 +45,8 @@ impl SurfaceRadiation {
 pub enum Distribution {
     /// The vector is the total. On a set with element faces it is split by the faces' consistent
     /// nodal weights (area-weighted, [`Model::surface_weights`]); on a set of nodes only, equally.
-    /// The total is the same on every mesh of the set.
+    /// The total is the same on every mesh of the set. A torque in an axisymmetric model with twist
+    /// is spread over element edges by the weights of a shear growing with the radius (Saint-Venant's distribution, F_i = T q_i / J with q_i = ∫ N_i r 2πr ds).
     #[default]
     Total,
     /// The vector is applied at every node of the set, so the total grows with the number of

@@ -163,7 +163,7 @@ pub(crate) fn elform(kind: ElementKind, section: &SectionKind, f: Formulation, s
             ElementKind::Beam2 => plain(2),
             _ => no("a beam section cannot hold"),
         },
-        SectionKind::Axisymmetric {} => {
+        SectionKind::Axisymmetric { .. } => {
             no("axisymmetric sections are not written to LS-DYNA decks yet (its axisymmetric forms count loads per radian; not verified):")
         }
         SectionKind::PlaneStress { .. } | SectionKind::PlaneStrain { .. } => {

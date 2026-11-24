@@ -81,6 +81,9 @@ pub struct Resolved {
     /// How each element of a 2D section (plane stress, plane strain, axisymmetric) extends out
     /// of its plane; empty for a model without 2D sections. A model is 2D or not as a whole.
     pub planar: BTreeMap<u32, Extent>,
+    /// Whether the model's axisymmetric sections carry twist (the hoop displacement as a third
+    /// unknown); a model has it in all of them or in none.
+    pub twist: bool,
 }
 
 impl Resolved {
@@ -254,6 +257,7 @@ impl Model {
                 }
             }
         }
+        resolved.twist = self.sections.values().any(|s| s.kind.twist());
         let empty = crate::ResolvedSet::default();
         let set_of = |name: &str| resolved.sets.get(name).unwrap_or(&empty);
 
@@ -288,7 +292,7 @@ impl Model {
             }
             let fits = |k: ElementKind| match sec.kind {
                 SectionKind::Solid {} => k.dimension() == 3,
-                SectionKind::Shell { .. } | SectionKind::PlaneStress { .. } | SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric {} => {
+                SectionKind::Shell { .. } | SectionKind::PlaneStress { .. } | SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric { .. } => {
                     k.dimension() == 2
                 }
                 SectionKind::Beam { .. } => k == ElementKind::Beam2,
@@ -518,7 +522,7 @@ impl Model {
                 Err(m) => d.error(&subject, m),
             }
             match load {
-                Load::Moment { target, .. } if !has_rotations(target) => {
+                Load::Moment { target, .. } if !has_rotations(target) && !(resolved.twist && matches!(target, Target::Set(_))) => {
                     d.error(&subject, format!("{target} has no nodes with rotations; apply the moment to a reference point coupled to it"))
                 }
                 Load::Pressure { set, .. } if set_of(set).faces.is_empty() && resolved.planar_edges(set).is_empty() => {
@@ -563,7 +567,7 @@ impl Model {
                 _ => {}
             }
             if resolved.is_planar() {
-                Self::check_planar_load(load, resolved.extent(), &subject, &mut d);
+                Self::check_planar_load(load, resolved.extent(), resolved.twist, &subject, &mut d);
             }
         }
 
@@ -830,6 +834,9 @@ impl Model {
             return Err(format!("set `{name}` has no nodes"));
         }
         let edges = if set.faces.is_empty() { r.planar_edges(name) } else { Vec::new() };
+        if r.twist && matches!(load, Load::Moment { .. }) {
+            return self.torque_values(name, set, &edges, vector, distribution, r).map(Some);
+        }
         Ok(Some(match distribution {
             Distribution::PerNode => set.nodes.iter().map(|n| (*n, vector)).collect(),
             Distribution::Total if set.faces.is_empty() && edges.is_empty() => {
@@ -846,6 +853,40 @@ impl Model {
                 w.into_iter().map(|(n, a)| (n, scale(vector, a / area))).collect()
             }
         }))
+    }
+
+    /// A torque about the axis of an axisymmetric model with twist as nodal ring torques
+    /// (moments about Y, summing to `vector`). On element edges the hoop shear grows with the
+    /// radius (Saint-Venant's distribution, the forces a rigid rotation of the surface works
+    /// against): node i takes rᵢ qᵢ / Σ rⱼ qⱼ with qᵢ = ∫ Nᵢ r 2πr dL
+    /// ([`Model::edge_torque_weights`]). On nodes alone the shares are equal. A node on the axis
+    /// has no lever arm.
+    fn torque_values(
+        &self,
+        name: &str,
+        set: &ResolvedSet,
+        edges: &[crate::ElementEdge],
+        vector: [f64; 3],
+        distribution: Distribution,
+        r: &Resolved,
+    ) -> std::result::Result<Vec<(u32, [f64; 3])>, String> {
+        let radius = |n: u32| self.nodes.get(&n).map(|p| p.xyz[0]).ok_or_else(|| format!("load node {n} of set `{name}` is not in the model"));
+        let scale = |k: f64| vector.map(|c| c * k);
+        if distribution == Distribution::Total && !edges.is_empty() {
+            let q = self.edge_torque_weights(edges, &r.planar).map_err(|e| e.to_string())?;
+            let polar = q.iter().try_fold(0.0, |acc, (n, w)| radius(*n).map(|r| acc + r * w))?;
+            if !(polar > 0.0 && polar.is_finite()) {
+                return Err(format!("the edges of set `{name}` lie on the axis, where a torque has no lever arm"));
+            }
+            return q.into_iter().map(|(n, w)| Ok((n, scale(radius(n)? * w / polar)))).collect();
+        }
+        for n in &set.nodes {
+            if !(radius(*n)? > 0.0) {
+                return Err(format!("node {n} of set `{name}` is on the axis, where a torque has no lever arm (apply it to a set of element edges)"));
+            }
+        }
+        let share = if distribution == Distribution::PerNode { 1.0 } else { 1.0 / set.nodes.len() as f64 };
+        Ok(set.nodes.iter().map(|n| (*n, scale(share))).collect())
     }
 
     /// The rules of a 2D model: one kind of 2D model (plane or axisymmetric) and nothing else but
@@ -871,6 +912,10 @@ impl Model {
         }
         if axisymmetric && r.planar.values().any(|e| *e != Extent::Revolved) {
             d.error("model", "axisymmetric and plane (stress or strain) sections cannot be mixed in one model");
+        }
+        let twists = |on: bool| self.sections.values().any(|s| matches!(s.kind, SectionKind::Axisymmetric { twist } if twist == on));
+        if twists(true) && twists(false) {
+            d.error("model", "axisymmetric sections with and without twist cannot be mixed in one model");
         }
         let (mut off_plane, mut negative_radius, mut clockwise) = (Vec::new(), Vec::new(), Vec::new());
         for &label in r.planar.keys() {
@@ -937,12 +982,20 @@ impl Model {
     }
 
     /// A load in a 2D model: in the XY plane, and a rotation about the axis the model can carry.
-    fn check_planar_load(load: &Load, extent: Option<Extent>, subject: &str, d: &mut Diagnostics) {
+    /// With twist the Z component of a force or traction is the hoop one (a ring force, a hoop
+    /// shear traction), and a moment is a torque about the Y axis.
+    fn check_planar_load(load: &Load, extent: Option<Extent>, twist: bool, subject: &str, d: &mut Diagnostics) {
         let in_plane = match load {
-            Load::Force { vector, .. } | Load::Traction { vector, .. } | Load::BodyForce { vector, .. } => vector[2] == 0.0,
+            // With twist the Z component is the hoop one: a ring force or a hoop shear traction.
+            Load::Force { vector, .. } | Load::Traction { vector, .. } => twist || vector[2] == 0.0,
+            Load::BodyForce { vector, .. } => vector[2] == 0.0,
             Load::Gravity { acceleration, .. } => acceleration[2] == 0.0,
             Load::Moment { vector, .. } => {
-                if vector[0] != 0.0 || vector[1] != 0.0 {
+                if twist {
+                    if vector[0] != 0.0 || vector[2] != 0.0 {
+                        d.error(subject, "in an axisymmetric model with twist a moment is a torque about the Y axis; this one has X or Z components");
+                    }
+                } else if vector[0] != 0.0 || vector[1] != 0.0 {
                     d.error(subject, "in a 2D model a moment is about the Z axis; this moment has an X or Y component");
                 }
                 true
