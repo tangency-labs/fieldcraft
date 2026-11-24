@@ -93,7 +93,10 @@
 //! | beam2, rod2 | | | B31, B33 (Euler–Bernoulli) | T3D2 |
 //! | rod3 | | | | T3D3 |
 //!
-//! Trusses in a 2D model are T2D2 and T2D3.
+//! Trusses in a 2D model are T2D2 and T2D3, and beams B21: the planar beam, with degrees of
+//! freedom 1, 2 and 6, whose first section axis Abaqus fixes at (0, 0, −1), out of the plane.
+//! The model's planar beams have their orientation along Z, so the profile is written as it is
+//! and the axis as (0, 0, −1) (the library profiles are doubly symmetric: either way is the same).
 //!
 //! Pipes under a pipe pressure: the beam2 elements of a section whose profile is a pipe with a
 //! bore, when a pipe pressure loads any of them, are `PIPE31` with
@@ -205,7 +208,7 @@ pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<Stri
     d.discrete_elements(&discrete);
     d.sets(model, r)?;
     d.materials(model)?;
-    d.sections(model, &pressurised)?;
+    d.sections(model, r, &pressurised)?;
     d.discrete_properties(&discrete)?;
     d.couplings(model, r)?;
     d.contacts(model, r)?;
@@ -274,6 +277,12 @@ pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result
     Ok(if f.hybrid { format!("{plain}H") } else { plain.to_string() })
 }
 
+/// The element type of a truss or beam in a 2D model: the planar counterpart (T2D2, T2D3, B21)
+/// of the type [`element_type`] gives.
+pub(crate) fn planar_line_type(t: String) -> String {
+    t.replacen("T3D", "T2D", 1).replacen("B31", "B21", 1)
+}
+
 /// Whether the model has a nonlinear static step: hyperelastic materials are then written as
 /// `*HYPERELASTIC` (in a deck of linear steps their elastic constants are the whole of it).
 fn has_nonlinear_step(model: &Model) -> bool {
@@ -326,10 +335,19 @@ fn elements_by_type<'m>(model: &'m Model, r: &Resolved, pressurised: &BTreeSet<&
             }
         }
         for (kind, elements) in by_kind {
-            // Trusses of a 2D model are the planar ones.
-            let planar = |t: String| if r.is_planar() { t.replacen("T3D", "T2D", 1) } else { t };
-            let pipe = |t: String| if t == "B31" && pressurised.contains(name.as_str()) { "PIPE31".to_string() } else { t };
-            match element_type(kind, section).map(planar).map(pipe) {
+            // Trusses and beams of a 2D model are the planar ones (the model check refuses an
+            // Euler-Bernoulli beam and a pipe pressure there); a pipe under pressure is PIPE31.
+            let pressurised = pressurised.contains(name.as_str());
+            let line = |t: String| {
+                if r.is_planar() {
+                    planar_line_type(t)
+                } else if t == "B31" && pressurised {
+                    "PIPE31".to_string()
+                } else {
+                    t
+                }
+            };
+            match element_type(kind, section).map(line) {
                 Ok(t) => {
                     count += elements.len();
                     by_type.entry(t).or_default().extend(elements);
@@ -1017,7 +1035,7 @@ impl Deck {
     }
 
     /// `pressurised`: the pipe sections under a pipe pressure ([`pressurised_sections`]).
-    fn sections(&mut self, model: &Model, pressurised: &BTreeSet<&str>) -> Result<()> {
+    fn sections(&mut self, model: &Model, r: &Resolved, pressurised: &BTreeSet<&str>) -> Result<()> {
         if model.sections().is_empty() {
             return Ok(());
         }
@@ -1059,7 +1077,10 @@ impl Deck {
                     };
                     self.line(&format!("*BEAM SECTION, SECTION={shape}, ELSET={set}, MATERIAL={material}"));
                     self.numbers_line("", &dims)?;
-                    self.numbers_line("", &orientation)?;
+                    // A planar beam's first section axis is (0, 0, −1) in Abaqus; the model's is
+                    // along Z either way, the same doubly symmetric section.
+                    let axis = if r.is_planar() { [0.0, 0.0, -1.0] } else { orientation };
+                    self.numbers_line("", &axis)?;
                 }
             }
         }

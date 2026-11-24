@@ -10,8 +10,8 @@
 use std::collections::BTreeMap;
 
 use fieldcraft_model::{
-    BeamProfile, BeamTheory, BoundaryCondition, Distribution, Elastic, ElementFace, ElementKind, Formulation, Load, Material, Model, Procedure,
-    Section, SectionKind, Set, Step, Target,
+    BeamProfile, BeamTheory, BoundaryCondition, Direction, Distribution, Elastic, ElementFace, ElementKind, Formulation, Load, Material, Model,
+    PointMass, Procedure, Section, SectionKind, Set, Spring, Step, Target,
 };
 use fieldcraft_solver::{FrequencyOptions, Limits, MassKind, StaticResult, solve_frequency, solve_static};
 
@@ -766,6 +766,344 @@ fn a_pressurised_pipe_loop_between_two_anchors() {
     let hoop = r.beams[3].pipe.unwrap().hoop;
     let (a2, b2) = (45.0 * 45.0, 50.0 * 50.0);
     assert!(rel(hoop[0], internal * (a2 + b2) / (b2 - a2)) < 1e-12 && rel(hoop[1], 2.0 * internal * a2 / (b2 - a2)) < 1e-12, "{hoop:?}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Beams in 2D models
+// ---------------------------------------------------------------------------------------------
+
+/// A plane stress quad4 on four nodes (counter-clockwise) held by `values`: it makes the model a
+/// 2D one (a model is 2D by its 2D sections) and, held at every node, carries nothing; the
+/// frames below stand on it.
+fn foundation(b: &mut Build, nodes: [u32; 4], values: [Option<f64>; 6]) {
+    let plate = b.element(ElementKind::Quad4, nodes.to_vec());
+    b.section("foundation", vec![plate], SectionKind::PlaneStress { thickness: 1.0 });
+    b.hold_nodes("ground", values, nodes.to_vec());
+}
+
+#[test]
+fn planar_cantilever_beam_is_exact() {
+    // The cantilever of `cantilever_beam_deflection_is_exact` in a 2D model: three unknowns per
+    // beam node, the profile's height in the plane (orientation along Z), so the plane bends
+    // with I_y and the shear area along z. Tip shear: δ = P L³/(3 E I) + P L/(G A_s); tip
+    // tension: P L/(E A); tip moment: θ = M L/(E I), δ = M L²/(2 E I).
+    let profile = BeamProfile::I { height: 200.0, width: 100.0, web: 6.0, flange: 10.0 };
+    let (length, load): (f64, f64) = (1000.0, 1000.0);
+    let p = profile.properties(0.3);
+    let (e, g) = (210e3, 210e3 / 2.6);
+    // The axis and the in-plane direction a quarter turn counter-clockwise from it.
+    let (dir, across) = ([0.6, 0.8, 0.0], [-0.8, 0.6, 0.0]);
+    for n in [1usize, 4] {
+        for case in ["shear", "tension", "moment"] {
+            let mut b = Build::new(Elastic::Isotropic { young: e, poisson: 0.3 }, 7.85e-9, Procedure::Static {});
+            for i in 0..=n {
+                let s = length * i as f64 / n as f64;
+                b.node(i as u32 + 1, dir.map(|c| c * s));
+            }
+            let elements: Vec<u32> = (1..=n as u32).map(|i| b.element(ElementKind::Beam2, vec![i, i + 1])).collect();
+            b.section("beam", elements, SectionKind::Beam { profile, orientation: [0.0, 0.0, 1.0] });
+            for (label, xy) in [(901, [-100.0, -100.0]), (902, [0.0, -100.0]), (903, [-100.0, 0.0])] {
+                b.node(label, [xy[0], xy[1], 0.0]);
+            }
+            foundation(&mut b, [901, 902, 1, 903], [Some(0.0); 6]);
+            let tip = n as u32 + 1;
+            match case {
+                "shear" => b.force("tip", vec![tip], across.map(|c| load * c)),
+                "tension" => b.force("tip", vec![tip], dir.map(|c| load * c)),
+                _ => {
+                    b.model.add_set("tip", Set { nodes: vec![tip], ..Set::default() }).unwrap();
+                    b.load("tip", Load::Moment { target: Target::Set("tip".into()), vector: [0.0, 0.0, load], distribution: Distribution::Total });
+                }
+            }
+            let r = b.solve();
+            assert_eq!(r.stats.dofs, 3 * (n + 1) + 2 * 3, "three unknowns per beam node, two per plate node");
+            let (u, theta) = (r.displacement[at(&r, tip)], r.rotation[at(&r, tip)]);
+            let along = |v: [f64; 3]| u[0] * v[0] + u[1] * v[1];
+            let moment = r.reaction_moment[at(&r, 1)];
+            let root = &r.beams[0].forces.ends[0];
+            eprintln!("planar cantilever, {n} element(s), {case}: tip {u:?}, rotation {theta:?}, clamp moment {moment:?}, root {root:?}");
+            match case {
+                "shear" => {
+                    let want = load * length.powi(3) / (3.0 * e * p.iy) + load * length / (g * p.shear_z);
+                    assert!(rel(along(across), want) < 1e-9, "{} {want}", along(across));
+                    assert!(rel(moment[2], -load * length) < 1e-9, "{moment:?}");
+                    assert!(rel(root[2].abs(), load) < 1e-9 && rel(root[4].abs(), load * length) < 1e-9, "{root:?}");
+                }
+                "tension" => {
+                    assert!(rel(along(dir), load * length / (e * p.area)) < 1e-9, "{}", along(dir));
+                    assert!(rel(root[0], load) < 1e-9, "{root:?}");
+                }
+                _ => {
+                    assert!(rel(theta[2], load * length / (e * p.iy)) < 1e-9, "{theta:?}");
+                    assert!(rel(along(across), load * length * length / (2.0 * e * p.iy)) < 1e-9, "{}", along(across));
+                    assert!(rel(moment[2], -load) < 1e-9, "{moment:?}");
+                }
+            }
+            // Nothing leaves the plane.
+            assert!(u[2] == 0.0 && theta[0] == 0.0 && theta[1] == 0.0 && moment[0] == 0.0 && moment[1] == 0.0, "{u:?} {theta:?} {moment:?}");
+            assert!(root[1] == 0.0 && root[3] == 0.0 && root[5] == 0.0, "{root:?}");
+        }
+    }
+}
+
+#[test]
+fn planar_portal_frame_matches_the_slope_deflection_solution() {
+    // The frame of `portal_frame_matches_the_slope_deflection_solution` in the XY plane of a 2D
+    // model (columns along Y, the girder along X), with the same hand calculation and
+    // tolerances.
+    let (h, l, load) = (8000.0, 10000.0, 1000.0);
+    let column = BeamProfile::Rectangle { width: 100.0, height: 100.0 };
+    let girder = BeamProfile::Rectangle { width: 100.0, height: 200.0 };
+    let e = 210e3;
+    let mut b = Build::new(Elastic::Isotropic { young: e, poisson: 0.3 }, 7.85e-9, Procedure::Static {});
+    let n = 8;
+    let mut path = Vec::new();
+    for i in 0..=n {
+        path.push([0.0, h * i as f64 / n as f64, 0.0]);
+    }
+    for i in 1..=n {
+        path.push([l * i as f64 / n as f64, h, 0.0]);
+    }
+    for i in 1..=n {
+        path.push([l, h - h * i as f64 / n as f64, 0.0]);
+    }
+    for (i, x) in path.iter().enumerate() {
+        b.node(i as u32 + 1, *x);
+    }
+    let count = path.len() as u32;
+    let mut columns = Vec::new();
+    let mut beam = Vec::new();
+    for i in 1..count {
+        let el = b.element(ElementKind::Beam2, vec![i, i + 1]);
+        if (n as u32 + 1..2 * n as u32 + 1).contains(&i) { beam.push(el) } else { columns.push(el) }
+    }
+    b.section("columns", columns, SectionKind::Beam { profile: column, orientation: [0.0, 0.0, 1.0] });
+    b.section("girder", beam, SectionKind::Beam { profile: girder, orientation: [0.0, 0.0, 1.0] });
+    // The bases stand on the foundation's top corners.
+    b.node(901, [0.0, -1000.0, 0.0]);
+    b.node(902, [l, -1000.0, 0.0]);
+    foundation(&mut b, [901, 902, count, 1], [Some(0.0); 6]);
+    b.force("push", vec![n as u32 + 1], [load, 0.0, 0.0]);
+    let r = b.solve();
+    assert_eq!(r.stats.dofs, 3 * path.len() + 2 * 2);
+    let g = e / 2.6;
+    let (pc, pb) = (column.properties(0.3), girder.properties(0.3));
+    let (phi_c, phi_b) = (12.0 * e * pc.iy / (g * pc.shear_z * h * h), 12.0 * e * pb.iy / (g * pb.shear_z * l * l));
+    let (a, bb) = (e * pc.iy / (h * (1.0 + phi_c)), e * pb.iy / (l * (1.0 + phi_b)));
+    let c = 6.0 * a / (h * (a * (4.0 + phi_c) + 6.0 * bb));
+    let sway = -load * h / 2.0 / (a * (6.0 * c - 12.0 / h));
+    let theta = c * sway;
+    let base = a * ((2.0 - phi_c) * theta - 6.0 * sway / h);
+    let top = r.displacement[at(&r, n as u32 + 1)][0];
+    let m = r.reaction_moment[at(&r, 1)][2];
+    let rot = r.rotation[at(&r, n as u32 + 1)][2];
+    eprintln!(
+        "planar portal frame: sway {top:.6e} vs {sway:.6e} ({:.1e}), joint rotation {rot:.6e} vs {theta:.6e} ({:.1e}), base moment {m:.6e} vs {:.6e} ({:.1e})",
+        rel(top, sway),
+        rel(rot.abs(), theta.abs()),
+        base.abs(),
+        rel(m.abs(), base.abs())
+    );
+    assert!(rel(top, sway) < 5e-4 && rel(rot.abs(), theta.abs()) < 3e-3 && rel(m.abs(), base.abs()) < 5e-4);
+    assert!((r.reaction_total[0] + load).abs() < 1e-9 * load);
+}
+
+/// A plane stress plate with a beam along each loaded edge, sharing its nodes: in uniform
+/// tension (ν = 0) the plate and the beams are springs in parallel, u = F L / (E t w + E A).
+#[test]
+fn plane_beams_stiffen_a_plane_stress_plate() {
+    let (l, w, t, young, force) = (4.0, 1.0, 0.2, 1000.0, 30.0);
+    let profile = BeamProfile::Rectangle { width: 0.1, height: 0.25 };
+    let mut b = Build::new(Elastic::Isotropic { young, poisson: 0.0 }, 1.0, Procedure::Static {});
+    for (label, xyz) in [(1, [0.0, 0.0, 0.0]), (2, [l, 0.0, 0.0]), (3, [l, w, 0.0]), (4, [0.0, w, 0.0])] {
+        b.node(label, xyz);
+    }
+    let plate = b.element(ElementKind::Quad4, vec![1, 2, 3, 4]);
+    b.section("plate", vec![plate], SectionKind::PlaneStress { thickness: t });
+    let stiffeners = vec![b.element(ElementKind::Beam2, vec![1, 2]), b.element(ElementKind::Beam2, vec![4, 3])];
+    b.section("stiffeners", stiffeners, SectionKind::Beam { profile, orientation: [0.0, 0.0, 1.0] });
+    b.hold_nodes("left", [Some(0.0), FREE, FREE, FREE, FREE, FREE], vec![1, 4]);
+    b.hold_nodes("corner", [FREE, Some(0.0), FREE, FREE, FREE, FREE], vec![1]);
+    b.model.add_set("right", Set { nodes: vec![2, 3], ..Set::default() }).unwrap();
+    b.load("pull", Load::Force { target: Target::Set("right".into()), vector: [force, 0.0, 0.0], distribution: Distribution::PerNode });
+    let r = b.solve();
+    let u = r.displacement[at(&r, 2)][0];
+    let exact = 2.0 * force * l / (young * t * w + young * 2.0 * profile.area());
+    let turn = r.rotation.iter().map(|x| x[2].abs()).fold(0.0, f64::max);
+    eprintln!("plane beams on a plate: u {u:.12} vs {exact:.12}; largest rotation {turn:.3e}; {} unknowns", r.stats.dofs);
+    assert!(rel(u, exact) < 1e-12 && turn < 1e-12 * exact / l, "{u} {exact} {turn}");
+    assert_eq!(r.stats.dofs, 3 * 4, "Ux, Uy and Rz at every node");
+}
+
+/// The pin-ended double cross of NAFEMS test FV2 (*Selected Benchmarks for Natural Frequency
+/// Analysis*, NAFEMS 1987): eight arms of length 5 m at 45° meeting at a rigid joint, each pinned
+/// at its far end, square section 0.125 m, E = 200 GPa, ρ = 8000 kg/m³, four elements per arm.
+#[test]
+fn pin_ended_double_cross_in_plane_frequencies() {
+    let (arm, side, young, density): (f64, f64, f64, f64) = (5.0, 0.125, 200e9, 8000.0);
+    let profile = BeamProfile::Rectangle { width: side, height: side };
+    let n = 4u32;
+    let mut b = Build::new(Elastic::Isotropic { young, poisson: 0.3 }, density, Procedure::Frequency { modes: 16, min_hz: None, max_hz: None });
+    b.node(1, [0.0; 3]);
+    let (mut elements, mut ends) = (Vec::new(), Vec::new());
+    for k in 0..8u32 {
+        let angle = f64::from(k) * std::f64::consts::FRAC_PI_4;
+        let mut previous = 1;
+        for i in 1..=n {
+            let label = 1 + k * n + i;
+            let s = arm * f64::from(i) / f64::from(n);
+            b.node(label, [s * angle.cos(), s * angle.sin(), 0.0]);
+            elements.push(b.element(ElementKind::Beam2, vec![previous, label]));
+            previous = label;
+        }
+        ends.push(previous);
+    }
+    b.section("arms", elements, SectionKind::Beam { profile, orientation: [0.0, 0.0, 1.0] });
+    // The pins: every arm end held in X and Y, its rotation free. The plate between four of
+    // them makes the model 2D and carries nothing.
+    let plate = b.element(ElementKind::Quad4, vec![ends[0], ends[2], ends[4], ends[6]]);
+    b.section("plate", vec![plate], SectionKind::PlaneStress { thickness: 0.01 });
+    b.hold_nodes("pins", [Some(0.0), Some(0.0), FREE, FREE, FREE, FREE], ends.clone());
+    let r = solve_frequency(&b.model, None, &FrequencyOptions { mass: MassKind::Consistent, shift: None }, &Limits::default()).unwrap();
+    assert_eq!(r.stats.dofs, 3 * (1 + 8 * n as usize));
+    let p = profile.properties(0.3);
+    let g = young / 2.6;
+    let pi = std::f64::consts::PI;
+    let euler = |lambda: f64| lambda * lambda / (2.0 * pi * arm * arm) * (young * p.iy / (density * p.area)).sqrt();
+    // A pinned–pinned Timoshenko beam's frequency of wave number k = jπ/L, the smaller root of
+    // a ω⁴ − b ω² + c = 0.
+    let timoshenko = |j: f64| {
+        let k = j * pi / arm;
+        let a = density * p.iy / (g * p.shear_z);
+        let bq = 1.0 + p.iy / p.area * k * k + young * p.iy * k * k / (g * p.shear_z);
+        let c = young * p.iy * k.powi(4) / (density * p.area);
+        (2.0 * c / (bq + (bq * bq - 4.0 * a * c).sqrt())).sqrt() / (2.0 * pi)
+    };
+    // Mode 1: every arm a pinned–pinned beam (the joint turns, and by symmetry carries no moment).
+    // Four elements per half wave: the cubic element with its consistent mass is (kh)⁴/1440 =
+    // 2.6e-4 high at kh = π/4.
+    let first = r.modes[0].frequency;
+    eprintln!("double cross mode 1: {first:.6} Hz vs Timoshenko {:.6} ({:.1e})", timoshenko(1.0), rel(first, timoshenko(1.0)));
+    assert!(rel(first, timoshenko(1.0)) < 1e-3, "{first}");
+    // NAFEMS's targets (Hz) by mode, from Euler–Bernoulli theory (λ²/(2π L²) √(E I/ρ A) with
+    // λ = π, 3.9266, 2π, 7.0686: pinned–pinned and clamped–pinned arms): shear and rotary inertia,
+    // which the element has and the targets leave out, lower them by 0.1 % to 0.5 %.
+    assert!(rel(euler(pi), 11.336) < 1e-4 && rel(euler(3.926_602_312_047_919), 17.709) < 1e-4);
+    assert!(rel(euler(2.0 * pi), 45.345) < 1e-4 && rel(euler(7.068_582_745_628_732), 57.390) < 1e-4);
+    assert_eq!(r.modes.len(), 16);
+    for (i, m) in r.modes.iter().enumerate() {
+        let target = [11.336, 17.709, 45.345, 57.390][usize::from(i > 0) + usize::from(i > 7) + usize::from(i > 8)];
+        eprintln!("double cross mode {}: {:.6} Hz vs {target} ({:+.2e})", i + 1, m.frequency, m.frequency / target - 1.0);
+        assert!(rel(m.frequency, target) < 0.01, "mode {}: {} vs {target}", i + 1, m.frequency);
+    }
+}
+
+#[test]
+fn planar_beam_models_that_cannot_be_solved_are_errors() {
+    // A beam from a plate's corner; the plate's base held, and the corner's rotation.
+    let build = |orientation: [f64; 3], z: f64, plate: SectionKind| {
+        let mut b = Build::new(Elastic::Isotropic { young: 1.0, poisson: 0.0 }, 1.0, Procedure::Static {});
+        for (label, xyz) in [(1, [0.0, 0.0, 0.0]), (2, [1.0, 0.0, 0.0]), (3, [0.5, 1.0, z]), (901, [0.0, -1.0, 0.0]), (902, [1.0, -1.0, 0.0])] {
+            b.node(label, xyz);
+        }
+        let beam = b.element(ElementKind::Beam2, vec![1, 3]);
+        b.section("beam", vec![beam], SectionKind::Beam { profile: BeamProfile::Circle { radius: 0.1 }, orientation });
+        let quad = b.element(ElementKind::Quad4, vec![901, 902, 2, 1]);
+        b.section("plate", vec![quad], plate);
+        b.hold_nodes("base", [Some(0.0); 6], vec![901, 902]);
+        b.hold_nodes("turn", [FREE, FREE, FREE, FREE, FREE, Some(0.0)], vec![1]);
+        b.force("tip", vec![3], [1.0, 0.0, 0.0]);
+        b
+    };
+    let stress = SectionKind::PlaneStress { thickness: 1.0 };
+    let error = |b: &Build| solve_static(&b.model, None, &Limits::default()).unwrap_err().to_string();
+    // Either way along Z is the same section.
+    assert!(solve_static(&build([0.0, 0.0, -2.0], 0.0, stress).model, None, &Limits::default()).is_ok());
+    for (b, want) in [
+        (build([0.0, 1.0, 0.0], 0.0, stress), "along Z"),
+        (build([0.0, 0.0, 1.0], 0.5, stress), "off the XY plane"),
+        (build([0.0, 0.0, 1.0], 0.0, SectionKind::Axisymmetric {}), "cannot be mixed"),
+    ] {
+        let e = error(&b);
+        assert!(e.contains(want), "{want}: {e}");
+    }
+    let mut b = build([0.0, 0.0, 1.0], 0.0, stress);
+    b.model.add_set("end", Set { nodes: vec![3], ..Set::default() }).unwrap();
+    b.load("twist", Load::Moment { target: Target::Set("end".into()), vector: [1.0, 0.0, 0.0], distribution: Distribution::Total });
+    let e = error(&b);
+    assert!(e.contains("about the Z axis"), "{e}");
+    // The planar beam is a Timoshenko beam: an Euler–Bernoulli section is refused by name, and a
+    // pipe pressure has no pipe wall to act on.
+    let mut b = build([0.0, 0.0, 1.0], 0.0, stress);
+    b.euler_bernoulli("beam");
+    let e = error(&b);
+    assert!(e.contains("section `beam`: an Euler-Bernoulli beam is not supported in a 2D model"), "{e}");
+    let mut b = build([0.0, 0.0, 1.0], 0.0, stress);
+    b.load("steam", Load::PipePressure { set: "beam".into(), internal: 1.0, external: 0.0 });
+    let e = error(&b);
+    assert!(e.contains("a pipe pressure is not supported in a 2D model"), "{e}");
+}
+
+/// A cantilever beam along X in a 2D model (node 1 clamped, node 2 its tip) on a held plate.
+fn planar_beam_cantilever(profile: BeamProfile, length: f64, procedure: Procedure) -> Build {
+    let mut b = Build::new(Elastic::Isotropic { young: 1.0, poisson: 0.3 }, 1e-9, procedure);
+    b.node(1, [0.0; 3]);
+    b.node(2, [length, 0.0, 0.0]);
+    let beam = b.element(ElementKind::Beam2, vec![1, 2]);
+    b.section("beam", vec![beam], SectionKind::Beam { profile, orientation: [0.0, 0.0, 1.0] });
+    for (label, xyz) in [(901, [0.0, -1.0, 0.0]), (902, [1.0, -1.0, 0.0]), (903, [1.0, -2.0, 0.0]), (904, [0.0, -2.0, 0.0])] {
+        b.node(label, xyz);
+    }
+    foundation(&mut b, [904, 903, 902, 901], [Some(0.0); 6]);
+    b.hold_nodes("clamp", [Some(0.0); 6], vec![1]);
+    b
+}
+
+/// A rotary inertia I33 at the tip of a planar cantilever beam acts on Rz alone. The tip's
+/// translations carry no mass, so they condense out exactly: under a pure tip moment the tip turns
+/// by M L / (E I), a rotational stiffness E I / L whatever the shear flexibility, and the one
+/// mode of the disc is f = sqrt(E I / (L J)) / 2π. The beam's own mass (density 1e-9) is a
+/// part in 1e6 of the disc's.
+#[test]
+fn rotary_inertia_at_a_planar_beam_node_acts_about_z() {
+    let profile = BeamProfile::Circle { radius: 0.1 };
+    let (length, disc) = (1.0, 1.0);
+    let mut b = planar_beam_cantilever(profile, length, Procedure::Frequency { modes: 1, min_hz: None, max_hz: None });
+    b.model.add_set("tip", Set { nodes: vec![2], ..Set::default() }).unwrap();
+    b.model.add_mass("disc", PointMass { target: Target::Set("tip".into()), mass: None, inertia: Some([0.0, 0.0, disc, 0.0, 0.0, 0.0]) }).unwrap();
+    let r = solve_frequency(&b.model, None, &FrequencyOptions { mass: MassKind::Consistent, shift: None }, &Limits::default()).unwrap();
+    let exact = (profile.properties(0.3).iy / (length * disc)).sqrt() / (2.0 * std::f64::consts::PI);
+    let f = r.modes[0].frequency;
+    eprintln!("disc on a planar cantilever: {f:.9e} Hz vs {exact:.9e} ({:+.1e})", f / exact - 1.0);
+    assert!(rel(f, exact) < 1e-5, "{f} vs {exact}");
+    assert_eq!(r.stats.dofs, 3 * 2 + 2 * 4, "Ux, Uy and Rz at the beam's nodes, Ux and Uy at the plate's");
+}
+
+/// What leaves the plane of a 2D model is refused by name: an inertia about X or Y (or a product),
+/// a torsional spring about X or Y, a spring along Z.
+#[test]
+fn discrete_elements_that_leave_the_plane_of_a_2d_model_are_refused() {
+    let profile = BeamProfile::Circle { radius: 0.1 };
+    let procedure = || Procedure::Frequency { modes: 1, min_hz: None, max_hz: None };
+    let solve = |b: &Build| {
+        solve_frequency(&b.model, None, &FrequencyOptions { mass: MassKind::Consistent, shift: None }, &Limits::default()).unwrap_err().to_string()
+    };
+    for (inertia, what) in [([1.0, 1.0, 1.0, 0.0, 0.0, 0.0], "I11, I22"), ([1.0, 1.0, 1.0, 0.0, 0.0, 0.5], "I23")] {
+        let mut b = planar_beam_cantilever(profile, 1.0, procedure());
+        b.model.add_set("tip", Set { nodes: vec![2], ..Set::default() }).unwrap();
+        b.model.add_mass("disc", PointMass { target: Target::Set("tip".into()), mass: None, inertia: Some(inertia) }).unwrap();
+        let e = solve(&b);
+        assert!(e.contains("point mass `disc`") && e.contains("2D model") && e.contains("about Z only"), "{what}: {e}");
+    }
+    for dof in [3u8, 4, 5] {
+        let mut b = planar_beam_cantilever(profile, 1.0, procedure());
+        b.model.add_set("tip", Set { nodes: vec![2], ..Set::default() }).unwrap();
+        b.model
+            .add_spring("k", Spring::Spring { first: Target::Set("tip".into()), second: None, direction: Direction::Dof(dof), stiffness: 1.0 })
+            .unwrap();
+        let e = solve(&b);
+        assert!(e.contains("`k`") && e.contains("2D model") && e.contains("leaves the plane"), "dof {dof}: {e}");
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

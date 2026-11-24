@@ -56,12 +56,13 @@ Timoshenko beam and an Euler–Bernoulli beam:
 | `points` | 1 to 15 | 5 | shell integration points through the thickness |
 | `type` | `beam` | — | two-node beam (beam2): Timoshenko, or Euler–Bernoulli by the formulation |
 | `profile` | `rectangle {width, height}`, `circle {radius}`, `pipe {radius, thickness}`, `i {height, width, web, flange}`, `box {width, height, thickness}` | — | the cross-section; `width` along local y, `height` along local z |
-| `orientation` | `[x, y, z]`, nonzero, not along the beam | — | the profile's local y direction, projected normal to each beam's axis |
+| `orientation` | `[x, y, z]`, nonzero, not along the beam | — | the profile's local y direction, projected normal to each beam's axis; in a 2D model along Z (`[0, 0, 1]`): the width out of the plane, the height in it |
 | `type` | `rod` | — | truss (rod2, rod3) |
 | `area` | > 0 | — | truss cross-sectional area |
 
 A 2D model is 2D as a whole: its elements lie in the XY plane, and 2D and solid sections are not
-mixed in one model (trusses may join either).
+mixed in one model. Trusses and beams join a plane stress or plane strain model: a truss node carries
+Ux and Uy, a beam node Ux, Uy and Rz. A model of trusses or beams alone is a 3D model.
 
 ### Formulation (`formulation`)
 
@@ -98,7 +99,7 @@ The enum order (Ux, Uy, Uz, Rx, Ry, Rz, T, P) is the numbering order within a no
 
 An element declares its unknowns as `ElementDofs { node: DofSet, internal: Internal }`: the
 kinds every node of the element carries (`DofSet::TRANSLATIONS` for solids, `PLANE` for 2D
-elements, `STRUCTURAL` for shells and beams, `TEMPERATURE` for heat conduction, translations plus
+elements, `PLANE_FRAME` (Ux, Uy, Rz) for the beams of a 2D model, `STRUCTURAL` for shells and beams, `TEMPERATURE` for heat conduction, translations plus
 `PRESSURE` for continuous-pressure mixed elements), and the internal unknowns it condenses out
 itself (`incompatible_modes`, discontinuous `pressure`), which never reach the global system.
 Element matrices are ordered node by node, the node's kinds in `DofKind` order (a shell's
@@ -339,6 +340,12 @@ z = x × y (its `height` direction).
   box (thin-walled): J = Σ b t³/3 (open I) and Bredt's 4 A_m² t / p (closed box); shear areas the
   walls parallel to the shear (the web for shear along z, 5/6 of the flanges along y) (Pilkey
   2002, ch. 6).
+- **2D models.** A beam in the XY plane of a 2D model keeps the rows and columns Ux, Uy, Rz of these matrices: the
+  plane frame element (Przemieniecki 1968, §5.6), axial EA/L and bending with I_y and the shear area along z, the
+  profile's `height` in the plane. The orientation is along Z, so Z is a principal axis of the profile and the block
+  is uncoupled from Uz, Rx, Ry; any other orientation is refused. Its nodes may be nodes of 2D elements and trusses.
+  The planar beam is a Timoshenko beam: an Euler–Bernoulli section and a pipe pressure in a 2D model are refused.
+  A moment is about Z; end forces are N, V_z and M_y (V_y, T, M_z zero).
 
 ![Beam local axes from the orientation vector](../../media/manual/elements-3.svg)
 
@@ -435,7 +442,7 @@ beams warns that only solid, 2D and truss elements are strained ([Heat transfer]
 | plane stress tri3, tri6, quad4, quad8 | yes | yes | refused | refused | refused |
 | plane strain, axisymmetric tri3, tri6, quad4, quad8 (and hybrid quad4, quad8, tri6) | yes | yes | refused | yes | refused |
 | shell tri3, quad4 | yes | refused | refused | refused | refused |
-| beam2 | yes | refused | refused | refused | refused |
+| beam2 (also in plane stress and plane strain models) | yes | refused | refused | refused | refused |
 | rod2, rod3 | yes | refused | refused | refused | rod2; rod3 with `nonlinear_geometry: false` only; elastic only |
 | point mass, spring, dashpot | yes (dashpots ignored) | yes (dashpots ignored) | — | springs, along their fixed directions | translational ones; rotary inertia and torsional springs refused |
 
@@ -454,11 +461,12 @@ ELEMENT_MASS (per-direction masses: Nastran only); rotary inertia to ROTARYI, CO
 ELEMENT_INERTIA; springs to SPRING1/2/A, CELAS2 and ELEMENT_DISCRETE (skew fixed directions:
 LS-DYNA only); dashpots to DASHPOT1/2/A, CDAMP2 and ELEMENT_DISCRETE; rod2 to T3D2 / T2D2, CROD
 and an LS-DYNA truss beam (3D models); rod3 to T3D3 / T2D3 (no Nastran or LS-DYNA counterpart);
-beam2 to B31 with the profile's BEAM SECTION, CBEAM with its PBEAML, and an LS-DYNA
+beam2 to B31 with the profile's BEAM SECTION (B21 in a 2D model, its first section axis (0, 0, −1)),
+CBEAM with its PBEAML (in a 2D model the same cards, the beam grids holding 3, 4, 5), and an LS-DYNA
 Belytschko–Schwer resultant beam (ELEMENT_BEAM_ORIENTATION) given the profile's area, second
 moments, torsion constant and shear area, the numbers this element uses (isotropic elastic
 materials only; I and box profiles whose shear areas differ by direction have no LS-DYNA
-counterpart, its resultant beams taking one shear area);
+counterpart, its resultant beams taking one shear area); beams in a 2D model have no LS-DYNA counterpart;
 pyramid5 to C3D5, CPYRAM and an LS-DYNA degenerate solid. The Euler–Bernoulli beam (`beam_theory`
 euler_bernoulli) has no shear flexibility: B33 with the same BEAM SECTION as B31; CBAR with a PBAR
 of A, I1, I2 and J and blank shear factors K1 and K2 (Nastran; PBEAML and PBARL compute shear factors
@@ -467,6 +475,7 @@ always taking a shear area, so that deck is refused by name. Pipes under a pipe 
 with a THICK PIPE beam section and `*DLOAD` PI / PE lines (the pressure and the effective inner or outer
 diameter, closed ends); the Nastran and LS-DYNA decks refuse the load by name, since their beams as written here
 take no pressure.
+A planar beam is B21, a Timoshenko beam (the model check refuses an Euler–Bernoulli beam and a pipe pressure in a 2D model).
 
 ## Algorithm
 
@@ -613,6 +622,9 @@ four: equilibrium does not depend on the formulation.
 | Euler–Bernoulli cantilever frequencies, consistent mass (4th order) and lumped mass (2nd order) | theory | consistent: 0 < error < 1.1 × (β_k L/n)⁴/1440 and order 3.9–4.1 (n = 10 → 20); lumped: order 1.9–2.1 (20 → 40), |error| < 5·10⁻³ | as stated | `euler_bernoulli_cantilever_frequencies` |
 | Closed pipe under internal and external pressure, free and held (Lamé; closed-end force) | theory | < 10⁻⁹ | exact | `a_closed_pipe_under_pressure_follows_lame`, `pipe-closed-pressure` |
 | Pressurised pipe loop between two anchors (thrust, displacements, wall force) | theory (Castigliano at the elastic centre, Timoshenko members) | < 10⁻⁸ | exact | `a_pressurised_pipe_loop_between_two_anchors`, `pipe-pressure-loop` |
+| Planar beams in a 2D model: cantilever (tip shear, tension, moment), one and four elements | theory | < 10⁻⁹; nothing out of plane | exact | `planar_cantilever_beam_is_exact` |
+| Planar portal frame on a held plate (slope-deflection); beams stiffening a plane stress plate | theory | sway 1.3·10⁻⁴, joint rotation 1.4·10⁻³, base moment 7·10⁻⁵; 10⁻¹² | as the 3D frame; exact | `planar_portal_frame_matches_the_slope_deflection_solution`, `plane_beams_stiffen_a_plane_stress_plate` |
+| NAFEMS FV2 pin-ended double cross, 16 in-plane frequencies, four elements per arm | benchmark; mode 1 also theory (pinned–pinned Timoshenko beam) | −0.51 % to +0.04 % (the targets leave out shear and rotary inertia); mode 1 +3·10⁻⁴ of theory | 1 %; 10⁻³ | `pin_ended_double_cross_in_plane_frequencies`, `nafems-fv2` |
 | Trusses by the method of joints (Pratt, tripod), three-bar truss, rod3 patch, hanging bar | theory | < 10⁻¹⁰ | exact | `crates/solver/tests/one_d.rs` |
 | Kirsch plate, Lamé cylinder, rotating disc and cylinder in 2D | theory | see [Linear static](linear-static.md#verification) | | `crates/solver/tests/plane.rs` |
 | Shape functions, every family | theory | Kronecker delta, partition of unity, monomial reproduction to `degree()` with gradients and Hessians, derivatives against central differences, physical Hessians on affine and curved maps | round-off | `basis::tests`, `dof::tests`, `jet::tests` |
@@ -637,9 +649,9 @@ explicit, engine and io test suites hashed identically before and after.
   continuous nodal-pressure (Taylor–Hood) elements are not implemented.
 - quad9, hex27 and wedge15 have shape functions only; there are no wedge15 or pyramid13 elements.
 - Material axes are the global axes: there are no material orientations.
-- A 2D model takes no couplings, no shells or beams; an axisymmetric model takes no trusses,
-  point masses, springs or dashpots.
-- Not implemented: three-node and planar 2D beams; elbow elements (ovalisation of pipe bends, von Kármán's flexibility); open-section beams with warping; rebar and stringers; generalized plane strain,
+- A 2D model takes no couplings and no shells; its beams have their orientation along Z; a frame of
+  beams alone is a 3D model; a pipe pressure is not supported in a 2D model; an axisymmetric model takes no trusses, beams, point masses, springs or dashpots.
+- Not implemented: three-node beams; elbow elements (ovalisation of pipe bends, von Kármán's flexibility); open-section beams with warping; rebar and stringers; generalized plane strain,
   axisymmetric elements with twist and axisymmetric shells; quad8 and tri6 shells, continuum
   shells and composite ply layups; membranes and surface elements; a modified quadratic tet;
   cohesive, gasket, infinite, acoustic and rigid elements; heat conduction in 2D, shell and beam
@@ -659,7 +671,7 @@ explicit, engine and io test suites hashed identically before and after.
 | `crates/fem/src/beam.rs`, `frame.rs` | `BeamSection`, `properties`, the beam kernel and `forces`; local frames |
 | `crates/fem/src/pipe.rs` | `PipePressure`, `PipeWall` (Lamé), `PipeStress`; `Beam::pressure_load`, `Beam::pipe_stress` in `beam.rs` |
 | `crates/fem/src/truss.rs` | `Truss`, `young_modulus`, `DOFS` |
-| `crates/solver/src/system.rs` | `Mesh::new` (sections to elements), `Elem::kernel`, `Structural` |
+| `crates/solver/src/system.rs` | `Mesh::new` (sections to elements), `Elem::kernel`, `Structural`, `structural_kinds`, `kind_block` |
 | `crates/solver/src/discrete.rs` | point masses, springs, dashpots: `needs`, `dof_of` |
 
 ## References

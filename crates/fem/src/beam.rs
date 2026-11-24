@@ -38,6 +38,12 @@
 //! the model so the deck writers give other solvers the same numbers): area, second moments, the
 //! torsion constant and the shear areas; the polar moment I_y + I_z is the rotary inertia of
 //! torsion.
+//!
+//! **2D models.** A beam in the XY plane of a 2D model keeps the in-plane block of these
+//! matrices, Ux, Uy and Rz at each node: the plane frame element (Przemieniecki 1968, §5.6, with
+//! the shear of the interdependent interpolation). The section's orientation is then along Z, so
+//! Z is a principal axis of the profile and the block is uncoupled from Uz, Rx and Ry. The
+//! solver takes the block (`fieldcraft_solver::system::structural_kinds`).
 
 use fieldcraft_model::{BeamProfile, BeamProperties, BeamTheory, Elastic};
 

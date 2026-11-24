@@ -232,9 +232,16 @@ fn supported_writer_table_has_canonical_inverse_formulations() {
             assert!(Type::parse(&format!("{prefix}{suffix}"), 1).is_ok(), "{prefix}{suffix}");
         }
     }
-    for (name, kind) in
-        [("S3", K::Tri3), ("S4", K::Quad4), ("B31", K::Beam2), ("T3D2", K::Rod2), ("T3D3", K::Rod3), ("T2D2", K::Rod2), ("T2D3", K::Rod3)]
-    {
+    for (name, kind) in [
+        ("S3", K::Tri3),
+        ("S4", K::Quad4),
+        ("B31", K::Beam2),
+        ("B21", K::Beam2),
+        ("T3D2", K::Rod2),
+        ("T3D3", K::Rod3),
+        ("T2D2", K::Rod2),
+        ("T2D3", K::Rod3),
+    ] {
         assert_eq!(Type::parse(name, 1).unwrap().kind, kind);
     }
     use fieldcraft_model::BeamTheory;
@@ -242,7 +249,7 @@ fn supported_writer_table_has_canonical_inverse_formulations() {
         let parsed = Type::parse(name, 1).unwrap();
         assert_eq!((parsed.kind, parsed.formulation.beam_theory), (K::Beam2, theory), "{name}");
     }
-    for name in ["C3D4R", "C3D10M", "S8", "S6", "B32", "B33H", "CPS4H", "T3D2H"] {
+    for name in ["C3D4R", "C3D10M", "S8", "S6", "B32", "B22", "B21H", "CPS4H", "T3D2H"] {
         assert!(Type::parse(name, 1).is_err(), "{name}");
     }
 }

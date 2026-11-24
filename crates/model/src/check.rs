@@ -542,6 +542,9 @@ impl Model {
                     if elements.is_empty() {
                         d.error(&subject, format!("set `{set}` has no elements"));
                     }
+                    if resolved.is_planar() {
+                        d.error(&subject, "a pipe pressure is not supported in a 2D model: planar beams carry no pipe wall");
+                    }
                     let pipe = |e: &u32| {
                         let section = owner.get(e).and_then(|s| self.sections.get(*s));
                         section.is_some_and(|s| matches!(s.kind, SectionKind::Beam { profile, .. } if profile.bore().is_some()))
@@ -699,6 +702,9 @@ impl Model {
             if m.inertia.is_some_and(|i| i.iter().any(|c| *c != 0.0)) && !has_rotations(&m.target) {
                 d.error(&subject, format!("{} has no nodes with rotations for its inertia; put it on a reference point", m.target));
             }
+            if resolved.is_planar() && m.inertia.is_some_and(|i| [0, 1, 3, 4, 5].iter().any(|k| i[*k] != 0.0)) {
+                d.error(&subject, "in a 2D model a rotary inertia turns about Z only (I33); I11, I22 and the products of inertia leave the plane");
+            }
             if !take(nodes.len()) {
                 break;
             }
@@ -716,6 +722,16 @@ impl Model {
             }
             if rotational && s.targets().any(|t| !has_rotations(t)) {
                 d.error(&subject, "acts on a rotation, and its nodes have none; connect reference points (or shell and beam nodes)");
+            }
+            if resolved.is_planar() {
+                let out_of_plane = match s.direction() {
+                    Direction::Dof(k) => matches!(k, 3..=5),
+                    Direction::Vector(v) => v[2] != 0.0,
+                    Direction::Line => false,
+                };
+                if out_of_plane {
+                    d.error(&subject, "in a 2D model a spring or dashpot acts along X or Y, or about Z; its direction leaves the plane");
+                }
             }
             let unit = |v: [f64; 3]| {
                 let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
@@ -840,9 +856,10 @@ impl Model {
             return;
         }
         let axisymmetric = r.extent() == Some(Extent::Revolved);
-        // Trusses join a plane model with its two in-plane unknowns per node.
-        let truss = |s: &crate::Section| matches!(s.kind, SectionKind::Rod { .. }) && !axisymmetric;
-        let others: Vec<&str> = self.sections.iter().filter(|(_, s)| !s.kind.is_planar() && !truss(s)).map(|(n, _)| n.as_str()).collect();
+        // Trusses and beams join a plane model: its two in-plane translations per node, and the
+        // rotation about Z at a beam's nodes.
+        let line = |s: &crate::Section| matches!(s.kind, SectionKind::Rod { .. } | SectionKind::Beam { .. }) && !axisymmetric;
+        let others: Vec<&str> = self.sections.iter().filter(|(_, s)| !s.kind.is_planar() && !line(s)).map(|(n, _)| n.as_str()).collect();
         if !others.is_empty() {
             d.error(
                 "model",
@@ -872,12 +889,28 @@ impl Model {
                 clockwise.push(label);
             }
         }
-        for sec in self.sections.values().filter(|s| truss(s)) {
+        for (name, sec) in self.sections.iter().filter(|(_, s)| line(s)) {
             for label in r.sets.get(&sec.set).map(|s| s.elements.as_slice()).unwrap_or_default() {
                 let Some(e) = self.elements.get(label) else { continue };
                 if e.nodes.iter().filter_map(|n| self.nodes.get(n)).any(|n| n.xyz[2] != 0.0) {
                     off_plane.push(*label);
                 }
+            }
+            // A beam bends in the plane about a principal axis of its profile, so nothing couples
+            // the plane to what is out of it: the orientation (the profile's width) is along Z.
+            if let SectionKind::Beam { orientation, .. } = sec.kind
+                && (orientation[0] != 0.0 || orientation[1] != 0.0)
+            {
+                d.error(
+                    format!("section `{name}`"),
+                    "in a 2D model a beam's orientation vector is along Z (the profile's width out of the plane, its height in it)",
+                );
+            }
+            if matches!(sec.kind, SectionKind::Beam { .. }) && !sec.formulation.beam_theory.is_timoshenko() {
+                d.error(
+                    format!("section `{name}`"),
+                    "an Euler-Bernoulli beam is not supported in a 2D model yet: the planar beam is a Timoshenko beam",
+                );
             }
         }
         if !off_plane.is_empty() {
@@ -908,7 +941,13 @@ impl Model {
         let in_plane = match load {
             Load::Force { vector, .. } | Load::Traction { vector, .. } | Load::BodyForce { vector, .. } => vector[2] == 0.0,
             Load::Gravity { acceleration, .. } => acceleration[2] == 0.0,
-            Load::Moment { .. } | Load::Pressure { .. } => true,
+            Load::Moment { vector, .. } => {
+                if vector[0] != 0.0 || vector[1] != 0.0 {
+                    d.error(subject, "in a 2D model a moment is about the Z axis; this moment has an X or Y component");
+                }
+                true
+            }
+            Load::Pressure { .. } => true,
             // A 2D model has no pipes, which the load's own check reports.
             Load::PipePressure { .. } => true,
             // Scalars.
