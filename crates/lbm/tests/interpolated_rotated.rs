@@ -16,8 +16,9 @@
 mod common;
 
 use common::*;
+use fieldcraft_lbm::setup::MIN_TAU;
 use fieldcraft_lbm::{Obstacle, WallLinks};
-use fieldcraft_model::{FaceCondition, WallTreatment};
+use fieldcraft_model::{Collision, FaceCondition, WallTreatment};
 
 /// The lattice's mean speed the body force is set for.
 const MEAN_SPEED: f64 = 0.02;
@@ -32,14 +33,34 @@ struct Run {
     l2: f64,
     /// Drift of the mean density over the fluid cells per 10 000 steps (lattice density 1).
     drift: f64,
+    /// The largest speed of any fluid cell at the end of the run (lattice units).
+    max_speed: f64,
+    /// The largest exact parabola over the same fluid cells' centres (lattice units): the discrete peak.
+    exact_peak: f64,
     /// How the wall links bounced back.
     links: WallLinks,
 }
 
+/// The collision and the lattice viscosity a channel runs with, and its mean speed (lattice units).
+#[derive(Debug, Clone, Copy)]
+struct Regime {
+    collision: Collision,
+    nu_lat: f64,
+    mean_speed: f64,
+}
+
+/// The regime of the recorded cases: TRT at τ⁺ 0.65, the mean speed [`MEAN_SPEED`].
+const BASE: Regime = Regime { collision: Collision::Trt, nu_lat: 0.05, mean_speed: MEAN_SPEED };
+
 /// The channel `width` cells across, turned `a:b`, its walls moved `phase` cells, run `steps`
 /// steps with the wall treatment `walls`.
 fn rotated_channel((a, b): (usize, usize), width: f64, phase: f64, walls: WallTreatment, steps: u64) -> Run {
-    let nu_lat = 0.05;
+    run_channel((a, b), width, phase, walls, steps, BASE)
+}
+
+/// [`rotated_channel`] in the regime `regime`.
+fn run_channel((a, b): (usize, usize), width: f64, phase: f64, walls: WallTreatment, steps: u64, regime: Regime) -> Run {
+    let nu_lat = regime.nu_lat;
     let dx = 1.0 / width;
     let dt = nu_lat * dx * dx;
     let len = ((a * a + b * b) as f64).sqrt();
@@ -72,9 +93,9 @@ fn rotated_channel((a, b): (usize, usize), width: f64, phase: f64, walls: WallTr
     }
     d.obstacles = obstacles.iter().map(|o| o.body.clone()).collect();
     // g = 12 ν U / H² gives the exact mean speed (ν = 1 in the model, U in physical units).
-    let g = 12.0 * MEAN_SPEED * dx / dt / (ho * ho);
+    let g = 12.0 * regime.mean_speed * dx / dt / (ho * ho);
     d.acceleration = [g * dir[0], g * dir[1], 0.0];
-    let proc = with_walls(step(steps as f64 * dt, dt, None), walls);
+    let proc = with_walls(collide(steps as f64 * dt, dt, None, regime.collision), walls);
     let (_, mut flow) = prepare(&model(1.0, 1.0, d, proc), &obstacles);
     let fluid: Vec<usize> = (0..flow.grid().len()).filter(|&c| flow.is_fluid(c)).collect();
     let mean_density = |flow: &fieldcraft_lbm::Flow| fluid.iter().map(|&c| flow.moments(c).map_or(0.0, |(r, _)| r)).sum::<f64>() / fluid.len() as f64;
@@ -83,6 +104,7 @@ fn rotated_channel((a, b): (usize, usize), width: f64, phase: f64, walls: WallTr
         flow.step().unwrap();
     }
     let drift = (mean_density(&flow) - start) / steps as f64 * 10_000.0;
+    let max_speed = fluid.iter().map(|&c| flow.moments(c).map_or(0.0, |(_, u)| (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt())).fold(0.0, f64::max);
     // Each fluid cell's velocity along the channel and the exact parabola at its centre: the distance across the
     // channel from the wall plane at s0, in cells, folded into one period of the strips.
     let grid = *flow.grid();
@@ -92,12 +114,13 @@ fn rotated_channel((a, b): (usize, usize), width: f64, phase: f64, walls: WallTr
             let u = flow.moments(c).map_or(0.0, |(_, u)| u[0] * dir[0] + u[1] * dir[1]);
             let [x, y, _] = grid.centre(c);
             let s = ((n[0] * x + n[1] * y - s0) / dx).rem_euclid(pitch);
-            (u, if s < width { 6.0 * MEAN_SPEED * s * (width - s) / (width * width) } else { 0.0 })
+            (u, if s < width { 6.0 * regime.mean_speed * s * (width - s) / (width * width) } else { 0.0 })
         })
         .collect();
+    let exact_peak = pairs.iter().map(|&(_, x)| x).fold(0.0, f64::max);
     let (along, exact) = pairs.iter().fold((0.0, 0.0), |(a, e), (u, x)| (a + u, e + x));
     let (e2, x2) = pairs.iter().fold((0.0, 0.0), |(e2, x2), (u, x)| (e2 + (u - x) * (u - x), x2 + x * x));
-    Run { flow_rate: 100.0 * (along / exact - 1.0), l2: (e2 / x2).sqrt(), drift, links: flow.wall_links().unwrap_or_default() }
+    Run { flow_rate: 100.0 * (along / exact - 1.0), l2: (e2 / x2).sqrt(), drift, max_speed, exact_peak, links: flow.wall_links().unwrap_or_default() }
 }
 
 /// One expected case: the angle, the grid, the wall offset in cells, the flow-rate error in
@@ -115,17 +138,20 @@ const fn case(angle: (usize, usize), cells: usize, phase: f64, flow_rate: f64, d
 }
 
 /// Known: the linear rule on the turned channel. Flow rates miss by up to 1.4 % on 8 cells and the
-/// mean density drifts by up to 2.7e-2 per 10 000 steps.
+/// mean density drifts by up to 2.7e-2 per 10 000 steps. The 2:1 rows at 0.67 (and 0.33 on 16 cells)
+/// have links at q < 0.01. Their flow rates read 0.13, 0.06 and 0.006 points closer to exact while q
+/// was held at 0.01 (before #1059): that floor widened the channel by a hundredth of a link, a
+/// first-order error of the opposite sign to the linear rule's own. These are the rule's numbers.
 const LINEAR: [Case; 12] = [
     case((2, 1), 8, 0.0, -0.6864, -1.582e-2),
     case((2, 1), 8, 0.33, -0.7247, -2.669e-2),
-    case((2, 1), 8, 0.67, -0.7125, 1.249e-2),
+    case((2, 1), 8, 0.67, -0.8406, 1.197e-2),
     case((1, 1), 8, 0.0, -1.3624, -6.991e-3),
     case((1, 1), 8, 0.25, -1.1782, -2.230e-2),
     case((1, 1), 8, 0.5, 0.9205, -6.162e-3),
     case((2, 1), 16, 0.0, -0.1402, -1.273e-3),
-    case((2, 1), 16, 0.33, -0.1604, -3.099e-3),
-    case((2, 1), 16, 0.67, -0.1115, 4.589e-4),
+    case((2, 1), 16, 0.33, -0.1664, -2.921e-3),
+    case((2, 1), 16, 0.67, -0.1734, 3.859e-4),
     case((1, 1), 16, 0.0, -0.5402, -1.061e-3),
     case((1, 1), 16, 0.25, -0.5332, -1.155e-3),
     case((1, 1), 16, 0.5, 0.0983, -1.544e-3),
@@ -137,13 +163,13 @@ const LINEAR: [Case; 12] = [
 const QUADRATIC: [Case; 12] = [
     case((2, 1), 8, 0.0, 0.0545, -5.823e-3),
     case((2, 1), 8, 0.33, 0.3896, -1.104e-2),
-    case((2, 1), 8, 0.67, 0.7639, -7.806e-3),
+    case((2, 1), 8, 0.67, 0.6444, -7.831e-3),
     case((1, 1), 8, 0.0, 0.5031, -8.965e-3),
     case((1, 1), 8, 0.25, -0.2425, -1.951e-2),
     case((1, 1), 8, 0.5, 0.5730, -3.644e-3),
     case((2, 1), 16, 0.0, 0.0200, 7.439e-4),
-    case((2, 1), 16, 0.33, 0.1266, 2.956e-5),
-    case((2, 1), 16, 0.67, 0.1931, -1.388e-3),
+    case((2, 1), 16, 0.33, 0.1209, 2.029e-4),
+    case((2, 1), 16, 0.67, 0.1333, -1.415e-3),
     case((1, 1), 16, 0.0, 0.1126, -9.363e-4),
     case((1, 1), 16, 0.25, 0.1057, -1.005e-3),
     case((1, 1), 16, 0.5, -0.0427, -4.774e-4),
@@ -228,12 +254,14 @@ struct OrderCase {
 
 // 1:1 at offset 0 is left out: its wall runs through the centre row of cells, and rounding puts
 // that row on a different side of the wall on each grid, so the fit measures that scatter, not the
-// rule's order. The case comes back with the link-fraction floor's removal (issue #1059), at a
-// ±1e-6 cell offset.
-const ORDER_CASES: [OrderCase; 6] = [
+// rule's order. The wall a millionth of a cell either side of that row is here instead: its normal
+// links are cut at q = 1e-6/√2 ≈ 7.1e-7.
+const ORDER_CASES: [OrderCase; 8] = [
     OrderCase { angle: (1, 1), rows: [11, 17, 23, 34], phase: 0.1 },
     OrderCase { angle: (1, 1), rows: [11, 17, 23, 34], phase: 0.25 },
     OrderCase { angle: (1, 1), rows: [11, 17, 23, 34], phase: 0.5 },
+    OrderCase { angle: (1, 1), rows: [11, 17, 23, 34], phase: 1e-6 },
+    OrderCase { angle: (1, 1), rows: [11, 17, 23, 34], phase: -1e-6 },
     OrderCase { angle: (2, 1), rows: [18, 27, 36, 54], phase: 0.1 },
     OrderCase { angle: (2, 1), rows: [18, 27, 36, 54], phase: 0.25 },
     OrderCase { angle: (2, 1), rows: [18, 27, 36, 54], phase: 0.67 },
@@ -297,4 +325,63 @@ fn the_quadratic_form_keeps_a_constant_reproduces_a_parabola_and_is_halfway_boun
     }
     assert!((bouzidi_quadratic(0.5, 0.7, 0.1, 0.2, 0.3, 0.4) - 0.7).abs() < 1e-12);
     assert!((bouzidi_quadratic(0.5 - 1e-12, 0.7, 0.1, 0.2, 0.3, 0.4) - 0.7).abs() < 1e-9);
+}
+
+/// The mean speed of the stability runs. The exact centreline speed is 1.5 times it, 0.0225, which
+/// is under the stream-stability limit of TRT at τ⁺ 0.505, 5.6·(τ⁺ − ½) ≈ 0.028 (issue #1063, #1076;
+/// not on develop yet).
+const STABILITY_MEAN: f64 = 0.015;
+
+/// The relative margin on the discrete exact peak: the flow-rate bar of [`check`], 2e-3 percent. check()
+/// has no velocity bar of its own, so its flow-rate bar is the one tolerance this channel already uses.
+const PEAK_MARGIN: f64 = 2e-3 / 100.0;
+
+/// The density drift per 10 000 steps of the stability runs, at offsets +1e-6 and −1e-6, as the code
+/// gives them on this branch. Measured: the floor code on develop 655d92fe gives TRT −3.119429e-2 and
+/// −2.075217e-2, regularized −1.759055e-4 and −2.278871e-3, so removing the floor moves the drift by
+/// under 1 % (TRT −1e-6: 0.07 %; regularized −1e-6: 0.9 %), not materially. The drift values are measured;
+/// their cause is inferred: TRT at τ⁺ 0.505 with Λ = 3/16 has τ⁻ = 1/2 + (3/16)/(τ⁺ − ½) ≈ 38, so the
+/// odd mode relaxes at 1/τ⁻ ≈ 0.026 per step against 1/τ⁺ ≈ 2.0 for the shear, and the interpolated wall's
+/// mass defect is left unrelaxed at that rate (the cause is inferred, not checked against a second run).
+const TRT_STABILITY_DRIFT: [f64; 2] = [-3.119429e-2, -2.076600e-2];
+/// The regularized collision's drift in the same runs (its values are small; the same origin is not
+/// inferred for them).
+const REGULARIZED_STABILITY_DRIFT: [f64; 2] = [-1.759055e-4, -2.298570e-3];
+
+/// Links with a fraction q below 0.01: the 45° wall a millionth of a cell off a row of cell centres
+/// cuts its normal links at q ≈ 7.1e-7. Run at the viscosity floor of the setup, [`MIN_TAU`] (τ⁺ 0.505,
+/// the lowest laminar τ for every collision), with TRT and the regularized collision, for
+/// [`DIFFUSION_TIMES`] diffusion times H²/ν of the 11-cell channel (about 290 000 steps), so that a
+/// slowly growing mode would show. The bound is the exact centreline speed of the parabola, 1.5 times
+/// the mean, sampled at the fluid cells' centres, with the margin [`PEAK_MARGIN`] for a sound run's small
+/// overshoot. A growing mode fails on the speed and on the drift. The drift is checked against its known value.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn links_with_a_tiny_fraction_keep_a_channel_bounded_at_the_viscosity_floor() {
+    let nu_lat = (MIN_TAU - 0.5) / 3.0;
+    let width = 11.0;
+    let steps = (DIFFUSION_TIMES as f64 * width * width / nu_lat).ceil() as u64;
+    let mut runs = Vec::new();
+    for (collision, known) in [(Collision::Trt, TRT_STABILITY_DRIFT), (Collision::Regularized, REGULARIZED_STABILITY_DRIFT)] {
+        for (k, phase) in [1e-6, -1e-6].into_iter().enumerate() {
+            let regime = Regime { collision, nu_lat, mean_speed: STABILITY_MEAN };
+            let r = run_channel((1, 1), width, phase, WallTreatment::Interpolated, steps, regime);
+            println!(
+                "{collision:?}, offset {phase:+e}, {steps} steps: max speed {:.6e} (discrete peak {:.6e}), drift {:+.6e} (known {:+.6e}), links {:?}",
+                r.max_speed, r.exact_peak, r.drift, known[k], r.links
+            );
+            runs.push((collision, phase, known[k], r));
+        }
+    }
+    for (collision, phase, known, r) in &runs {
+        assert!(r.max_speed.is_finite() && r.drift.is_finite(), "{collision:?} {phase}: {r:?}");
+        let bound = r.exact_peak * (1.0 + PEAK_MARGIN);
+        assert!(
+            r.max_speed <= bound,
+            "{collision:?} {phase}: max speed {} above the discrete peak {} with margin {bound}",
+            r.max_speed,
+            r.exact_peak
+        );
+        assert!((r.drift - known).abs() < 1e-5 + 0.01 * known.abs(), "{collision:?} {phase}: drift {} against {known}", r.drift);
+    }
 }

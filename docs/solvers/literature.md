@@ -644,11 +644,13 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
 
 **C3.2 Bouzidi, Firdaouss, Lallemand 2001, interpolated bounce-back.** **Verdict: build on.**
 - **Citation.** Phys. Fluids 13(11):3452–3459, 2001. DOI [10.1063/1.1399290](https://doi.org/10.1063/1.1399290).
-- **Method.** For each wall link, the fraction q ∈ (0, 1] of the link inside the fluid; linear or quadratic
+- **Method.** For each wall link, the fraction q ∈ [0, 1] of the link inside the fluid; linear or quadratic
   interpolation of the reflected population, second-order for curved walls.
 - **Needs from meshing.** q comes from ray–triangle intersection of the lattice link with the face-tagged boundary
   surface — robust predicates (fieldcraft-mesh) give the inside/outside decision; q itself is a constructed value.
-- **Limits.** Not mass conservative; small q (< ~0.01) can destabilise: treat as q = 0 or use the Mei variant.
+- **Limits.** Not mass conservative. Both interpolations are bounded on the whole of [0, 1] (at q = 0 they return
+  the next node's population), so q takes no floor (#1059); the small-fraction trouble Mei, Luo & Shyy report belongs
+  to the Filippova–Hänel weighting.
 - **Also.** R. Mei, L.-S. Luo, W. Shyy, JCP 155(2):307–330, 1999, DOI [10.1006/jcph.1999.6334](https://doi.org/10.1006/jcph.1999.6334) — the alternative curved-boundary scheme. **Reference.**
 - **Built (#732).** `walls: "interpolated"` on the fluid step (default `"halfway"`), CPU and GPU: the linear
   interpolation at every link into an obstacle (`crates/lbm/src/flow.rs`, `bouzidi`), with Ladd's
@@ -657,8 +659,8 @@ JCP 232(1):100–117, 2013, DOI [10.1016/j.jcp.2012.07.023](https://doi.org/10.1
   momentum exchange in the wall's frame (Y. Wen, Z. Zhou, C. Shu, H. Ho, J. Fan, JCP 266:161–170,
   2014, DOI [10.1016/j.jcp.2014.02.018](https://doi.org/10.1016/j.jcp.2014.02.018)). q is the
   nearest crossing of the link with the obstacle's triangles by exact `orient3d` tests, or with the
-  face's exact curved surface where it has one (`crates/lbm/src/voxel.rs`, `link_fraction`), held
-  at 0.01 or above. A link with q < ½ and no second fluid cell behind it, or with no crossing, keeps
+  face's exact curved surface where it has one (`crates/lbm/src/voxel.rs`, `link_fraction`), taken in
+  [0, 1] (no floor since #1059). A link with q < ½ and no second fluid cell behind it, or with no crossing, keeps
   halfway bounce-back and is counted in a warning. Box faces, the temperature lattice and
   conducting interfaces stay halfway (#631). Refused with a wall model and a free surface. The
   quadratic variant is not built.

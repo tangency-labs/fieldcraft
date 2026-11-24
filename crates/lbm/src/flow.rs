@@ -231,8 +231,7 @@ pub struct Interpolation {
     /// The fluid cell one link further from the wall (at `+c_q`, across periodic faces), read
     /// when `q < ½` (the link's own cell otherwise).
     pub next: u32,
-    /// The fraction of the link from the cell to where the surface crosses it,
-    /// `[crate::voxel::MIN_LINK_FRACTION, 1]`.
+    /// The fraction of the link from the cell to where the surface crosses it, in `[0, 1]`.
     pub q: f64,
     /// Ladd's moving-wall term, as for [`Rule::Bounce`].
     pub du: f64,
