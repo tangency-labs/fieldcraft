@@ -354,13 +354,26 @@ fn the_sub_steps_follow_the_field_or_are_refused() {
     assert!(e.contains("more than 64 sub-steps"), "{e}");
 }
 
-/// What the device does not run yet is refused before a device is opened, naming the model
-/// and the CPU: heat. (A wall model is refused for the model on both backends, by the setup.)
+/// What the device does not run with the model yet is refused before a device is opened, naming
+/// the model, the wall treatment and the CPU: Malaspinas and Sagaut's wall model (`musker`) and
+/// heat. Han's on-node wall runs with it (the halfway wall-function bounce is refused by the
+/// setup on either backend).
 #[test]
 fn what_the_gpu_does_not_run_with_spalart_allmaras_is_refused_clearly() {
     let refused = |flow: &Flow| {
         GpuFlow::with_options(flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string())
     };
+    let mut channel = forced_channel(Collision::Hrr, 10.0, 180.0);
+    let (model, name) = (WallModel::Musker, "`musker`");
+    let mut step = channel.step("Run").cloned().unwrap();
+    if let Procedure::Fluid { turbulence, .. } = &mut step.procedure {
+        *turbulence = Some(sa(3.0, Some(model)));
+    }
+    channel.replace_step(step).unwrap();
+    let (_, flow) = prepare(&channel, &[]);
+    let e = refused(&flow);
+    println!("{model:?}: {e:?}");
+    assert!(e.as_deref().is_some_and(|e| e.contains("Spalart–Allmaras") && e.contains(name) && e.contains("cpu")), "{e:?}");
     let mut d = domain([0.0; 3], [4.0, 2.0, 2.0], 1.0);
     d.thermal = Some(FluidThermal::default());
     d.faces.y_max = FaceCondition::MovingWall { velocity: [0.01, 0.0, 0.0] };
@@ -369,4 +382,202 @@ fn what_the_gpu_does_not_run_with_spalart_allmaras_is_refused_clearly() {
     let e = refused(&flow);
     println!("heat: {e:?}");
     assert!(e.as_deref().is_some_and(|e| e.contains("Spalart–Allmaras") && e.contains("heat") && e.contains("cpu")), "{e:?}");
+}
+
+/// The model on Han, Ooka and Kikumoto's on-node wall (`spalding_bounce`), inflow ν̃/ν 3.
+fn on_han() -> Turbulence {
+    sa(3.0, Some(WallModel::SpaldingBounce))
+}
+
+/// The same wall with the model's own constant-stress wall law (`spalart_allmaras_bounce`).
+fn on_han_sa_law() -> Turbulence {
+    sa(3.0, Some(WallModel::SpalartAllmarasBounce))
+}
+
+thread_local! {
+    /// Whether the cases below run the model's own wall law instead of Spalding's.
+    static OWN_LAW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `body` with the cases on the model's own wall law.
+fn with_own_law<T>(body: impl FnOnce() -> T) -> T {
+    OWN_LAW.with(|c| c.set(true));
+    let out = body();
+    OWN_LAW.with(|c| c.set(false));
+    out
+}
+
+/// `p` with the model on Han's wall, and the hybrid collision's σ 0.99 when it is the hybrid one.
+fn han_procedure(p: Procedure, collision: Collision) -> Procedure {
+    let mut p = with(p, if OWN_LAW.with(|c| c.get()) { on_han_sa_law() } else { on_han() });
+    if let Procedure::Fluid { sigma, .. } = &mut p
+        && collision == Collision::Hrr
+    {
+        *sigma = Some(HrrSigma::Value(0.99));
+    }
+    p
+}
+
+/// The forced channel on Han's wall, 4 cells per half-height, 12 × 9 × 6 cells, periodic in x and
+/// z, started from a blunt profile at the bulk speed 15.7 (lattice 0.1), ν set for τ − ½ =
+/// `tau_half`: the walls are the box's y faces. Every node is flat: the plane path, `Side::Node`
+/// and the wall function.
+fn han_channel(collision: Collision, tau_half: f64, steps: f64) -> (Setup, Flow) {
+    let (n, ub) = (4usize, 15.7);
+    let dx = 1.0 / n as f64;
+    let (lx, lz) = (12.0 * dx, 6.0 * dx);
+    let mut d = domain([0.0; 3], [lx, 2.0 + dx, lz], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.acceleration = [1.0, 0.0, 0.0];
+    let dt = 0.1 * dx / ub;
+    let nu = tau_half / 3.0 * dx * dx / dt;
+    let (setup, mut flow) = prepare(&model(1.0, nu, d, han_procedure(collide(steps * dt, dt, None, collision), collision)), &[]);
+    let grid = *flow.grid();
+    let to_lattice = 1.0 / setup.velocity_scale();
+    flow.set_equilibrium(|cell| {
+        let [_, y, _] = grid.centre(cell);
+        let eta = y - 1.0 - 0.5 * dx;
+        (1.0, [1.15 * ub * (1.0 - eta.abs().min(1.0).powi(8)) * to_lattice, 0.0, 0.0])
+    });
+    (setup, flow)
+}
+
+/// What one run of the model on Han's wall measured, GPU against CPU: velocity (over the largest
+/// CPU speed), density, ν̃ (over the largest CPU ν̃); the wall function's friction velocities at
+/// the last step (over the largest CPU one); and every group's force averaged over the last 200
+/// steps (over the largest CPU group force).
+struct HanParity {
+    du: f64,
+    drho: f64,
+    dv: f64,
+    dut: f64,
+    dforce: f64,
+    rows: usize,
+}
+
+/// `steps` steps of `flow` on the CPU and the GPU (`streaming`), both with 2 fixed sub-steps of ν̃,
+/// and what [`HanParity`] measures; the wall function's rows are the same cells on both.
+fn han_parity(flow: Flow, steps: u64, streaming: Streaming) -> Option<HanParity> {
+    let mut cpu = flow;
+    cpu.set_sa_substeps(Some(2));
+    let mut gpu = gpu(&cpu, streaming)?;
+    gpu.fix_sa_substeps(Some(2)).unwrap();
+    let tail = 200.min(steps);
+    cpu.advance(steps - tail).unwrap();
+    gpu.advance(steps - tail).unwrap();
+    let groups = cpu.groups().len();
+    let (mut mc, mut mg) = (vec![[0.0f64; 3]; groups], vec![[0.0f64; 3]; groups]);
+    for _ in 0..tail {
+        cpu.advance(1).unwrap();
+        gpu.advance(1).unwrap();
+        let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
+        assert_eq!(fg.len(), groups);
+        for g in 0..groups {
+            for k in 0..3 {
+                mc[g][k] += fc[g][k] / tail as f64;
+                mg[g][k] += fg[g][k] / tail as f64;
+            }
+        }
+    }
+    let norm = |v: &[f64; 3]| v.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let scale = mc.iter().map(norm).fold(0.0, f64::max).max(1e-300);
+    let dforce = mc.iter().zip(&mg).map(|(a, b)| norm(&[a[0] - b[0], a[1] - b[1], a[2] - b[2]])).fold(0.0, f64::max) / scale;
+    let (wc, wg) = (cpu.sa_wall_function().1.to_vec(), gpu.sa_wall_function().unwrap());
+    assert_eq!(wc.iter().map(|r| r.0).collect::<Vec<_>>(), wg.iter().map(|r| r.0).collect::<Vec<_>>(), "the wall function's rows");
+    let ut = wc.iter().map(|r| r.2).fold(0.0, f64::max).max(1e-300);
+    let dut = wc.iter().zip(&wg).map(|(a, b)| (a.2 - b.2).abs()).fold(0.0, f64::max) / ut;
+    let (dv, _) = nu_tilde_difference(&mut cpu, &mut gpu);
+    let (du, drho) = field_difference(&mut cpu, &mut gpu);
+    Some(HanParity { du, drho, dv, dut, dforce, rows: wc.len() })
+}
+
+/// The bounds: velocity 1e-4, density 1e-5, ν̃ 5e-5, the friction velocities the wall function
+/// asked for and the groups' 200-step mean forces 1e-3. Prints what it measured; false past any.
+fn han_check(what: &str, r: &HanParity) -> bool {
+    println!(
+        "{what}: velocity {:.2e}, density {:.2e}, ν̃ {:.2e}; wall function u_τ {:.2e} over {} rows; group forces, mean of 200 steps {:.2e}",
+        r.du, r.drho, r.dv, r.dut, r.rows, r.dforce
+    );
+    r.du < 1e-4 && r.drho < 1e-5 && r.dv < 5e-5 && r.dut < 1e-3 && r.dforce < 1e-3
+}
+
+/// The model on Han's on-node wall, GPU against CPU, at τ − ½ 1.2e-4 (the gated cases' τ), both
+/// layouts: the forced channel with box-face walls (144 nodes and 144 wall-function rows) on the
+/// hybrid collision (σ 0.99), `steps` steps. With `own_law` the wall is the model's own
+/// constant-stress law (the table in f32 on the device), where the friction velocity asked for
+/// runs from the sublayer through the buffer layer.
+fn the_model_on_han_s_wall_follows_the_cpu_cases(steps: f64, own_law: bool) {
+    let mut failed = Vec::new();
+    let mut run = || {
+        for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+            let (setup, flow) = han_channel(Collision::Hrr, 1.2e-4, steps);
+            assert_eq!(flow.wall_nodes().map(|n| n.nodes().len()), Some(144));
+            let law = if own_law { fieldcraft_lbm::sa::WallLaw::SpalartAllmaras } else { fieldcraft_lbm::sa::WallLaw::Spalding };
+            assert_eq!(flow.wall_nodes().map(|n| n.law()), Some(law));
+            let Some(r) = han_parity(flow, setup.steps, streaming) else { return };
+            let what = format!(
+                "SA {}, channel (box faces), Hrr, {streaming:?}, τ − ½ 1.2e-4, {steps} steps",
+                if own_law { "own wall law" } else { "on Han" }
+            );
+            assert_eq!(r.rows, 144);
+            if !han_check(&what, &r) {
+                failed.push(what);
+            }
+        }
+    };
+    if own_law {
+        with_own_law(run)
+    } else {
+        run()
+    }
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+#[test]
+fn the_model_on_han_s_wall_follows_the_cpu() {
+    the_model_on_han_s_wall_follows_the_cpu_cases(300.0, false);
+}
+
+/// [`the_model_on_han_s_wall_follows_the_cpu`] over 2000 steps.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_model_on_han_s_wall_follows_the_cpu_for_2000_steps() {
+    the_model_on_han_s_wall_follows_the_cpu_cases(2000.0, false);
+}
+
+#[test]
+fn the_model_s_own_wall_law_follows_the_cpu() {
+    the_model_on_han_s_wall_follows_the_cpu_cases(300.0, true);
+}
+
+/// [`the_model_s_own_wall_law_follows_the_cpu`] over 2000 steps.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_model_s_own_wall_law_follows_the_cpu_for_2000_steps() {
+    the_model_on_han_s_wall_follows_the_cpu_cases(2000.0, true);
+}
+
+/// The model on Han's wall twice on one device gives the same fields, ν̃, forces and wall-function
+/// rows bit for bit: the forced channel, 100 steps, hybrid collision, both layouts.
+#[test]
+fn the_model_on_han_s_wall_is_deterministic_on_its_device() {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let (_, mut flow) = han_channel(Collision::Hrr, 1.2e-4, 100.0);
+        flow.set_sa_substeps(Some(2));
+        let run = || {
+            let mut g = gpu(&flow, streaming)?;
+            g.fix_sa_substeps(Some(2)).unwrap();
+            g.advance(100).unwrap();
+            let mut bits = field_bits(&g.fields().unwrap());
+            bits.extend(g.nu_tilde().unwrap().unwrap().iter().map(|v| v.to_bits()));
+            bits.extend(g.forces().unwrap().iter().flatten().map(|v| v.to_bits()));
+            bits.extend(g.sa_wall_function().unwrap().iter().map(|r| r.2.to_bits()));
+            Some(bits)
+        };
+        let (Some(a), Some(b)) = (run(), run()) else { return };
+        println!("SA on Han, channel, {streaming:?}: two runs bit for bit: {}", a == b);
+        assert!(a == b);
+    }
 }

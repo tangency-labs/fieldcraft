@@ -347,6 +347,23 @@ per step on the GB10, −1.174e-4 on llvmpipe, −1.169e-4 on the CPU, tolerance
 at 1e-3 of a lattice speed: at the CPU's 1e-6 single precision's rounding of the base holds the mode
 near 4e-6 and the rate measured is the rounding's.
 
+With the Spalart–Allmaras model (`spalart_allmaras` and `spalding_bounce`) the wall function runs on
+the device too (`sa_wall_function` in `lbm.wgsl`): one row per first fluid node, the interior cell
+of one or more boundary nodes, from the host. After the ν̃ sub-steps and before the collision it
+takes u_τ = √(τ_w / ρ) from the largest stress the law asked for at its nodes, ν_t = ν νt⁺(y⁺) from
+Spalding's law and ν̃ as the root of ν̃ f_v1 = ν_t, both roots by bisection (at most 40 halvings;
+the CPU's upper end), and writes u_τ back for the host. `Flow::sa_wall_function` has the same rows
+on both backends. The device is checked against the CPU in `tests/verification/sa.rs`
+(the forced channel with box-face walls, hybrid collision at σ 0.99).
+
+`wall_model: "spalart_allmaras_bounce"` runs on the device with the model's own law: the host packs
+the CPU's table as segments (`sa_law::segments`) in f32, after the wall function's rows, a header
+row with the segment count and one row per segment; the kernel finds u⁺(y⁺) by binary search and
+the friction velocity by the segment's quadratic (the sublayer's root below the first node, the
+last node above the table), and the node's ν̃ is κ u_τ y exactly. Against the CPU on the cases of
+the section above (`the_model_s_own_wall_law_follows_the_cpu_for_2000_steps`): channel velocity
+4.2e-7 to 5.7e-7 (2000 steps), ν̃ 1.5e-5 to 2.2e-5, u_τ 4.9e-7 to 5.4e-7, density 1e-13, forces below 2.0e-8 (the same case on Spalding's law: velocity 4.2e-7, ν̃ 1.5e-5). Measured on an NVIDIA GeForce RTX 4070 Laptop GPU; two runs on one device agree bit for bit.
+
 The Taylor–Green study (`study_taylor_green_vortex_dissipation`, 64³, lattice speed 0.05, to
 t = 20) on the GB10 gives the CPU's peak dissipation to the digits printed, at the same time:
 

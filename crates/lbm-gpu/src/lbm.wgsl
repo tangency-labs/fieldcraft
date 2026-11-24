@@ -131,6 +131,9 @@ override ZONES: bool = false;
 override SA: bool = false;
 // The most ν̃ sub-steps one lattice step may take (fieldcraft_lbm::sa::MAX_SUBSTEPS).
 override SA_MAX_SUBSTEPS: u32 = 64u;
+// The model's own constant-stress wall law (fieldcraft_lbm::sa_law) in place of Spalding's, for the
+// on-node wall: `sa_law_friction` and ν̃ = κ u_τ y at the first fluid node.
+override SA_LAW: bool = false;
 // The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
 // outlet's convection speed.
 override MAX_SPEED: f32 = 0.5;
@@ -191,13 +194,15 @@ struct Params {
     // von Kármán length, the box's shortest extent in cells (z).
     les: vec4<f32>,
     // Whether each axis is periodic (xyz: 1 or 0), for the finite-difference gradient's
-    // neighbours.
+    // neighbours (w unused).
     periodic: vec4<u32>,
     // The Spalart–Allmaras model: each box face's kind for ν̃ (x, 2 bits per face −x, +x, −y, +y,
     // −z, +z: 1 wall, 2 inflow, 3 open), the inflow ν̃ (y, as f32 bits), a fixed sub-step count (z;
     // 0: as many as the monotone bound needs), and whether the model's sources act (w: 1, or 0
     // for the transport alone).
     sa: vec4<u32>,
+    // With the model on Han's wall, the rows of its wall function (x, `sa_wall_function`).
+    sa_wall: vec4<u32>,
 };
 
 // Each kernel's bind group holds only the bindings it reaches (native.rs reads them from this
@@ -412,6 +417,9 @@ fn cell_of(lid: u32, wg: vec3<u32>) -> u32 {
 // word is 2 (native.rs, NODE: the fluid bit clear): it streams, but it is the wall, not fluid
 // (see `node_bounce`). The wall model's and the halfway bounce's rows past the fluid bit never
 // meet it: the wall models exclude each other.
+// A boundary node's flag word under the on-node bounce (native.rs NODE).
+const NODE_FLAG: u32 = 2u;
+
 fn is_fluid(cell: u32) -> bool {
     if ON_NODE { return (fluid[cell] & 1u) != 0u; }
     return fluid[cell] != 0u;
@@ -658,7 +666,8 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
         let rel = u - b.xyz;
         let t = rel - dot(rel, a.xyz) * a.xyz;
         let speed = length(t);
-        let ut = spalding_root(speed, a.w, params.smag.w, 0.41, 5.5);
+        var ut = 0.0;
+        if SA_LAW { ut = sa_law_friction(speed, a.w, params.smag.w); } else { ut = spalding_root(speed, a.w, params.smag.w, 0.41, 5.5); }
         let scale = rho * ut * ut / speed;
         if speed > 0.0 && scale < 1e30 { stress = scale * t; }
     }
@@ -1136,6 +1145,7 @@ const SA_KAPPA: f32 = 0.41;
 const SA_CW2: f32 = 0.3;
 const SA_CW3_6: f32 = 64.0;
 const SA_CV1_3: f32 = 357.911;
+const SA_CV1: f32 = 7.1;
 const SA_CT3: f32 = 1.2;
 const SA_CT4: f32 = 0.5;
 const SA_CV2: f32 = 0.7;
@@ -1146,6 +1156,9 @@ const SA_CELL: u32 = 0u;
 const SA_WALL: u32 = 1u;
 const SA_INFLOW: u32 = 2u;
 const SA_OPEN: u32 = 3u;
+// A boundary node of Han's on-node wall across the face: ν̃ 0 on the wall a whole cell away
+// (fieldcraft_lbm::sa::Side::Node).
+const SA_NODE: u32 = 4u;
 // stats words (see `stats`) and sa_gate offsets of ν̃'s sub-stepping.
 const SA_MOST: u32 = 4u;
 const SA_STOPPED: u32 = 6u;
@@ -1342,6 +1355,7 @@ fn sa_side(p: vec3<i32>, d: vec3<i32>, face: u32) -> vec2<u32> {
     let w = p + d;
     if any(((w < vec3<i32>(0)) | (w >= size)) & !periodic) { return vec2<u32>((params.sa.x >> (2u * face)) & 3u, 0u); }
     let cell = wrapped(w);
+    if ON_NODE && fluid[cell] == NODE_FLAG { return vec2<u32>(SA_NODE, 0u); }
     if !is_fluid(cell) { return vec2<u32>(SA_WALL, 0u); }
     return vec2<u32>(SA_CELL, cell);
 }
@@ -1365,6 +1379,10 @@ fn sa_face(side: vec2<u32>, v: f32, uc: f32, axis: u32, sign: f32, nu: f32, eta_
         case 1u: {
             slope = -2.0 * v;
             d = 2.0 * nu / SA_SIGMA;
+        }
+        case 4u: {
+            slope = -v;
+            d = 0.5 * (eta_c + nu) / SA_SIGMA;
         }
         case 2u: {
             let inflow = bitcast<f32>(params.sa.y);
@@ -1455,6 +1473,125 @@ fn sa_update(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) w
     if !(abs(v) < 1e30) { atomicStore(&stats[5], 1u); }
     nu_tilde[cell] = v;
     moments[cell] = vec4<f32>(moments[cell].xyz, sa_nu_t(v, params.smag.w));
+}
+
+// Han's on-node wall with the model: the wall function (SaField's first-node ν̃), after the sub-steps and
+// before the collision; one row per first fluid node, from native.rs (`sa_wall_row`).
+const SA_HALVINGS: u32 = 40u;
+// e^{−κB} with Spalding's κ 0.41 and B 5.5 (fieldcraft_lbm::wall::BOUNCE_KAPPA, BOUNCE_B).
+const SA_LAW_E: f32 = 0.1048735437362869;
+
+fn sa_wall_row(j: u32) -> u32 {
+    return 4u * params.wall.x + 3u * j;
+}
+
+// The model's own wall law's table (fieldcraft_lbm::sa_law::segments, from native.rs) after the wall
+// function's rows: a header row (the segment count, as bits, in x), then one row per segment
+// k = 1, 2, …: [y⁺_k u⁺_k, y⁺_(k−1), s, b] with u⁺ = b + s y⁺ inside it, the nodes growing by
+// SA_LAW_RATIO from 10⁻³ (the first segment starts at 0 and ends there).
+const SA_LAW_RATIO: f32 = 1.002;
+const SA_LAW_FIRST: f32 = 0.001;
+
+fn sa_law_friction(speed: f32, y: f32, nu: f32) -> f32 {
+    let re = speed * y / nu;
+    if !(re > 0.0) || re > 1e30 || !(y > 0.0) { return 0.0; }
+    let base = 4u * params.wall.x + 3u * params.sa_wall.x;
+    let count = bitcast<u32>(walls[base].x);
+    var yp = sqrt(re);
+    if re > SA_LAW_FIRST * SA_LAW_FIRST && count > 0u {
+        // The first segment whose largest Reynolds number is above re.
+        var lo = 0u;
+        var hi = count;
+        for (var i = 0u; i < 16u && lo < hi; i = i + 1u) {
+            let mid = (lo + hi) / 2u;
+            if walls[base + 1u + mid].x <= re { lo = mid + 1u; } else { hi = mid; }
+        }
+        if lo >= count {
+            yp = walls[base + count].y * SA_LAW_RATIO;
+        } else {
+            let seg = walls[base + 1u + lo];
+            let disc = sqrt(max(seg.w * seg.w + 4.0 * seg.z * re, 0.0));
+            if seg.w >= 0.0 { yp = 2.0 * re / (seg.w + disc); } else { yp = (disc - seg.w) / (2.0 * seg.z); }
+            yp = clamp(yp, seg.y, select(seg.y * SA_LAW_RATIO, SA_LAW_FIRST, seg.y == 0.0));
+        }
+    }
+    let ut = nu * yp / y;
+    if ut == ut && ut < 1e30 { return ut; }
+    return 0.0;
+}
+
+// Σ_{k ≥ m} x^k / k! for m = 3 or 4, to k = 9 below x = ½, from exp above.
+fn sa_exp_tail(x: f32, m: u32) -> f32 {
+    if x < 0.5 {
+        let x2 = x * x;
+        let x4 = x2 * x2;
+        var s = x4 / 24.0 + x4 * x / 120.0 + x4 * x2 / 720.0 + x4 * x2 * x / 5040.0 + x4 * x4 / 40320.0 + x4 * x4 * x / 362880.0;
+        if m == 3u { s = s + x2 * x / 6.0; }
+        return s;
+    }
+    var s = exp(x) - 1.0 - x - 0.5 * x * x;
+    if m == 4u { s = s - x * x * x / 6.0; }
+    return s;
+}
+
+// Spalding's νt⁺ at y⁺ (0 at y⁺ ≤ 0 or not a number): u⁺ from y⁺ = u⁺ + e^{−κB} Σ_{k≥4} (κu⁺)^k/k!.
+fn sa_spalding_nu_t(y_plus: f32) -> f32 {
+    if !(y_plus > 0.0 && y_plus < 1e30) { return 0.0; }
+    var lo = 0.0;
+    var hi = y_plus;
+    for (var i = 0u; i < SA_HALVINGS; i = i + 1u) {
+        let mid = 0.5 * (lo + hi);
+        if hi - lo <= 1e-7 * hi || !(mid > lo && mid < hi) { break; }
+        if mid + SA_LAW_E * sa_exp_tail(SA_KAPPA * mid, 4u) < y_plus { lo = mid; } else { hi = mid; }
+    }
+    let out = SA_KAPPA * SA_LAW_E * sa_exp_tail(SA_KAPPA * hi, 3u);
+    return select(0.0, out, out > 0.0 && out < 1e30);
+}
+
+// The ν̃ ≥ 0 whose ν̃ f_v1(ν̃/ν) is ν_t (fieldcraft_lbm::sa::nu_tilde_for): χ in [t, t + c_v1].
+fn sa_nu_tilde_for(nu_t: f32, nu: f32) -> f32 {
+    let t = nu_t / nu;
+    if !(nu > 0.0 && t > 0.0 && t < 1e30) { return 0.0; }
+    var lo = t;
+    var hi = t + SA_CV1;
+    for (var i = 0u; i < SA_HALVINGS; i = i + 1u) {
+        let mid = 0.5 * (lo + hi);
+        if hi - lo <= 1e-7 * hi || !(mid > lo && mid < hi) { break; }
+        if mid * sa_fv1(mid) < t { lo = mid; } else { hi = mid; }
+    }
+    return hi * nu;
+}
+
+@compute @workgroup_size(256)
+fn sa_wall_function(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let j = cell_of(lid, wg);
+    if !(SA && ON_NODE) || params.sa.w == 0u || j >= params.sa_wall.x { return; }
+    let base = sa_wall_row(j);
+    let a = walls[base];
+    let b = walls[base + 1u];
+    let cell = bitcast<u32>(a.x);
+    let count = min(bitcast<u32>(a.y), 6u);
+    let nodes = array<u32, 6>(bitcast<u32>(a.z), bitcast<u32>(a.w), bitcast<u32>(b.x), bitcast<u32>(b.y), bitcast<u32>(b.z), bitcast<u32>(b.w));
+    var tau = 0.0;
+    for (var i = 0u; i < count; i = i + 1u) {
+        tau = max(tau, length(walls[4u * nodes[i] + 2u].xyz));
+    }
+    var xyz = vec3<i32>(0);
+    if AA_MODE && params.phase.x == 1u { xyz = coords(cell); }
+    var drho = 0.0;
+    for (var q = 0u; q < Q; q = q + 1u) {
+        drho = drho + population(q, cell, xyz);
+    }
+    let rho = 1.0 + drho;
+    let nu = params.smag.w;
+    var ut = 0.0;
+    if rho > 0.0 && tau < 1e30 { ut = sqrt(tau / rho); }
+    // The model's own law has ν̃ = κ u_τ y exactly (y = 1 here); Spalding's ν_t⁺ is inverted.
+    var v = SA_KAPPA * ut;
+    if !SA_LAW { v = sa_nu_tilde_for(nu * sa_spalding_nu_t(ut / nu), nu); }
+    nu_tilde[cell] = v;
+    moments[cell] = vec4<f32>(moments[cell].xyz, sa_nu_t(v, nu));
+    walls[base + 2u] = vec4<f32>(ut, v, 0.0, 0.0);
 }
 
 // The rate of an explicit eddy viscosity, τ̄ = 3 (ν + ν_t) + ½.
