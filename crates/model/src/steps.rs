@@ -77,7 +77,8 @@ pub enum Procedure {
     /// used only with `collision: "hrr"`). With `steady`, the run stops on its own once the flow stops changing ([`Steady`]); its
     /// length is then the most it may run. `turbulence` adds a subgrid eddy viscosity
     /// ([`Turbulence`]; none by default). `walls` is how the links into obstacles bounce back
-    /// ([`WallTreatment`], halfway by default).
+    /// ([`WallTreatment`], halfway by default). `inlet_ramp` raises the velocity faces from the initial field over that time
+    /// (none by default).
     Fluid {
         domain: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -100,6 +101,10 @@ pub enum Procedure {
         steady: Option<Steady>,
         #[serde(default, skip_serializing_if = "WallTreatment::is_halfway")]
         walls: WallTreatment,
+        /// The time over which every velocity face of the domain rises from the initial field to its velocity, as
+        /// ½ (1 − cos(π t / T)); none: the faces hold their velocities from the first step.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        inlet_ramp: Option<f64>,
     },
     /// Heat conduction: the steady temperature field, or its history over time when `transient`
     /// is given. Temperature boundary conditions and heat loads (flux, convection, sources)
@@ -1201,7 +1206,7 @@ impl Procedure {
         if let Procedure::NonlinearStatic(n) = self {
             return n.validate();
         }
-        if let Procedure::Fluid { end_time, steps, time_step, frames, magic, sigma, ref steady, .. } = *self {
+        if let Procedure::Fluid { end_time, steps, time_step, frames, magic, sigma, ref steady, inlet_ramp, .. } = *self {
             if let Some(st) = steady {
                 st.validate()?;
             }
@@ -1215,6 +1220,9 @@ impl Procedure {
             }
             if let Some(dt) = time_step {
                 crate::positive("time step", dt)?;
+            }
+            if let Some(t) = inlet_ramp {
+                crate::positive("the inlet ramp time", t)?;
             }
             if !(1..=MAX_FLUID_FRAMES).contains(&frames) {
                 return Err(Error::Invalid(format!("a fluid step writes 1 to {MAX_FLUID_FRAMES} frames, got {frames}")));
@@ -1542,6 +1550,29 @@ fn switch(active: &mut BTreeSet<String>, name: &str, on: bool) {
 mod tests {
     use super::*;
     use crate::{BoundaryCondition, Set, Target};
+
+    #[test]
+    fn an_inlet_ramp_is_a_positive_finite_time() {
+        let fluid = |inlet_ramp| Procedure::Fluid {
+            domain: "Flow".into(),
+            end_time: Some(1.0),
+            steps: None,
+            time_step: None,
+            frames: 1,
+            magic: None,
+            sigma: None,
+            collision: None,
+            turbulence: None,
+            steady: None,
+            walls: WallTreatment::Halfway,
+            inlet_ramp,
+        };
+        assert!(fluid(None).validate().is_ok());
+        assert!(fluid(Some(2.0)).validate().is_ok());
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(fluid(Some(bad)).validate().is_err(), "the inlet ramp {bad} was accepted");
+        }
+    }
 
     #[test]
     fn steps_keep_order_and_an_explicit_table() {

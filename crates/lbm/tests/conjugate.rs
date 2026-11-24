@@ -315,6 +315,7 @@ fn a_low_capacity_solid_with_strong_links_stays_stable() {
             turbulence: None,
             steady: rule,
             walls: Default::default(),
+            inlet_ramp: None,
         };
         let m = cht_model([1.0, alpha, alpha], (capacity, [8.0 * alpha; 3], 1.0), d, procedure);
         let cube = [obstacle("Cube", cuboid([0.25; 3], [0.75; 3]), &CUBOID_FACES)];
@@ -434,6 +435,7 @@ fn heated_block(capacity: f64, end_time: f64, steady: Option<fieldcraft_model::S
         turbulence: None,
         steady,
         walls: Default::default(),
+        inlet_ramp: None,
     };
     let m = cht_model([1.0, nu, alpha], (capacity, [0.5; 3], 1.0), d, procedure);
     (m, vec![obstacle("Block", cuboid([0.75, 0.375, -1.0], [1.25, 0.625, 1.0]), &CUBOID_FACES)])

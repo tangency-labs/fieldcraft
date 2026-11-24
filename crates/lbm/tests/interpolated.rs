@@ -203,6 +203,7 @@ fn sphere_drag(r: f64, l: usize, steps: u64, w: WallTreatment, nu: f64) -> f64 {
         turbulence: None,
         steady: None,
         walls: w,
+        inlet_ramp: None,
     };
     let m = model(1.0, nu, d, p);
     let (setup, mut flow) = prepare(&m, std::slice::from_ref(&ball));

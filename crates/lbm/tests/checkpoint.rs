@@ -259,6 +259,7 @@ fn an_advance_failure_keeps_the_uninterrupted_reporting_boundary() {
         turbulence: None,
         steady: Some(Steady { window: Some(160.0 * dt), tolerance: 1e-6, min_time: None, divergence: None, monitors: vec![], averaging: None }),
         walls: Default::default(),
+        inlet_ramp: None,
     };
     let m = model(1.0, 0.01, d, p);
     let normal = solve_fluid(&m, None, &[], &Limits::default()).unwrap();
@@ -286,6 +287,7 @@ fn rounded_steady_windows_can_retain_more_than_the_history_sampling_target() {
         turbulence: None,
         steady: Some(Steady { window: Some(17.0), tolerance: 1e-6, min_time: Some(169999.0), divergence: None, monitors: vec![], averaging: None }),
         walls: Default::default(),
+        inlet_ramp: None,
     };
     let m = model(1.0, 0.1, domain([0.0; 3], [1.0; 3], 1.0), p);
     let normal = solve_fluid(&m, None, &[], &Limits::default()).unwrap();
@@ -421,4 +423,20 @@ fn a_collapsing_column_resumes_with_its_surface() {
     let fs = normal.stats.free_surface.unwrap();
     assert!(fs.filled > 0 && fs.emptied > 0, "cells convert within the run: {fs:?}");
     parity(&m, &[]);
+}
+
+#[test]
+fn an_inlet_ramp_resumes_mid_ramp_bit_for_bit() {
+    // A 30-step ramp of a tube at rest: the saves at steps 11 and 22 land inside it, and the run resumes from step 22.
+    let mut d = domain([0.0; 3], [16.0, 1.0, 1.0], 1.0);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [0.01, 0.0, 0.0], profile: fieldcraft_model::Profile::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
+    for f in [&mut d.faces.y_min, &mut d.faces.y_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = FaceCondition::Periodic {};
+    }
+    let mut p = collide(40.0, 1.0, None, Collision::Trt);
+    if let Procedure::Fluid { inlet_ramp, .. } = &mut p {
+        *inlet_ramp = Some(30.0);
+    }
+    parity_at(&model(1.0, 0.1 / 3.0, d, p), &[], 11);
 }

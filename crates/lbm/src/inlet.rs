@@ -74,6 +74,29 @@ use crate::lattice::{C, Q, W, equilibrium, opposite};
 use crate::outlet::Populations;
 use crate::{Error, Grid, Result};
 
+/// The share of a velocity face's velocity at time step `step` (1 is the first step) under a ramp of `ramp_steps`
+/// steps: ½ (1 − cos(π step / ramp_steps)), and 1 from `ramp_steps` on or without a ramp (`ramp_steps` 0).
+///
+/// The form is the lowest-order trigonometric rise with s(0) = 0, s(T) = 1 and s′ = 0 at both ends, so the inlet's
+/// acceleration is continuous at the start and the end. The face's velocity is u(t) = u0 + r(t) (u − u0) with u0 the
+/// initial field's velocity; a start from rest is u0 = 0.
+///
+/// The residual. A velocity step U at a velocity face sends a density pulse U / c_s = Ma (Ma = √3 U, the lattice Mach
+/// number), since a travelling wave has p′ = ρ c v′ (Joukowsky's relation: N. Joukowsky, Mém. Acad. Imp. Sci.
+/// St-Pétersbourg, sér. 8, 9(5), 1900). Its pressure coefficient, against ½ρU², is 2 / Ma. In a box of length L between
+/// the velocity face and a pressure face the fundamental period is T₀ = 4 L / c_s (c_s = 1/√3 cells per step, a
+/// closed–open tube), and the step's fundamental standing wave has (4/π) of the step's amplitude (the odd harmonics of
+/// a square wave, 4 / (π (2n + 1))). With T = m T₀ the ramp keeps the fundamental at |cos(π m)| / |4 m² − 1| of that.
+/// So the residual pressure coefficient of the fundamental is C_p ≈ (4/π)(2/Ma) |cos(π m)| / |4 m² − 1|, at most
+/// (8 / (π Ma)) / (4 m² − 1) with the cosine at its largest. For a chosen tolerance ε on that residual, m must be at
+/// least ½ √(1 + 8 / (π ε Ma)). The time T is the user's choice; the code recommends none.
+pub fn ramp(step: u64, ramp_steps: u64) -> f64 {
+    if ramp_steps == 0 || step >= ramp_steps {
+        return 1.0;
+    }
+    0.5 * (1.0 - libm::cos(std::f64::consts::PI * step as f64 / ramp_steps as f64))
+}
+
 const MISSING: u32 = u32::MAX;
 const WEIGHTS: [f64; 5] = [-1.0 / 16.0, 4.0 / 16.0, 10.0 / 16.0, 4.0 / 16.0, -1.0 / 16.0];
 

@@ -653,6 +653,12 @@ pub struct Flow {
     /// The links that do not stream by the shifted copies, in cell order.
     links: Vec<Link>,
     open: Vec<OpenCell>,
+    /// The steps over which the velocity faces rise (0: none), from the initial field `inlet_from` to their targets.
+    inlet_ramp_steps: u64,
+    /// The lattice velocity the ramp starts from: the initial field's (rest unless the domain gives it one).
+    inlet_from: [f64; 3],
+    /// Under an inlet ramp: every open cell's full target, in the order of `open` (empty without a ramp).
+    inlet_full: Vec<Target>,
     omega_plus: f64,
     omega_minus: f64,
     collision: Collision,
@@ -1471,7 +1477,11 @@ impl Flow {
             }
         };
         open.shrink_to_fit();
+        let inlet_full = if setup.inlet_ramp_steps > 0 { open.iter().map(|c| c.target).collect() } else { Vec::new() };
         let mut flow = Flow {
+            inlet_ramp_steps: setup.inlet_ramp_steps,
+            inlet_from: setup.initial_velocity,
+            inlet_full,
             grid,
             n,
             stride,
@@ -1859,6 +1869,17 @@ impl Flow {
         self.steps_done
     }
 
+    /// The steps over which the velocity faces rise from the initial field (0: none).
+    pub fn inlet_ramp_steps(&self) -> u64 {
+        self.inlet_ramp_steps
+    }
+
+    /// Every open cell's target at the full velocities, in the order of [`Flow::open_cells`]: the targets a device
+    /// starts from (under an inlet ramp, the full ones; the open cells' own otherwise).
+    pub fn inlet_targets(&self) -> Vec<Target> {
+        if self.inlet_ramp_steps == 0 { self.open.iter().map(|c| c.target).collect() } else { self.inlet_full.clone() }
+    }
+
     /// The links that do not stream from the neighbour at `−c_q`, in cell order.
     pub fn links(&self) -> &[Link] {
         &self.links
@@ -2062,6 +2083,7 @@ impl Flow {
     /// One time step. Fails with [`Error::Unstable`] when a density stops being a positive
     /// number or a lattice speed exceeds [`MAX_LATTICE_SPEED`].
     pub fn step(&mut self) -> Result<()> {
+        self.ramp_inlets();
         self.targets()?;
         self.refresh_buoyancy();
         self.refresh_fans();
@@ -2102,6 +2124,23 @@ impl Flow {
         }
         self.steps_done += 1;
         Ok(())
+    }
+
+    /// Under an inlet ramp: every velocity face's target for this step, u(t) = u0 + r(t) (u − u0) with u0 the initial
+    /// field's lattice velocity, u the full target and r the share of [`crate::inlet::ramp`].
+    fn ramp_inlets(&mut self) {
+        // One step past the ramp's end is still written, so the targets end on the full velocities exactly.
+        if self.inlet_ramp_steps == 0 || self.steps_done > self.inlet_ramp_steps {
+            return;
+        }
+        let share = crate::inlet::ramp(self.steps_done + 1, self.inlet_ramp_steps);
+        let from = self.inlet_from;
+        for (oc, full) in self.open.iter_mut().zip(&self.inlet_full) {
+            if let Target::Velocity(u) = full {
+                let target = if share >= 1.0 { *u } else { std::array::from_fn(|c| from[c] + share * (u[c] - from[c])) };
+                oc.target = Target::Velocity(target);
+            }
+        }
     }
 
     /// The streaming targets (the second arrays of populations), allocated before the first step.
@@ -3389,7 +3428,11 @@ impl crate::backend::Backend for Flow {
             acceleration,
             forces,
             groups,
-            // Fixed by the setup (the links carry their rules and are saved).
+            // Fixed by the setup (the links carry their rules and are saved). The ramp's targets are
+            // rewritten from `steps_done` at each step, so a resumed flow needs nothing saved for them.
+            inlet_ramp_steps: _,
+            inlet_from: _,
+            inlet_full: _,
             wall_velocity: _,
             wall_links: _,
             interpolations,

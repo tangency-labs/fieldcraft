@@ -27,6 +27,7 @@ fn steps(steps: u64, collision: Collision) -> Procedure {
         turbulence: None,
         steady: None,
         walls: Default::default(),
+        inlet_ramp: None,
     }
 }
 
@@ -252,6 +253,7 @@ fn cylinder_failure(cells: f64, re: f64, steps_run: u64, collision: Collision) -
         turbulence: None,
         steady: None,
         walls: Default::default(),
+        inlet_ramp: None,
     };
     let m = model(1.0, d / re, dom, p);
     let setup = Setup::new(&m, None, std::slice::from_ref(&cyl), &Limits::default()).unwrap();
@@ -306,6 +308,7 @@ fn channel(n: usize, collision: Collision) -> (f64, f64, f64, f64) {
         turbulence: None,
         steady: None,
         walls: Default::default(),
+        inlet_ramp: None,
     };
     let r = solve_fluid(&model(1.0, nu, d, p), None, &[], &Limits::default()).unwrap();
     let last = r.frames.last().unwrap();

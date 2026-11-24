@@ -37,6 +37,7 @@ fn drag_history(collision: Collision, steps: u64) -> Vec<f64> {
         turbulence: Some(Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: None }),
         steady: None,
         walls: Default::default(),
+        inlet_ramp: None,
     };
     let m = model(1.0, 1.0 / 8000.0, d, p);
     let r = solve_fluid(&m, None, &[body], &Limits::default()).unwrap();
