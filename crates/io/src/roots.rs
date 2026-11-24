@@ -58,6 +58,22 @@ enum Grant {
     Within(PathBuf),
 }
 
+/// `path` as a user reads it, without the Windows verbatim prefix [`std::fs::canonicalize`] adds
+/// to every resolved root and path: `\\?\C:\x` is `C:\x`, `\\?\UNC\server\share\x` is
+/// `\\server\share\x`. For display only; the root checks keep the canonical form. Any other
+/// verbatim form (a volume GUID, a device) has no plain equivalent and is kept, as is a path
+/// without the prefix.
+pub fn without_verbatim(path: &Path) -> PathBuf {
+    let Some(s) = path.to_str() else { return path.to_path_buf() };
+    if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{unc}"));
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if matches!(rest.as_bytes(), [d, b':', b'\\', ..] if d.is_ascii_alphabetic()) => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
 fn resolve_root(p: &Path, access: Access) -> Result<PathBuf> {
     let shown = p.display();
     let dir = std::fs::canonicalize(p).map_err(|e| Error::Io(format!("the {} root `{shown}`: {e}", access.name())))?;
@@ -189,6 +205,16 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn verbatim_prefix_is_taken_off_for_display() {
+        let plain = |s: &str| without_verbatim(Path::new(s));
+        assert_eq!(plain(r"\\?\C:\Users\Ada\Dev\x"), Path::new(r"C:\Users\Ada\Dev\x"));
+        assert_eq!(plain(r"\\?\UNC\server\share\x"), Path::new(r"\\server\share\x"));
+        assert_eq!(plain(r"\\?\Volume{1234}\x"), Path::new(r"\\?\Volume{1234}\x"));
+        assert_eq!(plain(r"C:\Users\Ada"), Path::new(r"C:\Users\Ada"));
+        assert_eq!(plain("/home/ada"), Path::new("/home/ada"));
     }
 
     #[test]
