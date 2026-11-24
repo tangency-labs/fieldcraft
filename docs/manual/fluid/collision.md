@@ -146,6 +146,60 @@ the model's ν_t, and with heat α_t = ν_t / Pr_t still reaches the scalar latt
 continuous model's estimate; near τ̄ = ½ the scheme's own hyperviscosity is several times larger
 (above), so there dynamic σ dissipates more than the subgrid model it matches.
 
+### Trace relaxation (opt-in)
+
+A fluid step with `"collision": "hrr"` takes `"trace_bulk_one": true` (a boolean, off by default; the setup refuses it with another
+collision). It relaxes one mode of the hybrid collision at its own rate: the non-equilibrium density (trace) mode, the Hermite component
+`H = |c|² − 1` of the populations, at the bulk rate ω_b = 1 in every hybrid cell. The CPU and the GPU run it the same way. The step carries it,
+so a restored run goes on with it (a checkpoint of a run with the relaxation is refused by a model without it), and off the collision is bit
+for bit what it was (a test pins the 8-cell duct's fields after 500 steps).
+
+The populations lose `1.5 a w_q H_q` with `a = Σ f_q H_q − ρ u² − u·F`, which leaves density and momentum alone, since `H` is orthogonal to
+both and `Σ w H² = 2/3` on D3Q19; the `u·F` is the trace Guo's forcing puts in the populations at this rate (`(1 − ω_b/2) · 2 u·F`), which
+stays. The bulk rate is a free parameter of the collision, independent of the shear rate (Dellar 2001, "Bulk and shear viscosities in lattice
+Boltzmann equations", Phys. Rev. E 64:031203). The value 1 is derived, not fitted: the mode's non-equilibrium part is multiplied by
+`1 − ω_b` in each collision, which is stable for 0 < ω_b < 2 and changes sign every step for ω_b > 1, a cell-to-cell alternation of its own; so
+the fastest rate without the alternation is ω_b = 1, which removes the mode in one collision and leaves it no memory. A single trace rate gives the bulk
+viscosity ζ = (2/9)(1/ω_b − ½) in lattice units (d'Humières 2002, eq. 3.16), against the shear viscosity ν = (1/3)(1/ω − ½). The removal acts on the outgoing
+populations before the mass and momentum projection, on the CPU and on the device, and at every σ, σ = 1 included.
+
+The rate of the trace, taken from the populations after the collision of a uniformly accelerated periodic box, is `ρ u² + u·F` to round-off
+(`tests/trace_bulk.rs`): the equilibrium's `ρ u²` and the forcing's share at ω_b = 1, with u the velocity of the half force.
+
+Measured against theory, the bulk viscosity it sets. A plane density wave of amplitude 1e-4 and one wavelength of N cells in a periodic box
+(ν = 0.01 lattice) decays at Γ = (k²/2)(4ν/3 + ζ), k = 2π/N. Off, the hybrid collision has ζ = 2ν/3 and Γ = νk²; on, ζ = 1/9 and the wave
+decays six times faster at N = 32. Relative error of the measured rate (the bar, set before the run: at most (2π/N)²):
+
+| σ | N | off | on | bar |
+|---|---|---|---|---|
+| 0.99 | 32 | 0.079 % | 0.166 % | 3.86 % |
+| 0.99 | 64 | 0.020 % | 0.042 % | 0.96 % |
+| 1 | 32 | 0.000 % | 0.175 % | 3.86 % |
+| 1 | 64 | 0.000 % | 0.045 % | 0.96 % |
+
+The observed order of the error in N is 1.97 with the relaxation on. Anything unsteady that carries density waves changes with it on, start-up
+transients included.
+
+What it does, measured on its own (σ 0.99, hybrid collision). On a bed with no trace mode it changes nothing measurable: a periodic square
+duct at τ̄ − ½ = 6e-3, flow rate over the exact laminar series (Boussinesq), with the series summed at the cell centres (the midpoint
+rule's bias of the cell-centre mean, 1.85, 0.82 and 0.46 % at 8, 12 and 16 cells) divided out:
+
+| cells | plain hybrid | with the trace relaxation |
+|---|---|---|
+| 8 | 0.92736 | 0.92750 |
+| 12 | 0.96295 | 0.96304 |
+| 16 | 0.97529 | 0.97537 |
+
+and a slot between two plates driven at a held speed (6 and 8 cells, τ̄ − ½ = 1.8e-3 and 2.4e-3) has the same cell-to-cell alternation along
+the flow with it as without (4.1e-3 against 4.0e-3 in the wall row at 6 cells). The deficit of the hybrid collision in the duct is the
+blend's own, not the trace's: the relaxation is for flows where a treatment elsewhere in the collision leaves the density mode undamped
+and it grows into a cell-to-cell mode, not a correction of the plain collision.
+
+**Limits.** The bulk rate fixes ζ against ν: at τ̄ − ½ = 3e-3 and ω_b = 1, ζ is about 110 ν. The dilatational mode, which carries sound, is
+damped two orders of magnitude harder than the shear. That suits steady and low-Mach flows (RANS, the incompressible limit), where the
+density mode carries noise. It does not suit aeroacoustics, compressible transients (waves, fronts, the dilatational dissipation are the
+physics there), or lattice Mach numbers above 0.1, where the setup already warns of the compressibility error of the lattice. Switching it on changes the answer of every hybrid flow it is on for; keep it off for those.
+
 ### Multiple relaxation times
 
 The populations are mapped to 19 orthogonal moments m = M f, each relaxed towards its equilibrium
