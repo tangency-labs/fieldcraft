@@ -12,7 +12,7 @@ test on non-matching meshes. Planar rigid walls stop a set's nodes in explicit d
 | **Step procedure** | `"explicit_dynamic"` (pairs, general contact, rigid walls), `"nonlinear_static"` (pairs, general contact) |
 | **Solver** | `crates/explicit` (penalty), `crates/solver` (mortar, augmented Lagrangian); geometry in `crates/fem` (`contact`, `mortar`, `dual`); CPU, f64 |
 | **Method** | Explicit: mortar segmentation with the penalty at the integration points (Puso & Laursen 2004; Fischer & Wriggers 2005). Static: mortar contact (Puso & Laursen 2004) by augmented Lagrangian (Simo & Laursen 1992; Alart & Curnier 1991) |
-| **Verified by** | `crates/explicit/tests/contact.rs`, `crates/solver/tests/contact.rs`; oracle cases `explicit-bars-collision`, `explicit-contact-patch`, `explicit-sliding-block-*`, `bar-rigid-wall-impact`, `nl-contact-patch*`, `nl-hertz-cylinder*`, `nl-friction-sliding-blocks` |
+| **Verified by** | `crates/explicit/tests/contact.rs`, `crates/explicit/tests/self_contact.rs`, `crates/solver/tests/contact.rs`; oracle cases `explicit-bars-collision`, `explicit-contact-patch`, `explicit-sliding-block-*`, `bar-rigid-wall-impact`, `nl-contact-patch*`, `nl-hertz-cylinder*`, `nl-friction-sliding-blocks` |
 
 ## Synopsis
 
@@ -106,13 +106,33 @@ Hallquist 1990).
 opposite, a dot product below −0.1) are projected onto the secondary face's plane, split into
 triangles and clipped against each other (Sutherland–Hodgman). On each overlap triangle a
 three-point rule takes the gap g = (x_s − x_m)·n_m between the faces' closest points. Where g < 0,
-no deeper than half the main face's element, a penalty pressure p = ε(−g) acts on the secondary
+no deeper than half the main face's element (the smaller of its undeformed and its current
+thickness, volume over face area), a penalty pressure p = ε(−g) acts on the secondary
 face's nodes with weights N_i^s along n_m and on the main face's nodes with −N_j^m. For a uniform
 pressure across flat faces both meshes receive exactly the consistent nodal forces ∫ p N dA, so
 the contact patch test passes on non-matching meshes; node-to-segment contact fails it (Taylor &
 Papadopoulos 1991). Every contact runs both ways at half the penalty each: a pair with each
 surface as the secondary in turn, single-surface contact with every face against every other face
 that shares no node with it.
+
+**Self contact** is general contact on one body's faces, all its exterior faces or a set of them
+(single-surface contact: Benson & Hallquist 1990; Belytschko et al. 2014, ch. 10). Nothing in the search or the integration
+asks which body a face belongs to, so a body that folds onto itself meets itself as two bodies
+meet, with the same penalty, friction and energy account. Three rules keep a body from touching
+itself where it only bends or squeezes:
+
+- a face never meets a face that shares a node with it: its neighbours, however sharply the
+  surface folds, are left out;
+- a face never meets a face of its own element (a hexahedron's opposite faces share no node);
+- the depth limit is half the main face's element, undeformed *and as it is now*: a layer
+  squeezed through its thickness brings the far side of its elements nearer than half an
+  undeformed element, but never nearer than about one current element, so it is not taken for a
+  surface its near side has passed.
+
+Each normal force and its reaction act along the main face's normal through both points, so the
+contact keeps linear and angular momentum. Friction acts at a node and, reversed, at the point of
+the face under it: a couple whose arm is the penetration, so with friction the angular momentum
+changes by at most δ_max μ ∫ F_n dt.
 
 **Penalty.** Per area, from the masses and the stable increment Δt:
 
@@ -432,6 +452,22 @@ quarter-sphere mesh of 27 648 hex8 (`spheres_collide_as_hertz_says`: peak force 
 −0.4 %); initial penetrations adjusted or refused, the face cap, tetrahedra; bit-for-bit results on
 one and four threads.
 
+Self contact, in `crates/explicit/tests/self_contact.rs`:
+
+| Test | Reference | Result | Tolerance |
+|---|---|---|---|
+| `hinged_bars_collide_like_two_bodies`: two bars joined by a soft hinge cell over their joint (one body, general contact on all its faces) against the same bars unjoined (two bodies, a pair) | the two-body run; wave theory (Graff 1991): contact 2L/c, force ρcAv₀/2 | peak force −0.022 %, contact time 0.000 %, rebound velocities within 1.6·10⁻³ v₀ of the two-body run; contact 1.2 % over 2L/c, peak force +0.3 % over ρcAv₀/2, velocities exchanged within 4·10⁻³ v₀; momentum to 2·10⁻¹⁴; balance 5·10⁻⁵ | 1 %; 1 %; 0.005 v₀; 2 % (time), 5 % (force), 0.03 v₀; 10⁻¹⁰; 0.005 |
+| `a_hairpin_closing_on_itself_keeps_momentum_and_energy`: a U-shaped body whose arms are thrown at each other, one sliding along the other | conservation of linear and angular momentum; the friction couple's bound δ_max μ ∫F_n dt | linear momentum to 5·10⁻¹⁵; angular momentum to 1.6·10⁻⁸ of itself frictionless, and with μ = 0.3 changed by 8.5·10⁻⁷ against the bound 1.7·10⁻⁵; balance 1.6·10⁻⁴; the same numbers on one and four threads | 10⁻¹⁰; 10⁻⁶; the bound; 0.005; bit for bit |
+| `a_ring_crushed_flat_carries_load_on_its_inner_surface` (heavy): half a neo-Hookean ring (wall a tenth of the radius, two elements through it, plane strain) crushed between two punches from its height of 2.1 radii to 0.18, a little under its two walls | without contact the walls pass; with it the inner surfaces carry the punch's load; the penalty law p = ε(−g) | without: the walls cross by 0.027 (27 % of the wall); with: no deeper than 0.0087, the contact carrying 99.6 % (inner surface) and 98 % (every face) of the punch's force, 18 times the force bending alone takes; the force ε W ∫ d dx from the measured overlap, with the increments of the last samples, 7.1 to 11.1 around the reported 7.69 | crossing > 0.2 t; < 0.1 t; 3 %; > 10 times; within the bracket ± 5 % |
+| `a_bending_cantilever_feels_no_self_contact`, `an_ovalising_tube_feels_no_self_contact`, `a_squeezed_one_element_layer_feels_no_self_contact`, `a_squeezed_two_element_layer_feels_no_self_contact`: a cantilever flung to a tip deflection of 0.78 of its length, a thick tube with a small bore squeezed oval by its own motion, a layer of foam one element thick squeezed by 60 % and two elements thick by 80 % | the same run without contact | no contact force, the same frames bit for bit (before the depth limit followed the current element, the squeezed layers took false contact forces of 193 and 1 216 N) | exact |
+| `self_contact_cost_scales_with_the_exterior_faces` (heavy): a slab n × n × 2 tumbling freely, n = 8 to 64 | — | the contact's time per increment and exterior face 13, 13, 6.4 and 5.1 µs for 192, 640, 2 304 and 8 704 faces (debug build; a guide to how the cost scales, not to speed): linear in the faces, the larger runs spread over more threads | — |
+
+The fix that came with these tests (the depth limit also halving the current thickness, and a
+face never meeting a face of its own element) accepts no point that was refused before, and
+refuses a point that was accepted only where it lies deeper than half the current thickness of
+a squeezed element. Everywhere else nothing changes: the contact tests that were there before
+the fix (`crates/explicit/tests/contact.rs`) give the same results bit for bit.
+
 Nonlinear static, oracle cases:
 
 | Case | Reference | Quantity | Error | Tolerance |
@@ -477,6 +513,17 @@ folds onto itself (heavy suite).
   has no slip rate, so the exponential decay is not used there.
 - Explicit contact: faces exposed by eroded elements do not join the contact (eroding contact is
   not implemented).
+- Explicit self contact is face against face: two edges that cross without either touching the
+  inside of a face (edge-to-edge contact) are not caught, and a node that slides off the edge of a
+  surface into a sharp re-entrant corner may be caught late. It acts on hex8 and tet4 faces;
+  explicit dynamics has no shells or beams yet.
+- One penalty per contact, from the lightest node per area of its whole surface: general contact
+  on every exterior face of a model that joins very different materials or element sizes gets
+  the penalty its lightest part allows, and its stiff parts sink further into each other. Name
+  separate surfaces for such parts.
+- The depth limit follows the current element: where the pressure is high enough that the
+  penalty's penetration p/ε passes half of an element crushed under the face, those points let
+  go. The penetration is reported (`max_penetration`); a smaller `penalty_scale` makes it worse.
 - Rigid walls are fixed planes in explicit dynamic steps only.
 - `interaction.contact.find` looks at solid elements only.
 - Caps: 1000 contacts per model; 10⁷ contact faces in explicit (`max_contact_faces`), 2 · 10⁶ in
@@ -508,6 +555,8 @@ folds onto itself (heavy suite).
 - P. Wriggers. *Computational Contact Mechanics*, 2nd ed., Springer 2006.
 - R. L. Taylor, P. Papadopoulos. *On a patch test for contact problems in two dimensions*, 1991.
 - D. J. Benson, J. O. Hallquist. *A single surface contact algorithm for the post-buckling analysis of shell structures.* CMAME 78:141–163, 1990.
+- T. Belytschko, W. K. Liu, B. Moran, K. I. Elkhodary. *Nonlinear Finite Elements for Continua and Structures*, 2nd ed. Wiley, 2014: ch. 10 (contact-impact).
+- K. F. Graff. *Wave Motion in Elastic Solids.* Dover, 1991: §2.1–2.3 (colliding bars).
 - J. O. Hallquist, G. L. Goudreau, D. J. Benson. *Sliding interfaces with contact-impact in large-scale Lagrangian computations.* CMAME 51:107–137, 1985.
 - T. J. R. Hughes, R. L. Taylor, J. L. Sackman, A. Curnier, W. Kanoknukulchai. *A finite element method for a class of contact-impact problems.* CMAME 8(3):249–276, 1976.
 - H. Hertz. J. reine angew. Math. 92:156–171, 1882; K. L. Johnson. *Contact Mechanics*, Cambridge 1985.
