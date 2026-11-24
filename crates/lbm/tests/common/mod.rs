@@ -7,6 +7,7 @@ pub mod inlet;
 pub mod lee_moser;
 pub mod pressure_zone;
 pub mod ramp_tube;
+pub mod slot_bed;
 
 use std::collections::BTreeMap;
 

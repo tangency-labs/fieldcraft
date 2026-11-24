@@ -260,6 +260,7 @@ fn an_advance_failure_keeps_the_uninterrupted_reporting_boundary() {
         steady: Some(Steady { window: Some(160.0 * dt), tolerance: 1e-6, min_time: None, divergence: None, monitors: vec![], averaging: None }),
         walls: Default::default(),
         inlet_ramp: None,
+        trace_bulk_one: false,
     };
     let m = model(1.0, 0.01, d, p);
     let normal = solve_fluid(&m, None, &[], &Limits::default()).unwrap();
@@ -288,6 +289,7 @@ fn rounded_steady_windows_can_retain_more_than_the_history_sampling_target() {
         steady: Some(Steady { window: Some(17.0), tolerance: 1e-6, min_time: Some(169999.0), divergence: None, monitors: vec![], averaging: None }),
         walls: Default::default(),
         inlet_ramp: None,
+        trace_bulk_one: false,
     };
     let m = model(1.0, 0.1, domain([0.0; 3], [1.0; 3], 1.0), p);
     let normal = solve_fluid(&m, None, &[], &Limits::default()).unwrap();
@@ -439,4 +441,41 @@ fn an_inlet_ramp_resumes_mid_ramp_bit_for_bit() {
         *inlet_ramp = Some(30.0);
     }
     parity_at(&model(1.0, 0.1 / 3.0, d, p), &[], 11);
+}
+
+/// A forced periodic duct with the hybrid collision, with the trace relaxation `on` or off (a lattice-unit model: Δx = Δt = 1, τ = 0.6).
+fn trace_duct(on: bool) -> Model {
+    let mut d = domain([0.0; 3], [8.0, 4.0, 4.0], 1.0);
+    d.faces.x_min = FaceCondition::Periodic {};
+    d.faces.x_max = FaceCondition::Periodic {};
+    d.acceleration = [2e-3, 0.0, 0.0];
+    let mut p = collide(40.0, 1.0, None, Collision::Hrr);
+    if let Procedure::Fluid { sigma, trace_bulk_one, .. } = &mut p {
+        *sigma = Some(HrrSigma::Value(0.99));
+        *trace_bulk_one = on;
+    }
+    model(1.0, 0.1 / 3.0, d, p)
+}
+
+/// The trace relaxation is part of the step, so a restored run goes on with it: the interrupted and resumed run equals the uninterrupted one
+/// bit for bit, and differs from the plain collision's.
+#[test]
+fn the_trace_relaxation_resumes_bit_for_bit_and_differs_from_the_plain_collision() {
+    parity(&trace_duct(true), &[]);
+    let on = solve_fluid(&trace_duct(true), None, &[], &Limits::default()).unwrap();
+    let off = solve_fluid(&trace_duct(false), None, &[], &Limits::default()).unwrap();
+    assert_ne!(on, off, "the relaxation changed nothing in the duct");
+}
+
+/// A checkpoint of a run with the relaxation on is not resumed by a model with it off (the setup's fingerprint holds the flag).
+#[test]
+fn a_checkpoint_with_the_trace_relaxation_is_refused_by_a_model_without_it() {
+    let mut store = MemoryStore { stop_after: 2, interval: 11, ..Default::default() };
+    assert!(
+        solve_fluid_checkpointed(&trace_duct(true), None, &[], &Limits::default(), &mut store).unwrap_err().to_string().contains("test interruption")
+    );
+    store.resume = true;
+    store.stop_after = 0;
+    let refused = solve_fluid_checkpointed(&trace_duct(false), None, &[], &Limits::default(), &mut store);
+    assert!(refused.is_err(), "a run without the relaxation resumed from one with it");
 }
