@@ -1,9 +1,9 @@
 //! Flat shell elements: the four-node MITC4 quadrilateral and the three-node MITC3 triangle,
 //! with six degrees of freedom per node (three translations, three rotations).
 //!
-//! Each element is flat: its nodes are projected onto the element's mean plane, where the
-//! membrane, the Reissner–Mindlin plate and a drilling stiffness are superposed in local axes and
-//! the result rotated to the global ones (the facet approach; Zienkiewicz, Taylor & Fox 2014,
+//! Each element is built on its mean plane, where the membrane, the Reissner–Mindlin plate and a
+//! drilling stiffness are superposed in local axes and the result rotated to the global ones (the
+//! facet approach; Zienkiewicz, Taylor & Fox 2014,
 //! *The Finite Element Method for Solid and Structural Mechanics*, 7th ed., ch. 9–10). Curved
 //! shells are approximated by facets; quadrilaterals on a cylinder whose edges follow the
 //! generators and the circumference are exactly flat.
@@ -12,6 +12,16 @@
 //!   u = u₀ + z θ_y, v = v₀ − z θ_x, w = w₀: membrane strains ε = (u₀,x, v₀,y, u₀,y + v₀,x),
 //!   curvatures κ = (θ_y,x, −θ_x,y, θ_y,y − θ_x,x) and transverse shear strains
 //!   γ = (w,x + θ_y, w,y − θ_x).
+//! - **Warped quadrilaterals.** The four nodes lie h, −h, h, −h off the mean plane. Each corner of
+//!   the flat element is rigidly attached to its node, u_p = u − h θ_y, v_p = v + h θ_x, so the
+//!   strain operator is B W and rigid motions of the nodes strain nothing (R. H. MacNeal, *A simple
+//!   quadrilateral shell element*, Computers & Structures 8:175–183, 1978; R. L. Taylor, *Finite
+//!   element analysis of linear shell problems*, in The Mathematics of Finite Elements and
+//!   Applications VI, Academic Press, 1988; the same coupling of the membrane to the rotations
+//!   through the warp offset as T. Belytschko, B. L. Wong, H.-Y. Chiang, CMAME 96(1):93–107, 1992).
+//!   Elements warped by more than a tenth of their size are refused. Mass and body force
+//!   are built from the nodal translations and are not linked (the link changes the stiffness
+//!   and stresses only).
 //! - **Section.** Linear elastic and homogeneous through the thickness, so the integration
 //!   through the thickness is done exactly in closed form (any number of section points gives the
 //!   same stiffness): with the mid-surface at z = e from the reference surface (e = −offset · t),
@@ -44,7 +54,9 @@
 //!   is refined, so curved shells modelled with facets converge steadily: the Scordelis–Lo and
 //!   pinched-cylinder benchmarks change by less than 0.5 % for γ from G/1000 to G, whereas a
 //!   penalty that is a fixed fraction of the bending stiffness lets that rotation go soft on fine
-//!   meshes.
+//!   meshes. The penalty has a limit on twisted surfaces: with twist rate τ it adds (t τ)² /
+//!   (6 (1 − ν) γ/G) to the plate-bending compliance at any mesh (3.75 % on the MacNeal–Harder
+//!   twisted beam, t τ = 0.042), and a larger γ locks coarse doubly curved meshes (issue #1077).
 //! - **Mass.** Consistent: ρ t on the translations, ρ (t³/12 + t e²) on the rotations and
 //!   ρ t e coupling translations and bending rotations when the reference surface is offset. The
 //!   drilling rotation gets the same rotary inertia as the bending ones (shell theory gives it
@@ -198,6 +210,8 @@ pub struct Shell {
     local: [[f64; 2]; 4],
     section: ShellSection,
     area: f64,
+    /// The nodes' offsets from the mean plane along e₃ (a quadrilateral's are h, −h, h, −h; a triangle's are zero).
+    offsets: [f64; 4],
 }
 
 impl Shell {
@@ -247,14 +261,16 @@ impl Shell {
                 return Err(degenerate());
             }
         }
+        // A quadrilateral's nodes lie h, −h, h, −h off its mean plane (e₃ is normal to both diagonals); a triangle is flat.
+        let h = if nodes == 4 { 0.25 * dot(sub([0, 1, 2].map(|k| p(0)[k] + p(2)[k]), [0, 1, 2].map(|k| p(1)[k] + p(3)[k])), e3) } else { 0.0 };
+        let warp = h.abs();
         // A strongly warped quadrilateral is not a facet.
-        let warp = xyz.iter().map(|x| dot(sub(*x, centre), e3).abs()).fold(0.0, f64::max);
         if warp > 0.1 * size {
             return Err(Error::Degenerate(format!(
                 "a quad4 shell element is warped by {warp:.3e} out of its plane (more than a tenth of its size); split it into triangles"
             )));
         }
-        let mut shell = Shell { kind, nodes, axes, local, section, area: 0.0 };
+        let mut shell = Shell { kind, nodes, axes, local, section, area: 0.0, offsets: [h, -h, h, -h] };
         shell.area = shell.rule().points().iter().map(|q| shell.map(q.xi[0], q.xi[1]).map_or(0.0, |m| m.det * q.weight)).sum();
         if !(shell.area > 0.0) {
             return Err(degenerate());
@@ -346,7 +362,8 @@ impl Shell {
     }
 
     /// The generalized strain operator at (r, s): membrane strains, curvatures, transverse shear
-    /// strains (8 rows) and the drilling row θ_z − ω, with the map.
+    /// strains (8 rows) and the drilling row θ_z − ω, with the map. The rows act on the nodes' degrees of freedom
+    /// through the rigid links from the nodes to the mean plane.
     fn operator(&self, tying: &Tying, r: f64, s: f64) -> Result<([Row; 9], Map)> {
         let m = self.map(r, s)?;
         let mut b = [[0.0; MAX_DOFS]; 9];
@@ -369,6 +386,13 @@ impl Shell {
         for k in 0..MAX_DOFS {
             b[6][k] = m.inv[0][0] * ert[k] + m.inv[0][1] * est[k];
             b[7][k] = m.inv[1][0] * ert[k] + m.inv[1][1] * est[k];
+        }
+        // Rigid links from the nodes to the mean plane: the corner under node i moves by u − hᵢ θ_y, v + hᵢ θ_x.
+        for row in &mut b {
+            for (i, h) in self.offsets.iter().enumerate().take(self.nodes) {
+                row[6 * i + 4] -= h * row[6 * i];
+                row[6 * i + 3] += h * row[6 * i + 1];
+            }
         }
         Ok((b, m))
     }
@@ -589,5 +613,34 @@ mod tests {
         assert!(Shell::new(ElementKind::Tri3, &line, section).is_err());
         assert!(Shell::new(ElementKind::Quad8, &flat, section).is_err());
         assert!(ShellSection::new(1.0, 0.0, &Elastic::EngineeringConstants { young: [1.0; 3], poisson: [0.0; 3], shear: [1.0; 3] }).is_err());
+    }
+
+    /// One element of the MacNeal–Harder twisted beam at 12 × 2: its nodes are 3.1 % of its size off the mean plane.
+    #[test]
+    fn warped_quadrilaterals_are_free_of_rigid_motion() {
+        let (young, thickness) = (29.0e6, 0.32);
+        let elastic = Elastic::Isotropic { young, poisson: 0.22 };
+        let node = |x: f64, s: f64| {
+            let twist = std::f64::consts::FRAC_PI_2 * x / 12.0;
+            [x, s * twist.cos(), s * twist.sin()]
+        };
+        let xyz = [node(0.0, -0.55), node(1.0, -0.55), node(1.0, 0.0), node(0.0, 0.0)];
+        for offset in [0.0, 0.25] {
+            let shell = Shell::new(ElementKind::Quad4, &xyz, ShellSection::new(thickness, offset, &elastic).unwrap()).unwrap();
+            let k = shell.stiffness().unwrap();
+            let scale = (0..k.n).map(|i| k.get(i, i)).fold(0.0, f64::max);
+            for i in 0..k.n {
+                for j in 0..k.n {
+                    assert_eq!(k.get(i, j), k.get(j, i));
+                }
+            }
+            for m in 0..6 {
+                let motion = rigid(&xyz, m);
+                let f = k.mul_vec(&motion);
+                assert!(f.iter().all(|v| v.abs() < 1e-10 * scale), "rigid {m}: {f:?}");
+                let stress = shell.stresses(&motion).unwrap();
+                assert!(stress.forces.iter().flatten().all(|v| v.abs() < 1e-9 * young * thickness), "rigid {m}: {:?}", stress.forces);
+            }
+        }
     }
 }
