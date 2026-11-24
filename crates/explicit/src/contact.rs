@@ -290,7 +290,7 @@ fn current_volume(x: &[Vec3]) -> f64 {
 }
 
 /// How closely the local thickness must agree with the average for the average to stand.
-const LOCAL_AGREEMENT: f64 = 1e-9;
+const LOCAL_AGREEMENT: f64 = 1e-9; // unit-factors: relative to the average thickness
 
 /// The smallest current local thickness of `face`'s element under it: the smallest distance
 /// behind the face of the element's nodes that are not on the face, each taken at the closest
