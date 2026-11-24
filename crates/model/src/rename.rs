@@ -164,7 +164,8 @@ impl Model {
                         | L::SurfaceFlux { set: s, .. }
                         | L::Convection { set: s, .. }
                         | L::Radiation { set: s, .. }
-                        | L::HeatSource { set: s, .. } => {
+                        | L::HeatSource { set: s, .. }
+                        | L::PipePressure { set: s, .. } => {
                             if set {
                                 swap(s, from, to);
                             }

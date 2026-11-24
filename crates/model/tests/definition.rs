@@ -198,6 +198,40 @@ fn the_check_names_what_is_missing() {
 }
 
 #[test]
+fn a_pipe_pressure_needs_pipes_with_a_bore() {
+    let mut m = Model::default();
+    m.set_node(1, [0.0; 3]).unwrap();
+    m.set_node(2, [1.0, 0.0, 0.0]).unwrap();
+    m.set_element(1, ElementKind::Beam2, vec![1, 2]).unwrap();
+    m.add_set("run", Set { elements: vec![1], ..Set::default() }).unwrap();
+    m.add_set("none", Set { nodes: vec![1], ..Set::default() }).unwrap();
+    m.add_material("Steel", Material { elastic: Some(Elastic::Isotropic { young: 210e9, poisson: 0.3 }), ..Material::default() }).unwrap();
+    let section = |profile| Section {
+        set: "run".into(),
+        material: "Steel".into(),
+        kind: SectionKind::Beam { profile, orientation: [0.0, 0.0, 1.0] },
+        formulation: Formulation::default(),
+    };
+    m.add_section("run", section(BeamProfile::Circle { radius: 0.02 })).unwrap();
+    m.add_load("steam", Load::PipePressure { set: "run".into(), internal: 1e6, external: 0.0 }).unwrap();
+    let refused = |m: &Model| {
+        let wanted = "elements 1 are not beams with a pipe profile that has a bore";
+        m.check().iter().any(|d| d.subject == "load `steam`" && d.message.contains(wanted))
+    };
+    assert!(refused(&m), "a solid circle");
+    m.replace_section("run", section(BeamProfile::Pipe { radius: 0.02, thickness: 0.02 })).unwrap();
+    assert!(refused(&m), "a pipe without a bore");
+    m.replace_section("run", section(BeamProfile::Pipe { radius: 0.02, thickness: 0.002 })).unwrap();
+    assert!(!refused(&m), "{:?}", m.check());
+    m.replace_load("steam", Load::PipePressure { set: "none".into(), internal: 1e6, external: 0.0 }).unwrap();
+    assert!(m.check().iter().any(|d| d.subject == "load `steam`" && d.message.contains("set `none` has no elements")));
+    assert!(m.add_load("air", Load::PipePressure { set: "nowhere".into(), internal: 1.0, external: 0.0 }).is_err(), "a missing set");
+    // Renaming the set follows into the load.
+    m.rename(rename::Kind::Set, "none", "anchor").unwrap();
+    assert_eq!(m.load("steam").and_then(Load::set), Some("anchor"));
+}
+
+#[test]
 fn the_check_names_output_a_step_will_not_write() {
     let text = |m: &Model| -> Vec<String> { m.check().iter().map(ToString::to_string).collect() };
     assert!(!text(&defined()).iter().any(|t| t.contains("output") || t.contains("does not compute")), "{:#?}", text(&defined()));

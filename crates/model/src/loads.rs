@@ -111,6 +111,18 @@ pub enum Load {
     /// thermally (ε = α (T − T_ref)); nodes it does not reach stay at their material's reference
     /// temperature.
     Temperature { target: Target, value: f64 },
+    /// Uniform pressure inside (`internal`) and around (`external`) the pipes of the set: beam
+    /// elements whose profile is a pipe with a bore ([`crate::BeamProfile::bore`]). The pressures
+    /// stress the wall (Lamé) and act on the pipe's closed ends: every element carries the end
+    /// force p_i A_i − p_o A_o of its bore and outer areas, which cancels between elements in
+    /// line and remains at a closed end and at a bend.
+    PipePressure {
+        set: String,
+        #[serde(default)]
+        internal: f64,
+        #[serde(default)]
+        external: f64,
+    },
 }
 
 /// The centrifugal acceleration ω² r at `x` of a rotation at `angular_velocity` about the axis
@@ -125,7 +137,8 @@ pub fn centrifugal_acceleration(angular_velocity: f64, point: [f64; 3], axis: [f
 }
 
 impl Load {
-    /// `force`, `moment`, `traction`, `pressure`, `gravity` or `body_force`.
+    /// The `type` it is written with: `force`, `moment`, `traction`, `pressure`, `gravity`,
+    /// `body_force`, `centrifugal`, the heat loads, `temperature` or `pipe_pressure`.
     pub fn kind(&self) -> &'static str {
         match self {
             Load::Force { .. } => "force",
@@ -140,6 +153,7 @@ impl Load {
             Load::Radiation { .. } => "radiation",
             Load::HeatSource { .. } => "heat_source",
             Load::Temperature { .. } => "temperature",
+            Load::PipePressure { .. } => "pipe_pressure",
         }
     }
 
@@ -159,7 +173,8 @@ impl Load {
             | Load::SurfaceFlux { set, .. }
             | Load::Convection { set, .. }
             | Load::Radiation { set, .. }
-            | Load::HeatSource { set, .. } => Some(set),
+            | Load::HeatSource { set, .. }
+            | Load::PipePressure { set, .. } => Some(set),
             Load::Gravity { set, .. } | Load::Centrifugal { set, .. } => set.as_deref(),
         }
     }
@@ -211,6 +226,14 @@ impl Load {
                 finite("temperature", *value)?;
                 if let Target::ReferencePoint(r) = target {
                     return Err(Error::Invalid(format!("reference points have no temperature (`{r}`); apply it to a set")));
+                }
+                return Ok(());
+            }
+            Load::PipePressure { internal, external, .. } => {
+                finite("internal pressure", *internal)?;
+                finite("external pressure", *external)?;
+                if *internal == 0.0 && *external == 0.0 {
+                    return Err(Error::Invalid("a pipe pressure needs an internal or an external pressure that is not zero".into()));
                 }
                 return Ok(());
             }
@@ -291,5 +314,18 @@ mod tests {
         }
         let l = Load::Radiation { set: set(), emissivity: 0.9, ambient: 300.0 };
         assert!(l.is_thermal() && l.set() == Some("s") && l.kind() == "radiation");
+    }
+
+    #[test]
+    fn pipe_pressures_validate() {
+        let load: Load = serde_json::from_value(serde_json::json!({"type": "pipe_pressure", "set": "run", "internal": 2.5})).unwrap();
+        assert_eq!(load, Load::PipePressure { set: "run".into(), internal: 2.5, external: 0.0 });
+        assert!(load.validate().is_ok() && !load.is_thermal() && load.set() == Some("run") && load.kind() == "pipe_pressure");
+        assert!(Load::PipePressure { set: "run".into(), internal: 0.0, external: -1.0 }.validate().is_ok(), "suction outside");
+        for (internal, external) in [(0.0, 0.0), (f64::NAN, 1.0), (1.0, f64::INFINITY)] {
+            assert!(Load::PipePressure { set: "run".into(), internal, external }.validate().is_err(), "{internal} {external}");
+        }
+        let typo = serde_json::json!({"type": "pipe_pressure", "set": "run", "inside": 1});
+        assert!(serde_json::from_value::<Load>(typo).is_err(), "typos are errors");
     }
 }

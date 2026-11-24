@@ -712,6 +712,9 @@ impl System {
                 Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::Radiation { .. } | Load::HeatSource { .. } => {
                     return Err(Error::NotSupported(format!("{} loads (`{name}`) in explicit dynamics", load.kind())));
                 }
+                Load::PipePressure { .. } => {
+                    return Err(Error::NotSupported(format!("pipe pressures (`{name}`): explicit dynamics has no beam elements")));
+                }
                 // Thermal strains, set by `temperatures`.
                 Load::Temperature { .. } => {}
                 Load::Force { .. } | Load::Traction { .. } => {

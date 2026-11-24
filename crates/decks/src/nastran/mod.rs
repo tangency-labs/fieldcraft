@@ -705,6 +705,10 @@ impl<'m> Deck<'m> {
                     Load::BodyForce { .. } => {
                         self.problems.insert(format!("load `{name}`: a body force (Nastran has no force-per-volume load for these elements)"));
                     }
+                    Load::PipePressure { .. } => {
+                        self.problems
+                            .insert(format!("load `{name}`: a pipe pressure (the CBEAM this writer writes takes no pressure inside or around it)"));
+                    }
                     Load::Gravity { set: Some(s), .. } if r.sets.get(s).map(|s| s.elements.len()) != Some(model.elements().len()) => {
                         self.problems.insert(format!("load `{name}`: gravity on part of the model (set `{s}`); Nastran's gravity acts on all of it"));
                     }
@@ -1029,6 +1033,7 @@ impl<'m> Deck<'m> {
                     entry(Card::new("RFORCE").int(*sid).blank().blank().real(a).reals(*axis), out, &mut first)?
                 }
                 Load::BodyForce { .. }
+                | Load::PipePressure { .. }
                 | Load::SurfaceFlux { .. }
                 | Load::Convection { .. }
                 | Load::Radiation { .. }

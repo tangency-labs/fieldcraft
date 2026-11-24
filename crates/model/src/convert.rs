@@ -252,6 +252,10 @@ impl Quantities for Load {
             Load::Radiation { set: _, emissivity: _, ambient } => f(Q::Temperature, ambient),
             Load::HeatSource { set: _, power } => f(Q::HeatGeneration, power),
             Load::Temperature { target: _, value } => f(Q::Temperature, value),
+            Load::PipePressure { set: _, internal, external } => {
+                f(Q::Pressure, internal);
+                f(Q::Pressure, external);
+            }
         }
     }
 }

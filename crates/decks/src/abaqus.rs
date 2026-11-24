@@ -335,6 +335,12 @@ fn check_expressible(model: &Model) -> Result<()> {
             ));
         }
     }
+    // Temporary: the Abaqus writer's pipe pressure (piece 4) replaces this refusal.
+    for (name, load) in model.loads() {
+        if matches!(load, Load::PipePressure { .. }) {
+            bad.insert(format!("load `{name}`: a pipe pressure (not written to Abaqus input yet)"));
+        }
+    }
     for step in model.steps().iter().filter(|s| matches!(s.procedure, Procedure::ExplicitDynamic(_))) {
         bad.insert(format!("step `{}`: explicit dynamic steps (not written to Abaqus input yet)", step.name));
     }

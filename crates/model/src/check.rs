@@ -537,6 +537,26 @@ impl Model {
                     }
                 }
                 Load::Centrifugal { set: Some(s), .. } if set_of(s).elements.is_empty() => d.error(&subject, format!("set `{s}` has no elements")),
+                Load::PipePressure { set, .. } => {
+                    let elements = &set_of(set).elements;
+                    if elements.is_empty() {
+                        d.error(&subject, format!("set `{set}` has no elements"));
+                    }
+                    let pipe = |e: &u32| {
+                        let section = owner.get(e).and_then(|s| self.sections.get(*s));
+                        section.is_some_and(|s| matches!(s.kind, SectionKind::Beam { profile, .. } if profile.bore().is_some()))
+                    };
+                    let other: Vec<u32> = elements.iter().copied().filter(|e| !pipe(e)).collect();
+                    if !other.is_empty() {
+                        d.error(
+                            &subject,
+                            format!(
+                                "elements {} are not beams with a pipe profile that has a bore; a pipe pressure acts on those only",
+                                first_labels(&other)
+                            ),
+                        );
+                    }
+                }
                 _ => {}
             }
             if resolved.is_planar() {
@@ -889,6 +909,8 @@ impl Model {
             Load::Force { vector, .. } | Load::Traction { vector, .. } | Load::BodyForce { vector, .. } => vector[2] == 0.0,
             Load::Gravity { acceleration, .. } => acceleration[2] == 0.0,
             Load::Moment { .. } | Load::Pressure { .. } => true,
+            // A 2D model has no pipes, which the load's own check reports.
+            Load::PipePressure { .. } => true,
             // Scalars.
             Load::SurfaceFlux { .. } | Load::Convection { .. } | Load::Radiation { .. } | Load::HeatSource { .. } | Load::Temperature { .. } => true,
             Load::Centrifugal { point, axis, .. } => {
