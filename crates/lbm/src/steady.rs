@@ -340,9 +340,10 @@ impl Monitor {
     }
 
     /// Sample every quantity at step `k` (a sample point) and, at the end of a window, decide:
-    /// `Some` reason to stop now.
-    pub fn sample(&mut self, setup: &Setup, flow: &mut dyn Backend, k: u64) -> Result<Option<StopReason>> {
-        self.sample_observed(setup, flow, k, None)
+    /// `Some` reason to stop now. `forces` are the wall forces of the sample (the run records the
+    /// mean of two consecutive steps; see [`crate::solve`]).
+    pub fn sample(&mut self, setup: &Setup, flow: &mut dyn Backend, k: u64, forces: &[[f64; 3]]) -> Result<Option<StopReason>> {
+        self.sample_observed(setup, flow, k, None, forces)
     }
 
     /// [`Monitor::sample`], also offering its field read to the run's validity sampler (no
@@ -353,6 +354,7 @@ impl Monitor {
         flow: &mut dyn Backend,
         k: u64,
         validity: Option<&mut crate::validity::Sampler>,
+        forces: &[[f64; 3]],
     ) -> Result<Option<StopReason>> {
         let fields = flow.fields()?;
         if let Some(validity) = validity {
@@ -364,7 +366,6 @@ impl Monitor {
         let vs = setup.velocity_scale();
         let t0 = setup.thermal.as_ref().map_or(0.0, |t| t.initial_temperature);
         let zero = setup.thermal.as_ref().map_or(0.0, |t| t.zero);
-        let forces = if self.quantities.iter().any(|q| matches!(q.kind, Kind::Force(_))) { flow.forces()? } else { Vec::new() };
         let heat = if self.quantities.iter().any(|q| matches!(q.kind, Kind::Heat(_))) { flow.heat()? } else { Vec::new() };
         let end = k.is_multiple_of(self.setup.window);
         let mut values = Vec::with_capacity(self.quantities.len());
