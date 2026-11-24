@@ -1340,7 +1340,9 @@ pub struct StepInputs<'a> {
     elements: &'a BTreeMap<u32, crate::Element>,
     classification: &'a crate::Classification,
     sets: BTreeMap<&'a str, &'a crate::Set>,
-    materials: &'a BTreeMap<String, crate::Material>,
+    /// Without their fatigue data, which no solver reads: adding or changing it keeps results
+    /// current (a material without it serializes as before, so older results' hashes hold).
+    materials: std::borrow::Cow<'a, BTreeMap<String, crate::Material>>,
     sections: &'a BTreeMap<String, crate::Section>,
     reference_points: &'a BTreeMap<String, crate::ReferencePoint>,
     couplings: &'a BTreeMap<String, crate::Coupling>,
@@ -1372,7 +1374,11 @@ impl Model {
             elements: &self.elements,
             classification: &self.classification,
             sets: self.sets.iter().filter(|(n, _)| self.step_uses_set(step, n)).map(|(n, s)| (n.as_str(), s)).collect(),
-            materials: &self.materials,
+            materials: if self.materials.values().any(|m| m.fatigue.is_some()) {
+                std::borrow::Cow::Owned(self.materials.iter().map(|(n, m)| (n.clone(), crate::Material { fatigue: None, ..m.clone() })).collect())
+            } else {
+                std::borrow::Cow::Borrowed(&self.materials)
+            },
             sections: &self.sections,
             reference_points: &self.reference_points,
             couplings: &self.couplings,
@@ -1483,6 +1489,15 @@ impl Model {
     /// Replace a step's definition (procedure, output and table entries), keeping its place.
     pub fn replace_step(&mut self, step: Step) -> Result<()> {
         self.check_step(&step)?;
+        // A fatigue assessment reads a linear static step's stress: a procedure that is not
+        // linear static would leave a model that cannot be opened again.
+        if self.fatigue.contains_key(&step.name) && !matches!(step.procedure, Procedure::Static {}) {
+            return Err(Error::Invalid(format!(
+                "step `{}` has a fatigue assessment, which needs a linear static step: delete the assessment (model.fatigue.delete) before changing the procedure to {}",
+                step.name,
+                step.procedure.name()
+            )));
+        }
         let name = step.name.clone();
         *self.step_mut(&name)? = step;
         Ok(())
@@ -1491,6 +1506,8 @@ impl Model {
     pub fn remove_step(&mut self, name: &str) -> Result<()> {
         let i = self.step_index(name)?;
         self.steps.remove(i);
+        // Its fatigue assessment belongs to it.
+        self.fatigue.remove(name);
         Ok(())
     }
 

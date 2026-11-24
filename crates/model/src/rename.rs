@@ -115,6 +115,10 @@ impl Model {
                 }
                 let step = self.steps.iter_mut().find(|s| s.name == from).ok_or_else(|| Error::NotFound(format!("step `{from}`")))?;
                 step.name = to.to_string();
+                // The step's fatigue assessment is kept under its name.
+                if let Some(a) = self.fatigue.remove(from) {
+                    self.fatigue.insert(to.to_string(), a);
+                }
             }
         }
         self.rewrite_references(kind, from, to);

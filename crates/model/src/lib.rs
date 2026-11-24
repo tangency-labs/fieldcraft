@@ -41,6 +41,7 @@ mod convert;
 pub mod curves;
 pub mod datums;
 pub mod discrete;
+pub mod fatigue;
 pub mod fluid_zones;
 pub mod fluids;
 pub mod geometry;
@@ -76,6 +77,7 @@ pub use contact::{Contact, ContactSurfaces, Friction, InitialPenetration};
 pub use curves::{TableRange, TemperatureDependent, TemperatureTable};
 pub use datums::{Datum, Partition};
 pub use discrete::{Direction, Mass, PointMass, ResolvedDirection, ResolvedMass, ResolvedSpring, Spring};
+pub use fatigue::{Counting, FatigueAssessment, Loading, MeanStress, StressMeasure};
 pub use fluid_zones::{Axis, Fan, FanDirection, PorousZone, Resistance};
 pub use fluids::{
     BoxFace, BoxFaces, BoxThermalFaces, ConductingSolid, FaceCondition, FluidBoundary, FluidDomain, FluidThermal, FreeSurface, LiquidRegion, Outflow,
@@ -85,7 +87,10 @@ pub use geometry::{BodyMesh, Classification, Entity, GeometryRef};
 pub use geometry_names::NameUse;
 pub use initial::InitialField;
 pub use loads::{Distribution, Load, STEFAN_BOLTZMANN, SurfaceRadiation, centrifugal_acceleration};
-pub use materials::{Damage, Directional, Elastic, Erosion, Fluid, Hardening, HardeningPoint, Hyperelastic, Material, PhaseChange, Plastic, Thermal};
+pub use materials::{
+    Damage, Directional, Elastic, Erosion, Fatigue, Fluid, Hardening, HardeningPoint, Hyperelastic, Material, PhaseChange, Plastic, SnCurve, SnPoint,
+    Thermal,
+};
 pub use mesh::{
     Element, ElementEdge, ElementFace, ElementKind, MIN_NORMALIZED_JACOBIAN, Node, admissible_jacobian, check_coordinates, normalized_jacobian,
     tet4_jacobian,
@@ -218,6 +223,9 @@ pub struct Model {
     /// Features of the design taken out for meshing, in the order they were made.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     defeatures: Vec<Defeature>,
+    /// Fatigue assessments of linear static steps, by step name ([`fatigue`]).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    fatigue: BTreeMap<String, FatigueAssessment>,
 }
 
 /// A [`Model`] as stored, before it is checked.
@@ -284,6 +292,8 @@ struct ModelData {
     face_splits: Vec<FaceSplit>,
     #[serde(default)]
     defeatures: Vec<Defeature>,
+    #[serde(default)]
+    fatigue: BTreeMap<String, FatigueAssessment>,
 }
 
 impl TryFrom<ModelData> for Model {
@@ -391,6 +401,9 @@ impl TryFrom<ModelData> for Model {
         }
         for v in d.defeatures {
             m.set_defeature(v)?;
+        }
+        for (step, a) in d.fatigue {
+            m.set_fatigue(&step, a)?;
         }
         Ok(m)
     }
@@ -537,6 +550,7 @@ impl Model {
             stitches: self.stitches.clone(),
             face_splits: self.face_splits.clone(),
             defeatures: self.defeatures.clone(),
+            fatigue: self.fatigue.clone(),
         }
     }
 
