@@ -95,6 +95,15 @@
 //!
 //! Trusses in a 2D model are T2D2 and T2D3.
 //!
+//! Pipes under a pipe pressure: the beam2 elements of a section whose profile is a pipe with a
+//! bore, when a pipe pressure loads any of them, are `PIPE31` with
+//! `*BEAM SECTION, SECTION=THICK PIPE` (outside radius, wall thickness), whose wall carries
+//! radial and hoop stresses that vary through it, as Lamé's do here. The pressure is `*DLOAD`,
+//! one line per element and kind: `PI` with the internal pressure and the effective inner
+//! diameter 2a, `PE` with the external pressure and the effective outer diameter 2b, both with
+//! Abaqus's closed-end condition, which is the model's. Pressures of several loads on an
+//! element are summed. Other pipe sections stay `B31` with `SECTION=PIPE`.
+//!
 //! Point masses, springs and dashpots are elements numbered after the mesh's, one per resolved
 //! copy, in an element set per definition (`<name>-mass`, `<name>-inertia`, `<name>-spring`, made
 //! unique against the model's sets): `MASS` with `*MASS` (one mass for every direction),
@@ -185,7 +194,8 @@ pub fn write(model: &Model, units: Preset) -> Result<String> {
 /// [`write`] for a model already expressed in `units` ([`crate::express`]) and resolved.
 pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<String> {
     crate::refuse_fluid(FORMAT, model)?;
-    let by_type = elements_by_type(model, r)?;
+    let pressurised = pressurised_sections(model, r);
+    let by_type = elements_by_type(model, r, &pressurised)?;
     check_expressible(model)?;
     let discrete = discrete_groups(model, r)?;
     let mut d = Deck::default();
@@ -195,7 +205,7 @@ pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<Stri
     d.discrete_elements(&discrete);
     d.sets(model, r)?;
     d.materials(model)?;
-    d.sections(model)?;
+    d.sections(model, &pressurised)?;
     d.discrete_properties(&discrete)?;
     d.couplings(model, r)?;
     d.contacts(model, r)?;
@@ -270,8 +280,41 @@ fn has_nonlinear_step(model: &Model) -> bool {
     model.steps().iter().any(|s| matches!(s.procedure, Procedure::NonlinearStatic(_)))
 }
 
-/// Every element, grouped by element type (from its section) and sorted by label.
-fn elements_by_type<'m>(model: &'m Model, r: &Resolved) -> Result<BTreeMap<String, Vec<(u32, &'m Element)>>> {
+/// The sections whose elements are pipes under pressure: beam sections of a pipe profile with a
+/// bore that hold an element of some pipe pressure's set.
+fn pressurised_sections<'m>(model: &'m Model, r: &Resolved) -> BTreeSet<&'m str> {
+    let loaded: BTreeSet<u32> = model
+        .loads()
+        .values()
+        .filter_map(|l| match l {
+            Load::PipePressure { set, .. } => r.sets.get(set),
+            _ => None,
+        })
+        .flat_map(|s| s.elements.iter().copied())
+        .collect();
+    model
+        .sections()
+        .iter()
+        .filter(|(_, s)| matches!(s.kind, SectionKind::Beam { profile, .. } if profile.bore().is_some()))
+        .filter(|(_, s)| r.sets.get(&s.set).is_some_and(|set| set.elements.iter().any(|e| loaded.contains(e))))
+        .map(|(name, _)| name.as_str())
+        .collect()
+}
+
+/// The bore (inner and outer radius) of every element a pipe pressure can load.
+fn element_bores(model: &Model, r: &Resolved) -> BTreeMap<u32, (f64, f64)> {
+    let mut bores = BTreeMap::new();
+    for s in model.sections().values() {
+        let SectionKind::Beam { profile, .. } = s.kind else { continue };
+        let Some(bore) = profile.bore() else { continue };
+        bores.extend(r.sets.get(&s.set).map(|set| set.elements.as_slice()).unwrap_or_default().iter().map(|e| (*e, bore)));
+    }
+    bores
+}
+
+/// Every element, grouped by element type (from its section, pipes under pressure as `PIPE31`)
+/// and sorted by label.
+fn elements_by_type<'m>(model: &'m Model, r: &Resolved, pressurised: &BTreeSet<&str>) -> Result<BTreeMap<String, Vec<(u32, &'m Element)>>> {
     let mut by_type: BTreeMap<String, Vec<(u32, &Element)>> = BTreeMap::new();
     let mut bad = BTreeSet::new();
     let mut count = 0;
@@ -285,7 +328,8 @@ fn elements_by_type<'m>(model: &'m Model, r: &Resolved) -> Result<BTreeMap<Strin
         for (kind, elements) in by_kind {
             // Trusses of a 2D model are the planar ones.
             let planar = |t: String| if r.is_planar() { t.replacen("T3D", "T2D", 1) } else { t };
-            match element_type(kind, section).map(planar) {
+            let pipe = |t: String| if t == "B31" && pressurised.contains(name.as_str()) { "PIPE31".to_string() } else { t };
+            match element_type(kind, section).map(planar).map(pipe) {
                 Ok(t) => {
                     count += elements.len();
                     by_type.entry(t).or_default().extend(elements);
@@ -333,12 +377,6 @@ fn check_expressible(model: &Model) -> Result<()> {
                 section.material,
                 section.kind.name()
             ));
-        }
-    }
-    // Temporary: the Abaqus writer's pipe pressure (piece 4) replaces this refusal.
-    for (name, load) in model.loads() {
-        if matches!(load, Load::PipePressure { .. }) {
-            bad.insert(format!("load `{name}`: a pipe pressure (not written to Abaqus input yet)"));
         }
     }
     for step in model.steps().iter().filter(|s| matches!(s.procedure, Procedure::ExplicitDynamic(_))) {
@@ -646,6 +684,15 @@ fn element_loads<'a>(loads: &[ElementLoad<'a>], kind: BodyKind, out: &mut Vec<(E
     out.retain(|(_, _, v)| v.iter().any(|c| *c != 0.0));
 }
 
+/// The pressures inside and around one pipe element, with the radii they act on.
+#[derive(Default, Clone, Copy)]
+struct PipeLoad {
+    internal: f64,
+    external: f64,
+    inner: f64,
+    outer: f64,
+}
+
 /// A centrifugal load: the element set, ω², a point on the axis and its direction.
 type Centrifugal<'a> = (&'a str, f64, [f64; 3], [f64; 3]);
 
@@ -658,6 +705,8 @@ struct StepLoads<'a> {
     pressure: BTreeMap<&'a str, f64>,
     element: Vec<(ElementTarget<'a>, BodyKind, [f64; 3])>,
     centrifugal: Vec<Centrifugal<'a>>,
+    /// Pipe element → its summed pipe pressures.
+    pipe: BTreeMap<u32, PipeLoad>,
     /// Body forces of axisymmetric elements are radial and axial (`BR`, `BZ`).
     axisymmetric: bool,
 }
@@ -672,8 +721,14 @@ struct Written {
 
 impl<'a> StepLoads<'a> {
     /// `everything` is every element and the section sets that hold them (gravity on the whole
-    /// model).
-    fn new(model: &'a Model, r: &'a Resolved, step: &'a Step, everything: &'a (Vec<&'a str>, Vec<u32>)) -> StepLoads<'a> {
+    /// model); `bores` the radii of every pipe element ([`element_bores`]).
+    fn new(
+        model: &'a Model,
+        r: &'a Resolved,
+        step: &'a Step,
+        everything: &'a (Vec<&'a str>, Vec<u32>),
+        bores: &BTreeMap<u32, (f64, f64)>,
+    ) -> StepLoads<'a> {
         let axisymmetric = r.extent() == Some(fieldcraft_model::Extent::Revolved);
         let mut s = StepLoads { concentrated: crate::concentrated_loads(model, r, &step.loads), axisymmetric, ..StepLoads::default() };
         let (mut gravity, mut body) = (Vec::new(), Vec::new());
@@ -692,6 +747,14 @@ impl<'a> StepLoads<'a> {
                         None => s.centrifugal.extend(everything.0.iter().map(|set| (*set, w2, *point, *axis))),
                     }
                 }
+                Some(Load::PipePressure { set, internal, external }) => {
+                    for e in r.sets.get(set).map(|s| s.elements.as_slice()).unwrap_or_default() {
+                        let Some(&(inner, outer)) = bores.get(e) else { continue };
+                        let p = s.pipe.entry(*e).or_insert(PipeLoad { inner, outer, ..PipeLoad::default() });
+                        p.internal += internal;
+                        p.external += external;
+                    }
+                }
                 _ => {}
             }
         }
@@ -705,7 +768,7 @@ impl<'a> StepLoads<'a> {
         Written {
             concentrated: !self.concentrated.is_empty(),
             pressure: !self.pressure.is_empty(),
-            element: !self.element.is_empty() || !self.centrifugal.is_empty(),
+            element: !self.element.is_empty() || !self.centrifugal.is_empty() || !self.pipe.is_empty(),
         }
     }
 }
@@ -953,7 +1016,8 @@ impl Deck {
         Ok(())
     }
 
-    fn sections(&mut self, model: &Model) -> Result<()> {
+    /// `pressurised`: the pipe sections under a pipe pressure ([`pressurised_sections`]).
+    fn sections(&mut self, model: &Model, pressurised: &BTreeSet<&str>) -> Result<()> {
         if model.sections().is_empty() {
             return Ok(());
         }
@@ -981,11 +1045,14 @@ impl Deck {
                     let _ = writeln!(self.out, ", {points}");
                 }
                 SectionKind::Beam { profile, orientation } => {
-                    // Abaqus profiles: RECT a, b; CIRC r; PIPE r, t; I l, h, b1, b2, t1, t2, t3
-                    // (l: from the section origin to the bottom; centred here); BOX a, b, t1–t4.
+                    // Abaqus profiles: RECT a, b; CIRC r; PIPE and THICK PIPE r, t (the thick
+                    // one for pipes under pressure: its wall stresses vary through it); I l, h,
+                    // b1, b2, t1, t2, t3 (l: from the section origin to the bottom; centred
+                    // here); BOX a, b, t1–t4.
                     let (shape, dims) = match profile {
                         BeamProfile::Rectangle { width, height } => ("RECT", vec![width, height]),
                         BeamProfile::Circle { radius } => ("CIRC", vec![radius]),
+                        BeamProfile::Pipe { radius, thickness } if pressurised.contains(name.as_str()) => ("THICK PIPE", vec![radius, thickness]),
                         BeamProfile::Pipe { radius, thickness } => ("PIPE", vec![radius, thickness]),
                         BeamProfile::I { height, width, web, flange } => ("I", vec![height / 2.0, height, width, width, flange, flange, web]),
                         BeamProfile::Box { width, height, thickness } => ("BOX", vec![width, height, thickness, thickness, thickness, thickness]),
@@ -1266,7 +1333,7 @@ impl Deck {
                 self.numbers_line(&format!("{surface}, P"), &[*p])?;
             }
         }
-        if self.op_new("*DLOAD", !loads.element.is_empty() || !loads.centrifugal.is_empty(), before.element) {
+        if self.op_new("*DLOAD", !loads.element.is_empty() || !loads.centrifugal.is_empty() || !loads.pipe.is_empty(), before.element) {
             for (target, kind, v) in &loads.element {
                 let target = match target {
                     ElementTarget::Set(s) => s.to_string(),
@@ -1290,6 +1357,16 @@ impl Deck {
             for (set, w2, point, axis) in &loads.centrifugal {
                 // CENTRIF: ω², a point on the axis and the axis direction.
                 self.numbers_line(&format!("{set}, CENTRIF"), &[*w2, point[0], point[1], point[2], axis[0], axis[1], axis[2]])?;
+            }
+            for (element, p) in &loads.pipe {
+                // PI and PE (closed ends): the pressure, then the effective inner or outer
+                // diameter it acts on.
+                if p.internal != 0.0 {
+                    self.numbers_line(&format!("{element}, PI"), &[p.internal, 2.0 * p.inner])?;
+                }
+                if p.external != 0.0 {
+                    self.numbers_line(&format!("{element}, PE"), &[p.external, 2.0 * p.outer])?;
+                }
             }
         }
         Ok(())
@@ -1338,6 +1415,7 @@ impl Deck {
         } else {
             Default::default()
         };
+        let bores = element_bores(model, r);
         let mut base_bcs = initial;
         let mut base_loads: BTreeSet<String> = BTreeSet::new();
         let mut written = Written::default();
@@ -1393,7 +1471,7 @@ impl Deck {
                     if step.loads == base_loads {
                         self.comment("loads: as in the previous general step");
                     } else {
-                        let loads = StepLoads::new(model, r, step, &everything);
+                        let loads = StepLoads::new(model, r, step, &everything, &bores);
                         self.step_loads(&loads, written)?;
                         written = loads.written();
                     }
@@ -1424,7 +1502,7 @@ impl Deck {
                     self.line("*BUCKLE, EIGENSOLVER=LANCZOS");
                     self.line(&format!("{modes}"));
                     self.step_boundaries(model, r, &base_bcs, &step.boundary_conditions)?;
-                    let loads = StepLoads::new(model, r, step, &everything);
+                    let loads = StepLoads::new(model, r, step, &everything, &bores);
                     self.step_loads(&loads, written)?;
                     written = loads.written();
                 }
