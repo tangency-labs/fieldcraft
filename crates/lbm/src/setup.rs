@@ -50,8 +50,9 @@ pub const AUTO_TAU_MAX: f64 = 1.0;
 pub const MAX_MACH: f64 = 0.3;
 /// The smallest symmetric relaxation time τ⁺.
 pub const MIN_TAU: f64 = 0.505;
-/// The smallest τ⁺ of the fluid itself with a subgrid model (not the Spalart–Allmaras model,
-/// whose ν_t is 0 at a wall): the eddy viscosity raises each sheared cell's own relaxation time
+/// The smallest τ⁺ of the fluid itself with a subgrid model, or the Spalart–Allmaras model with
+/// its wall law and the regularised or hybrid collision (not on resolved walls, where its ν_t is
+/// 0): the eddy viscosity raises each sheared cell's own relaxation time
 /// above it, which is what lets a coarse grid hold a fast
 /// flow (a cell Reynolds number of 90 is τ⁺ ≈ 0.503 at lattice speed 0.1).
 pub const MIN_TAU_TURBULENT: f64 = 0.5001;
@@ -745,6 +746,14 @@ impl Setup {
                 "wall_model `spalding_bounce_halfway` is disabled because its wall-row checkerboard mode grows; remove `wall_model` for resolved no-slip walls, or explicitly choose and validate another wall treatment. `spalding_bounce` uses a different, on-node wall location".into(),
             ));
         }
+        if turbulence
+            .as_ref()
+            .is_some_and(|t| t.wall_model() == Some(WallModel::SpalartAllmarasBounce) && !matches!(t, Turbulence::SpalartAllmaras { .. }))
+        {
+            return Err(Error::Invalid(
+                "wall_model `spalart_allmaras_bounce` is the Spalart–Allmaras model's own wall law: use it with `spalart_allmaras` turbulence, or `spalding_bounce` with a subgrid model".into(),
+            ));
+        }
         // Interpolated walls replace the bounce-back of the obstacles' links; the wall models and
         // the free surface rebuild or reflect those populations their own way.
         if walls.is_interpolated() {
@@ -807,15 +816,16 @@ impl Setup {
                                 SA_INFLOW_RATIO.end()
                             )));
                         }
-                        // A wall law's rate would replace ν_t at the wall cell while ν̃ keeps its own
-                        // wall condition (ν̃ = 0, d = ½) at a cell the law means for y⁺ 30 to 100:
-                        // the two disagree until a wall law is chosen for the model.
-                        if t.wall_model().is_some() {
+                        // Another law's stress at the wall would disagree with the ν̃ the model keeps
+                        // there; the model's own law (`spalart_allmaras_bounce`) is the one that agrees
+                        // with it ([`crate::sa_law`]).
+                        let wall_model = t.wall_model();
+                        if wall_model.is_some_and(|w| w != WallModel::SpalartAllmarasBounce) {
                             return Err(Error::Invalid(
-                                "not supported yet: a wall model (`wall_model`) with the Spalart–Allmaras model (`spalart_allmaras`); resolve the wall (the first cell at y⁺ 1 or below) and leave `wall_model` out".into(),
+                                "not supported yet: this wall model (`wall_model`) with the Spalart–Allmaras model (`spalart_allmaras`): use the model's own wall law (`spalart_allmaras_bounce`), or resolve the wall (the first cell at y⁺ 1 or below) and leave `wall_model` out".into(),
                             ));
                         }
-                        (0.0, 0.0, Some(SaSetup { inflow_ratio }), prandtl, None, None)
+                        (0.0, 0.0, Some(SaSetup { inflow_ratio }), prandtl, None, wall_model)
                     }
                 }
             }
@@ -1088,9 +1098,19 @@ impl Setup {
             shear_dependent_floor(r, &domain, initial_kelvin, tau_plus, &mut warnings)?;
             tau_plus.clamp(r.tau[0], r.tau[1])
         } else {
-            // The Spalart–Allmaras model keeps the laminar floor: its ν_t goes to 0 at a wall
-            // (ν̃ = 0 there), so the wall cells, the most sheared, keep the fluid's own τ⁺.
-            let eddy = turbulence.as_ref().is_some_and(|t| !matches!(t, Turbulence::SpalartAllmaras { .. }));
+            // The Spalart–Allmaras model on resolved walls keeps the laminar floor: its ν_t goes to 0
+            // at a wall (ν̃ = 0 there), so the wall cells, the most sheared, keep the fluid's own τ⁺.
+            // With its wall law the wall is the boundary nodes, which do not collide, and the first
+            // cells that do carry ν̃ = κ u_τ y, the model's log-layer value, like a subgrid model's:
+            // the turbulent floor, with the regularised and hybrid collisions only. The TRT collision
+            // keeps the laminar floor (#1063: unstable in an oblique stream near the floor); MRT has
+            // its own bound. Revisit when the stream-stability analysis of the regularised and
+            // hybrid collisions near τ⁺ ½ (the LES study, #785) lands.
+            let regularized = collision.unwrap_or_default().is_regularized();
+            let eddy = turbulence.as_ref().is_some_and(|t| match t {
+                Turbulence::SpalartAllmaras { wall_model, .. } => wall_model.is_some() && regularized,
+                _ => true,
+            });
             let min_tau = if eddy { MIN_TAU_TURBULENT } else { MIN_TAU };
             if !(tau_plus >= min_tau) {
                 let model = if turbulence.is_none() { ", or add a turbulence model (`turbulence`)" } else { "" };

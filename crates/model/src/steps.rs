@@ -383,6 +383,15 @@ pub enum WallModel {
     /// algorithm and validation using turbulent channel flow*, Fluid Dyn. Res. 53:045506, 2021,
     /// doi:10.1088/1873-7005/ac1782).
     SpaldingBounce,
+    /// Han, Ooka and Kikumoto's on-node wall ([`WallModel::SpaldingBounce`]) with the wall law of
+    /// the Spalart–Allmaras model itself in place of Spalding's: the stress is the one of the mean
+    /// velocity the model produces in a layer of constant total stress, u⁺(y⁺) = ∫ dy⁺ / (1 + κ y⁺
+    /// f_v1(κ y⁺)) with the model's κ 0.41 and c_v1 7.1, and the first interior node's ν̃ is
+    /// κ u_τ y, the model's exact solution there (P. R. Spalart, S. R. Allmaras, *A one-equation
+    /// turbulence model for aerodynamic flows*, AIAA-92-0439, 1992, eqs. 7–9 and the section "Near-wall
+    /// region, finite Reynolds number"; La Recherche Aérospatiale 1994(1):5–21). Only
+    /// with `spalart_allmaras` turbulence; where it runs is `spalding_bounce`'s.
+    SpalartAllmarasBounce,
     /// Our halfway variant of a wall-function bounce, not Han, Ooka and Kikumoto's scheme: a
     /// plane no-slip box face at rest lies halfway along the links and reflects its populations
     /// specularly (no drag of its own), and after streaming each wall cell gives the face the
@@ -392,6 +401,13 @@ pub enum WallModel {
     /// lattice Boltzmann method: algorithm and validation using turbulent channel flow*, Fluid
     /// Dyn. Res. 53:045506, 2021 (doi:10.1088/1873-7005/ac1782), whose own scheme is on-node.
     SpaldingBounceHalfway,
+}
+
+impl WallModel {
+    /// Whether it is Han, Ooka and Kikumoto's on-node wall (with either law).
+    pub fn is_on_node(self) -> bool {
+        matches!(self, WallModel::SpaldingBounce | WallModel::SpalartAllmarasBounce)
+    }
 }
 
 fn default_turbulent_prandtl() -> f64 {

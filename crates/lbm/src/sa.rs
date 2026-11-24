@@ -53,6 +53,8 @@ pub const KAPPA: f64 = 0.41;
 pub const C_W2: f64 = 0.3;
 pub const C_W3: f64 = 2.0;
 pub const C_V1: f64 = 7.1;
+/// c_t3 and c_t4 of f_t2: 1.2 and 0.5 as Spalart & Allmaras 1994 and Allmaras et al. 2012 give
+/// them; the earlier AIAA-92-0439 (1992) had 1.1 and 2. The final form's values are used.
 pub const C_T3: f64 = 1.2;
 pub const C_T4: f64 = 0.5;
 /// c_v2 of the S̃ limiter (Allmaras et al. 2012).
@@ -370,6 +372,20 @@ impl SaField {
         }
         for ((out, &v), &f) in self.nu_tilde.iter_mut().zip(values).zip(&self.fluid) {
             *out = if f { v } else { 0.0 };
+        }
+        Ok(())
+    }
+
+    /// Set ν̃ at the given cells, `(cell, ν̃)` (a wall law's condition at its first cells). Each
+    /// must be a cell of the field and each value finite; nothing is set otherwise.
+    pub fn impose(&mut self, values: &[(usize, f64)]) -> crate::Result<()> {
+        if let Some((c, v)) = values.iter().find(|(c, v)| !(v.is_finite() && self.fluid.get(*c).copied().unwrap_or(false))) {
+            return Err(crate::Error::Invalid(format!("Spalart–Allmaras: ν̃ {v} at cell {c}, which is not a fluid cell of the field or not finite")));
+        }
+        for &(c, v) in values {
+            if let Some(out) = self.nu_tilde.get_mut(c) {
+                *out = v;
+            }
         }
         Ok(())
     }

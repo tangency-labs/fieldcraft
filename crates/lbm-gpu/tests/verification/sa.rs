@@ -355,7 +355,8 @@ fn the_sub_steps_follow_the_field_or_are_refused() {
 }
 
 /// What the device does not run yet is refused before a device is opened, naming the model
-/// and the CPU: heat. (A wall model is refused for the model on both backends, by the setup.)
+/// and the CPU: heat, and the model's own wall law (`spalart_allmaras_bounce`; the setup refuses
+/// the other wall models with the model on both backends).
 #[test]
 fn what_the_gpu_does_not_run_with_spalart_allmaras_is_refused_clearly() {
     let refused = |flow: &Flow| {
@@ -369,6 +370,15 @@ fn what_the_gpu_does_not_run_with_spalart_allmaras_is_refused_clearly() {
     let e = refused(&flow);
     println!("heat: {e:?}");
     assert!(e.as_deref().is_some_and(|e| e.contains("Spalart–Allmaras") && e.contains("heat") && e.contains("cpu")), "{e:?}");
+    let mut d = domain([0.0; 3], [1.0, 9.0, 1.0], 1.0);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = FaceCondition::Periodic {};
+    }
+    let m = model(1.0, 0.1, d, with(collide(10.0, 1.0, None, Collision::Trt), sa(3.0, Some(WallModel::SpalartAllmarasBounce))));
+    let (_, flow) = prepare(&m, &[]);
+    let e = refused(&flow);
+    println!("wall law: {e:?}");
+    assert!(e.as_deref().is_some_and(|e| e.contains("Spalart–Allmaras") && e.contains("spalart_allmaras_bounce") && e.contains("cpu")), "{e:?}");
 }
 
 /// A field smaller than 16 bytes reads back: a column of 3 cells has 3 ν̃ (12 bytes), and the readback used to pad
