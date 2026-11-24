@@ -23,6 +23,8 @@
 //!   and the same with small strain for inelastic materials;
 //! - [`plane`]: 2D elements (plane stress, plane strain, axisymmetric) on tri3, tri6, quad4 and
 //!   quad8, with two displacement components per node;
+//! - [`twist`]: axisymmetric elements with twist (the hoop displacement as a third unknown per node, torsion of
+//!   bodies of revolution);
 //! - [`shell`]: flat MITC4 quadrilateral and MITC3 triangle shells with a drilling rotation, six
 //!   degrees of freedom per node;
 //! - [`beam`]: two-node Timoshenko beams with profile section properties;
@@ -86,6 +88,7 @@ pub mod shape;
 pub mod shell;
 pub mod transfer;
 pub mod truss;
+pub mod twist;
 pub mod uniform;
 
 pub use basis::Basis;
