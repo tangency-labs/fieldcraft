@@ -479,6 +479,7 @@ pub fn with_units(form: &[Field], params: &Value, input: &DisplaySystem) -> Valu
 /// list (of lists) of them. Replies are converted from the command's frame into the display
 /// system by these, and get a `units` object naming the unit of each quantity they hold.
 pub const REPLIES: &[(&str, &[(&str, Dim)])] = &[
+    ("deck.openfoam", &[("/location", Dim::Length)]),
     ("model.initial_field.map", &[("/max_distance", Dim::Length), ("/tolerance", Dim::Length)]),
     (
         "model.material.specific_volume",

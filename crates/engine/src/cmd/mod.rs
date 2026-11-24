@@ -39,6 +39,7 @@ pub(crate) mod names;
 pub(crate) mod node_move;
 pub(crate) mod nodes;
 pub(crate) mod octree;
+pub(crate) mod openfoam;
 mod orphan;
 mod path;
 pub(crate) mod plan;
@@ -226,6 +227,7 @@ pub static ALL: &[CommandSpec] = &[
     edit::REDO,
     deck::WRITE,
     deck::READ,
+    openfoam::WRITE,
     solve::RUN,
     solve::STATIC,
     solve::NONLINEAR,
