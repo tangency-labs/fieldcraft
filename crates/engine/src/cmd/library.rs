@@ -9,7 +9,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const LIST: CommandSpec = CommandSpec {
     id: "model.material.library.list",
     label: "Browse Material Library",
-    params: r#"{"family"?: "steel|stainless|aluminium|titanium|fluid"} — list the fixed cited catalogue, with properties in display units, temperature curves (cited points, linear between them), conditions and unavailable properties. Read-only. Strengths are informational, never selected plasticity or failure criteria."#,
+    params: r#"{"family"?: "steel|stainless|cast_iron|aluminium|copper|titanium|fluid"} — list the fixed cited catalogue, with properties in display units, temperature curves (cited points, linear between them), conditions and unavailable properties. Read-only. Strengths are informational, never selected plasticity or failure criteria."#,
     form: Some(super::forms::MATERIAL_LIBRARY_LIST),
     kind: CommandKind::Model,
     requires: &[],
@@ -19,7 +19,7 @@ pub const LIST: CommandSpec = CommandSpec {
 pub const ADD: CommandSpec = CommandSpec {
     id: "model.material.library.add",
     label: "Add Library Material",
-    params: r#"{"entry": "EN10025-S235|EN10025-S275|EN10025-S355|EN10025-S460N|EN10088-14301|EN10088-14401|AA5083-H111|AA6061-T6|AA6063-T6|AA6082-T6|AA7075-T6|AA2024-T3|Ti6Al4V-annealed|air", "name"?: "Steel" (default: entry id), "reference_temperature"?: 20 (default 20 °C; bare numbers in display units, or a value with its unit), "temperature"?: 20 (default 20 °C: where temperature-dependent properties give their constants)} — create an isotropic material (a Newtonian fluid for air) from cited properties, refusing duplicate names. Temperature curves are saved with the material: heat transfer follows its conductivity, specific heat and density curves, a fluid step with heat its viscosity curve; other solvers use the constants taken at `temperature`, with a warning when it lies outside a curve (the end value is taken). The stress-free temperature is your modelling choice. Missing data stays absent; strength data is reported but never applied as plasticity/damage/failure criteria."#,
+    params: r#"{"entry": "EN10025-S235|EN10025-S275|EN10025-S355|EN10025-S460N|EN10083-C45-QT|EN10083-42CrMo4-QT|EN10088-14301|EN10088-14401|EN1561-GJL-250|EN1563-GJS-400-15|AA5083-H111|AA6061-T6|AA6063-T6|AA6082-T6|AA7075-T6|AA2024-T3|Cu-ETP-R240|CuZn37-R350|Ti6Al4V-annealed|air", "name"?: "Steel" (default: entry id), "reference_temperature"?: 20 (default 20 °C; bare numbers in display units, or a value with its unit), "temperature"?: 20 (default 20 °C: where temperature-dependent properties give their constants)} — create an isotropic material (a Newtonian fluid for air) from cited properties, refusing duplicate names. Temperature curves are saved with the material: heat transfer follows its conductivity, specific heat and density curves, a fluid step with heat its viscosity curve; other solvers use the constants taken at `temperature`, with a warning when it lies outside a curve (the end value is taken). The stress-free temperature is your modelling choice. Missing data stays absent; strength data is reported but never applied as plasticity/damage/failure criteria."#,
     form: Some(super::forms::MATERIAL_LIBRARY),
     kind: CommandKind::Model,
     requires: &[],
@@ -68,7 +68,7 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
     let p = parameters(p, &["family"])?;
     let family = text(p, "family")?;
     if family.is_some_and(|f| !library::FAMILIES.iter().any(|(id, _)| *id == f)) {
-        return Err(EngineError::invalid("family", "choose steel, stainless, aluminium, titanium or fluid"));
+        return Err(EngineError::invalid("family", "choose steel, stainless, cast_iron, aluminium, copper, titanium or fluid"));
     }
     let entries = library::entries()?.iter().filter(|e| family.is_none_or(|f| e.family == f)).map(|e| report(s, e)).collect::<Result<Vec<_>>>()?;
     Ok(json!({"count": entries.len(), "entries": entries}))
@@ -124,9 +124,13 @@ mod tests {
         let mut s = Session::default();
         let before = s.revision();
         let all = s.execute(LIST.id, &json!({})).unwrap();
-        assert_eq!(all["count"], 14);
+        assert_eq!(all["count"], 20);
         let steel = s.execute(LIST.id, &json!({"family": "steel"})).unwrap();
-        assert_eq!(steel["count"], 4);
+        assert_eq!(steel["count"], 6);
+        let cast_iron = s.execute(LIST.id, &json!({"family": "cast_iron"})).unwrap();
+        assert_eq!(cast_iron["count"], 2);
+        let copper = s.execute(LIST.id, &json!({"family": "copper"})).unwrap();
+        assert_eq!(copper["count"], 2);
         let aluminium = s.execute(LIST.id, &json!({"family": "aluminium"})).unwrap();
         assert_eq!(aluminium["count"], 6);
         assert_eq!(s.revision(), before);

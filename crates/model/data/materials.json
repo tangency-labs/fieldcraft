@@ -2620,6 +2620,186 @@
     }
   },
   {
+    "id": "EN10083-C45-QT",
+    "name": "Engineering steel C45+QT",
+    "family": "steel",
+    "designation": {
+      "standard": "DIN EN 10083 (C45 / 1.0503)",
+      "grade": "C45+QT / 1.0503",
+      "condition": "Quenched and tempered (+QT); strength minimums limited to diameter < 16 mm (flat thickness < 8 mm); typical elastic and physical constants from Ovako C45 datasheet."
+    },
+    "properties": {
+      "young": {
+        "value": 210000000000.0,
+        "unit": "Pa",
+        "basis": "typical",
+        "source": {
+          "document": "Ovako Material Data Sheet, Steel Grade C45",
+          "edition": "Last revised 30 Jan 2025",
+          "location": "Other properties (typical values) table, Youngs module",
+          "page": "2",
+          "url": "https://steelnavigator.ovako.com/steel-grades/c45/pdf?variantIDs=136"
+        },
+        "applicability": "Typical Young's modulus for C45 steel; the Ovako datasheet does not state a specific test temperature for this column."
+      },
+      "poisson": {
+        "value": 0.3,
+        "unit": "1",
+        "basis": "typical",
+        "source": {
+          "document": "Ovako Material Data Sheet, Steel Grade C45",
+          "edition": "Last revised 30 Jan 2025",
+          "location": "Other properties (typical values) table, Poisson's ratio",
+          "page": "2",
+          "url": "https://steelnavigator.ovako.com/steel-grades/c45/pdf?variantIDs=136"
+        },
+        "applicability": "Typical Poisson's ratio for C45 steel; the Ovako datasheet does not state a specific test temperature for this column."
+      },
+      "density": {
+        "value": 7800,
+        "unit": "kg/m\u00b3",
+        "basis": "typical",
+        "source": {
+          "document": "Ovako Material Data Sheet, Steel Grade C45",
+          "edition": "Last revised 30 Jan 2025",
+          "location": "Other properties (typical values) table, Density",
+          "page": "2",
+          "url": "https://steelnavigator.ovako.com/steel-grades/c45/pdf?variantIDs=136"
+        },
+        "applicability": "Typical density for C45 steel; the Ovako datasheet does not state a specific test temperature for this column."
+      },
+      "expansion": {
+        "value": 1.2e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "typical",
+        "source": {
+          "document": "Ovako Material Data Sheet, Steel Grade C45",
+          "edition": "Last revised 30 Jan 2025",
+          "location": "Other properties (typical values) table, Average CTE 20-300 deg C",
+          "page": "2",
+          "url": "https://steelnavigator.ovako.com/steel-grades/c45/pdf?variantIDs=136"
+        },
+        "applicability": "Average coefficient of thermal expansion over 20-300 deg C, applied as a constant. Conductivity and specific heat are given only as ranges in the sheet and remain absent."
+      },
+      "yield": {
+        "value": 490000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Saarstahl Material specification sheet: Saarstahl - C45 (1.0503, DIN EN 10083)",
+          "edition": "Published datasheet (Saarstahl, 20160401)",
+          "location": "Mechanical Properties, Quenched and tempered (+QT), d < 16 mm / t < 8 mm",
+          "page": "1",
+          "url": "https://en.saarstahl.com/app/uploads/2024/03/20160401102929-0503_C45.pdf"
+        },
+        "applicability": "Published minimum 0.2% proof stress for C45+QT below 16 mm diameter (8 mm flat thickness); drops to 430 MPa for > 16-40 mm and 370 MPa for > 40-100 mm. Informational only, not a plasticity law or failure criterion."
+      },
+      "tensile": {
+        "value": 700000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Saarstahl Material specification sheet: Saarstahl - C45 (1.0503, DIN EN 10083)",
+          "edition": "Published datasheet (Saarstahl, 20160401)",
+          "location": "Mechanical Properties, Quenched and tempered (+QT), d < 16 mm / t < 8 mm (700-850 N/mm^2)",
+          "page": "1",
+          "url": "https://en.saarstahl.com/app/uploads/2024/03/20160401102929-0503_C45.pdf"
+        },
+        "applicability": "Published minimum tensile strength (lower bound of 700-850 MPa) for C45+QT below 16 mm diameter (8 mm flat thickness); informational only, not a plasticity law or failure criterion."
+      }
+    }
+  },
+  {
+    "id": "EN10083-42CrMo4-QT",
+    "name": "Engineering steel 42CrMo4+QT",
+    "family": "steel",
+    "designation": {
+      "standard": "DIN EN 10083 (42CrMo4 / 1.7225)",
+      "grade": "42CrMo4+QT / 1.7225",
+      "condition": "Quenched and tempered (+QT); strength minimums limited to diameter < 16 mm (flat thickness < 8 mm); typical elastic and physical constants from Ovako 42CrMo4 datasheet."
+    },
+    "properties": {
+      "young": {
+        "value": 210000000000.0,
+        "unit": "Pa",
+        "basis": "typical",
+        "source": {
+          "document": "Ovako Material Data Sheet, Steel Grade 42CrMo4",
+          "edition": "Last revised 02 Nov 2026",
+          "location": "Other properties (typical values) table, Youngs module",
+          "page": "3",
+          "url": "https://steelnavigator.ovako.com/steel-grades/42crmo4/pdf?variantIDs=53"
+        },
+        "applicability": "Typical Young's modulus for 42CrMo4 steel; the Ovako datasheet does not state a specific test temperature for this column."
+      },
+      "poisson": {
+        "value": 0.3,
+        "unit": "1",
+        "basis": "typical",
+        "source": {
+          "document": "Ovako Material Data Sheet, Steel Grade 42CrMo4",
+          "edition": "Last revised 02 Nov 2026",
+          "location": "Other properties (typical values) table, Poisson's ratio",
+          "page": "3",
+          "url": "https://steelnavigator.ovako.com/steel-grades/42crmo4/pdf?variantIDs=53"
+        },
+        "applicability": "Typical Poisson's ratio for 42CrMo4 steel; the Ovako datasheet does not state a specific test temperature for this column."
+      },
+      "density": {
+        "value": 7800,
+        "unit": "kg/m\u00b3",
+        "basis": "typical",
+        "source": {
+          "document": "Ovako Material Data Sheet, Steel Grade 42CrMo4",
+          "edition": "Last revised 02 Nov 2026",
+          "location": "Other properties (typical values) table, Density",
+          "page": "3",
+          "url": "https://steelnavigator.ovako.com/steel-grades/42crmo4/pdf?variantIDs=53"
+        },
+        "applicability": "Typical density for 42CrMo4 steel; the Ovako datasheet does not state a specific test temperature for this column."
+      },
+      "expansion": {
+        "value": 1.2e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "typical",
+        "source": {
+          "document": "Ovako Material Data Sheet, Steel Grade 42CrMo4",
+          "edition": "Last revised 02 Nov 2026",
+          "location": "Other properties (typical values) table, Average CTE 20-300 deg C",
+          "page": "3",
+          "url": "https://steelnavigator.ovako.com/steel-grades/42crmo4/pdf?variantIDs=53"
+        },
+        "applicability": "Average coefficient of thermal expansion over 20-300 deg C, applied as a constant. Conductivity and specific heat are given only as ranges in the sheet and remain absent."
+      },
+      "yield": {
+        "value": 900000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Saarstahl Material specification sheet: Saarstahl - 42CrMo4 - 42CrMoS4 (1.7225, DIN EN 10083)",
+          "edition": "Published datasheet (Saarstahl, 20160323)",
+          "location": "Mechanical Properties, Quenched and tempered (+QT), d < 16 mm / t < 8 mm",
+          "page": "1",
+          "url": "https://en.saarstahl.com/app/uploads/2024/03/20160323013851-42CrMo4-42CrMoS4.pdf"
+        },
+        "applicability": "Published minimum 0.2% proof stress for 42CrMo4+QT below 16 mm diameter (8 mm flat thickness); drops to 750 MPa for > 16-40 mm and 650 MPa for > 40-100 mm. Informational only, not a plasticity law or failure criterion."
+      },
+      "tensile": {
+        "value": 1100000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Saarstahl Material specification sheet: Saarstahl - 42CrMo4 - 42CrMoS4 (1.7225, DIN EN 10083)",
+          "edition": "Published datasheet (Saarstahl, 20160323)",
+          "location": "Mechanical Properties, Quenched and tempered (+QT), d < 16 mm / t < 8 mm (1100-1300 N/mm^2)",
+          "page": "1",
+          "url": "https://en.saarstahl.com/app/uploads/2024/03/20160323013851-42CrMo4-42CrMoS4.pdf"
+        },
+        "applicability": "Published minimum tensile strength (lower bound of 1100-1300 MPa) for 42CrMo4+QT below 16 mm diameter (8 mm flat thickness); informational only, not a plasticity law or failure criterion."
+      }
+    }
+  },
+  {
     "id": "EN10088-14301",
     "name": "Stainless steel 1.4301 / 304",
     "family": "stainless",
@@ -2840,6 +3020,248 @@
           "page": "7"
         },
         "applicability": "Nominal strength for this grade/product/thickness, informational only; no plasticity or damage is inferred."
+      }
+    }
+  },
+  {
+    "id": "EN1561-GJL-250",
+    "name": "Grey cast iron EN-GJL-250",
+    "family": "cast_iron",
+    "designation": {
+      "standard": "BS EN 1561:2023",
+      "grade": "EN-GJL-250 / 5.1301",
+      "condition": "Lamellar graphite grey cast iron; linear-elastic approximation using the lower bound of the 103-118 GPa modulus range; brittle material (0.2% proof strength absent, tension/compression asymmetry not modelled)."
+    },
+    "properties": {
+      "young": {
+        "value": 103000000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Ductile Castings, Grey Cast Irons Technical Data (BS EN 1561-2023)",
+          "edition": "Published January 2025",
+          "location": "EN-GJL-250 (5.1301) column, Modulus of elasticity E (103-118 GPa)",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Grey-Cast-Irons-DC.pdf"
+        },
+        "applicability": "Lower bound of the published 103-118 GPa range for EN-GJL-250; grey cast iron modulus varies with section thickness and stress level. The datasheet does not state a specific test temperature for this row."
+      },
+      "poisson": {
+        "value": 0.26,
+        "unit": "1",
+        "basis": "typical",
+        "source": {
+          "document": "Ductile Castings, Grey Cast Irons Technical Data (BS EN 1561-2023)",
+          "edition": "Published January 2025",
+          "location": "EN-GJL-250 (5.1301) column, Poisson's number",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Grey-Cast-Irons-DC.pdf"
+        },
+        "applicability": "Published Poisson's ratio for EN-GJL-250; the datasheet does not state a specific test temperature for this row."
+      },
+      "density": {
+        "value": 7200,
+        "unit": "kg/m\u00b3",
+        "basis": "typical",
+        "source": {
+          "document": "Ductile Castings, Grey Cast Irons Technical Data (BS EN 1561-2023)",
+          "edition": "Published January 2025",
+          "location": "EN-GJL-250 (5.1301) column, Density (7.20 g/cm^3)",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Grey-Cast-Irons-DC.pdf"
+        },
+        "applicability": "Published density for EN-GJL-250, converted from 7.20 g/cm^3; the datasheet does not state a specific test temperature for this row."
+      },
+      "specific_heat": {
+        "value": 460,
+        "unit": "J/(kg\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Ductile Castings, Grey Cast Irons Technical Data (BS EN 1561-2023)",
+          "edition": "Published January 2025",
+          "location": "EN-GJL-250 (5.1301) column, Specific heat capacity between 20 deg C and 200 deg C",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Grey-Cast-Irons-DC.pdf"
+        },
+        "applicability": "Mean specific heat capacity between 20 deg C and 200 deg C, applied as a constant (the sheet also lists 535 J/(kg*K) between 20 deg C and 600 deg C)."
+      },
+      "expansion": {
+        "value": 1.17e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "typical",
+        "source": {
+          "document": "Ductile Castings, Grey Cast Irons Technical Data (BS EN 1561-2023)",
+          "edition": "Published January 2025",
+          "location": "EN-GJL-250 (5.1301) column, Linear expansion coefficient between 20 deg C and 200 deg C",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Grey-Cast-Irons-DC.pdf"
+        },
+        "applicability": "Mean linear thermal expansion coefficient between 20 deg C and 200 deg C, applied as a constant."
+      },
+      "tensile": {
+        "value": 250000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Ductile Castings, Grey Cast Irons Technical Data (BS EN 1561-2023)",
+          "edition": "Published January 2025",
+          "location": "EN-GJL-250 (5.1301) column, Tensile strength Rm (250-350 MPa)",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Grey-Cast-Irons-DC.pdf"
+        },
+        "applicability": "Lower bound of published tensile strength range (250-350 MPa) for EN-GJL-250; compression strength is much higher (753 MPa in sheet) and no 0.2% proof strength is defined for grey iron. Informational only, not a failure criterion."
+      }
+    },
+    "curves": {
+      "conductivity": {
+        "unit": "W/(m\u00b7K)",
+        "points": [
+          [
+            373.15,
+            48.5
+          ],
+          [
+            473.15,
+            47.5
+          ],
+          [
+            573.15,
+            46.5
+          ],
+          [
+            673.15,
+            45.0
+          ],
+          [
+            773.15,
+            44.5
+          ]
+        ],
+        "basis": "typical",
+        "source": {
+          "document": "Ductile Castings, Grey Cast Irons Technical Data (BS EN 1561-2023)",
+          "edition": "Published January 2025",
+          "location": "EN-GJL-250 (5.1301) column, Thermal conductivity at 100 to 500 deg C",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Grey-Cast-Irons-DC.pdf"
+        },
+        "applicability": "Tabulated thermal conductivity from 100 deg C to 500 deg C in 100 K steps; below 100 deg C the 100 deg C end value (48.5 W/(m*K)) is held with a range warning."
+      }
+    }
+  },
+  {
+    "id": "EN1563-GJS-400-15",
+    "name": "Ductile cast iron EN-GJS-400-15",
+    "family": "cast_iron",
+    "designation": {
+      "standard": "BS EN 1563:2018",
+      "grade": "EN-GJS-400-15 / 5.3106",
+      "condition": "Ferritic spheroidal graphite (ductile) cast iron; isotropic elastic approximation; thermal values reflect the elevated-temperature/range conditions stated in the source."
+    },
+    "properties": {
+      "young": {
+        "value": 169000000000.0,
+        "unit": "Pa",
+        "basis": "typical",
+        "source": {
+          "document": "Ductile Castings, Spheroidal Graphite (SG) Cast Irons Technical Data (BS EN 1563 (2018))",
+          "edition": "Published January 2025",
+          "location": "EN-GJS-400-15 (5.3106) column, Modulus of elasticity E (tension and compression)",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Spheroidal-Graphite-DC.pdf"
+        },
+        "applicability": "Published modulus of elasticity in tension and compression for EN-GJS-400-15; the datasheet does not state a specific test temperature for this row."
+      },
+      "poisson": {
+        "value": 0.275,
+        "unit": "1",
+        "basis": "typical",
+        "source": {
+          "document": "Ductile Castings, Spheroidal Graphite (SG) Cast Irons Technical Data (BS EN 1563 (2018))",
+          "edition": "Published January 2025",
+          "location": "EN-GJS-400-15 (5.3106) column, Poisson's ratio",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Spheroidal-Graphite-DC.pdf"
+        },
+        "applicability": "Published Poisson's ratio for EN-GJS-400-15; the datasheet does not state a specific test temperature for this row."
+      },
+      "density": {
+        "value": 7100,
+        "unit": "kg/m\u00b3",
+        "basis": "typical",
+        "source": {
+          "document": "Ductile Castings, Spheroidal Graphite (SG) Cast Irons Technical Data (BS EN 1563 (2018))",
+          "edition": "Published January 2025",
+          "location": "EN-GJS-400-15 (5.3106) column, Density (7.1 g/cm^3)",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Spheroidal-Graphite-DC.pdf"
+        },
+        "applicability": "Published density for EN-GJS-400-15, converted from 7.1 g/cm^3; the datasheet does not state a specific test temperature for this row."
+      },
+      "conductivity": {
+        "value": 36.2,
+        "unit": "W/(m\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Ductile Castings, Spheroidal Graphite (SG) Cast Irons Technical Data (BS EN 1563 (2018))",
+          "edition": "Published January 2025",
+          "location": "EN-GJS-400-15 (5.3106) column, Thermal conductivity at 300 deg C",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Spheroidal-Graphite-DC.pdf"
+        },
+        "applicability": "Published thermal conductivity at 300 deg C, applied as a constant (not a room-temperature value or temperature curve)."
+      },
+      "specific_heat": {
+        "value": 515,
+        "unit": "J/(kg\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Ductile Castings, Spheroidal Graphite (SG) Cast Irons Technical Data (BS EN 1563 (2018))",
+          "edition": "Published January 2025",
+          "location": "EN-GJS-400-15 (5.3106) column, Specific heat capacity between 20 deg C and 500 deg C",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Spheroidal-Graphite-DC.pdf"
+        },
+        "applicability": "Mean specific heat capacity between 20 deg C and 500 deg C, applied as a constant."
+      },
+      "expansion": {
+        "value": 1.25e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "typical",
+        "source": {
+          "document": "Ductile Castings, Spheroidal Graphite (SG) Cast Irons Technical Data (BS EN 1563 (2018))",
+          "edition": "Published January 2025",
+          "location": "EN-GJS-400-15 (5.3106) column, Linear expansion coefficient between 20 deg C and 400 deg C",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Spheroidal-Graphite-DC.pdf"
+        },
+        "applicability": "Mean linear thermal expansion coefficient between 20 deg C and 400 deg C, applied as a constant."
+      },
+      "yield": {
+        "value": 250000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Ductile Castings, Spheroidal Graphite (SG) Cast Irons Technical Data (BS EN 1563 (2018))",
+          "edition": "Published January 2025",
+          "location": "EN-GJS-400-15 (5.3106) column, 0.2% proof stress Rp0.2 (min)",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Spheroidal-Graphite-DC.pdf"
+        },
+        "applicability": "Published minimum 0.2% proof stress for EN-GJS-400-15; informational only, not a selected plasticity law or failure criterion."
+      },
+      "tensile": {
+        "value": 400000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Ductile Castings, Spheroidal Graphite (SG) Cast Irons Technical Data (BS EN 1563 (2018))",
+          "edition": "Published January 2025",
+          "location": "EN-GJS-400-15 (5.3106) column, Tensile strength Rm (min)",
+          "page": "1",
+          "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Spheroidal-Graphite-DC.pdf"
+        },
+        "applicability": "Published minimum tensile strength for EN-GJS-400-15; informational only, not a selected plasticity law or failure criterion."
       }
     }
   },
@@ -3342,6 +3764,238 @@
           "url": "https://quicksearch.dla.mil/qsDocDetails.aspx?ident_number=53876"
         },
         "applicability": "Room-temperature bare-sheet value: 10,500 ksi tensile modulus, Poisson ratio 0.33, density 0.100 lb/in^3; stress and density converted through FieldCraft Quantity. Not relabelled as MIL-HDBK-5J data."
+      }
+    }
+  },
+  {
+    "id": "Cu-ETP-R240",
+    "name": "Copper Cu-ETP (CW004A) R240",
+    "family": "copper",
+    "designation": {
+      "standard": "EN CW004A / UNS C11000 (Cu-ETP)",
+      "grade": "Cu-ETP R240",
+      "condition": "Rolled electrolytic tough-pitch copper strip in R240 temper; room-temperature physical reference values (CTE averaged over 0-300 deg C)."
+    },
+    "properties": {
+      "young": {
+        "value": 115000000000.0,
+        "unit": "Pa",
+        "basis": "typical",
+        "source": {
+          "document": "Wieland-K32 (Cu-ETP | C11000 | CW004A) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Physical properties (Reference values at room temperature), Modulus of elasticity",
+          "page": "1",
+          "url": "https://www.wieland.com/fr/content/download/12509/file/K32_global.pdf"
+        },
+        "applicability": "Reference room-temperature modulus of elasticity for rolled Cu-ETP strip."
+      },
+      "poisson": {
+        "value": 0.34,
+        "unit": "1",
+        "basis": "typical",
+        "source": {
+          "document": "Wieland-K32 (Cu-ETP | C11000 | CW004A) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Physical properties (Reference values at room temperature), Poisson's ratio",
+          "page": "1",
+          "url": "https://www.wieland.com/fr/content/download/12509/file/K32_global.pdf"
+        },
+        "applicability": "Reference room-temperature Poisson's ratio for rolled Cu-ETP strip."
+      },
+      "density": {
+        "value": 8940,
+        "unit": "kg/m\u00b3",
+        "basis": "typical",
+        "source": {
+          "document": "Wieland-K32 (Cu-ETP | C11000 | CW004A) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Physical properties (Reference values at room temperature), Density (8.94 g/cm^3)",
+          "page": "1",
+          "url": "https://www.wieland.com/fr/content/download/12509/file/K32_global.pdf"
+        },
+        "applicability": "Reference room-temperature density for rolled Cu-ETP strip, converted from 8.94 g/cm^3."
+      },
+      "conductivity": {
+        "value": 390,
+        "unit": "W/(m\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Wieland-K32 (Cu-ETP | C11000 | CW004A) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Physical properties (Reference values at room temperature), Thermal conductivity",
+          "page": "1",
+          "url": "https://www.wieland.com/fr/content/download/12509/file/K32_global.pdf"
+        },
+        "applicability": "Reference room-temperature thermal conductivity for rolled Cu-ETP strip; applied as a constant, not a temperature curve."
+      },
+      "specific_heat": {
+        "value": 386,
+        "unit": "J/(kg\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Wieland-K32 (Cu-ETP | C11000 | CW004A) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Physical properties (Reference values at room temperature), Specific heat (0.386 J/(g*K))",
+          "page": "1",
+          "url": "https://www.wieland.com/fr/content/download/12509/file/K32_global.pdf"
+        },
+        "applicability": "Reference room-temperature specific heat capacity for rolled Cu-ETP strip, converted from 0.386 J/(g*K)."
+      },
+      "expansion": {
+        "value": 1.77e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "typical",
+        "source": {
+          "document": "Wieland-K32 (Cu-ETP | C11000 | CW004A) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Physical properties, Coefficient of thermal expansion (footnote *: Between 0 and 300 deg C)",
+          "page": "1",
+          "url": "https://www.wieland.com/fr/content/download/12509/file/K32_global.pdf"
+        },
+        "applicability": "Mean coefficient of thermal expansion between 0 and 300 deg C, applied as a constant."
+      },
+      "yield": {
+        "value": 180000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Wieland-K32 (Cu-ETP | C11000 | CW004A) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Mechanical properties table, Temper R240, Yield strength Rp0.2 (>= 180 MPa)",
+          "page": "1",
+          "url": "https://www.wieland.com/fr/content/download/12509/file/K32_global.pdf"
+        },
+        "applicability": "Published minimum 0.2% proof strength for rolled Cu-ETP strip in temper R240; informational only, not a plasticity law or failure criterion."
+      },
+      "tensile": {
+        "value": 240000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Wieland-K32 (Cu-ETP | C11000 | CW004A) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Mechanical properties table, Temper R240, Tensile strength Rm (240-300 MPa)",
+          "page": "1",
+          "url": "https://www.wieland.com/fr/content/download/12509/file/K32_global.pdf"
+        },
+        "applicability": "Published minimum tensile strength (lower bound of 240-300 MPa) for rolled Cu-ETP strip in temper R240; informational only, not a plasticity law or failure criterion."
+      }
+    }
+  },
+  {
+    "id": "CuZn37-R350",
+    "name": "Brass CuZn37 (CW508L) R350",
+    "family": "copper",
+    "designation": {
+      "standard": "EN CW508L / UNS C27200 (CuZn37)",
+      "grade": "CuZn37 R350",
+      "condition": "Rolled CuZn37 (63% Cu) brass strip in R350 temper; room-temperature physical reference values (CTE averaged over 0-300 deg C)."
+    },
+    "properties": {
+      "young": {
+        "value": 105000000000.0,
+        "unit": "Pa",
+        "basis": "typical",
+        "source": {
+          "document": "Wieland-M37 (CuZn37 | C27200 | CW508L) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Physical properties (Reference values at room temperature), Modulus of elasticity",
+          "page": "1",
+          "url": "https://www.wieland.com/en/content/download/44850/file/M37_RP_EN.pdf"
+        },
+        "applicability": "Reference room-temperature modulus of elasticity for rolled CuZn37 strip."
+      },
+      "poisson": {
+        "value": 0.34,
+        "unit": "1",
+        "basis": "typical",
+        "source": {
+          "document": "Wieland-M37 (CuZn37 | C27200 | CW508L) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Physical properties (Reference values at room temperature), Poisson's ratio",
+          "page": "1",
+          "url": "https://www.wieland.com/en/content/download/44850/file/M37_RP_EN.pdf"
+        },
+        "applicability": "Reference room-temperature Poisson's ratio for rolled CuZn37 strip."
+      },
+      "density": {
+        "value": 8440,
+        "unit": "kg/m\u00b3",
+        "basis": "typical",
+        "source": {
+          "document": "Wieland-M37 (CuZn37 | C27200 | CW508L) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Physical properties (Reference values at room temperature), Density (8.44 g/cm^3)",
+          "page": "1",
+          "url": "https://www.wieland.com/en/content/download/44850/file/M37_RP_EN.pdf"
+        },
+        "applicability": "Reference room-temperature density for rolled CuZn37 strip, converted from 8.44 g/cm^3."
+      },
+      "conductivity": {
+        "value": 120,
+        "unit": "W/(m\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Wieland-M37 (CuZn37 | C27200 | CW508L) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Physical properties (Reference values at room temperature), Thermal conductivity",
+          "page": "1",
+          "url": "https://www.wieland.com/en/content/download/44850/file/M37_RP_EN.pdf"
+        },
+        "applicability": "Reference room-temperature thermal conductivity for rolled CuZn37 strip; applied as a constant, not a temperature curve."
+      },
+      "specific_heat": {
+        "value": 377,
+        "unit": "J/(kg\u00b7K)",
+        "basis": "typical",
+        "source": {
+          "document": "Wieland-M37 (CuZn37 | C27200 | CW508L) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Physical properties (Reference values at room temperature), Specific heat (0.377 J/(g*K))",
+          "page": "1",
+          "url": "https://www.wieland.com/en/content/download/44850/file/M37_RP_EN.pdf"
+        },
+        "applicability": "Reference room-temperature specific heat capacity for rolled CuZn37 strip, converted from 0.377 J/(g*K)."
+      },
+      "expansion": {
+        "value": 2.02e-05,
+        "unit": "K\u207b\u00b9",
+        "basis": "typical",
+        "source": {
+          "document": "Wieland-M37 (CuZn37 | C27200 | CW508L) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Physical properties, Coefficient of thermal expansion (footnote *: Between 0 and 300 deg C)",
+          "page": "1",
+          "url": "https://www.wieland.com/en/content/download/44850/file/M37_RP_EN.pdf"
+        },
+        "applicability": "Mean coefficient of thermal expansion between 0 and 300 deg C, applied as a constant."
+      },
+      "yield": {
+        "value": 170000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Wieland-M37 (CuZn37 | C27200 | CW508L) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Mechanical properties table, Temper R350, Yield strength Rp0.2 (>= 170 MPa)",
+          "page": "1",
+          "url": "https://www.wieland.com/en/content/download/44850/file/M37_RP_EN.pdf"
+        },
+        "applicability": "Published minimum 0.2% proof strength for rolled CuZn37 strip in temper R350; informational only, not a plasticity law or failure criterion."
+      },
+      "tensile": {
+        "value": 350000000.0,
+        "unit": "Pa",
+        "basis": "minimum",
+        "source": {
+          "document": "Wieland-M37 (CuZn37 | C27200 | CW508L) datasheet",
+          "edition": "06.21 | RP.TMA.UL/ Bm",
+          "location": "Mechanical properties table, Temper R350, Tensile strength Rm (350-440 MPa)",
+          "page": "1",
+          "url": "https://www.wieland.com/en/content/download/44850/file/M37_RP_EN.pdf"
+        },
+        "applicability": "Published minimum tensile strength (lower bound of 350-440 MPa) for rolled CuZn37 strip in temper R350; informational only, not a plasticity law or failure criterion."
       }
     }
   },
