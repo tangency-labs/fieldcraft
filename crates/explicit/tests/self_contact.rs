@@ -731,6 +731,53 @@ fn a_squeezed_two_element_layer_feels_no_self_contact() {
     squeezed_layer(2, 0.8);
 }
 
+/// A stack of `layers` unit hex8 whose nodes are all prescribed to a layer squeezed unevenly: the
+/// node at level k over corner c ends at height k h_c, so the stack is `h_c` thick over corner c
+/// (the corners of the unit square in the element's order). Every element keeps a positive volume
+/// and nothing crosses, but where `h_c` is small the far exterior face is only `layers h_c` away
+/// from the near one, however thick the element is on average. The stack moves as without
+/// contact and takes no contact force.
+fn tapered_stack(layers: usize, h: [f64; 4]) {
+    let mut m = Mesh::new();
+    let stack = m.block(0, [0.0; 3], [1.0, 1.0, layers as f64], [1, 1, layers], |x| x);
+    m.material("Foam", 1.0e3, 0.0, 1.0, false);
+    m.section("stack", &stack, "Foam");
+    m.node_set("all_nodes", m.nodes_where(&stack, |_| true));
+    m.general("self", None, Friction::NONE);
+    let mut bcs: Vec<(String, BoundaryCondition)> = vec![("die".into(), held("all_nodes", &[0, 1], 0.0))];
+    for n in m.nodes_where(&stack, |_| true) {
+        let x = m.xyz(n);
+        let corner = match [x[0] > 0.5, x[1] > 0.5] {
+            [false, false] => 0,
+            [true, false] => 1,
+            [true, true] => 2,
+            [false, true] => 3,
+        };
+        let level = x[2];
+        m.node_set(&format!("n{n}"), vec![n]);
+        bcs.push((format!("z{n}"), held(&format!("n{n}"), &[2], level * h[corner] - level)));
+    }
+    let bcs: Vec<(&str, BoundaryCondition)> = bcs.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
+    m.step(ExplicitDynamic::new(0.2), &bcs);
+    same_without_contact(m, &format!("{layers} layers tapered {h:?}"));
+}
+
+/// Two hex8 whose middle surface is 0.001 high over three corners and 1.0 over the fourth, and
+/// whose top surface is twice as high (automated review of #1120): the lower element is 0.251
+/// thick on average, but over the thin corners its far side is 0.001 away and the next element's
+/// exterior face 0.002 away, so a limit of half the average thickness reached it.
+#[test]
+fn a_tapered_two_element_stack_feels_no_self_contact() {
+    tapered_stack(2, [0.001, 1.0, 0.001, 0.001]);
+}
+
+/// The same with three elements through the thickness: the far exterior face is three thin
+/// elements away over the thin corners.
+#[test]
+fn a_tapered_three_element_stack_feels_no_self_contact() {
+    tapered_stack(3, [0.001, 1.0, 0.001, 0.001]);
+}
+
 /// What self contact costs: a slab of n × n × 2 hex8 tumbling freely, run for 200 increments with
 /// general contact on all its exterior faces and without, for growing n. The contact's time per
 /// increment over the number of exterior faces stays about constant (the search and the

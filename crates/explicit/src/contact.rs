@@ -41,18 +41,25 @@
 //!    inside out (a volume that is not positive), and that is the element's failure, not a
 //!    contact. A contact between two parts always involves two elements, so no genuine contact
 //!    is lost.
-//! 3. *The depth limit is half the smaller of the main face's element's undeformed thickness and
-//!    its current thickness* (its volume over the face's area, where that is positive). The limit
-//!    tells a point that has passed through a surface from one that rests on it. The far side of
-//!    a squeezed layer lies at least about one current element thickness behind a face, so half
-//!    the current thickness never reaches it, while half the undeformed thickness does once the
-//!    layer is squeezed below half: that was the false force. A penetration that the penalty law
-//!    gives is p/ε, set by the pressure p and the penalty ε, and it does not grow when the
-//!    element is squeezed; the limit shrinks with the element, so it can cut a genuine contact
-//!    only where p/ε passes half of an element crushed under the face (a limit listed in the
-//!    manual). The limit is never larger than the undeformed one, so no point is newly accepted,
-//!    and a point is newly refused only where it lies deeper than half the current thickness of
-//!    a squeezed element: everywhere else the accepted points and the results are unchanged.
+//! 3. *The depth limit is half the smallest of the main face's element's undeformed thickness, its
+//!    current thickness (its volume over the face's area) and its smallest current local
+//!    thickness under the face* (how far behind the face, along its normal at the closest point,
+//!    the element's nodes that are not on it lie; positive values only, and where there is none
+//!    the other two stand). The limit tells a point that has passed through a surface from one
+//!    that rests on it. The far exterior face of a squeezed layer lies behind the element's far
+//!    side, so at least the element's local thickness away from the face (the element's far
+//!    nodes are that far behind it, and the layers between do not bring the far face nearer
+//!    unless an element is turned inside out), and the limit, half of the smallest local
+//!    thickness, cannot reach it without the surfaces crossing. Half the undeformed thickness
+//!    did once the layer was squeezed below half, and half the average thickness did where the
+//!    element is much thinner over one corner than on average: those were the false forces. A
+//!    penetration that the penalty law gives is p/ε, set by the pressure p and the penalty ε, and
+//!    it does not grow when the element is squeezed; the limit shrinks with the element, so it
+//!    can cut a genuine contact only where p/ε passes half of the thinnest part of an element
+//!    crushed under the face (a limit listed in the manual). The limit is never larger than the
+//!    undeformed one, so no point is newly accepted, and a point is newly refused only where it
+//!    lies deeper than half the current thickness of a squeezed element: everywhere else, and
+//!    where the current thickness is even, the accepted points and the results are unchanged.
 //!
 //! Each normal force and its reaction act along the main face's normal through both points, so
 //! the contact keeps linear and angular momentum; the friction force at a node and its reaction
@@ -282,6 +289,26 @@ fn current_volume(x: &[Vec3]) -> f64 {
     }
 }
 
+/// How closely the local thickness must agree with the average for the average to stand.
+const LOCAL_AGREEMENT: f64 = 1e-9;
+
+/// The smallest current local thickness of `face`'s element under it: the smallest distance
+/// behind the face of the element's nodes that are not on the face, each taken at the closest
+/// point of the face's own (bilinear) surface along the normal there, the same measure the
+/// contact's gap uses, so a warped face or a sheared element is measured as it is. Only positive,
+/// finite distances count (`None` when there are none: an element turned inside out). `x` are
+/// the face's corners now. For a tetrahedron it is the opposite node's height, three times V/A;
+/// for a hexahedron squeezed evenly it is V/A.
+fn local_thickness(face: &Face, x: &[Vec3], xyz: &[Vec3], u: &[f64]) -> Option<f64> {
+    face.owner
+        .iter()
+        .filter(|node| !face.corners().contains(node))
+        .filter_map(|node| closest_point(x, position(xyz, u, *node)))
+        .map(|p| -p.gap)
+        .filter(|h| *h > 0.0 && h.is_finite())
+        .min_by(f64::total_cmp)
+}
+
 /// A face's area vector (its outward normal times its area, flat or bilinear).
 fn area_vector(x: &[Vec3]) -> Vec3 {
     match x {
@@ -381,12 +408,13 @@ impl Surface {
     }
 
     /// Each face's depth limit at displacements `u` (corners at `positions`): [`DEPTH_FRACTION`]
-    /// of the smaller of its element's undeformed thickness and its current thickness V/A (where
-    /// it has a positive volume now). A body squeezed through its thickness brings the far side
-    /// of its own layers of elements nearer than half an undeformed element without anything
-    /// passing through; the far side stays at least about the main face's whole current element
-    /// away (a bulged element's local thickness differs from V/A, hence half of it), and the
-    /// element's own opposite face is never a candidate (see [`integrate_face`]).
+    /// of the smallest of its element's undeformed thickness, its current thickness V/A (where it
+    /// has a positive volume now) and its smallest current local thickness under the face
+    /// ([`local_thickness`]). A body squeezed through its thickness brings the far side of its own
+    /// layers of elements nearer than half an undeformed element without anything passing
+    /// through; the far side stays at least the main face's element's local thickness away, even
+    /// where the element is much thinner than it is on average, and the element's own opposite
+    /// face is never a candidate (see [`integrate_face`]).
     fn depths(&self, xyz: &[Vec3], u: &[f64], positions: &[Vec<Vec3>]) -> Vec<f64> {
         self.faces
             .iter()
@@ -394,8 +422,19 @@ impl Surface {
             .map(|(f, x)| {
                 let area = norm(area_vector(x));
                 let corners: Vec<Vec3> = f.owner.iter().map(|n| position(xyz, u, *n)).collect();
-                let thickness = current_volume(&corners) / area;
-                if thickness > 0.0 && thickness.is_finite() { f.depth.min(DEPTH_FRACTION * thickness) } else { f.depth }
+                let average = current_volume(&corners) / area;
+                let mut depth = f.depth;
+                if average > 0.0 && average.is_finite() {
+                    depth = depth.min(DEPTH_FRACTION * average);
+                }
+                if let Some(local) = local_thickness(f, x, xyz, u) {
+                    // Where the two agree to rounding (an element squeezed evenly) the average
+                    // stands, so that the accepted points do not move with the last bit.
+                    if local < average * (1.0 - LOCAL_AGREEMENT) || !(average > 0.0 && average.is_finite()) {
+                        depth = depth.min(DEPTH_FRACTION * local);
+                    }
+                }
+                depth
             })
             .collect()
     }
