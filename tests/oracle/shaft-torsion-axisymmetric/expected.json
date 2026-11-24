@@ -1,0 +1,76 @@
+{
+ "title": "Solid circular shaft in torsion, axisymmetric with twist (Saint-Venant)",
+ "kind": "theory",
+ "source": "Saint-Venant torsion of a circular shaft, Timoshenko and Goodier, Theory of Elasticity, 3rd ed., McGraw-Hill 1970, ch. 10",
+ "quantities": [
+  {
+   "id": "utheta_end",
+   "quantity": "displacement along Z, −r θ for a right-handed twist θ about +Y, at the surface of the loaded end (r = 20, axial position 100)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Torsion",
+     "at": [
+      [
+       20.0,
+       100.0,
+       0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/displacement/2"
+   },
+   "value": -0.09852448858069712,
+   "tolerance": {
+    "relative": 1e-9
+   },
+   "reason": "the bilinear element on a rectangle holds u_θ = κ r z and its 2 × 2 rule integrates the forces of τ_zθ exactly, so the result is the closed form (negative: a torque about +Y turns +X toward -Z, u_z = -r kappa y) to the round-off of the solve"
+  },
+  {
+   "id": "tau_surface",
+   "quantity": "shear stress τ_zθ at the surface at mid length (stress component 6, yz)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Torsion",
+     "at": [
+      [
+       20.0,
+       50.0,
+       0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/stress/5"
+   },
+   "value": -79.57747154594767,
+   "tolerance": {
+    "relative": 1e-9
+   },
+   "reason": "the bilinear element on a rectangle holds u_θ = κ r z and its 2 × 2 rule integrates the forces of τ_zθ exactly, so the result is the closed form (negative: a torque about +Y turns +X toward -Z, u_z = -r kappa y) to the round-off of the solve"
+  },
+  {
+   "id": "tau_radial",
+   "quantity": "shear stress τ_rθ at the same point (stress component 5, xz)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Torsion",
+     "at": [
+      [
+       20.0,
+       50.0,
+       0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/stress/4"
+   },
+   "value": 0.0,
+   "tolerance": {
+    "absolute": 1e-6
+   },
+   "reason": "zero in the closed form; 10⁻⁶ MPa is round-off at a stress of 80 MPa"
+  }
+ ]
+}

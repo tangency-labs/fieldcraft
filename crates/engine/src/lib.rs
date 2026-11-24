@@ -1070,6 +1070,7 @@ mod tests {
             json!({"name": "A", "set": "all", "material": "Steel", "kind": {"type": "plane_stress", "thickness": -1}}),
             json!({"name": "A", "set": "all", "material": "Steel", "kind": {"type": "plane_strain", "thickness": 1e308}}),
             json!({"name": "A", "set": "all", "material": "Steel", "kind": {"type": "axisymmetric", "axis": "x"}}),
+            json!({"name": "A", "set": "all", "material": "Steel", "kind": {"type": "axisymmetric", "twist": "yes"}}),
             json!({"name": "A", "type": "centrifugal", "angular_velocity": 1e300, "point": [0, 0, 0], "axis": [0, 1, 0]}),
             json!({"name": "A", "type": "centrifugal", "angular_velocity": 1, "point": [0, 0, 0], "axis": [0, 0, 0]}),
             json!({"name": "A", "edges": [{"element": u32::MAX, "edge": 0}]}),

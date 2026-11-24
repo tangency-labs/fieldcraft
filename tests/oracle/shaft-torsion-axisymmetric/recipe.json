@@ -1,0 +1,12 @@
+[
+ {"command": "mesh.block", "params": {"body": "Shaft", "kind": "quad4", "corners": [[0, 0, 0], [20.0, 0, 0], [20.0, 100.0, 0], [0, 100.0, 0]], "divisions": [4, 10], "bias": [1, 1], "edges": [{"corners": [1, 2], "name": "bottom"}, {"corners": [3, 4], "name": "top"}]}},
+ {"command": "model.set.create", "params": {"name": "all", "geometry": [{"body": "Shaft", "face": "area"}]}},
+ {"command": "model.set.create", "params": {"name": "bottom", "geometry": [{"body": "Shaft", "edge": "bottom"}]}},
+ {"command": "model.set.create", "params": {"name": "top", "geometry": [{"body": "Shaft", "edge": "top"}]}},
+ {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000.0, "poisson": 0.3}}},
+ {"command": "model.section.create", "params": {"name": "shaft", "set": "all", "material": "Steel", "kind": {"type": "axisymmetric", "twist": true}}},
+ {"command": "model.boundary_condition.create", "params": {"name": "held", "type": "fixed", "target": {"set": "bottom"}}},
+ {"command": "model.load.create", "params": {"name": "torque", "type": "moment", "target": {"set": "top"}, "vector": [0, 1000000.0, 0]}},
+ {"command": "model.step.create", "params": {"name": "Torsion", "procedure": {"type": "static"}, "boundary_conditions": ["held"], "loads": ["torque"]}},
+ {"command": "solve.static", "params": {}, "id": "solve"}
+]

@@ -50,6 +50,7 @@ Timoshenko beam and an Euler–Bernoulli beam:
 | `type` | `plane_stress` | — | 2D continuum, σzz = 0; `thickness` required |
 | `type` | `plane_strain` | — | 2D continuum, εzz = 0; `thickness` 1 mm by default |
 | `type` | `axisymmetric` | — | 2D continuum in the half plane x ≥ 0, revolved about Y; forces, reactions and masses are totals over 2π |
+| `twist` | `true`, `false` | `false` | axisymmetric sections: a third unknown per node, the hoop displacement u_θ (degree of freedom 3), for torsion |
 | `type` | `shell` | — | flat MITC shells (tri3, quad4) |
 | `thickness` | > 0 | — | shell or plane stress/strain thickness |
 | `offset` | −0.5 to 0.5 | 0 | shell reference surface offset from the mid-surface, as a fraction of the thickness (0.5: on the side the normal points to) |
@@ -264,6 +265,23 @@ axisymmetric B-bar): K = ∫ Bᵀ D_dev B dV + κ g gᵀ / V with g = ∫ Bᵀ m
 hoop strain included in the volumetric part. The linear triangle locks and is refused; plane
 stress has no volume constraint and is refused.
 
+**Axisymmetric with twist** (`crate::twist`): with `"twist": true` each node carries a third
+unknown, the hoop displacement u_θ on the model's Z (degree of freedom 3). The element strains are
+γ_rθ = ∂u_θ/∂r − u_θ/r and γ_zθ = ∂u_θ/∂z, reported as the components xz and yz, and the twist
+stiffness is K_θ = ∫ Bᵀ C B 2πr dA at the element's stiffness points, with C = (G₁₃, G₂₃). It is
+uncoupled from the meridian unknowns, whose formulations (reduced, incompatible modes, hybrid) are
+unchanged, and u_θ is held at zero on the axis. Loads: hoop forces and tractions may have a Z
+component; a moment `[0, T, 0]` on a set is a torque about the axis, spread over the element edges
+as Mᵢ = T qᵢ rᵢ / Σⱼ qⱼ rⱼ, with qᵢ = ∫ Nᵢ r 2πr ds (about rᵢ² ds: the weights of τ ∝ r, the forces a rigid rotation of the surface works against) so that Σ = T on any mesh. The sense is right-handed about +Y, as in 3D: the hoop direction is Z, a rotation about +Y carries +X toward −Z, so a torque T gives a z displacement of −κ r z (the hoop displacement of a right-handed twist about +Y) and hoop forces −Mᵢ/rᵢ. A torque on a node on the axis is refused.
+Results: u_θ is `displacement[2]`; the Z totals are sums of hoop forces, which balance as torques.
+Uniform torsion is reproduced exactly on rectangular quad4 and straight-sided quad8, and to the
+integration rule's accuracy on tri6 and reduced quad8; tri3 is second order. Measured on the solid
+shaft (r ≤ 2, 2 × 4 → 4 × 8 cells, notes §4): quad4 and quad8 to 10⁻¹⁴ or better, quad8 reduced
+1.1·10⁻³ → 2.7·10⁻⁴, tri6 2.0·10⁻⁴ → 5.1·10⁻⁵, tri3 1.6·10⁻¹ → 4.8·10⁻². Sources: Zienkiewicz,
+Taylor & Zhu, *The Finite Element Method*, 7th ed., 2013, §6.6; Timoshenko & Goodier 1970, ch. 10.
+Twist is for linear static and frequency steps; hoop body forces, nonlinear and buckling steps are
+refused.
+
 ### Shells
 
 Flat MITC4 quadrilaterals and MITC3 triangles (`crate::shell`) with six unknowns per node. Each
@@ -441,6 +459,7 @@ beams warns that only solid, 2D and truss elements are strained ([Heat transfer]
 | hybrid hex8, hex20, tet10 | yes | yes | yes (as the displacement element) | yes (needs the neo-Hookean option or another hyperelastic or plastic model with a volumetric split) | refused |
 | plane stress tri3, tri6, quad4, quad8 | yes | yes | refused | refused | refused |
 | plane strain, axisymmetric tri3, tri6, quad4, quad8 (and hybrid quad4, quad8, tri6) | yes | yes | refused | yes | refused |
+| axisymmetric with twist tri3, tri6, quad4, quad8 | yes | refused | refused | refused | refused |
 | shell tri3, quad4 | yes | refused | refused | refused | refused |
 | beam2 (also in plane stress and plane strain models) | yes | refused | refused | refused | refused |
 | rod2, rod3 | yes | refused | refused | refused | rod2; rod3 with `nonlinear_geometry: false` only; elastic only |
@@ -627,6 +646,10 @@ four: equilibrium does not depend on the formulation.
 | NAFEMS FV2 pin-ended double cross, 16 in-plane frequencies, four elements per arm | benchmark; mode 1 also theory (pinned–pinned Timoshenko beam) | −0.51 % to +0.04 % (the targets leave out shear and rotary inertia); mode 1 +3·10⁻⁴ of theory | 1 %; 10⁻³ | `pin_ended_double_cross_in_plane_frequencies`, `nafems-fv2` |
 | Trusses by the method of joints (Pratt, tripod), three-bar truss, rod3 patch, hanging bar | theory | < 10⁻¹⁰ | exact | `crates/solver/tests/one_d.rs` |
 | Kirsch plate, Lamé cylinder, rotating disc and cylinder in 2D | theory | see [Linear static](linear-static.md#verification) | | `crates/solver/tests/plane.rs` |
+| Solid circular shaft in torsion, axisymmetric with twist (Saint-Venant), quad4 2 × 4 | theory (Timoshenko & Goodier 1970, ch. 10) | u_θ and τ_zθ to the round-off of the solve (τ_rθ −1.4·10⁻¹³ at 80 MPa) | round-off | `shaft-torsion-axisymmetric` (oracle) |
+| Hollow circular shaft in torsion, axisymmetric with twist, quad8 2 × 5 | theory (Timoshenko & Goodier 1970, ch. 10) | u_θ and τ_zθ to round-off | round-off | `shaft-torsion-hollow-axisymmetric` (oracle) |
+| Torsion of shafts (solid and hollow) and conical shaft, axisymmetric with twist, tri3 to quad8 | theory | solid shaft quad8 u 3.7·10⁻¹⁵; conical shaft quad8 u 6.6·10⁻⁵; tube under hoop traction quad8 2.3·10⁻⁵ → 1.7·10⁻⁶ (quad4 3.2·10⁻³) | as stated | `crates/solver/tests/plane.rs` |
+| Torsional frequency, axisymmetric with twist, quad8 | theory | 1.0·10⁻⁶ relative | as stated | `crates/solver/tests/plane.rs` |
 | Shape functions, every family | theory | Kronecker delta, partition of unity, monomial reproduction to `degree()` with gradients and Hessians, derivatives against central differences, physical Hessians on affine and curved maps | round-off | `basis::tests`, `dof::tests`, `jet::tests` |
 
 The migration of the solvers to `DofLayout` was checked bit for bit: every result of the solver,
@@ -651,8 +674,11 @@ explicit, engine and io test suites hashed identically before and after.
 - Material axes are the global axes: there are no material orientations.
 - A 2D model takes no couplings and no shells; its beams have their orientation along Z; a frame of
   beams alone is a 3D model; a pipe pressure is not supported in a 2D model; an axisymmetric model takes no trusses, beams, point masses, springs or dashpots.
-- Not implemented: three-node beams; elbow elements (ovalisation of pipe bends, von Kármán's flexibility); open-section beams with warping; rebar and stringers; generalized plane strain,
-  axisymmetric elements with twist and axisymmetric shells; quad8 and tri6 shells, continuum
+- Axisymmetric twist: linear static and frequency steps only; hoop body forces are refused.
+  Nastran and LS-DYNA decks do not take axisymmetric sections; the Abaqus deck writes CGAX
+  elements and refuses a non-zero prescribed hoop displacement and incompatible modes.
+- Not implemented: three-node beams; elbow elements (ovalisation of pipe bends, von Kármán's flexibility); open-section beams with warping; rebar and stringers; generalized plane strain
+  and axisymmetric shells; quad8 and tri6 shells, continuum
   shells and composite ply layups; membranes and surface elements; a modified quadratic tet;
   cohesive, gasket, infinite, acoustic and rigid elements; heat conduction in 2D, shell and beam
   elements.

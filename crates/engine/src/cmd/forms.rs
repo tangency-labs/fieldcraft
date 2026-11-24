@@ -452,7 +452,13 @@ pub const SECTION: &[Field] = &[
                     .help("Out-of-plane thickness of the plane-strain slice; results are per this length.")
                     .hint("1 mm")],
             ),
-            variant("axisymmetric", "Axisymmetric", &[]),
+            variant(
+                "axisymmetric",
+                "Axisymmetric",
+                &[flag("twist", "Twist")
+                    .help("A third unknown per node, the hoop displacement, so the body can be twisted about its axis (torque loads).")
+                    .def("false")],
+            ),
         ],
     )
     .help("What the elements are: solids, shells, beams, rods or 2D elements.")
