@@ -16,6 +16,7 @@
 pub mod abaqus;
 pub mod lsdyna;
 pub mod nastran;
+pub mod openfoam;
 
 use std::collections::{BTreeMap, BTreeSet};
 
