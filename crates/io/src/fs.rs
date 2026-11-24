@@ -148,6 +148,11 @@ mod browser {
         FILES.with(|f| f.borrow().list(dir))
     }
 
+    /// The folders directly in `dir`, implied by the paths of the files under them.
+    pub fn list_dirs(dir: &Path) -> Result<Vec<PathBuf>> {
+        Ok(FILES.with(|f| f.borrow().dirs(dir)))
+    }
+
     /// Whether `dir` holds nothing (no file under it; folders are implied by files' paths).
     pub fn is_empty_dir(dir: &Path) -> Result<bool> {
         Ok(!FILES.with(|f| f.borrow().holds_any(dir)))
@@ -179,6 +184,10 @@ mod disk {
     use std::fs::{self, OpenOptions};
     use std::io::{Read, Write};
     use std::path::{Path, PathBuf};
+
+    /// The most entries one directory listing returns (a cap on what a hostile folder can make
+    /// a listing hold).
+    const MAX_LISTED: usize = 1_000_000;
 
     use super::{backup_path, version_backup_paths};
     use crate::{Error, FORMAT_VERSION, Result};
@@ -410,16 +419,38 @@ mod disk {
         fs::remove_file(path).map_err(|e| io_error(path, e))
     }
 
-    /// The files directly in `dir` (at most a million).
+    /// The files directly in `dir` (at most [`MAX_LISTED`]).
     pub fn list(dir: &Path) -> Vec<PathBuf> {
         fs::read_dir(dir)
             .into_iter()
             .flatten()
             .flatten()
-            .take(1_000_000)
             .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+            .take(MAX_LISTED)
             .map(|e| e.path())
             .collect()
+    }
+
+    /// The folders directly in `dir`, none when it does not exist. A directory of more than
+    /// [`MAX_LISTED`] entries, or one that cannot be read, is an error: never a list cut short in
+    /// the platform's order.
+    pub fn list_dirs(dir: &Path) -> Result<Vec<PathBuf>> {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(io_error(dir, e)),
+        };
+        let mut out = Vec::new();
+        for (seen, entry) in entries.enumerate() {
+            if seen >= MAX_LISTED {
+                return Err(Error::Limit(format!("{}: more than {MAX_LISTED} entries", dir.display())));
+            }
+            let entry = entry.map_err(|e| io_error(dir, e))?;
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                out.push(entry.path());
+            }
+        }
+        Ok(out)
     }
 
     /// Whether `dir` holds nothing: no file and no folder. A missing directory holds nothing; one

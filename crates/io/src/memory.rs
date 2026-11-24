@@ -92,6 +92,23 @@ impl MemoryFs {
         self.files.range::<Path, _>((Excluded(dir), Unbounded)).next().is_some_and(|(p, _)| p.starts_with(dir))
     }
 
+    /// The folders directly in `dir`, in path order: implied by the paths of the files under them.
+    pub fn dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        use std::ops::Bound::{Excluded, Unbounded};
+        let mut out: Vec<PathBuf> = Vec::new();
+        for (p, _) in self.files.range::<Path, _>((Excluded(dir), Unbounded)) {
+            let Ok(rest) = p.strip_prefix(dir) else { break };
+            let mut parts = rest.components();
+            if let (Some(first), Some(_)) = (parts.next(), parts.next()) {
+                let child = dir.join(first);
+                if out.last() != Some(&child) {
+                    out.push(child);
+                }
+            }
+        }
+        out
+    }
+
     /// The files directly in `dir`, in path order.
     pub fn list(&self, dir: &Path) -> Vec<PathBuf> {
         // Paths order by component, so everything under `dir` follows it.
@@ -150,6 +167,11 @@ mod tests {
         m.insert(Path::new("/b"), vec![]).unwrap();
         m.insert(Path::new("/b/c"), vec![]).unwrap();
         assert!(m.holds_any(Path::new("/b")), "a file at the folder's own path does not hide what is under it");
+        m.insert(Path::new("/case/0.5/U"), vec![]).unwrap();
+        m.insert(Path::new("/case/0.5/p"), vec![]).unwrap();
+        m.insert(Path::new("/case/case.foam"), vec![]).unwrap();
+        let dirs = m.dirs(Path::new("/case"));
+        assert_eq!(dirs, vec![PathBuf::from("/case/0.5"), PathBuf::from("/case/system")], "each folder once, not the files");
     }
 
     #[test]
