@@ -1,0 +1,23 @@
+[
+ {"command": "mesh.node.add", "params": {"label": 1, "xyz": [0, 0, 0]}},
+ {"command": "mesh.node.add", "params": {"label": 2, "xyz": [500, 0, 0]}},
+ {"command": "mesh.node.add", "params": {"label": 3, "xyz": [1000, 0, 0]}},
+ {"command": "mesh.node.add", "params": {"label": 11, "xyz": [0, 500, 0]}},
+ {"command": "mesh.node.add", "params": {"label": 12, "xyz": [500, 500, 0]}},
+ {"command": "mesh.node.add", "params": {"label": 13, "xyz": [1000, 500, 0]}},
+ {"command": "mesh.element.add", "params": {"label": 1, "kind": "beam2", "nodes": [1, 2]}},
+ {"command": "mesh.element.add", "params": {"label": 2, "kind": "beam2", "nodes": [2, 3]}},
+ {"command": "mesh.element.add", "params": {"label": 11, "kind": "beam2", "nodes": [11, 12]}},
+ {"command": "mesh.element.add", "params": {"label": 12, "kind": "beam2", "nodes": [12, 13]}},
+ {"command": "model.set.create", "params": {"name": "thick", "elements": [1, 2]}},
+ {"command": "model.set.create", "params": {"name": "thin", "elements": [11, 12]}},
+ {"command": "model.set.create", "params": {"name": "anchors", "nodes": [1, 11]}},
+ {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000.0, "poisson": 0.3}}},
+ {"command": "model.section.create", "params": {"name": "thick", "set": "thick", "material": "Steel", "kind": {"type": "beam", "profile": {"type": "pipe", "radius": 20.0, "thickness": 10.0}, "orientation": [0, 0, 1]}}},
+ {"command": "model.section.create", "params": {"name": "thin", "set": "thin", "material": "Steel", "kind": {"type": "beam", "profile": {"type": "pipe", "radius": 102.5, "thickness": 5.0}, "orientation": [0, 0, 1]}}},
+ {"command": "model.boundary_condition.create", "params": {"name": "anchors", "type": "fixed", "target": {"set": "anchors"}}},
+ {"command": "model.load.create", "params": {"name": "p_thick", "type": "pipe_pressure", "set": "thick", "internal": 100.0}},
+ {"command": "model.load.create", "params": {"name": "p_thin", "type": "pipe_pressure", "set": "thin", "internal": 5.0}},
+ {"command": "model.step.create", "params": {"name": "Pressure", "procedure": {"type": "static"}, "boundary_conditions": ["anchors"], "loads": ["p_thick", "p_thin"]}},
+ {"command": "solve.static", "params": {}, "id": "solve"}
+]

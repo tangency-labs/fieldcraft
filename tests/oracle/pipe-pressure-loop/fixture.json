@@ -1,0 +1,29 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "corner_x": {
+      "band": 1.2166999701667074e-10,
+      "value": 0.12166999701667072
+    },
+    "corner_z": {
+      "band": 1.62406015037594e-10,
+      "value": 0.16240601503759397
+    },
+    "crown_z": {
+      "band": 2.1336642982311725e-10,
+      "value": 0.21336642982311724
+    },
+    "hoop_bore": {
+      "band": 9.526315789473686e-8,
+      "value": 95.26315789473682
+    },
+    "run_wall_force": {
+      "band": 0.00006358914906564141,
+      "value": 63589.14906564141
+    },
+    "thrust": {
+      "band": 2.8102169551912262e-8,
+      "value": 28.102169551911317
+    }
+  }
+}

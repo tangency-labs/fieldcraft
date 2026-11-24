@@ -1,0 +1,29 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "axial": {
+      "band": 3.333333333333334e-8,
+      "value": 33.33333333333333
+    },
+    "hoop_bore": {
+      "band": 1.6666666666666668e-7,
+      "value": 166.66666666666666
+    },
+    "hoop_outside": {
+      "band": 6.666666666666668e-8,
+      "value": 66.66666666666666
+    },
+    "radial_bore": {
+      "band": 1.0000000000000001e-7,
+      "value": -99.99999999999999
+    },
+    "stretch": {
+      "band": 6.34920634920635e-11,
+      "value": 0.06349206349206349
+    },
+    "thin_hoop": {
+      "band": 1.000625e-7,
+      "value": 100.06249999999989
+    }
+  }
+}

@@ -16,8 +16,8 @@ from the published literature, and the deck writers map each element to each sol
 | **Commands** | `model.section.create`, `model.section.edit`; `model.mass.create`, `model.spring.create` (discrete elements) |
 | **Step procedure** | every structural procedure; which elements each accepts is in [Availability by procedure](#availability-by-procedure) |
 | **Solver** | `crates/fem` kernels, assembled by `crates/solver` (implicit, CPU, f64) and `crates/explicit` |
-| **Method** | isoparametric displacement elements (Zienkiewicz, Taylor & Zhu 2013; Hughes 2000), incompatible modes (Wilson et al. 1973; Taylor, Beresford & Wilson 1976), mixed u–p (Hughes 2000 §4.3–4.5), MITC shells (Dvorkin & Bathe 1984; Lee & Bathe 2004), interdependent Timoshenko beam (Friedman & Kosmatka 1993) |
-| **Verified by** | patch tests of every element and formulation, `patch-*`, `mh-solid-patch`, `cantilever-*`, `lame-cylinder*`, `kirsch-plate*`, `mh-thick-cylinder`, NAFEMS LE1–LE7, `scordelis-lo-roof-*`, `pinched-cylinder`, `pinched-hemisphere`; `crates/solver/tests/{verification,plane,structural,hybrid,one_d}.rs` (including `euler_bernoulli_cantilever_deflection_is_exact`, `euler_bernoulli_portal_frame_matches_the_slope_deflection_solution`, `euler_bernoulli_cantilever_frequencies`), `crates/fem/src/basis.rs` tests |
+| **Method** | isoparametric displacement elements (Zienkiewicz, Taylor & Zhu 2013; Hughes 2000), incompatible modes (Wilson et al. 1973; Taylor, Beresford & Wilson 1976), mixed u–p (Hughes 2000 §4.3–4.5), MITC shells (Dvorkin & Bathe 1984; Lee & Bathe 2004), interdependent Timoshenko beam (Friedman & Kosmatka 1993), pipes under pressure (Lamé in Timoshenko & Goodier 1970; Sparks 1984) |
+| **Verified by** | patch tests of every element and formulation, `patch-*`, `mh-solid-patch`, `cantilever-*`, `lame-cylinder*`, `kirsch-plate*`, `mh-thick-cylinder`, NAFEMS LE1–LE7, `scordelis-lo-roof-*`, `pinched-cylinder`, `pinched-hemisphere`, `pipe-closed-pressure`, `pipe-pressure-loop`; `crates/solver/tests/{verification,plane,structural,hybrid,one_d}.rs` (including `euler_bernoulli_cantilever_deflection_is_exact`, `euler_bernoulli_portal_frame_matches_the_slope_deflection_solution`, `euler_bernoulli_cantilever_frequencies`), `crates/fem/src/basis.rs` tests |
 
 ## Synopsis
 
@@ -342,6 +342,50 @@ z = x × y (its `height` direction).
 
 ![Beam local axes from the orientation vector](../../media/manual/elements-3.svg)
 
+### Pipes under pressure
+
+A pipe is a beam2 whose profile is `pipe` with a bore: outer radius b, wall thickness t, inner radius
+a = b − t > 0 (`BeamProfile::bore`). A `pipe_pressure` load acts on a set of such beams:
+
+    {"command": "model.load.create", "params": {"name": "steam", "type": "pipe_pressure", "set": "run", "internal": 10}}
+
+`internal` and `external` are the pressures inside and outside the wall, positive when pressing on it.
+Each is uniform along the set's pipes. The load acts in linear static steps only
+([Availability by procedure](#availability-by-procedure)).
+
+The wall stresses are Lamé's (Timoshenko & Goodier 1970, §28): σ_r = A − B/r² and σ_θ = A + B/r², with
+A = (p_i a² − p_o b²)/(b² − a²) and B = (p_i − p_o) a² b²/(b² − a²). For an internal pressure p alone the bore
+hoop stress is p (a² + b²)/(b² − a²). The thin-wall membrane formula p r_m/t, with mean radius r_m, is the
+limit of this value, with relative error (t/2r_m)².
+
+Two axial effects act on a closed pipe. First, the wall's Poisson strain: σ_r + σ_θ = 2A at every radius, so
+the pressure is a uniform axial strain ε₀ = −2νA/E, applied as an initial strain with the pair −2νA A_w, where
+A_w = π (b² − a²). Second, the closed-end force: each end of an element is pulled outwards by
+F = p_i A_i − p_o A_o = A A_w, with A_i = π a² and A_o = π b². Between elements in line these forces cancel; at
+a closed end the remaining one is the load on the cap; at a bend they add to the resultant of the pressure on
+the bend's wall (Sparks 1984 gives the effective-force view). The element's total axial load is therefore
+(1 − 2ν) A A_w.
+
+The three cases that follow from this:
+
+- A closed pipe free to stretch stretches by (1 − 2ν) A L/E, with wall force A A_w.
+- A pipe held at both ends has no stretch, wall force 2νA A_w, and an effective force of −(1 − 2ν) A A_w,
+  which the anchor reacts along the axis.
+- A free planar frame of closed pipes of one profile and one material stretches every member by the same
+  strain: the frame is similar to its unpressurised self, with no bending. Anchors or mixed profiles make it bend
+  (the pipe-pressure-loop case).
+
+The beam's end force N is the wall force, the force on the wall's cut; the closed-end pair is an external load
+and is not part of N. The effective force is N − F. The `pipe` result of `solve.probe` gives the radial and
+hoop stresses at the bore and at the outside, and the axial stress N/A_w at the two ends
+([Output](#output)). Bending, shear and torsion are unchanged: the stiffening of a pressurised pipe against
+bending is second order and is not included. The Bourdon effect and the ovalisation of a bend belong to the
+elbow, which is not implemented.
+
+Sources: S. P. Timoshenko, J. N. Goodier, *Theory of Elasticity*, 3rd ed., 1970, §28; C. P. Sparks, *The
+influence of tension, pressure and weight on pipe and riser deformations and stresses*, J. Energy Resources
+Technology 106(1):46–54, 1984.
+
 ### Trusses
 
 rod2 and rod3, straight or curved (`crate::truss`; Cook, Malkus, Plesha & Witt 2002, §3.6 and
@@ -395,6 +439,8 @@ beams warns that only solid, 2D and truss elements are strained ([Heat transfer]
 | rod2, rod3 | yes | refused | refused | refused | rod2; rod3 with `nonlinear_geometry: false` only; elastic only |
 | point mass, spring, dashpot | yes (dashpots ignored) | yes (dashpots ignored) | — | springs, along their fixed directions | translational ones; rotary inertia and torsional springs refused |
 
+A pipe pressure acts in linear static steps; frequency steps ignore loads, and explicit dynamics refuses it (it has no beams).
+
 Explicit dynamics uses its own kernels for the one-point hexahedron (uniform strain with
 Flanagan–Belytschko hourglass control) and the nodal-pressure tetrahedron
 ([Explicit dynamics](explicit-dynamics.md)). The finite-strain forms of the solids and 2D
@@ -417,7 +463,10 @@ pyramid5 to C3D5, CPYRAM and an LS-DYNA degenerate solid. The Euler–Bernoulli 
 euler_bernoulli) has no shear flexibility: B33 with the same BEAM SECTION as B31; CBAR with a PBAR
 of A, I1, I2 and J and blank shear factors K1 and K2 (Nastran; PBEAML and PBARL compute shear factors
 from the shape, so neither can express it); no LS-DYNA counterpart is written, its resultant beam
-always taking a shear area, so that deck is refused by name.
+always taking a shear area, so that deck is refused by name. Pipes under a pipe pressure go to Abaqus as PIPE31
+with a THICK PIPE beam section and `*DLOAD` PI / PE lines (the pressure and the effective inner or outer
+diameter, closed ends); the Nastran and LS-DYNA decks refuse the load by name, since their beams as written here
+take no pressure.
 
 ## Algorithm
 
@@ -445,7 +494,7 @@ element (`fieldcraft_model::admissible_jacobian`, the same criterion the meshers
 Per element, at the integration points: position, strain and stress (`PointStress`); extrapolated
 to the element's nodes (`ElementStress::nodal`); shells: section forces (N, M, Q per length in
 the element's axes) and bottom, middle and top stresses; beams: end forces (N, V_y, V_z, T, M_y,
-M_z in the element's axes); trusses: the uniaxial stress tensor. `solve.probe` with `elements`
+M_z in the element's axes) (a pipe under a pipe pressure also its wall stresses: radial and hoop at the bore and the outside, axial at the two ends); trusses: the uniaxial stress tensor. `solve.probe` with `elements`
 returns them; [Linear static](linear-static.md#output) describes the nodal averages.
 
 ## Worked example
@@ -562,6 +611,8 @@ four: equilibrium does not depend on the formulation.
 | Euler–Bernoulli cantilever, deflection in both bending planes, 1 and 4 elements | theory | < 6·10⁻¹⁴ (measured); the omitted shear term would be 14 % | 10⁻⁹ | `euler_bernoulli_cantilever_deflection_is_exact` |
 | Euler–Bernoulli portal frame, sway, rotation, lift and base moment, 1 and 3 elements per member (columns' axial flexibility in closed form) | theory | < 7·10⁻¹² (measured) | 10⁻⁹ | `euler_bernoulli_portal_frame_matches_the_slope_deflection_solution` |
 | Euler–Bernoulli cantilever frequencies, consistent mass (4th order) and lumped mass (2nd order) | theory | consistent: 0 < error < 1.1 × (β_k L/n)⁴/1440 and order 3.9–4.1 (n = 10 → 20); lumped: order 1.9–2.1 (20 → 40), |error| < 5·10⁻³ | as stated | `euler_bernoulli_cantilever_frequencies` |
+| Closed pipe under internal and external pressure, free and held (Lamé; closed-end force) | theory | < 10⁻⁹ | exact | `a_closed_pipe_under_pressure_follows_lame`, `pipe-closed-pressure` |
+| Pressurised pipe loop between two anchors (thrust, displacements, wall force) | theory (Castigliano at the elastic centre, Timoshenko members) | < 10⁻⁸ | exact | `a_pressurised_pipe_loop_between_two_anchors`, `pipe-pressure-loop` |
 | Trusses by the method of joints (Pratt, tripod), three-bar truss, rod3 patch, hanging bar | theory | < 10⁻¹⁰ | exact | `crates/solver/tests/one_d.rs` |
 | Kirsch plate, Lamé cylinder, rotating disc and cylinder in 2D | theory | see [Linear static](linear-static.md#verification) | | `crates/solver/tests/plane.rs` |
 | Shape functions, every family | theory | Kronecker delta, partition of unity, monomial reproduction to `degree()` with gradients and Hessians, derivatives against central differences, physical Hessians on affine and curved maps | round-off | `basis::tests`, `dof::tests`, `jet::tests` |
@@ -578,6 +629,7 @@ explicit, engine and io test suites hashed identically before and after.
   (refused in nonlinear steps), no heat conduction, no thermal strain.
 - Beams: two-node only (Timoshenko or Euler–Bernoulli); isotropic material; no warping of open sections; refused in
   buckling, nonlinear and heat transfer steps; no thermal strain.
+- Pipes under pressure: uniform pressures per load, closed ends only (an open end takes an opposite nodal force); corners are rigid joints with no elbow flexibility or Bourdon effect; no stiffening of a pressurised pipe against bending (second order); the fluid's mass is not added in frequency steps; Abaqus decks only.
 - Trusses: isotropic Young's modulus only; refused in buckling and nonlinear steps.
 - Reduced integration exists for hex20 and quad8 only in implicit analyses; reduced hex8 and quad4
   need hourglass control and are refused there.
@@ -587,8 +639,7 @@ explicit, engine and io test suites hashed identically before and after.
 - Material axes are the global axes: there are no material orientations.
 - A 2D model takes no couplings, no shells or beams; an axisymmetric model takes no trusses,
   point masses, springs or dashpots.
-- Not implemented: three-node and planar 2D beams; pipe and elbow
-  elements; open-section beams with warping; rebar and stringers; generalized plane strain,
+- Not implemented: three-node and planar 2D beams; elbow elements (ovalisation of pipe bends, von Kármán's flexibility); open-section beams with warping; rebar and stringers; generalized plane strain,
   axisymmetric elements with twist and axisymmetric shells; quad8 and tri6 shells, continuum
   shells and composite ply layups; membranes and surface elements; a modified quadratic tet;
   cohesive, gasket, infinite, acoustic and rigid elements; heat conduction in 2D, shell and beam
@@ -606,6 +657,7 @@ explicit, engine and io test suites hashed identically before and after.
 | `crates/fem/src/plane.rs` | `plane_type`, `formulation`, `Plane` |
 | `crates/fem/src/shell.rs` | `ShellSection`, `Shell` (MITC4, MITC3, drilling, mass, `stresses`) |
 | `crates/fem/src/beam.rs`, `frame.rs` | `BeamSection`, `properties`, the beam kernel and `forces`; local frames |
+| `crates/fem/src/pipe.rs` | `PipePressure`, `PipeWall` (Lamé), `PipeStress`; `Beam::pressure_load`, `Beam::pipe_stress` in `beam.rs` |
 | `crates/fem/src/truss.rs` | `Truss`, `young_modulus`, `DOFS` |
 | `crates/solver/src/system.rs` | `Mesh::new` (sections to elements), `Elem::kernel`, `Structural` |
 | `crates/solver/src/discrete.rs` | point masses, springs, dashpots: `needs`, `dof_of` |
@@ -634,6 +686,7 @@ explicit, engine and io test suites hashed identically before and after.
 - Z. Friedman, J. B. Kosmatka. *An improved two-node Timoshenko beam finite element.* Computers & Structures 47(3):473–481, 1993.
 - G. R. Cowper. *The shear coefficient in Timoshenko's beam theory.* J. Appl. Mech. 33(2):335–340, 1966.
 - S. P. Timoshenko, J. N. Goodier. *Theory of Elasticity*, 3rd ed. McGraw-Hill, 1970.
+- C. P. Sparks. *The influence of tension, pressure and weight on pipe and riser deformations and stresses.* J. Energy Resources Technology 106(1):46–54, 1984.
 - W. D. Pilkey. *Analysis and Design of Elastic Beams.* Wiley, 2002.
 - R. H. MacNeal, R. L. Harder. *A proposed standard set of problems to test finite element accuracy.* Finite Elements in Analysis and Design 1(1):3–20, 1985.
 - D. P. Flanagan, T. Belytschko. *A uniform strain hexahedron and quadrilateral with orthogonal hourglass control.* IJNME 17(5):679–706, 1981. doi:[10.1002/nme.1620170504](https://doi.org/10.1002/nme.1620170504)
