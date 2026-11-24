@@ -110,7 +110,7 @@ definition_commands!(
     Material,
     "material",
     "Material",
-    r#"{"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3} | {"type": "engineering_constants", "young": [E1, E2, E3], "poisson": [ν12, ν13, ν23], "shear": [G12, G13, G23]}, "density": 7.85e-9, "fluid": {"type": "newtonian", "viscosity": 1.0e-9} (dynamic viscosity) | {"type": "power_law", "consistency": K, "index": n, "reference_shear_rate"?: 1 (default 1/s)} (η = K (γ̇/γ̇_ref)^(n−1): K is the viscosity at the reference rate) | {"type": "carreau_yasuda", "zero_shear_viscosity": η₀, "infinite_shear_viscosity"?: η∞ (default 0, at most η₀), "time_constant": λ, "a"?: 2, "index": n} (η = η∞ + (η₀ − η∞) (1 + (λγ̇)^a)^((n−1)/a)) | {"type": "cross", "zero_shear_viscosity": η₀, "time_constant": λ, "index": n (0 < n < 1)} (η = η₀ / (1 + (λγ̇)^(1−n))) | {"type": "cross_wlf", "d1", "d2" (temperature), "a1", "a2" (temperature difference), "critical_stress": τ*, "index": n (0 < n < 1)} (η = η₀ / (1 + (η₀ γ̇/τ*)^(1−n)), η₀ = D1 exp(−A1 (T − D2) / (A2 + T − D2)); needs heat in the fluid domain) (γ̇ the local shear rate; n from 0 to 5; a fluid needs a density), "plastic": {…} (see model.material.plasticity), "damage": {…}, "erosion": {…} (see model.material.damage), "hyperelastic": {"type": "neo_hookean"} | {"type": "mooney_rivlin", "c01": 0.1} (C10 = μ/2 − C01) | {"type": "yeoh", "c20": -0.01, "c30": 0.001} (C10 = μ/2) (large strain in nonlinear steps, from the isotropic constants: μ = E/(2(1 + ν)), κ = E/(3(1 − 2ν)); without it an elastic material is St Venant–Kirchhoff there), "thermal": {"conductivity": 0.05 | [kx, ky, kz], "specific_heat": 4.6e8, "expansion": 1.2e-5 | [αx, αy, αz], "reference_temperature": 20 (zero thermal strain; default 0 °C)} (heat transfer and thermal strain; each key optional), "pvt": {…} (see model.material.pvt), "phase_change": {…} (see model.material.phase_change)} — numbers in the display units (model.units), or with their unit ("210 GPa")"#,
+    r#"{"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3} | {"type": "engineering_constants", "young": [E1, E2, E3], "poisson": [ν12, ν13, ν23], "shear": [G12, G13, G23]}, "density": 7.85e-9, "fluid": {"type": "newtonian", "viscosity": 1.0e-9} (dynamic viscosity) | {"type": "power_law", "consistency": K, "index": n, "reference_shear_rate"?: 1 (default 1/s)} (η = K (γ̇/γ̇_ref)^(n−1): K is the viscosity at the reference rate) | {"type": "carreau_yasuda", "zero_shear_viscosity": η₀, "infinite_shear_viscosity"?: η∞ (default 0, at most η₀), "time_constant": λ, "a"?: 2, "index": n} (η = η∞ + (η₀ − η∞) (1 + (λγ̇)^a)^((n−1)/a)) | {"type": "cross", "zero_shear_viscosity": η₀, "time_constant": λ, "index": n (0 < n < 1)} (η = η₀ / (1 + (λγ̇)^(1−n))) | {"type": "cross_wlf", "d1", "d2" (temperature), "a1", "a2" (temperature difference), "critical_stress": τ*, "index": n (0 < n < 1)} (η = η₀ / (1 + (η₀ γ̇/τ*)^(1−n)), η₀ = D1 exp(−A1 (T − D2) / (A2 + T − D2)); needs heat in the fluid domain) (γ̇ the local shear rate; n from 0 to 5; a fluid needs a density), "plastic": {…} (see model.material.plasticity), "damage": {…}, "erosion": {…} (see model.material.damage), "hyperelastic": {"type": "neo_hookean"} | {"type": "mooney_rivlin", "c01": 0.1} (C10 = μ/2 − C01) | {"type": "yeoh", "c20": -0.01, "c30": 0.001} (C10 = μ/2) (large strain in nonlinear steps, from the isotropic constants: μ = E/(2(1 + ν)), κ = E/(3(1 − 2ν)); without it an elastic material is St Venant–Kirchhoff there), "thermal": {"conductivity": 0.05 | [kx, ky, kz], "specific_heat": 4.6e8, "expansion": 1.2e-5 | [αx, αy, αz], "reference_temperature": 20 (zero thermal strain; default 0 °C)} (heat transfer and thermal strain; each key optional), "pvt": {…} (see model.material.pvt), "phase_change": {…} (see model.material.phase_change), "fatigue": {…} (stress-life data, see model.material.fatigue)} — numbers in the display units (model.units), or with their unit ("210 GPa")"#,
     super::forms::MATERIAL,
     super::forms::MATERIAL_DELETE,
     add_material,
@@ -136,6 +136,21 @@ fn change_material(s: &mut Session, p: &Value, change: impl FnOnce(&mut Material
     s.model.replace_material(n, m)?;
     Ok(json!({"name": n}))
 }
+
+pub const MATERIAL_FATIGUE: CommandSpec = CommandSpec {
+    id: "model.material.fatigue",
+    label: "Fatigue Data",
+    params: r#"{"name": "Steel", "fatigue": {"curve": {"type": "basquin", "coefficient": σf′, "exponent": b} (σ_a = σf′ (2N)^b in reversals, -1 < b < 0; the cycle form S = A N^b has A = σf′ 2^b) | {"type": "table", "points": [{"cycles": 1e3, "amplitude": 500}, {"cycles": 1e6, "amplitude": 250}, …]} (2 to 64 points, cycles rising from 0.5 and amplitudes falling, straight lines on log-log axes, the end segments extended beyond them), "endurance_limit"?: Se (infinite life at and below it; the safety factor is against it), "ultimate_strength"?: Su (Goodman, Gerber), "yield_strength"?: Sy (Soderberg, and the check for yield)} | null} — the stress-life (S-N) data of a material for fully reversed cycles of smooth specimens (null removes it): read only by the fatigue post-processing (model.fatigue.set, results.fatigue), so results stay current. The data is the user's: FieldCraft ships none. Stresses in the display units"#,
+    form: Some(super::forms::MATERIAL_FATIGUE),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Material],
+    run: |s: &mut Session, p: &Value| {
+        change_material(s, p, |m, p| {
+            m.fatigue = req(p, "fatigue")?;
+            Ok(())
+        })
+    },
+};
 
 pub const MATERIAL_PLASTICITY: CommandSpec = CommandSpec {
     id: "model.material.plasticity",

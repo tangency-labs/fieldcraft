@@ -13,7 +13,7 @@ constant and temperature-dependent properties, each value with its source.
 
 | | |
 |---|---|
-| **Commands** | `model.material.create`, `model.material.edit`, `model.material.plasticity`, `model.material.damage`, `model.material.pvt`, `model.material.specific_volume`, `model.material.delete`; `model.material.library.list` and `model.material.library.add` for the [cited material library](material-library.md) |
+| **Commands** | `model.material.create`, `model.material.edit`, `model.material.plasticity`, `model.material.damage`, `model.material.pvt`, `model.material.fatigue` ([fatigue](fatigue.md)), `model.material.specific_volume`, `model.material.delete`; `model.material.library.list` and `model.material.library.add` for the [cited material library](material-library.md) |
 | **Step procedure** | all structural and heat transfer procedures; see [Procedures](#procedures) |
 | **Solver** | `crates/fem` material kernels, used by `crates/solver` (CPU, f64) and `crates/explicit` |
 | **Method** | orthotropic compliance (Jones 1999); radial return (Simo & Hughes 1998, §3.3); multiplicative finite-strain plasticity (Simo 1992); Lagrangian logarithmic kinematic plasticity (Miehe, Apel & Lambrecht 2002); Johnson–Cook flow and fracture (Johnson & Cook 1983, 1985); decoupled hyperelasticity (Holzapfel 2000, §6.6); two-domain Tait PVT (Chang et al. 1996; Willerer et al. 2024, eqs. 1–9) |
@@ -125,6 +125,15 @@ material without PVT behaviour replies its constant density.
 Specific volume shows in the display system's volume per mass (mm³/t in mm-t-s-N-MPa); per
 degree and per pressure follow the system's temperature step and pressure. Coefficients
 published in m³/kg, K and Pa can be typed with their unit (`"1.23e-3 m³/kg"`).
+
+### Fatigue data (`fatigue`, set by `model.material.fatigue`; `null` removes it)
+
+A stress-life (S-N) curve of fully reversed cycles, Basquin's `{"type": "basquin",
+"coefficient": σf′, "exponent": b}` or a log-log `{"type": "table", "points": [{"cycles",
+"amplitude"}, …]}`, with an optional `endurance_limit`, `ultimate_strength` and
+`yield_strength`. No solver reads it: it is the data of the fatigue post-processing of linear
+static steps, and adding or changing it keeps their results current. Parameters, theory and
+limits: [Fatigue (stress-life)](fatigue.md). FieldCraft ships no fatigue data.
 
 ## Theory
 

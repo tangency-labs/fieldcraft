@@ -113,10 +113,18 @@ pub enum Field {
     ContactShear,
     /// The magnitude of the frictional slip over the last increment (secondary surfaces' nodes).
     ContactSlip,
+    /// log₁₀ of the fatigue life: cycles of a constant amplitude loading, blocks of a history
+    /// (linear static steps with a fatigue assessment, [`crate::fatigue`]); infinite below the
+    /// endurance limit.
+    FatigueLogLife,
+    /// Palmgren–Miner fatigue damage of one cycle, or one block of a history.
+    FatigueDamage,
+    /// The fatigue safety factor against the endurance limit.
+    FatigueSafetyFactor,
 }
 
 impl Field {
-    pub const ALL: [Field; 24] = [
+    pub const ALL: [Field; 27] = [
         Field::Displacement,
         Field::DisplacementX,
         Field::DisplacementY,
@@ -141,6 +149,9 @@ impl Field {
         Field::ContactStatus,
         Field::ContactShear,
         Field::ContactSlip,
+        Field::FatigueLogLife,
+        Field::FatigueDamage,
+        Field::FatigueSafetyFactor,
     ];
 
     /// The id commands take (`von_mises`…).
@@ -170,6 +181,9 @@ impl Field {
             Field::ContactStatus => "contact_status",
             Field::ContactShear => "contact_shear",
             Field::ContactSlip => "contact_slip",
+            Field::FatigueLogLife => "fatigue_log_life",
+            Field::FatigueDamage => "fatigue_damage",
+            Field::FatigueSafetyFactor => "fatigue_safety_factor",
         }
     }
 
@@ -199,10 +213,14 @@ impl Field {
             Field::ContactStatus => "Contact status (0 open, 1 closed or stick, 2 slip)",
             Field::ContactShear => "Contact shear traction",
             Field::ContactSlip => "Contact slip",
+            Field::FatigueLogLife => "Fatigue life, log₁₀ of cycles (blocks of a repeating history)",
+            Field::FatigueDamage => "Fatigue damage per cycle (per block of a history)",
+            Field::FatigueSafetyFactor => "Fatigue safety factor against the endurance limit",
         }
     }
 
-    /// What it measures; `None` for a code (a contact status).
+    /// What it measures; `None` for a code (a contact status) or a pure number (the fatigue
+    /// fields: shown as they are, an infinite life or safety factor in the top band).
     pub fn quantity(self) -> Option<Quantity> {
         Some(match self {
             Field::Displacement | Field::DisplacementX | Field::DisplacementY | Field::DisplacementZ | Field::ContactSlip | Field::ContactGap => {
@@ -212,7 +230,7 @@ impl Field {
             Field::Pressure => Quantity::Pressure,
             Field::Temperature => Quantity::Temperature,
             Field::HeatFlux | Field::WallHeatFlux => Quantity::HeatFlux,
-            Field::ContactStatus => return None,
+            Field::ContactStatus | Field::FatigueLogLife | Field::FatigueDamage | Field::FatigueSafetyFactor => return None,
             Field::ContactPressure
             | Field::ContactShear
             | Field::VonMises
@@ -291,6 +309,13 @@ impl Field {
                 | Field::HeatFlux
                 | Field::WallHeatFlux
         ) && !self.is_contact()
+            && !self.is_fatigue()
+    }
+
+    /// Whether it is a fatigue quantity (computed from a linear static step's stress and its
+    /// fatigue assessment, [`crate::fatigue`]).
+    pub fn is_fatigue(self) -> bool {
+        matches!(self, Field::FatigueLogLife | Field::FatigueDamage | Field::FatigueSafetyFactor)
     }
 
     /// Whether it is a contact quantity.
@@ -329,6 +354,7 @@ impl Field {
         Field::ALL
             .into_iter()
             .filter(move |f| match f {
+                f if f.is_fatigue() => false,
                 Field::Velocity => velocity,
                 Field::Pressure => false,
                 Field::WallHeatFlux => false,
@@ -340,6 +366,23 @@ impl Field {
             .collect::<Vec<_>>()
             .into_iter()
     }
+}
+
+/// The fields `r` has in `model`: [`Field::available`] and, for a linear static step with a
+/// fatigue assessment, the fatigue fields (the safety factor when a material in use has an
+/// endurance limit).
+pub fn available_in(model: &Model, r: &StepResult) -> Vec<Field> {
+    let mut fields: Vec<Field> = Field::available(r).collect();
+    if let Ok(e) = crate::fatigue::evaluate(model, r, Some(&[])) {
+        if !e.once {
+            fields.push(Field::FatigueLogLife);
+        }
+        fields.push(Field::FatigueDamage);
+        if e.endurance {
+            fields.push(Field::FatigueSafetyFactor);
+        }
+    }
+    fields
 }
 
 /// The unit of `q` in `display`: `None` for a number without one.
@@ -628,6 +671,9 @@ pub fn field_values(model: &Model, r: &StepResult, field: Field, pick: Pick) -> 
         Field::StressXy => each(&|t| t[3]),
         Field::StressXz => each(&|t| t[4]),
         Field::StressYz => each(&|t| t[5]),
+        Field::FatigueLogLife => crate::fatigue::field(model, r, crate::fatigue::Quantity::LogLife),
+        Field::FatigueDamage => crate::fatigue::field(model, r, crate::fatigue::Quantity::Damage),
+        Field::FatigueSafetyFactor => crate::fatigue::field(model, r, crate::fatigue::Quantity::SafetyFactor),
     }
 }
 
@@ -1064,7 +1110,7 @@ mod tests {
         }
         let (modes, _) = s.latest_result("Modes").unwrap();
         assert_eq!(Field::available(modes).count(), 4);
-        assert_eq!(Field::available(bend).count(), Field::ALL.len() - 10, "all but velocity, pressure, the thermal and the contact fields");
+        assert_eq!(Field::available(bend).count(), Field::ALL.len() - 13, "all but velocity, pressure, the thermal, contact and fatigue fields");
         assert!(field_values(&s.model, modes, Field::VonMises, Pick { mode: 1, frame: None }).is_err());
         assert!(field_values(&s.model, modes, Field::Displacement, Pick { mode: 9, frame: None }).is_err());
         assert_eq!(field_values(&s.model, modes, Field::Displacement, Pick { mode: 2, frame: None }).unwrap().len(), modes.nodes().len());

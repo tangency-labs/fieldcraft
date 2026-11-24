@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-97 ready, 27 coming soon.
+99 ready, 27 coming soon.
 
 ## Geometry
 
@@ -74,6 +74,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 |---|---|---|---|
 | Materials | Material — Elastic (isotropic, orthotropic) material with density; neo-Hookean hyperelasticity for nonlinear steps; Tait PVT behaviour; latent heat for a fluid that melts and freezes | ready | `model.material.create`, `model.material.edit`, `model.material.delete`, `model.material.pvt`, `model.material.specific_volume`, `model.material.phase_change`, `model.material.library.add`, `model.material.library.list` |
 | Materials | Plasticity — Von Mises plasticity: bilinear, hardening table or Johnson–Cook | ready | `model.material.plasticity` |
+| Materials | Fatigue Data — Stress-life (S-N) data: a Basquin or tabulated curve, endurance limit and strengths, for fatigue post-processing | ready | `model.material.fatigue` |
 | Materials | Hyperelastic — A rubber-like material for nonlinear steps: neo-Hookean, Mooney–Rivlin or Yeoh on the isotropic constants | ready | `model.material.create {"hyperelastic":{"type":"neo_hookean"}}` |
 | Materials | Damage — Johnson–Cook damage and element erosion | ready | `model.material.damage` |
 | Materials | Thermal — A material with conductivity, specific heat and expansion, for heat transfer and thermal stress | ready | `model.material.create {"thermal":{}}` |
@@ -157,6 +158,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Query | Reactions — Reaction force and moment sums per set | ready | `results.reactions`, `results.export.csv` |
 | Query | Fluid Measurements — Saved-frame face averages, flow, heat rates and pressure drop, with CSV | ready | `results.fluid.measure` |
 | Query | Linearize — Membrane, bending and peak stresses along a path through a wall (ASME VIII-2 Annex 5-A) | ready | `results.linearize` |
+| Query | Fatigue — Stress-life fatigue of a linear static step: life, damage and safety factor under a cycled load or a rainflow-counted history | ready | `results.fatigue`, `model.fatigue.set`, `model.fatigue.delete` |
 | Query | Free Body — Free-body forces across a cut | coming soon (M9) |  |
 | Plots | XY Plot — Plot a quantity against the load factor, time or mode | ready | `results.xy` |
 | Plots | Path Plot — Interpolate a solid nodal field along a reference-coordinate path, with CSV export | ready | `results.path` |

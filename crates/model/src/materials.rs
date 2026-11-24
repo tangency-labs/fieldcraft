@@ -592,6 +592,142 @@ impl PhaseChange {
     }
 }
 
+/// One point of a tabulated S-N curve: the stress amplitude of a fully reversed cycle (stress
+/// ratio R = −1) and the cycles to failure at it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnPoint {
+    /// Cycles to failure N (at least half a cycle: one reversal).
+    pub cycles: f64,
+    /// Stress amplitude S_a at that life.
+    pub amplitude: f64,
+}
+
+/// The stress-life curve of fully reversed cycles: the stress amplitude a smooth specimen of the
+/// material survives for N cycles. Evaluated by `fieldcraft_fem::fatigue`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SnCurve {
+    /// Basquin's relation in reversals, σ_a = σ_f′ (2N)^b (O. H. Basquin, *The exponential law
+    /// of endurance tests*, Proc. ASTM 10 (1910) 625–630, in the form of N. E. Dowling,
+    /// *Mechanical Behavior of Materials*, 4th ed., 2013, chapter 9): `coefficient` σ_f′ and
+    /// `exponent` b. The cycle form S = A N^b of the same curve has A = σ_f′ 2^b.
+    Basquin { coefficient: f64, exponent: f64 },
+    /// Points of amplitude against cycles, cycles rising and amplitudes falling, joined by
+    /// straight lines on log-log axes.
+    Table { points: Vec<SnPoint> },
+}
+
+/// Stress-life (S-N) fatigue data of a material, for the fatigue post-processing of linear static
+/// results (`model.fatigue.set`). The data is the user's: FieldCraft ships none.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fatigue {
+    /// The fully reversed S-N curve.
+    pub curve: SnCurve,
+    /// The stress amplitude (fully reversed) below which the life is infinite: the curve is cut
+    /// there (its knee). Without it the curve goes on falling at every life.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endurance_limit: Option<f64>,
+    /// The ultimate tensile strength S_u (the Goodman and Gerber mean stress corrections).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ultimate_strength: Option<f64>,
+    /// The tensile yield strength S_y (the Soderberg correction, and the check for local
+    /// yielding where the stress-life method does not apply).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yield_strength: Option<f64>,
+}
+
+impl Fatigue {
+    /// The most points a tabulated curve holds.
+    pub const MAX_POINTS: usize = 64;
+    /// The longest life a table point may give, in cycles.
+    pub const MAX_CYCLES: f64 = 1e30;
+
+    /// The curve's amplitude at its short-life end: σ_f′ for Basquin (the amplitude at one
+    /// reversal, half a cycle), the first point's amplitude for a table (at that point's own
+    /// cycles).
+    pub fn top(&self) -> f64 {
+        match &self.curve {
+            SnCurve::Basquin { coefficient, .. } => *coefficient,
+            SnCurve::Table { points } => points.first().map_or(f64::NAN, |p| p.amplitude),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        match &self.curve {
+            SnCurve::Basquin { coefficient, exponent } => {
+                positive("the fatigue strength coefficient σ_f′", *coefficient)?;
+                if !(*exponent > -1.0 && *exponent < 0.0) {
+                    return Err(Error::Invalid(format!(
+                        "the fatigue strength exponent b must be between -1 and 0 (metals are about -0.05 to -0.15), got {exponent}"
+                    )));
+                }
+            }
+            SnCurve::Table { points } => {
+                if points.len() < 2 {
+                    return Err(Error::Invalid("a tabulated S-N curve needs at least two points".into()));
+                }
+                if points.len() > Self::MAX_POINTS {
+                    return Err(Error::Invalid(format!("{} S-N points; at most {} are supported", points.len(), Self::MAX_POINTS)));
+                }
+                for (i, p) in points.iter().enumerate() {
+                    if !(0.5..=Self::MAX_CYCLES).contains(&p.cycles) {
+                        return Err(Error::Invalid(format!(
+                            "S-N point {}: the cycles must be from 0.5 (one reversal) to {:e}, got {}",
+                            i + 1,
+                            Self::MAX_CYCLES,
+                            p.cycles
+                        )));
+                    }
+                    positive(&format!("the amplitude of S-N point {}", i + 1), p.amplitude)?;
+                }
+                for (i, w) in points.windows(2).enumerate() {
+                    if let [a, b] = w
+                        && !(b.cycles > a.cycles && b.amplitude < a.amplitude)
+                    {
+                        return Err(Error::Invalid(format!(
+                            "S-N points {} and {}: the cycles must rise and the amplitudes fall from one point to the next",
+                            i + 1,
+                            i + 2
+                        )));
+                    }
+                }
+            }
+        }
+        if let Some(e) = self.endurance_limit {
+            positive("the endurance limit", e)?;
+            if !(e < self.top()) {
+                return Err(Error::Invalid(format!(
+                    "the endurance limit {e} must be below the curve's amplitude at its short-life end, {}",
+                    self.top()
+                )));
+            }
+            if let SnCurve::Table { points } = &self.curve
+                && let Some(last) = points.last()
+                && e > last.amplitude
+            {
+                return Err(Error::Invalid(format!(
+                    "the endurance limit {e} is above the table's last point ({}): it would cut off part of the curve you gave; end the table at the knee or lower the limit",
+                    last.amplitude
+                )));
+            }
+        }
+        if let Some(u) = self.ultimate_strength {
+            positive("the ultimate strength", u)?;
+        }
+        if let Some(y) = self.yield_strength {
+            positive("the yield strength", y)?;
+            if let Some(u) = self.ultimate_strength
+                && y > u
+            {
+                return Err(Error::Invalid(format!("the yield strength {y} is above the ultimate strength {u}")));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// A material.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -629,6 +765,10 @@ pub struct Material {
     /// Properties that follow the temperature ([`crate::curves`]); each table needs its constant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature_dependent: Option<TemperatureDependent>,
+    /// Stress-life fatigue data, read only by the fatigue post-processing (no solver reads it,
+    /// so it is left out of what a step's result depends on: [`Model::step_inputs`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fatigue: Option<Fatigue>,
 }
 
 impl Material {
@@ -701,6 +841,12 @@ impl Material {
         if let Some(d) = &self.temperature_dependent {
             self.validate_tables(d)?;
         }
+        if let Some(f) = &self.fatigue {
+            f.validate().map_err(|e| match e {
+                Error::Invalid(m) => Error::Invalid(format!("fatigue: {m}")),
+                e => e,
+            })?;
+        }
         Ok(())
     }
 
@@ -765,6 +911,103 @@ impl Model {
     pub fn remove_material(&mut self, name: &str) -> Result<()> {
         not_in_use("material", name, self.material_users(name))?;
         remove_existing(&mut self.materials, "material", name).map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod fatigue_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn steel(fatigue: serde_json::Value) -> serde_json::Result<Material> {
+        serde_json::from_value(json!({"elastic": {"type": "isotropic", "young": 2.0e11, "poisson": 0.3}, "fatigue": fatigue}))
+    }
+
+    #[test]
+    fn fatigue_data_round_trips_and_a_material_without_it_reads_as_before() {
+        let m = steel(json!({"curve": {"type": "basquin", "coefficient": 1.0e9, "exponent": -0.1}, "endurance_limit": 3.0e8,
+            "ultimate_strength": 8.0e8, "yield_strength": 6.0e8}))
+        .unwrap();
+        m.validate().unwrap();
+        let json = serde_json::to_value(&m).unwrap();
+        assert_eq!(serde_json::from_value::<Material>(json.clone()).unwrap(), m);
+        assert_eq!(json["fatigue"]["curve"], json!({"type": "basquin", "coefficient": 1.0e9, "exponent": -0.1}));
+        let plain = Material { fatigue: None, ..m };
+        assert!(serde_json::to_value(&plain).unwrap().get("fatigue").is_none());
+        let table =
+            steel(json!({"curve": {"type": "table", "points": [{"cycles": 1e3, "amplitude": 5e8}, {"cycles": 1e6, "amplitude": 2.5e8}]}})).unwrap();
+        table.validate().unwrap();
+        assert_eq!(table.fatigue.as_ref().map(Fatigue::top), Some(5e8));
+    }
+
+    #[test]
+    fn hostile_fatigue_data_is_refused() {
+        let basquin = |c: serde_json::Value, b: serde_json::Value| json!({"curve": {"type": "basquin", "coefficient": c, "exponent": b}});
+        let point = |n: f64, s: f64| json!({"cycles": n, "amplitude": s});
+        let table = |points: Vec<serde_json::Value>| json!({"curve": {"type": "table", "points": points}});
+        for bad in [
+            basquin(json!(0), json!(-0.1)),
+            basquin(json!(-1e9), json!(-0.1)),
+            basquin(json!(1e9), json!(0.1)),
+            basquin(json!(1e9), json!(0)),
+            basquin(json!(1e9), json!(-1)),
+            basquin(json!(1e9), json!(-2)),
+            table(vec![point(1e3, 5e8)]),
+            table(vec![point(1e3, 5e8), point(1e2, 2e8)]),
+            table(vec![point(1e3, 5e8), point(1e6, 6e8)]),
+            table(vec![point(1e3, 5e8), point(1e6, 5e8)]),
+            table(vec![point(0.1, 5e8), point(1e6, 2e8)]),
+            table(vec![point(1e3, -5e8), point(1e6, -6e8)]),
+            table(vec![point(1e3, 5e8), point(1e40, 2e8)]),
+            table((0..=Fatigue::MAX_POINTS).map(|i| point(10f64.powi(i as i32 % 30 + 1), 1e9 / (i as f64 + 1.0))).collect()),
+            json!({"curve": {"type": "basquin", "coefficient": 1e9, "exponent": -0.1}, "endurance_limit": 2e9}),
+            // An endurance limit above the table's last point cuts part of the curve off.
+            json!({"curve": {"type": "table", "points": [{"cycles": 1e3, "amplitude": 5e8}, {"cycles": 1e7, "amplitude": 2e8}]}, "endurance_limit": 3e8}),
+            json!({"curve": {"type": "basquin", "coefficient": 1e9, "exponent": -0.1}, "endurance_limit": -1}),
+            json!({"curve": {"type": "basquin", "coefficient": 1e9, "exponent": -0.1}, "ultimate_strength": 0}),
+            json!({"curve": {"type": "basquin", "coefficient": 1e9, "exponent": -0.1}, "ultimate_strength": 5e8, "yield_strength": 6e8}),
+        ] {
+            let m = steel(bad.clone()).unwrap();
+            let e = m.validate().unwrap_err().to_string();
+            assert!(e.contains("fatigue"), "{bad}: {e}");
+        }
+        for bad in [
+            json!({"curve": {"type": "basquin", "coefficient": "high", "exponent": -0.1}}),
+            json!({"curve": {"type": "basquin", "coefficient": 1e9}}),
+            json!({"curve": {"type": "wohler"}}),
+            json!({"curve": {"type": "basquin", "coefficient": 1e9, "exponent": -0.1}, "endurance": 3e8}),
+            json!({}),
+        ] {
+            assert!(steel(bad.clone()).is_err(), "{bad}");
+        }
+        let mut m = Model::default();
+        for (c, b) in [(1e9, f64::NAN), (f64::INFINITY, -0.1), (f64::NAN, -0.1), (1e9, f64::NEG_INFINITY)] {
+            let fatigue = Fatigue {
+                curve: SnCurve::Basquin { coefficient: c, exponent: b },
+                endurance_limit: None,
+                ultimate_strength: None,
+                yield_strength: None,
+            };
+            let bad = Material { fatigue: Some(fatigue), ..steel(serde_json::Value::Null).unwrap() };
+            assert!(m.add_material("Bad", bad).is_err(), "{c} {b}");
+        }
+        assert!(m.materials().is_empty());
+    }
+
+    /// Fatigue data is read by no solver: a step's inputs, and so whether its result is current,
+    /// do not change with it.
+    #[test]
+    fn fatigue_data_is_not_a_step_input() {
+        let mut m = Model::default();
+        m.add_material("Steel", steel(serde_json::Value::Null).unwrap()).unwrap();
+        m.add_step(crate::Step::new("Load", crate::Procedure::Static {}), None).unwrap();
+        let before = serde_json::to_string(&m.step_inputs("Load").unwrap()).unwrap();
+        let with = steel(json!({"curve": {"type": "basquin", "coefficient": 1.0e9, "exponent": -0.1}})).unwrap();
+        m.replace_material("Steel", with).unwrap();
+        assert_eq!(serde_json::to_string(&m.step_inputs("Load").unwrap()).unwrap(), before);
+        let stiffer = Material { elastic: Some(Elastic::Isotropic { young: 2.1e11, poisson: 0.3 }), ..m.material("Steel").unwrap().clone() };
+        m.replace_material("Steel", stiffer).unwrap();
+        assert_ne!(serde_json::to_string(&m.step_inputs("Load").unwrap()).unwrap(), before);
     }
 }
 

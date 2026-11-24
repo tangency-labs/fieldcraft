@@ -10,6 +10,7 @@ pub(crate) mod define;
 pub mod diagnostics;
 mod edit;
 mod extrude;
+mod fatigue;
 pub(crate) mod file;
 pub(crate) mod forms;
 mod geometry;
@@ -167,6 +168,7 @@ pub static ALL: &[CommandSpec] = &[
     define::MATERIAL_PVT,
     define::MATERIAL_SPECIFIC_VOLUME,
     define::MATERIAL_PHASE_CHANGE,
+    define::MATERIAL_FATIGUE,
     define::SECTION_CREATE,
     define::SECTION_EDIT,
     define::SECTION_DELETE,
@@ -212,6 +214,8 @@ pub static ALL: &[CommandSpec] = &[
     define::STEP_EDIT,
     define::STEP_DELETE,
     define::STEP_ACTIVATE,
+    fatigue::SET,
+    fatigue::DELETE,
     define::RENAME,
     define::ACTIVITY,
     file::NEW,
@@ -257,6 +261,7 @@ pub static ALL: &[CommandSpec] = &[
     xy::XY,
     path::PATH,
     linearize::LINEARIZE,
+    fatigue::REPORT,
     diagnostics::CRASH_REPORTS,
     diagnostics::CRASH_REPORT,
     diagnostics::CRASH_REPORTS_DELETE,

@@ -21,7 +21,8 @@ fn each(values: &mut [f64], q: Q, f: &mut dyn FnMut(Q, &mut f64)) {
 
 impl Quantities for Material {
     fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
-        let Material { elastic, hyperelastic, density, fluid, plastic, damage, erosion, thermal, pvt, phase_change, temperature_dependent } = self;
+        let Material { elastic, hyperelastic, density, fluid, plastic, damage, erosion, thermal, pvt, phase_change, temperature_dependent, fatigue } =
+            self;
         match elastic {
             Some(Elastic::Isotropic { young, poisson: _ }) => f(Q::Pressure, young),
             Some(Elastic::EngineeringConstants { young, poisson: _, shear }) => {
@@ -132,6 +133,20 @@ impl Quantities for Material {
             for [t, v] in &mut table.0 {
                 f(Q::Temperature, t);
                 f(q, v);
+            }
+        }
+        if let Some(Fatigue { curve, endurance_limit, ultimate_strength, yield_strength }) = fatigue {
+            // The exponent and the cycle counts are dimensionless.
+            match curve {
+                SnCurve::Basquin { coefficient, exponent: _ } => f(Q::Pressure, coefficient),
+                SnCurve::Table { points } => {
+                    for SnPoint { cycles: _, amplitude } in points {
+                        f(Q::Pressure, amplitude);
+                    }
+                }
+            }
+            for v in [endurance_limit, ultimate_strength, yield_strength].into_iter().flatten() {
+                f(Q::Pressure, v);
             }
         }
     }
@@ -599,6 +614,8 @@ impl Model {
             stitches,
             face_splits: _,
             defeatures: _,
+            // Load factors and choices only: dimensionless.
+            fatigue: _,
         } = self;
         for n in nodes.values_mut() {
             each(&mut n.xyz, Q::Length, f);

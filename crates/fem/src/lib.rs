@@ -32,6 +32,8 @@
 //!   bucket grid of the global search;
 //! - [`mortar`]: mortar segmentation of a secondary face against a main face and the integration
 //!   points on the overlap, over [`dual`]'s automatic differentiation for the exact tangent;
+//! - [`fatigue`]: stress-life (S-N) fatigue at a material point: signed stress measures, rainflow
+//!   counting, mean stress corrections, Palmgren–Miner damage;
 //! - [`heat`]: heat conduction (conductivity, capacity, sources, surface flux and convection,
 //!   heat flux); thermal strain loads and stresses are in [`element`];
 //! - [`uniform`]: uniform-strain (one-point) hexahedron and tetrahedron kinematics, hourglass
@@ -68,6 +70,7 @@ pub mod dual;
 pub mod elastoplastic;
 pub mod element;
 pub mod face;
+pub mod fatigue;
 pub mod finite;
 pub mod frame;
 pub mod heat;

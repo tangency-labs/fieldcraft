@@ -38,6 +38,8 @@ pub const ALIASES: &[(&str, &str, &str)] = &[
     ("edit.redo", "redo", ""),
     ("diagnostics.bug_report", "bug_report", ""),
     ("model.material.create", "material", ""),
+    ("model.material.fatigue", "graph", ""),
+    ("results.fatigue", "inspect", ""),
     ("results.cut", "section", ""),
     ("geometry.datum", "plane", ""),
     ("geometry.datum.axis", "axis", ""),

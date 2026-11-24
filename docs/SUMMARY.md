@@ -23,6 +23,7 @@
   - [Linear static](manual/structural/linear-static.md)
   - [Natural frequencies](manual/structural/frequency.md)
   - [Linear buckling](manual/structural/buckling.md)
+  - [Fatigue (stress-life)](manual/structural/fatigue.md)
   - [Heat transfer](manual/structural/heat-transfer.md)
   - [Nonlinear static](manual/structural/nonlinear-static.md)
   - [Explicit dynamics](manual/structural/explicit-dynamics.md)

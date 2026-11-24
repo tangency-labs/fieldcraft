@@ -268,6 +268,56 @@ const PHASE_CHANGE: Field = group(
 )
 .help("Melting and freezing: the latent heat released between the liquidus and the solidus. Needs a specific heat.");
 
+const FATIGUE: Field = group(
+    "fatigue",
+    "Fatigue (S-N)",
+    &[
+        variants(
+            "curve",
+            "S-N curve",
+            &[
+                variant(
+                    "basquin",
+                    "Basquin",
+                    &[
+                        above_zero("coefficient", "Fatigue strength coefficient σf′", D::Stress)
+                            .help("Basquin's σf′ in σa = σf′ (2N)^b: the amplitude at one reversal. From the material's own fully reversed tests.")
+                            .req(),
+                        above("exponent", "Fatigue strength exponent b", D::None, -1.0, 0.0)
+                            .help("Basquin's b, between -1 and 0 (metals about -0.05 to -0.15). The cycle form S = A N^b has A = σf′ 2^b.")
+                            .req(),
+                    ],
+                ),
+                variant(
+                    "table",
+                    "Table",
+                    &[rows_up_to(
+                        "points",
+                        "S-N points",
+                        &[
+                            positive("cycles", "Cycles to failure", D::None).help("The life N of the point, from 0.5 (one reversal).").req(),
+                            above_zero("amplitude", "Stress amplitude", D::Stress).help("The fully reversed stress amplitude at that life.").req(),
+                        ],
+                        fieldcraft_model::Fatigue::MAX_POINTS,
+                    )
+                    .help("2 to 64 points, cycles rising and amplitudes falling, joined by straight lines on log-log axes.")
+                    .req()],
+                ),
+            ],
+        )
+        .help("The stress amplitude a smooth specimen survives for N fully reversed cycles.")
+        .req(),
+        above_zero("endurance_limit", "Endurance limit", D::Stress)
+            .help("The fully reversed amplitude at and below which the life is infinite (the curve's knee). Without it the curve goes on falling.")
+            .hint("none: the curve goes on"),
+        above_zero("ultimate_strength", "Ultimate strength", D::Stress).help("The ultimate tensile strength Su: needed by the Goodman and Gerber mean stress corrections."),
+        above_zero("yield_strength", "Yield strength", D::Stress)
+            .help("The tensile yield strength Sy: needed by the Soderberg correction, and checked against the peak stress (stress-life does not apply where it yields)."),
+    ],
+)
+.help("Stress-life data for the fatigue post-processing of linear static results (model.fatigue.set). Your own data: FieldCraft ships none.")
+.hint("fatigue post-processing only");
+
 pub const MATERIAL: &[Field] = &[
     NAME,
     ELASTIC,
@@ -280,6 +330,7 @@ pub const MATERIAL: &[Field] = &[
     THERMAL,
     PVT,
     PHASE_CHANGE,
+    FATIGUE,
     variants(
         "fluid",
         "Fluid",
@@ -353,6 +404,62 @@ pub const MATERIAL_SPECIFIC_VOLUME: &[Field] = &[
 ];
 
 pub const MATERIAL_PHASE_CHANGE: &[Field] = &[reference("name", "Material", C::Material).help("The material to change.").req(), PHASE_CHANGE.req()];
+pub const MATERIAL_FATIGUE: &[Field] = &[reference("name", "Material", C::Material).help("The material to change.").req(), FATIGUE.req()];
+
+const LOAD_FACTOR: Field = num("", "Load factor", D::None).help("A multiple of the step's load.");
+const COUNTING: &[(&str, &str)] = &[("repeated", "Repeated block"), ("once", "Once")];
+const STRESS_MEASURES: &[(&str, &str)] = &[("signed_von_mises", "Signed von Mises"), ("max_abs_principal", "Largest principal (signed)")];
+const MEAN_STRESS: &[(&str, &str)] =
+    &[("none", "None"), ("goodman", "Goodman"), ("gerber", "Gerber"), ("soderberg", "Soderberg"), ("swt", "Smith-Watson-Topper")];
+pub const FATIGUE_SET: &[Field] = &[
+    reference("step", "Step", C::Step).help("The linear static step whose stress field the repeated load scales.").req(),
+    variants(
+        "loading",
+        "Loading",
+        &[
+            variant(
+                "constant_amplitude",
+                "Constant amplitude",
+                &[
+                    num("max", "Largest load factor", D::None).help("The top of the cycle, as a multiple of the step's load.").req(),
+                    num("min", "Smallest load factor", D::None).help("The bottom of the cycle (−1 times max: fully reversed; 0: from zero).").req(),
+                ],
+            ),
+            variant(
+                "stress_ratio",
+                "Stress ratio",
+                &[
+                    range("ratio", "Stress ratio R", D::None, -1.0, 1.0).help("R = σmin/σmax: −1 fully reversed, 0 from zero, between 0 and 1 fluctuating.").req(),
+                    above_zero("scale", "Load scale", D::None).help("σmax as a multiple of the step's load.").def("1"),
+                ],
+            ),
+            variant(
+                "history",
+                "Load history",
+                &[
+                    list("factors", "Load factors", &LOAD_FACTOR, fieldcraft_model::fatigue::MAX_HISTORY)
+                        .help("One block of the loading as load factors in time order, rainflow counted.")
+                        .req(),
+                    choice("counting", "Counting", COUNTING)
+                        .help("Repeated: the block repeats and every cycle closes. Once: it happens once, and the ranges left at the end count as half cycles.")
+                        .def("\"repeated\""),
+                ],
+            ),
+        ],
+    )
+    .help("How the step's load repeats: proportional loading, every stress component following the same factor.")
+    .req(),
+    choice("measure", "Stress measure", STRESS_MEASURES)
+        .help("The scalar stress read at each node: von Mises signed as the largest principal stress (ductile metals), or that principal stress (brittle materials).")
+        .req(),
+    choice("mean_stress", "Mean stress correction", MEAN_STRESS)
+        .help("Corrects the amplitude for a tensile mean: Goodman and Gerber need the ultimate strength, Soderberg the yield strength, Smith-Watson-Topper (SWT) no strength. Goodman, Gerber and Soderberg give a compressive mean no correction; SWT reads the cycle through its largest stress.")
+        .req(),
+    above("stress_factor", "Stress factor", D::None, 0.0, 100.0)
+        .help("Multiplies the whole stress history, amplitude and mean alike (the result is linear in the load): a stress concentration the mesh does not hold, or 1/k for a surface or size factor k. One number for both; a fatigue notch factor is usually applied to the amplitude and, where the notch does not yield, the mean too. 1 leaves the stresses as solved.")
+        .def("1"),
+];
+pub const FATIGUE_DELETE: &[Field] = &[reference("step", "Step", C::Step).help("The step whose fatigue assessment is removed.").req()];
 pub const MATERIAL_DAMAGE: &[Field] = &[
     reference("name", "Material", C::Material).help("The material to change.").req(),
     DAMAGE.def(r#"{"type": "johnson_cook"}"#).hint("give damage, erosion or both"),
@@ -2943,6 +3050,9 @@ const CONTOUR_FIELDS: &[(&str, &str)] = &[
     ("contact_status", "Contact status"),
     ("contact_shear", "Contact shear"),
     ("contact_slip", "Contact slip"),
+    ("fatigue_log_life", "Fatigue life (log₁₀)"),
+    ("fatigue_damage", "Fatigue damage"),
+    ("fatigue_safety_factor", "Fatigue safety factor"),
     ("none", "None"),
 ];
 /// The nodal fields, without "none": what a path plot or an XY series reads.
@@ -3105,6 +3215,10 @@ pub const RESULTS_PATH: &[Field] = &[
     int("frame", "Frame", 0, 1_000_000_000).help("A stored field frame; empty means final state."),
     int("mode", "Mode", 1, 1_000_000).help("Frequency results only; empty means mode 1."),
     path("path", "CSV file", true).help("Optional distance,x,y,z,value CSV in display units; gaps have empty values."),
+];
+pub const RESULTS_FATIGUE: &[Field] = &[
+    SOLVED,
+    reference("set", "Set", C::Set).help("Summarise over this set's nodes only (to leave out a support's singular stress, say).").hint("every node"),
 ];
 pub const RESULTS_LINEARIZE: &[Field] = &[
     SOLVED,
@@ -3288,6 +3402,7 @@ mod tests {
 
     const STATE: &[&str] = &[
         "open a design first",
+        "has no fatigue assessment",
         "update checks are off",
         "`boundary_conditions` or `loads`",
         "give one of",
