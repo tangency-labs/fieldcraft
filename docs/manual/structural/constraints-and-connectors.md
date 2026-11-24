@@ -260,11 +260,17 @@ and dashpot work in the internal and viscous energies.
 | Definition | Abaqus | Nastran | LS-DYNA |
 |---|---|---|---|
 | Kinematic coupling | `*COUPLING` with `*KINEMATIC` | `RBE2` (reference point independent) | `*CONSTRAINED_NODAL_RIGID_BODY`; some degrees of freedom only: refused |
-| Distributing coupling | `*COUPLING` with `*DISTRIBUTING, WEIGHTING METHOD=UNIFORM` | `RBE3` (equal weights, reference point dependent) | `*CONSTRAINED_INTERPOLATION` |
+| Distributing coupling | `*COUPLING` with `*DISTRIBUTING, WEIGHTING METHOD=UNIFORM`, each node's weight on the node-based `*SURFACE` | `RBE3` (one weight group per node, reference point dependent) | `*CONSTRAINED_INTERPOLATION` (one independent node card per node with its weight) |
 | Tie | `*TIE, ADJUST=NO` (secondary first, `POSITION TOLERANCE` when given) | refused | `*CONTACT_TIED_SURFACE_TO_SURFACE` between segment sets |
 | Inclined symmetry plane | `*EQUATION` (model data: refused when active in some steps only) | one `MPC` set per step | `*BOUNDARY_SPC_*_ID` in a `*DEFINE_COORDINATE_SYSTEM` whose x axis is the normal |
 | Point mass, rotary inertia | `MASS` / `*MASS`, `ROTARYI` / `*ROTARY INERTIA` | `CONM1` | `*ELEMENT_MASS`, `*ELEMENT_INERTIA` |
 | Spring, dashpot | `SPRING1/2/A`, `DASHPOT1/2/A` | `CELAS2`, `CDAMP2` | `*ELEMENT_DISCRETE` |
+
+A distributing coupling on faces is written with one weight per node, w = ∫ N dA over the set's
+faces (the consistent loads of a unit traction; negative at the corners of quadratic faces), and a
+set of nodes only with equal weights. The target fits its reference point to the nodes with these
+weights, so a force spreads as in FieldCraft and a moment slightly differently: FieldCraft fits the
+surface displacement, which no format's coupling keyword can state.
 
 Abaqus reports a mass that differs by direction and a spring along a skew fixed vector; per-direction
 masses are written by Nastran only, skew fixed spring directions by LS-DYNA only.

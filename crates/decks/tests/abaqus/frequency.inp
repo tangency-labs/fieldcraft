@@ -57,7 +57,7 @@ FieldCraft model, units mm-t-s-N-MPa
 ** section beam
 *SOLID SECTION, ELSET=all, MATERIAL=Steel
 ,
-** Couplings: every node of the set weighted equally
+** Couplings
 *SURFACE, TYPE=NODE, NAME=tie-nodes
 tip, 1.0
 *COUPLING, CONSTRAINT NAME=tie, REF NODE=99999999, SURFACE=tie-nodes

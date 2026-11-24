@@ -29,7 +29,8 @@
 //!   so every writer and the solver share one distribution; pressure: `PLOAD4` per element face;
 //!   gravity: `GRAV`; a step with several loads combines them with `LOAD`;
 //! - kinematic coupling: `RBE2` (the reference point independent); distributing coupling: `RBE3`
-//!   (equal weights on the set's translations; the reference point dependent);
+//!   (each node weighted by ∫ N dA over the set's faces; a set of nodes only: equal weights; the
+//!   reference point dependent);
 //! - frequency steps: `EIGRL` (Lanczos) with the step's mode count and range;
 //! - 2D models: plane stress as membranes, `CTRIA3`, `CQUAD4`, `CTRIA6`, `CQUAD8` with a
 //!   `PSHELL` that has only a membrane material, every grid holding its out-of-plane degrees of
@@ -871,13 +872,23 @@ impl<'m> Deck<'m> {
         for (eid, name, c) in &self.rigid {
             let rp = self.r.reference_point_nodes.get(&c.reference_point).copied().unwrap_or_default();
             let nodes = self.r.sets.get(&c.set).map(|s| s.nodes.as_slice()).unwrap_or_default();
-            let card = match c.kind {
-                CouplingKind::Kinematic => Card::new("RBE2").int(*eid).int(rp).int(component(c.dofs)).ints(nodes.iter().copied()),
-                // Equal weights on the set's translations.
+            // RBE3 (Quick Reference Guide): after REFC, groups of WTi, Ci, Gi,j; a real opens a group.
+            // A face set: one group per node, its weight ∫ N dA. A node set: one group, equal weights.
+            let (card, weighted) = match c.kind {
+                CouplingKind::Kinematic => (Card::new("RBE2").int(*eid).int(rp).int(component(c.dofs)).ints(nodes.iter().copied()), false),
                 CouplingKind::Distributing => {
-                    Card::new("RBE3").int(*eid).blank().int(rp).int(component(c.dofs)).real(1.0).int(123).ints(nodes.iter().copied())
+                    let head = Card::new("RBE3").int(*eid).blank().int(rp).int(component(c.dofs));
+                    match crate::coupling_weights(self.model, self.r, name, c)? {
+                        Some(weights) => (weights.into_iter().fold(head, |card, (node, w)| card.real(w).int(123).int(node)), true),
+                        None => (head.real(1.0).int(123).ints(nodes.iter().copied()), false),
+                    }
                 }
             };
+            if weighted {
+                for line in crate::NODAL_WEIGHTS {
+                    comment(out, line);
+                }
+            }
             write_named(out, &format!("coupling {name}"), *eid, card)?;
         }
         if !self.discrete.is_empty() {

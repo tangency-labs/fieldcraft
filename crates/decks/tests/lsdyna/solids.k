@@ -111,11 +111,20 @@ $                sid
                    5                   6                   7                   8                   9                  10                  11                  12
                   13                  14
 $ coupling `spider`
+$ nodal weights w = integral of N dA over the set's faces, negative at
+$ quadratic corners; a moment spreads slightly differently than in FieldCraft
 *CONSTRAINED_INTERPOLATION
 $               icid                dnid                ddof                cidd                ityp               idnsw                 fgm
-                   1            99999999              123456                                       1                                       1
-$               inid                idof
-                   3                 123
+                   1            99999999              123456                                                                               1
+$               inid                idof              twghtx
+                  25                 123-0.08333333333333337
+                  26                 123-0.08333333333333336
+                  27                 123-0.08333333333333323
+                  28                 123 -0.0833333333333333
+                  33                 123  0.3333333333333333
+                  34                 123 0.33333333333333337
+                  35                 123  0.3333333333333334
+                  36                 123  0.3333333333333333
 *TITLE
 Load
 *CONTROL_IMPLICIT_GENERAL

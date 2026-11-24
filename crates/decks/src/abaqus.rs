@@ -197,7 +197,7 @@ pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<Stri
     d.materials(model)?;
     d.sections(model)?;
     d.discrete_properties(&discrete)?;
-    d.couplings(model, r);
+    d.couplings(model, r)?;
     d.contacts(model, r)?;
     d.ties(model)?;
     d.equations(model, r)?;
@@ -990,16 +990,38 @@ impl Deck {
         Ok(())
     }
 
-    fn couplings(&mut self, model: &Model, r: &Resolved) {
+    /// Abaqus Keywords Reference, `*SURFACE` (TYPE=NODE) and `*DISTRIBUTING`; Analysis User's
+    /// Guide, "Coupling constraints": a node-based surface's second field is the node's weight.
+    /// A distributing coupling on faces writes each node's weight ∫ N dA; a set of nodes only
+    /// keeps every node at weight 1.0.
+    fn couplings(&mut self, model: &Model, r: &Resolved) -> Result<()> {
         if model.couplings().is_empty() {
-            return;
+            return Ok(());
         }
         let surfaces = coupling_surfaces(model, r);
-        self.comment("Couplings: every node of the set weighted equally");
+        self.comment("Couplings");
         for (name, c) in model.couplings() {
             let (Some(surface), Some(node)) = (surfaces.get(name), r.reference_point_nodes.get(&c.reference_point)) else { continue };
-            self.line(&format!("*SURFACE, TYPE=NODE, NAME={surface}"));
-            self.line(&format!("{}, 1.0", c.set));
+            let weights = crate::coupling_weights(model, r, name, c)?;
+            match &weights {
+                Some(w) => {
+                    self.comment(&format!("coupling `{name}`:"));
+                    for line in crate::NODAL_WEIGHTS {
+                        self.comment(line);
+                    }
+                    self.line(&format!("*SURFACE, TYPE=NODE, NAME={surface}"));
+                    for (n, weight) in w {
+                        self.numbers_line(&n.to_string(), &[*weight])?;
+                    }
+                }
+                None => {
+                    if c.kind == CouplingKind::Distributing {
+                        self.comment(&format!("coupling `{name}`: every node of the set weighted equally"));
+                    }
+                    self.line(&format!("*SURFACE, TYPE=NODE, NAME={surface}"));
+                    self.line(&format!("{}, 1.0", c.set));
+                }
+            }
             self.line(&format!("*COUPLING, CONSTRAINT NAME={name}, REF NODE={node}, SURFACE={surface}"));
             self.line(match c.kind {
                 CouplingKind::Kinematic => "*KINEMATIC",
@@ -1009,6 +1031,7 @@ impl Deck {
                 self.line(&format!("{a}, {b}"));
             }
         }
+        Ok(())
     }
 
     /// One surface interaction (the friction) per contact, then its pair, and every general

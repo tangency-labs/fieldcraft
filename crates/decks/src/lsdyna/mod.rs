@@ -32,7 +32,8 @@
 //!   use (with the set's name as title);
 //! - couplings: kinematic as `*CONSTRAINED_NODAL_RIGID_BODY` (the reference point first in its
 //!   node set), distributing as `*CONSTRAINED_INTERPOLATION` (the reference point dependent on
-//!   the set's translations, equal weights);
+//!   the set's translations, each node weighted by ∫ N dA over the set's faces; a set of nodes
+//!   only: equal weights);
 //! - contact: a pair as `*CONTACT_AUTOMATIC_SURFACE_TO_SURFACE` between segment sets (the
 //!   secondary surface first; a tie as `*CONTACT_TIED_SURFACE_TO_SURFACE` likewise), general
 //!   contact as `*CONTACT_AUTOMATIC_SINGLE_SURFACE` on a segment
@@ -769,23 +770,34 @@ fn couplings(d: &mut Deck, model: &Model, r: &Resolved, plan: &Plan) -> Result<(
                 next_part = next_part.checked_add(1).ok_or_else(|| Error::Limit("too many parts".into()))?;
             }
             CouplingKind::Distributing => {
-                let sid = plan.sets.get(c.set.as_str()).copied().ok_or_else(|| broken(format!("coupling `{name}`: set `{}`", c.set)))?;
+                // Keyword User's Manual Vol. I, *CONSTRAINED_INTERPOLATION: one independent node card
+                // per node with its weight TWGHTX, or one card naming the node set.
+                let weights = crate::coupling_weights(model, r, name, c)?;
                 let ddof: i64 = c.dofs.list().iter().fold(0, |acc, d| acc * 10 + i64::from(*d));
                 d.comment(&format!("coupling `{name}`"));
+                if weights.is_some() {
+                    for line in crate::NODAL_WEIGHTS {
+                        d.comment(line);
+                    }
+                }
                 d.line("*CONSTRAINED_INTERPOLATION");
                 d.header(&["icid", "dnid", "ddof", "cidd", "ityp", "idnsw", "fgm"]);
-                // FGM = 1: the dependent node is not part of the mesh.
-                d.card([
-                    Field::from(next_interpolation),
-                    Field::from(rp),
-                    Field::Int(ddof),
-                    Field::Blank,
-                    Field::from(1),
-                    Field::Blank,
-                    Field::from(1),
-                ]);
-                d.header(&["inid", "idof"]);
-                d.card([Field::from(sid), Field::from(123)]);
+                // ITYP: blank, card 2 names a node; 1, a node set. FGM = 1: the dependent node is not part of the mesh.
+                let ityp = if weights.is_some() { Field::Blank } else { Field::from(1) };
+                d.card([Field::from(next_interpolation), Field::from(rp), Field::Int(ddof), Field::Blank, ityp, Field::Blank, Field::from(1)]);
+                match weights {
+                    Some(w) => {
+                        d.header(&["inid", "idof", "twghtx"]);
+                        for (node, weight) in w {
+                            d.card([Field::from(node), Field::from(123), Field::from(weight)]);
+                        }
+                    }
+                    None => {
+                        let sid = plan.sets.get(c.set.as_str()).copied().ok_or_else(|| broken(format!("coupling `{name}`: set `{}`", c.set)))?;
+                        d.header(&["inid", "idof"]);
+                        d.card([Field::from(sid), Field::from(123)]);
+                    }
+                }
                 next_interpolation += 1;
             }
         }

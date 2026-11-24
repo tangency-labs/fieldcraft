@@ -608,10 +608,15 @@ fn beams_rods_orthotropy_couplings_and_prescribed_motion() {
     let prod = r.cards("PROD").next().unwrap();
     assert_eq!(real(&prod[2]), 3.5);
 
-    // The distributing coupling: the hub depends on the end face's translations, equally weighted.
+    // The distributing coupling: the hub depends on the end face's translations, each node weighted
+    // by its share of the face's area (a unit hex8 face: 1/4 each), one weight group per node.
     let rbe3 = r.cards("RBE3").next().unwrap();
     let hub = m.reference_point("Hub").unwrap().label;
-    assert_eq!((rbe3[1].as_str(), int(&rbe3[2]), int(&rbe3[3]), real(&rbe3[4]), int(&rbe3[5])), ("", hub, 123456, 1.0, 123));
+    assert_eq!((rbe3[1].as_str(), int(&rbe3[2]), int(&rbe3[3])), ("", hub, 123456));
+    let groups: Vec<(f64, u32, u32)> = rbe3[4..].chunks(3).filter(|g| !g[0].is_empty()).map(|g| (real(&g[0]), int(&g[1]), int(&g[2]))).collect();
+    assert_eq!(groups.len(), 4, "{groups:?}");
+    // 1e-9: a 16-column field keeps at least ten significant digits (card.rs).
+    assert!(groups.iter().all(|(w, c, _)| (w - 0.25).abs() < 1e-9 && *c == 123), "{groups:?}");
     let moment = r.cards("MOMENT").next().unwrap();
     assert_eq!((int(&moment[1]), real(&moment[4])), (hub, 1000.0));
 
