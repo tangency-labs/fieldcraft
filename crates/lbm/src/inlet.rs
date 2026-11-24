@@ -66,8 +66,8 @@
 //! No sponge or PML was built or measured.
 //!
 //! In the tested cases below τ⁺ = 0.505, reachable only with a turbulence model, none holds a 1e-6 disturbance at
-//! Mach 0.087, this one included; with Λ = 3/16 the bulk is itself linearly unstable there for
-//! τ⁺ ≤ 0.502 (`tests/trt_stability.rs`), and the setup warns below 0.505.
+//! Mach 0.087, this one included; with Λ = 3/16 the bulk along x is itself linearly unstable there for
+//! τ⁺ ≤ 0.502, and an oblique stream past 5.6 (τ⁺ − ½) at any τ⁺ (`tests/trt_stability.rs`); the setup warns below 0.505.
 
 use crate::flow::{OpenCell, Target};
 use crate::lattice::{C, Q, W, equilibrium, opposite};

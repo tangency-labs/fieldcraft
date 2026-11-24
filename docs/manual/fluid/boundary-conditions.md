@@ -284,7 +284,7 @@ The 16³, U=0.05, τ=0.505 checkerboard reproduction that failed at step 2838 co
 setup warns about it (only a turbulence model allows τ below 0.505):
 
 - The bulk is itself the first limit. Linearised about the uniform stream at U = 0.05
-  (Mach 0.087), with the default Λ = 3/16 the TRT collision has growing modes on the 16³ box
+  (Mach 0.087) along x, with the default Λ = 3/16 the TRT collision has growing modes on the 16³ box
   for τ ≤ 0.502 (1.96e-3 per step at τ = 0.5005) and none from 0.5025; at τ = 0.5005 it is
   stable only up to U = 0.01. The analysis is the von Neumann one of Sterling & Chen (1996)
   and Wissocq, Sagaut & Boussuge (2019,
@@ -292,7 +292,7 @@ setup warns about it (only a turbulence model allows τ below 0.505):
   BGK's instability to collisions of non-hydrodynamic with physical modes, worst for oblique
   waves; Lallemand & Luo (2000) find BGK unstable above V ≈ 0.07 already at τ ≈ 0.5025.
   Λ = 3/16 at τ = 0.5005 makes τ⁻ ≈ 375, odd moments that hardly relax; the stable MRT of
-  Lallemand & Luo relaxes them fast. The test `tests/trt_stability.rs` keeps these numbers.
+  Lallemand & Luo relaxes them fast. The test `tests/trt_stability.rs` keeps these numbers. A stream oblique to the grid is stable only up to 5.6 (τ − ½) at every τ in the smallest oblique onset found ([Collision operators](collision.md#stability)).
 - A near-BGK Λ (≤ 3e-5, τ⁻ ≤ 0.56) makes the bulk stable at τ = 0.5005, but moves the
   bounce-back wall: the effective channel width is √(H² + (16Λ − 3)/3) (Ginzburg,
   Verhaeghe & d'Humières 2008,
