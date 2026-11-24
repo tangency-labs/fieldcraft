@@ -24,7 +24,7 @@
    "tolerance": {
     "relative": 0.005
    },
-   "reason": "with ν = 0 pure bending is a quadratic displacement field that hex20 represents exactly; the coupling's nodal force pattern differs from the linear traction only within a depth or two of the end (Saint-Venant), five depths from the probe"
+   "reason": "with ν = 0 pure bending is a quadratic displacement field that hex20 represents exactly; the coupling's nodal forces are the consistent loads of the linear traction, so the field is exact to the end face; the probe is five depths from it (Saint-Venant)"
   },
   {
    "id": "rotation",
@@ -37,8 +37,7 @@
    "tolerance": {
     "relative": 0.01
    },
-   "reason": "the reference point follows the best-fit rigid motion of the end section, which the end zone's local deformation disturbs by well under 1%",
-   "known_failure": "1.2% high: the distributing coupling weights every node of the end face equally, corner and mid-side nodes of hex20 alike, which is not the consistent linear traction; the end face deforms locally and the fitted rotation includes it. Area-consistent weights would remove it"
+   "reason": "the reference point follows the best-fit rigid motion of the end section, and the coupling's nodal forces are the consistent loads of the linear traction, so the field is exact to the end face"
   }
  ]
 }

@@ -1,0 +1,37 @@
+{
+ "title": "Uniform tension through a distributing coupling on the end face",
+ "kind": "theory",
+ "source": "uniform tension, u = F L/(E A), σ = F/A; Timoshenko and Goodier, Theory of Elasticity, 3rd ed., 1970, ch. 1",
+ "quantities": [
+  {
+   "id": "rp_ux",
+   "quantity": "axial displacement of the reference point (the end face's mean)",
+   "measure": {
+    "from": "coupled",
+    "pointer": "/reference_points/0/displacement/0"
+   },
+   "value": 0.004761904761904762,
+   "tolerance": {
+    "relative": 1e-08
+   },
+   "reason": "the coupling's forces are the consistent loads of the uniform traction, which hex20 carries exactly: round-off only"
+  },
+  {
+   "id": "max_mises",
+   "quantity": "maximum von Mises stress over the bar at the coupled step",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Coupled",
+     "set": "all"
+    },
+    "pointer": "/max_von_mises/value"
+   },
+   "value": 10.0,
+   "tolerance": {
+    "relative": 1e-08
+   },
+   "reason": "the coupling's forces are the consistent loads of the uniform traction, which hex20 carries exactly: round-off only"
+  }
+ ]
+}

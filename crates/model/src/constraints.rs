@@ -33,8 +33,9 @@ pub struct ReferencePoint {
 pub enum CouplingKind {
     /// The nodes follow the reference point rigidly in the coupled degrees of freedom.
     Kinematic,
-    /// The reference point's load is spread over the nodes (weighted equally), and its motion is
-    /// their weighted average; the region stays free to deform.
+    /// The reference point's load is spread over the set's element faces as the consistent nodal
+    /// loads of a uniform plus linear traction (over a set of nodes only: equally), and its motion
+    /// is the best rigid fit of theirs; the region stays free to deform.
     Distributing,
 }
 

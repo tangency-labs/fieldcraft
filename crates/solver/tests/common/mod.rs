@@ -221,6 +221,15 @@ impl Grid {
         self.model.add_coupling(&format!("{name}_coupling"), Coupling { reference_point: name.into(), set, kind, dofs }).unwrap();
     }
 
+    /// Like [`Grid::couple`], but the set is the element faces where `f` holds.
+    pub fn couple_faces(&mut self, name: &str, xyz: [f64; 3], kind: CouplingKind, dofs: &[u8], f: impl Fn([f64; 3]) -> bool) {
+        let set = format!("{name}_faces");
+        self.face_set(&set, f);
+        self.model.add_reference_point(name, ReferencePoint { xyz, label: 0 }).unwrap();
+        let dofs = Dofs::try_from(dofs.to_vec()).unwrap();
+        self.model.add_coupling(&format!("{name}_coupling"), Coupling { reference_point: name.into(), set, kind, dofs }).unwrap();
+    }
+
     pub fn fixed(&mut self, name: &str, f: impl Fn([f64; 3]) -> bool) {
         self.node_set(name, f);
         self.bc(name, BoundaryCondition::Fixed { target: Target::Set(name.into()) });

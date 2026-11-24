@@ -1,0 +1,13 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "max_mises": {
+      "band": 1.0000000000000783e-8,
+      "value": 10.000000000000782
+    },
+    "rp_ux": {
+      "band": 4.761904761904866e-12,
+      "value": 0.0047619047619048656
+    }
+  }
+}

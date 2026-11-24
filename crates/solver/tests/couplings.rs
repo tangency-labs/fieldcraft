@@ -6,7 +6,9 @@ mod common;
 use std::f64::consts::PI;
 
 use common::*;
-use fieldcraft_model::{BoundaryCondition, CouplingKind, Distribution, ElementKind, Load, Procedure, Symmetry, Target};
+use fieldcraft_model::{
+    BoundaryCondition, Coupling, CouplingKind, Distribution, Dofs, ElementKind, Load, Procedure, ReferencePoint, Set, Symmetry, Target,
+};
 use fieldcraft_solver::{FrequencyOptions, Limits, StaticResult, solve_frequency, solve_static};
 
 const ALL: [u8; 6] = [1, 2, 3, 4, 5, 6];
@@ -206,6 +208,90 @@ fn bending_moment_through_a_distributing_coupling() {
     for k in 0..3 {
         assert!(r.applied_total[k].abs() < 1e-12 && r.reaction_total[k].abs() < 1e-9, "a moment adds no net force");
     }
+}
+
+/// A bar in tension, its end face coupled distributing through the face's own element faces: the
+/// consistent nodal loads of the uniform traction are exact, so every node carries σxx = F/A and
+/// u_x = F x / (E A) to round-off, and the point moves with the face's mean (Timoshenko and
+/// Goodier, *Theory of Elasticity*, 3rd ed., 1970, ch. 1).
+#[test]
+fn tension_through_a_distributing_coupling_on_faces_is_uniform() {
+    let (young, nu, total, area, l) = (1000.0, 0.3, 4.0, 1.0, 4.0);
+    for (kind, formulation, name) in [(ElementKind::Hex20, full(), "hex20"), (ElementKind::Hex8, full(), "hex8")] {
+        let mut g = grid([4, 2, 2], kind, |q| [l * q[0], q[1], q[2]]);
+        g.define(iso(young, nu), None, formulation, Procedure::Static {});
+        g.symmetry("x0", Symmetry::X, |q| near(q[0], 0.0));
+        g.symmetry("y0", Symmetry::Y, |q| near(q[1], 0.0));
+        g.symmetry("z0", Symmetry::Z, |q| near(q[2], 0.0));
+        g.couple_faces("End", [l, 0.5, 0.5], CouplingKind::Distributing, &ALL, |q| near(q[0], 1.0));
+        g.load("pull", force(rp("End"), [total, 0.0, 0.0]));
+        let r = solve(&g);
+        let (mut es, mut eu) = (0.0f64, 0.0f64);
+        for (i, label) in r.nodes.iter().enumerate() {
+            let x = g.model.node(*label).unwrap().xyz[0];
+            es = es.max((r.stress[i][0] - total / area).abs() / (total / area));
+            eu = eu.max((r.displacement[i][0] - total * x / (young * area)).abs());
+            assert!((r.stress[i][0] - total / area).abs() < 1e-9 * total / area, "{name}: σxx at node {label}: {}", r.stress[i][0]);
+            assert!((r.displacement[i][0] - total * x / (young * area)).abs() < 1e-9 * total * l / (young * area), "{name}: u_x at node {label}");
+        }
+        let ux = r.reference_points[0].displacement[0];
+        let want = total * l / (young * area);
+        eprintln!("tension through faces {name}: σxx error {es:.2e}, u_x error {eu:.2e}, point u_x error {:.2e}", (ux - want).abs() / want);
+        assert!((ux - want).abs() < 1e-9 * want, "{name}: point u_x {ux}");
+    }
+}
+
+/// Pure bending through a distributing coupling on the end face's element faces: the linear
+/// traction the fit carries is exact, so σxx = M z / I and the end rotation M L / (E I) hold at
+/// every node and at the point.
+#[test]
+fn bending_through_a_distributing_coupling_on_faces_is_exact() {
+    let (l, b, h, young, nu, m) = (10.0, 1.0, 2.0, 1000.0, 0.3, 3.0);
+    let i = b * h * h * h / 12.0;
+    let mut g = grid([10, 2, 4], ElementKind::Hex20, |q| [l * q[0], b * (q[1] - 0.5), h * (q[2] - 0.5)]);
+    g.define(iso(young, nu), None, full(), Procedure::Static {});
+    g.symmetry("x0", Symmetry::X, |q| near(q[0], 0.0));
+    g.node_set("axis", |q| near(q[0], 0.0) && near(q[1], 0.5) && near(q[2], 0.5));
+    g.bc("axis", BoundaryCondition::Displacement { target: Target::Set("axis".into()), values: [None, Some(0.0), Some(0.0), None, None, None] });
+    g.node_set("edge", |q| near(q[0], 0.0) && near(q[1], 0.5) && near(q[2], 0.0));
+    g.bc("edge", BoundaryCondition::Displacement { target: Target::Set("edge".into()), values: [None, Some(0.0), None, None, None, None] });
+    g.couple_faces("End", [l, 0.0, 0.0], CouplingKind::Distributing, &ALL, |q| near(q[0], 1.0));
+    g.load("bend", moment(rp("End"), [0.0, m, 0.0]));
+    let r = solve(&g);
+    let mut es: f64 = 0.0;
+    for (k, label) in r.nodes.iter().enumerate() {
+        let z = g.model.node(*label).unwrap().xyz[2];
+        let err = (r.stress[k][0] - m * z / i).abs();
+        es = es.max(err);
+        assert!(err < 1e-8 * (m * h / 2.0 / i), "node {label}: σxx error {err:.2e}");
+    }
+    let want = m * l / (young * i);
+    let got = r.reference_points[0].displacement[4];
+    eprintln!("bending through faces: σxx error {es:.2e}, point rotation error {:.2e}", (got - want).abs() / want);
+    assert!((got - want).abs() < 1e-8 * want, "{got} vs {want}");
+}
+
+/// A set with element faces and extra nodes off them: the surface does not reach those nodes, so
+/// the coupling refuses rather than leave them out of the fit.
+#[test]
+fn a_distributing_coupling_refuses_nodes_off_its_faces() {
+    let mut g = grid([4, 2, 2], ElementKind::Hex8, |q| [4.0 * q[0], q[1], q[2]]);
+    g.define(iso(1000.0, 0.3), None, full(), Procedure::Static {});
+    g.symmetry("x0", Symmetry::X, |q| near(q[0], 0.0));
+    g.symmetry("y0", Symmetry::Y, |q| near(q[1], 0.0));
+    g.symmetry("z0", Symmetry::Z, |q| near(q[2], 0.0));
+    let faces = g.faces_where(|q| near(q[0], 1.0));
+    let nodes = g.nodes_where(|q| near(q[0], 0.0));
+    g.model.add_set("mixed", Set { faces, nodes, ..Set::default() }).unwrap();
+    g.model.add_reference_point("End", ReferencePoint { xyz: [4.0, 0.5, 0.5], label: 0 }).unwrap();
+    let dofs = Dofs::try_from(ALL.to_vec()).unwrap();
+    g.model
+        .add_coupling("End_coupling", Coupling { reference_point: "End".into(), set: "mixed".into(), kind: CouplingKind::Distributing, dofs })
+        .unwrap();
+    g.load("pull", force(rp("End"), [4.0, 0.0, 0.0]));
+    let e = solve_static(&g.model, Some("Step"), &Limits::default()).unwrap_err().to_string();
+    eprintln!("refusal: {e}");
+    assert!(e.contains("on none of the set's element faces"), "{e}");
 }
 
 /// A tube of hex20 elements in (r, θ, z), the seam at θ = 0 shared.
