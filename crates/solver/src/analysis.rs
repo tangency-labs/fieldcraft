@@ -107,7 +107,9 @@ pub struct StaticResult {
     pub beams: Vec<BeamResult>,
     /// The coupled reference points, by name.
     pub reference_points: Vec<PointResult>,
-    /// Sum of the applied forces and of the reaction forces (moments are not included).
+    /// Sum of the applied forces and of the reaction forces (moments are not included). In an
+    /// axisymmetric model with twist the Z sums are of hoop forces, which balance as torques about
+    /// the axis, not as sums.
     pub applied_total: [f64; 3],
     pub reaction_total: [f64; 3],
     pub stats: Stats,
@@ -559,11 +561,34 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     }
     let stress: Vec<[f64; 6]> = sum.iter().zip(&count).map(|(s, c)| s.map(|v| if *c > 0 { v / f64::from(*c) } else { 0.0 })).collect();
     let von_mises = stress.iter().map(von_mises).collect();
-    let scale = crate::system::balance_scale(&applied_total, &reaction_total, &reaction);
+    // With twist the hoop forces (Z) balance as torques about the axis, r F_θ, not as sums.
+    let directions = if mesh.twist { 2 } else { 3 };
+    let in_balance = |v: &[f64; 3]| if mesh.twist { [v[0], v[1], 0.0] } else { *v };
+    let scale =
+        crate::system::balance_scale(&in_balance(&applied_total), &in_balance(&reaction_total), &reaction.iter().map(in_balance).collect::<Vec<_>>());
     let ground = mesh.discrete.ground_force(&u, mesh);
-    let imbalance = (0..3).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
+    let imbalance = (0..directions).map(|c| (applied_total[c] + reaction_total[c] + ground[c]).abs()).fold(0.0, f64::max);
     if scale > 0.0 && imbalance > crate::system::BALANCE_TOLERANCE * scale {
         warnings.push(format!("loads and reactions differ by {imbalance:.3e} (relative {:.1e})", imbalance / scale));
+    }
+    if mesh.twist {
+        // Applied and reaction torques, and the largest nodal one for the scale.
+        let (mut applied, mut reacted, mut largest) = (0.0, 0.0, 0.0f64);
+        for (dof, (fv, rv)) in f.iter().zip(&reactions).enumerate() {
+            let Some((slot, DofKind::Uz)) = mesh.layout.locate(dof) else { continue };
+            let radius = mesh.xyz.get(slot).map_or(0.0, |p| p[0]);
+            applied += radius * fv;
+            reacted += radius * rv;
+            largest = largest.max((radius * rv).abs());
+        }
+        let scale = largest.max(applied.abs()).max(reacted.abs());
+        let imbalance = (applied + reacted).abs();
+        if scale > 0.0 && imbalance > crate::system::BALANCE_TOLERANCE * scale {
+            warnings.push(format!(
+                "the torques of the loads and reactions about the axis differ by {imbalance:.3e} (relative {:.1e})",
+                imbalance / scale
+            ));
+        }
     }
     Ok(StaticResult {
         step: step.name.clone(),

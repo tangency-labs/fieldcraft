@@ -7,10 +7,10 @@ use std::collections::BTreeMap;
 use std::f64::consts::PI;
 
 use fieldcraft_model::{
-    BoundaryCondition, Elastic, ElementEdge, ElementKind, Formulation, Integration, Load, Material, Model, Procedure, Section, SectionKind, Set,
-    Step, Symmetry, Target,
+    BoundaryCondition, Distribution, Elastic, ElementEdge, ElementKind, Formulation, Integration, Load, Material, Model, Procedure, Section,
+    SectionKind, Set, Step, Symmetry, Target,
 };
-use fieldcraft_solver::{FrequencyOptions, Limits, StaticResult, solve_frequency, solve_static};
+use fieldcraft_solver::{FrequencyOptions, Limits, StaticResult, solve_buckle, solve_frequency, solve_nonlinear, solve_static};
 
 /// A structured 2D mesh of `n` cells on [0, 1]², mapped by `map`; nodes on the doubled lattice so
 /// quadratic elements take their mid-side nodes from the map.
@@ -640,5 +640,216 @@ fn a_plate_held_on_every_edge_carries_the_biaxial_thermal_stress() {
         for s in &r.stress {
             assert!((s[0] - want).abs() < 1e-8 * want.abs() && (s[1] - want).abs() < 1e-8 * want.abs() && s[3].abs() < 1e-6, "{name}: {s:?}");
         }
+    }
+}
+
+const TWIST: SectionKind = SectionKind::Axisymmetric { twist: true };
+
+/// A shaft r ∈ [r0, 2], 0 ≤ y ≤ 5, held at y = 0 with the torque T on its end y = 5 (Saint-Venant:
+/// u_z = −κ r z, κ = T / (G J), J = π (b⁴ − a⁴) / 2, τ_yz = −T r / J, τ_rθ = 0): the largest hoop
+/// displacement error over κ b L, the largest shear stress error over T b / J, and the reaction
+/// torque over −T.
+fn shaft(kind: ElementKind, formulation: Formulation, n: [usize; 2], r0: f64) -> (f64, f64, f64) {
+    let (young, nu, torque, b, length) = (1000.0, 0.25, 7.0, 2.0f64, 5.0);
+    let shear = young / (2.0 * (1.0 + nu));
+    let polar = PI * (b.powi(4) - r0.powi(4)) / 2.0;
+    let kappa = torque / (shear * polar);
+    let mut g = grid(n, kind, |p| [r0 + (b - r0) * p[0], length * p[1]]);
+    g.define(TWIST, young, nu, None, formulation, Procedure::Static {});
+    g.fixed("bottom", |p| near(p[1], 0.0));
+    g.edge_set("top", |p| near(p[1], 1.0));
+    g.load("torque", Load::Moment { target: Target::Set("top".into()), vector: [0.0, torque, 0.0], distribution: Distribution::Total });
+    let r = g.solve();
+    assert!(!r.warnings.iter().any(|w| w.contains("differ")), "{:?}", r.warnings);
+    let (mut eu, mut es, mut reaction) = (0.0f64, 0.0f64, 0.0);
+    for ((label, u), f) in r.nodes.iter().zip(&r.displacement).zip(&r.reaction) {
+        let x = g.model.node(*label).unwrap().xyz;
+        assert!(u[0] == 0.0 && u[1] == 0.0, "torsion moves nothing in the meridian plane: {u:?}");
+        eu = eu.max((u[2] + kappa * x[0] * x[1]).abs() / (kappa * b * length));
+        reaction += x[0] * f[2];
+    }
+    for el in &r.elements {
+        for p in &el.points {
+            es = es.max((p.stress[5] + torque * p.xyz[0] / polar).abs().max(p.stress[4].abs()) / (torque * b / polar));
+        }
+    }
+    (eu, es, reaction / torque)
+}
+
+/// Saint-Venant torsion of a solid and a hollow shaft. Rectangular quad4 and quad8 (3 × 3) hold
+/// u_θ = κ r z and integrate its forces exactly; tri6 and reduced quad8 hold it but their rules
+/// (degree 2, 2 × 2) do not integrate ∂N/∂z r² exactly; tri3 does not hold it and converges at
+/// second order. The reaction torque is exact on every element (a rigid rotation strains none).
+#[test]
+fn shafts_in_torsion_follow_saint_venant() {
+    for r0 in [0.0, 1.0] {
+        for (kind, formulation, name) in
+            [(ElementKind::Quad4, full(), "quad4"), (ElementKind::Quad4, incompatible(), "quad4 incompatible"), (ElementKind::Quad8, full(), "quad8")]
+        {
+            let (eu, es, torque) = shaft(kind, formulation, [2, 4], r0);
+            eprintln!("shaft r0 = {r0} {name}: u {eu:.1e}, stress {es:.1e}, torque {torque}");
+            assert!(eu < 1e-10 && es < 1e-10 && (torque - 1.0).abs() < 1e-10, "{name} {r0}: {eu:e} {es:e} {torque}");
+        }
+        for (kind, formulation, name) in [(ElementKind::Tri6, full(), "tri6"), (ElementKind::Quad8, reduced(), "quad8 reduced")] {
+            let (coarse, _, _) = shaft(kind, formulation, [2, 4], r0);
+            let (eu, es, torque) = shaft(kind, formulation, [4, 8], r0);
+            eprintln!("shaft r0 = {r0} {name}: u {coarse:.2e} -> {eu:.2e}, stress {es:.2e}, torque {torque}");
+            assert!(eu < 5e-4 && eu < 0.3 * coarse && es < 1.2e-2 && (torque - 1.0).abs() < 1e-10, "{name} {r0}: {coarse:e} {eu:e} {es:e}");
+        }
+        let (coarse, _, _) = shaft(ElementKind::Tri3, full(), [2, 4], r0);
+        let (eu, _, torque) = shaft(ElementKind::Tri3, full(), [4, 8], r0);
+        eprintln!("shaft r0 = {r0} tri3: u {coarse:.2e} -> {eu:.2e}, torque {torque}");
+        assert!(eu < 6e-2 && eu < 0.4 * coarse && (torque - 1.0).abs() < 1e-10, "tri3 {r0}: {coarse:e} {eu:e}");
+    }
+}
+
+/// A tube a ≤ r ≤ b held at the bore, a hoop shear traction τ₀ on the outside: τ_rθ = τ₀ b² / r²,
+/// u_θ = (τ₀ b² / 2G) r (1/a² − 1/r²). Returns the largest hoop displacement error over u_θ(b).
+fn tube(kind: ElementKind, n: usize) -> f64 {
+    let (young, nu, a, b, tau) = (1000.0, 0.25, 1.0, 2.0, 3.0);
+    let shear = young / (2.0 * (1.0 + nu));
+    let exact = |r: f64| tau * b * b / (2.0 * shear) * r * (1.0 / (a * a) - 1.0 / (r * r));
+    let mut g = grid([n, 1], kind, |p| [a + (b - a) * p[0], 0.5 * p[1]]);
+    g.define(TWIST, young, nu, None, full(), Procedure::Static {});
+    g.fixed("bore", |p| near(p[0], 0.0));
+    g.edge_set("outside", |p| near(p[0], 1.0));
+    g.load("shear", Load::Traction { set: "outside".into(), vector: [0.0, 0.0, tau] });
+    let r = g.solve();
+    assert!(!r.warnings.iter().any(|w| w.contains("differ")), "{:?}", r.warnings);
+    r.nodes.iter().zip(&r.displacement).map(|(l, u)| (u[2] - exact(g.model.node(*l).unwrap().xyz[0])).abs() / exact(b)).fold(0.0, f64::max)
+}
+
+/// The exact u_θ is not a polynomial: quad4 converges at second order and quad8 faster than
+/// third; the triangles of these one-cell-high meshes get more skewed as the radial count
+/// grows, and tri3 about halves its error per refinement.
+#[test]
+fn a_hoop_traction_twists_a_tube_about_its_bore() {
+    let quad4 = (tube(ElementKind::Quad4, 8), tube(ElementKind::Quad4, 16));
+    let quad8 = (tube(ElementKind::Quad8, 4), tube(ElementKind::Quad8, 8));
+    let tri6 = tube(ElementKind::Tri6, 8);
+    let tri3 = (tube(ElementKind::Tri3, 8), tube(ElementKind::Tri3, 16));
+    eprintln!("tube: quad4 {quad4:?}, quad8 {quad8:?}, tri6 {tri6:e}, tri3 {tri3:?}");
+    assert!(quad4.1 < 3e-4 && quad4.1 < 0.3 * quad4.0, "{quad4:?}");
+    assert!(quad8.1 < 5e-6 && quad8.1 < 0.125 * quad8.0, "{quad8:?}");
+    assert!(tri6 < 2e-4, "{tri6:e}");
+    assert!(tri3.1 < 1.5e-3 && tri3.1 < 0.6 * tri3.0, "{tri3:?}");
+}
+
+/// The conical shaft (Timoshenko and Goodier, Theory of Elasticity, ch. 10, torsion of circular
+/// shafts of variable diameter): apex at the origin, half angle α, ψ = c ρ⁻³ with ρ² = r² + z²,
+/// u_θ = r ψ, c = −T / (2πG (2 − 3 cos α + cos³ α)); the conical surface is free. The exact u_θ
+/// is prescribed on the ends z = 2 and z = 4. Returns the largest hoop displacement error over
+/// the largest u_θ, and minus the reaction torque on the end z = 4 over T (the function returns Σ r·F_z / T).
+fn cone(kind: ElementKind, formulation: Formulation, n: [usize; 2]) -> (f64, f64) {
+    let (young, nu, torque, alpha, z1, z2) = (1000.0, 0.25, 7.0, 20.0f64.to_radians(), 2.0, 4.0);
+    let shear = young / (2.0 * (1.0 + nu));
+    let c = -torque / (2.0 * PI * shear * (2.0 - 3.0 * alpha.cos() + alpha.cos().powi(3)));
+    let exact = |x: [f64; 3]| x[0] * c * (x[0] * x[0] + x[1] * x[1]).powf(-1.5);
+    let mut g = grid(n, kind, |p| {
+        let z = z1 + (z2 - z1) * p[1];
+        [p[0] * z * alpha.tan(), z]
+    });
+    g.define(TWIST, young, nu, None, formulation, Procedure::Static {});
+    for (i, label) in g.nodes_where(|p| near(p[1], 0.0) || near(p[1], 1.0)).into_iter().enumerate() {
+        let u = exact(g.model.node(label).unwrap().xyz);
+        let set = format!("end{i}");
+        g.model.add_set(&set, Set { nodes: vec![label], ..Set::default() }).unwrap();
+        g.bc(&set, BoundaryCondition::Displacement { target: Target::Set(set.clone()), values: [None, Some(0.0), Some(u), None, None, None] });
+    }
+    let r = g.solve();
+    assert!(!r.warnings.iter().any(|w| w.contains("differ")), "{:?}", r.warnings);
+    let top = g.nodes_where(|p| near(p[1], 1.0));
+    let (mut eu, mut scale, mut reaction) = (0.0f64, 0.0f64, 0.0);
+    for ((label, u), f) in r.nodes.iter().zip(&r.displacement).zip(&r.reaction) {
+        let x = g.model.node(*label).unwrap().xyz;
+        eu = eu.max((u[2] - exact(x)).abs());
+        scale = scale.max(exact(x).abs());
+        if top.contains(label) {
+            reaction += x[0] * f[2];
+        }
+    }
+    (eu / scale, reaction / torque)
+}
+
+#[test]
+fn a_conical_shaft_in_torsion_matches_the_closed_form() {
+    let (eu, torque) = cone(ElementKind::Quad8, full(), [4, 8]);
+    eprintln!("cone quad8: u {eu:.2e}, torque {torque}");
+    assert!(eu < 2e-4 && (torque - 1.0).abs() < 5e-5, "{eu:e} {torque}");
+    let (eu, torque) = cone(ElementKind::Tri6, full(), [4, 8]);
+    eprintln!("cone tri6: u {eu:.2e}, torque {torque}");
+    assert!(eu < 1e-3 && (torque - 1.0).abs() < 3e-4, "{eu:e} {torque}");
+    for (kind, name, limit, rate, moment) in [(ElementKind::Quad4, "quad4", 6e-4, 0.3, 2e-3), (ElementKind::Tri3, "tri3", 3e-3, 0.45, 2.5e-2)] {
+        let (coarse, _) = cone(kind, full(), [4, 8]);
+        let (eu, torque) = cone(kind, full(), [8, 16]);
+        eprintln!("cone {name}: u {coarse:.2e} -> {eu:.2e}, torque {torque}");
+        assert!(eu < limit && eu < rate * coarse && (torque - 1.0).abs() < moment, "{name}: {coarse:e} {eu:e} {torque}");
+    }
+}
+
+/// Torsional vibration of a shaft held at one end: u_θ = r sin(k z), f₁ = √(G/ρ) / (4 L) at any
+/// radius. With eight elements along the length the quadratic element is within 10⁻⁵ and the
+/// linear one stiff by its dispersion error (k h)² / 24, k h = π / 16.
+#[test]
+fn torsional_frequency_of_a_shaft_held_at_one_end() {
+    let (young, nu, rho, b, length) = (1000.0f64, 0.25, 3.0, 2.0, 5.0);
+    let exact = (young / (2.0 * (1.0 + nu)) / rho).sqrt() / (4.0 * length);
+    for (kind, name) in [(ElementKind::Quad8, "quad8"), (ElementKind::Quad4, "quad4")] {
+        let mut g = grid([2, 8], kind, |p| [b * p[0], length * p[1]]);
+        g.define(TWIST, young, nu, Some(rho), full(), Procedure::Frequency { modes: 1, min_hz: None, max_hz: None });
+        g.fixed("bottom", |p| near(p[1], 0.0));
+        // Hold the meridian motion, so the modes are the torsional ones.
+        let nodes = g.nodes_where(|_| true);
+        g.model.add_set("nodes", Set { nodes, ..Set::default() }).unwrap();
+        g.bc(
+            "meridian",
+            BoundaryCondition::Displacement { target: Target::Set("nodes".into()), values: [Some(0.0), Some(0.0), None, None, None, None] },
+        );
+        let f = solve_frequency(&g.model, None, &FrequencyOptions::default(), &Limits::default()).unwrap();
+        let mass = rho * PI * b * b * length;
+        assert!((f.total_mass - mass).abs() < 1e-12 * mass, "{} vs {mass}", f.total_mass);
+        let error = f.modes[0].frequency / exact - 1.0;
+        eprintln!("torsional frequency {name}: {} (exact {exact}), error {error:.3e}", f.modes[0].frequency);
+        if kind == ElementKind::Quad8 {
+            assert!(error.abs() < 1e-5, "{error:e}");
+            // The mode: u_θ ∝ r sin(π z / 2L).
+            let tip = f
+                .nodes
+                .iter()
+                .position(|l| {
+                    let x = g.model.node(*l).unwrap().xyz;
+                    near(x[0], b) && near(x[1], length)
+                })
+                .unwrap();
+            for (label, u) in f.nodes.iter().zip(&f.modes[0].shape) {
+                let x = g.model.node(*label).unwrap().xyz;
+                let want = x[0] / b * (PI * x[1] / (2.0 * length)).sin();
+                assert!((u[2] / f.modes[0].shape[tip][2] - want).abs() < 1e-3 && u[0] == 0.0 && u[1] == 0.0, "{x:?}: {u:?}");
+            }
+        } else {
+            let dispersion = (PI / 16.0f64).powi(2) / 24.0;
+            assert!((error - dispersion).abs() < 1e-4, "{error:e} vs {dispersion:e}");
+        }
+    }
+}
+
+#[test]
+fn twist_is_refused_where_it_has_no_formulation() {
+    for (procedure, what) in [
+        (Procedure::NonlinearStatic(fieldcraft_model::NonlinearStatic::default()), "nonlinear"),
+        (Procedure::Buckle { modes: 1, shift: None }, "buckling"),
+    ] {
+        let mut g = grid([1, 2], ElementKind::Quad4, |p| [1.0 + p[0], p[1]]);
+        g.define(TWIST, 1000.0, 0.25, None, full(), procedure.clone());
+        g.fixed("bottom", |p| near(p[1], 0.0));
+        g.edge_set("top", |p| near(p[1], 1.0));
+        g.load("torque", Load::Moment { target: Target::Set("top".into()), vector: [0.0, 1.0, 0.0], distribution: Distribution::Total });
+        let e = match procedure {
+            Procedure::Buckle { .. } => solve_buckle(&g.model, None, &Limits::default()).map(|_| ()),
+            _ => solve_nonlinear(&g.model, None, &Limits::default()).map(|_| ()),
+        }
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("not supported yet") && e.contains("twist") && e.contains(what), "{e}");
     }
 }

@@ -55,9 +55,10 @@ pub struct Discrete {
 
 /// The kinds each discrete copy needs at the labels it acts on: translations for a mass,
 /// rotations for an inertia, translations or rotations for a spring or dashpot. A 2D model's
-/// are X and Y, and the rotation about Z alone.
+/// are X and Y (and Z, the hoop one, with twist), and the rotation about Z alone.
 pub fn needs(resolved: &Resolved, planar: bool) -> impl Iterator<Item = (u32, DofSet)> + '_ {
-    let (translations, rotations) = (crate::system::translation_kinds(planar), crate::system::rotation_kinds(planar));
+    let translations = crate::system::translation_kinds(planar, resolved.twist);
+    let rotations = crate::system::rotation_kinds(planar);
     let masses = resolved.masses.iter().flat_map(move |m| {
         let mass = m.mass.iter().any(|c| *c != 0.0).then_some((m.node, translations));
         let inertia = m.inertia.iter().any(|c| *c != 0.0).then_some((m.node, rotations));
