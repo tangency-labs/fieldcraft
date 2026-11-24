@@ -653,6 +653,17 @@ pub const LOAD: &[Field] = &[
                 &[LOAD_SET, xyz("vector", "Force per volume", D::ForcePerVolume).help("A body force per unit volume, X, Y and Z components.").req()],
             ),
             variant(
+                "pipe_pressure",
+                "Pipe pressure",
+                &[
+                    reference("set", "Region", C::Set).help("The pipes: beam elements whose profile is a pipe with a bore.").req(),
+                    num("internal", "Internal pressure", D::Stress)
+                        .help("Pressure of what the pipe carries. It stresses the wall and pulls on the pipe's closed ends and bends.")
+                        .def("0"),
+                    num("external", "External pressure", D::Stress).help("Pressure around the pipe.").def("0"),
+                ],
+            ),
+            variant(
                 "centrifugal",
                 "Centrifugal",
                 &[
