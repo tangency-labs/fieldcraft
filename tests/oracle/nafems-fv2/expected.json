@@ -1,0 +1,215 @@
+{
+ "title": "NAFEMS FV2 pin-ended double cross, in-plane vibration (planar beams in a 2D model)",
+ "kind": "benchmark",
+ "source": "NAFEMS, The Standard NAFEMS Benchmarks, TNSB Rev. 3, October 1990, test FV2 (frequencies 11.336 Hz mode 1, 17.709 Hz modes 2-8, 45.345 Hz mode 9, 57.390 Hz modes 10-16); from F. Abbassian, D. J. Dawswell, N. C. Knowles, Selected Benchmarks for Natural Frequency Analysis, NAFEMS 1987, test 2",
+ "quantities": [
+  {
+   "id": "f1",
+   "quantity": "frequency of mode 1 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/0/frequency"
+   },
+   "value": 11.336,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f2",
+   "quantity": "frequency of mode 2 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/1/frequency"
+   },
+   "value": 17.709,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f3",
+   "quantity": "frequency of mode 3 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/2/frequency"
+   },
+   "value": 17.709,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f4",
+   "quantity": "frequency of mode 4 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/3/frequency"
+   },
+   "value": 17.709,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f5",
+   "quantity": "frequency of mode 5 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/4/frequency"
+   },
+   "value": 17.709,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f6",
+   "quantity": "frequency of mode 6 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/5/frequency"
+   },
+   "value": 17.709,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f7",
+   "quantity": "frequency of mode 7 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/6/frequency"
+   },
+   "value": 17.709,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f8",
+   "quantity": "frequency of mode 8 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/7/frequency"
+   },
+   "value": 17.709,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f9",
+   "quantity": "frequency of mode 9 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/8/frequency"
+   },
+   "value": 45.345,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f10",
+   "quantity": "frequency of mode 10 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/9/frequency"
+   },
+   "value": 57.39,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f11",
+   "quantity": "frequency of mode 11 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/10/frequency"
+   },
+   "value": 57.39,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f12",
+   "quantity": "frequency of mode 12 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/11/frequency"
+   },
+   "value": 57.39,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f13",
+   "quantity": "frequency of mode 13 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/12/frequency"
+   },
+   "value": 57.39,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f14",
+   "quantity": "frequency of mode 14 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/13/frequency"
+   },
+   "value": 57.39,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f15",
+   "quantity": "frequency of mode 15 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/14/frequency"
+   },
+   "value": 57.39,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  },
+  {
+   "id": "f16",
+   "quantity": "frequency of mode 16 (Hz)",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/15/frequency"
+   },
+   "value": 57.39,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "NAFEMS's targets are Euler-Bernoulli values (pinned-pinned and clamped-pinned arms: lambda^2/(2 pi L^2) sqrt(E I/(rho A)), lambda = pi, 3.9266, 2 pi, 7.0686), without shear deformation or rotary inertia; the Timoshenko element has both, which lowers a pinned-pinned arm by 0.10% (mode 1) and 0.41% (mode 9) in closed form, and four cubic elements per arm are 0.03% (mode 1) to 0.45% (mode 9) high; at 16 elements per arm modes 10 and 11 are 1.20% low (and with the arms' area raised by 1e4 at the same I and mass per length every mode is within 0.002% of the target), so the -0.51% of 4 elements is that shortfall partly cancelled by the cubic mesh being up to 0.62% high"
+  }
+ ]
+}
