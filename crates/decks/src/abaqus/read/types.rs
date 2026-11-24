@@ -1,6 +1,6 @@
 use super::lex::{canonical, error};
 use crate::Result;
-use fieldcraft_model::{ElementKind as K, Formulation, Integration, SectionKind};
+use fieldcraft_model::{BeamTheory, ElementKind as K, Formulation, Integration, SectionKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Family {
@@ -36,7 +36,7 @@ impl Type {
             (Family::Rod, t)
         } else if let Some(t) = normalized.strip_prefix("T2D") {
             (Family::PlanarRod, t)
-        } else if normalized == "B31" {
+        } else if normalized == "B31" || normalized == "B33" {
             (Family::Beam, "2")
         } else if let Some(t) = normalized.strip_prefix('S') {
             (Family::Shell, t)
@@ -75,7 +75,7 @@ impl Type {
                 integration: if reduced { Integration::Reduced } else { Integration::Full },
                 incompatible_modes: incompatible,
                 hybrid,
-                ..Formulation::default()
+                beam_theory: if normalized == "B33" { BeamTheory::EulerBernoulli } else { BeamTheory::Timoshenko },
             },
         };
         let section =

@@ -17,7 +17,7 @@
 //!
 //! Every mapping is checked by the sign of the element Jacobian in the tests.
 
-use fieldcraft_model::{ElementKind, Formulation, Integration, SectionKind};
+use fieldcraft_model::{BeamTheory, ElementKind, Formulation, Integration, SectionKind};
 
 /// How an element is written: its keyword and its node list in LS-DYNA order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -106,7 +106,8 @@ pub(crate) struct Elform {
 /// tetrahedron), hybrid 13 (nodal pressure); tet10 16; hex20 23. Shells: quad4 16 (fully
 /// integrated), reduced 2 (one-point) with hourglass control; tri3 4 (C0 triangle); quad8 23;
 /// tri6 24. Rods: 3 (truss). Beams: 2 (the Belytschko–Schwer resultant beam, whose section is
-/// its area, second moments, torsion constant and shear area; no integration rule applies). 2D (in the XY plane): plane stress 12, plane strain 13, both one-point
+/// its area, second moments, torsion constant and shear area; no integration rule applies; an
+/// Euler–Bernoulli section has no counterpart, the resultant beam always taking a shear area). 2D (in the XY plane): plane stress 12, plane strain 13, both one-point
 /// forms on quad4 (written for reduced integration, with hourglass control) and tri3 (exact at one
 /// point); quadratic 2D elements and axisymmetric sections have no form written here.
 /// What it cannot express is the reason, naming the section.
@@ -156,6 +157,9 @@ pub(crate) fn elform(kind: ElementKind, section: &SectionKind, f: Formulation, s
             _ => no("a rod section cannot hold"),
         },
         SectionKind::Beam { .. } => match kind {
+            ElementKind::Beam2 if f.beam_theory == BeamTheory::EulerBernoulli => {
+                no("the Euler–Bernoulli beam theory has no LS-DYNA counterpart written here (its resultant beam always takes a shear area) for")
+            }
             ElementKind::Beam2 => plain(2),
             _ => no("a beam section cannot hold"),
         },
@@ -220,5 +224,8 @@ mod tests {
         assert_eq!(elform(ElementKind::Beam2, &beam, full, "s").unwrap(), Elform { elform: 2, hourglass: None });
         assert_eq!(elform(ElementKind::Beam2, &beam, reduced, "s").unwrap().elform, 2, "a resultant beam has no integration rule");
         assert!(elform(ElementKind::Rod2, &beam, full, "s").unwrap_err().contains("a beam section cannot hold rod2"));
+        let shear_rigid = Formulation { beam_theory: BeamTheory::EulerBernoulli, ..full };
+        let e = elform(ElementKind::Beam2, &beam, shear_rigid, "frame").unwrap_err();
+        assert!(e.contains("section `frame`: the Euler–Bernoulli beam theory has no LS-DYNA counterpart") && e.ends_with("for beam2"), "{e}");
     }
 }

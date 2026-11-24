@@ -7,7 +7,9 @@
 //!
 //! - nodes and reference points: `GRID`;
 //! - solids: `CTETRA` (tet4, tet10), `CPENTA` (wedge6), `CPYRAM` (pyramid5), `CHEXA` (hex8, hex20) with `PSOLID`;
-//!   shells: `CTRIA3`, `CQUAD4`, `CTRIA6`, `CQUAD8` with `PSHELL`; beams: `CBEAM` with `PBEAML`;
+//!   shells: `CTRIA3`, `CQUAD4`, `CTRIA6`, `CQUAD8` with `PSHELL`; beams: `CBEAM` with `PBEAML`
+//!   (Euler–Bernoulli sections: `CBAR` with a `PBAR` of the profile's area, second moments and
+//!   torsion constant, whose blank K1 and K2 mean no transverse shear flexibility);
 //!   rods: `CROD` with `PROD`. Nastran numbers a 20-node hexahedron's mid-side nodes bottom
 //!   edges, vertical edges, top edges, where the model has bottom, top, vertical
 //!   ([`grids`] reorders them); every other kind keeps the model's order;
@@ -57,8 +59,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use fieldcraft_model::{
-    BeamProfile, Coupling, CouplingKind, Dofs, Elastic, ElementKind, Formulation, Hardening, Integration, Load, MAX_LABEL, Model, OutputVariable,
-    Plastic, Procedure, Resolved, SectionKind, Step,
+    BeamProfile, BeamProperties, BeamTheory, Coupling, CouplingKind, Dofs, Elastic, ElementKind, Formulation, Hardening, Integration, Load,
+    MAX_LABEL, Model, OutputVariable, Plastic, Procedure, Resolved, SectionKind, Step,
 };
 
 use fieldcraft_model::units::Preset;
@@ -229,6 +231,8 @@ enum Property {
         mid: u32,
         profile: BeamProfile,
         orientation: [f64; 3],
+        /// An Euler–Bernoulli section's properties: written as a `PBAR` of `CBAR` elements.
+        shear_rigid: Option<BeamProperties>,
     },
     Rod {
         mid: u32,
@@ -480,7 +484,17 @@ impl<'m> Deck<'m> {
                 }
                 SectionKind::Beam { profile, orientation } => {
                     let Some(mid) = ids.isotropic else { continue };
-                    self.add_property(sname, Property::Beam { mid, profile, orientation }, elements.iter().copied())?;
+                    let shear_rigid = match sec.formulation.beam_theory {
+                        BeamTheory::Timoshenko => None,
+                        BeamTheory::EulerBernoulli => match model.material(&sec.material).and_then(|m| m.elastic) {
+                            Some(Elastic::Isotropic { poisson, .. }) => Some(profile.properties(poisson)),
+                            _ => {
+                                self.problems.insert(format!("section `{sname}`: an Euler–Bernoulli beam needs an isotropic elastic material"));
+                                continue;
+                            }
+                        },
+                    };
+                    self.add_property(sname, Property::Beam { mid, profile, orientation, shear_rigid }, elements.iter().copied())?;
                 }
                 SectionKind::Rod { area } => {
                     if elements.iter().any(|e| kind_of(*e) == Some(ElementKind::Rod3)) {
@@ -839,6 +853,11 @@ impl<'m> Deck<'m> {
             let card = match p {
                 Property::Solid { mid, rule: (network, scheme) } => Card::new("PSOLID").int(pid).int(*mid).blank().opt(*network).blank().opt(*scheme),
                 Property::Shell { mid, thickness, .. } => Card::new("PSHELL").int(pid).int(*mid).real(*thickness).int(*mid).blank().int(*mid),
+                // I1 bends in the plane of the element's y axis (the profile's height, local 2): the model's I_y.
+                // K1 and K2 left blank: a CBAR's shear factors then default to infinite, so the bar
+                // has no transverse shear flexibility (MSC Nastran Linear Static Analysis User's
+                // Guide, the CBAR element); I12 is zero for every profile.
+                Property::Beam { mid, shear_rigid: Some(p), .. } => Card::new("PBAR").int(pid).int(*mid).reals([p.area, p.iy, p.iz, p.torsion]),
                 Property::Beam { mid, profile, .. } => {
                     let (shape, dims) = beam_dimensions(*profile);
                     Card::new("PBEAML").int(pid).int(*mid).blank().text(shape).end_line().reals(dims)
@@ -853,7 +872,11 @@ impl<'m> Deck<'m> {
         for (label, el) in self.model.elements() {
             let Some(pid) = self.element_pid.get(label).copied() else { continue };
             let Some((_, property)) = usize::try_from(pid).ok().and_then(|p| self.properties.get(p - 1)) else { continue };
-            let card = Card::new(element_card(el.kind)).int(*label).int(pid).ints(grids(el.kind, &el.nodes));
+            let name = match property {
+                Property::Beam { shear_rigid: Some(_), .. } => "CBAR",
+                _ => element_card(el.kind),
+            };
+            let card = Card::new(name).int(*label).int(pid).ints(grids(el.kind, &el.nodes));
             let card = match property {
                 Property::Beam { orientation, .. } => card.reals(self.beam_vector(&el.nodes, *orientation)),
                 // CQUAD8 has four corner thicknesses before the material axes and the offset.
@@ -1047,7 +1070,7 @@ impl<'m> Deck<'m> {
         })
     }
 
-    /// The `CBEAM` orientation vector: the profile's local 1 direction (the section's
+    /// The `CBEAM` or `CBAR` orientation vector: the profile's local 1 direction (the section's
     /// orientation) is Nastran's element z axis, so v = axis × orientation.
     fn beam_vector(&self, nodes: &[u32], o: [f64; 3]) -> [f64; 3] {
         let p = |i: usize| nodes.get(i).and_then(|n| self.model.node(*n)).map(|n| n.xyz).unwrap_or_default();
