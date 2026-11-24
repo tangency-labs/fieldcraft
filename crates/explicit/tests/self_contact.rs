@@ -394,19 +394,60 @@ fn angular_momentum(m: &Mesh, r: &ExplicitResult) -> Vec<V3> {
         .collect()
 }
 
+/// How far the upper arm's lower surface has gone below the lower arm's upper surface, at its
+/// deepest over the saved frames (negative while the arms are apart). The surfaces are the nodes
+/// that start at z = ±0.05 (x ≥ 0), the lower one interpolated linearly along x at the same y.
+fn arm_overlap(m: &Mesh, r: &ExplicitResult, all: &[u32]) -> f64 {
+    let upper = m.nodes_where(all, |x| x[0] >= -1e-9 && (x[2] - 0.05).abs() < 1e-9);
+    let lower = m.nodes_where(all, |x| x[0] >= -1e-9 && (x[2] + 0.05).abs() < 1e-9);
+    let mut deepest = f64::NEG_INFINITY;
+    for f in &r.frames {
+        let at = |n: u32| {
+            let (x0, i) = (m.xyz(n), index(r, n));
+            [0, 1, 2].map(|k| x0[k] + f.displacement[i][k])
+        };
+        for &u in &upper {
+            let pu = at(u);
+            let y0 = m.xyz(u)[1];
+            let mut line: Vec<V3> = lower.iter().filter(|n| (m.xyz(**n)[1] - y0).abs() < 1e-9).map(|n| at(*n)).collect();
+            line.sort_by(|a, b| a[0].total_cmp(&b[0]));
+            for w in line.windows(2) {
+                if w[0][0] <= pu[0] && pu[0] <= w[1][0] && w[1][0] > w[0][0] {
+                    let z = w[0][2] + (w[1][2] - w[0][2]) * (pu[0] - w[0][0]) / (w[1][0] - w[0][0]);
+                    deepest = deepest.max(z - pu[2]);
+                }
+            }
+        }
+    }
+    deepest
+}
+
 /// The arms of a hairpin hit each other: linear momentum kept to round-off; angular momentum kept
 /// to round-off without friction (each normal force and its reaction act along one line, the
 /// main face's normal through both points) and within the bound friction allows with it (the
 /// tangential force at a node and its reaction at the point of the face under it are a couple of
 /// arm at most the penetration δ, so |ΔL| ≤ δ_max μ ∫ F_n dt); the energy balance closed with
-/// the friction dissipated; no pass-through; the same numbers on one thread and four.
+/// the friction dissipated; no pass-through (the upper arm's lower surface never goes below the
+/// lower arm's upper surface by more than a tenth of an arm's thickness, where the same arms without
+/// contact pass through each other by more than their own thickness); the same numbers on one thread and four.
 #[test]
 fn a_hairpin_closing_on_itself_keeps_momentum_and_energy() {
     let end = 0.12;
     let mu = 0.3;
     for friction in [Friction::NONE, Friction::coulomb(mu)] {
-        let (m, _) = hairpin(friction, end);
+        let (m, all) = hairpin(friction, end);
         let r = m.solve();
+        let crossing = arm_overlap(&m, &r, &all);
+        eprintln!("hairpin μ = {}: the arms overlap by at most {crossing:.3e}", friction.static_coefficient);
+        assert!(crossing < 0.01, "the arms cross: {crossing}");
+        if friction.is_frictionless() {
+            // The same arms without the contact do pass through each other.
+            let (mut free, all) = hairpin(friction, end);
+            free.model.remove_contact("self").unwrap();
+            let through = arm_overlap(&free, &free.solve(), &all);
+            eprintln!("hairpin without contact: the arms overlap by {through:.3e}");
+            assert!(through > 0.1, "{through}");
+        }
         let s = &r.contacts[0];
         let p0 = r.history.momentum[0];
         let drift = r.history.momentum.iter().map(|p| norm([p[0] - p0[0], p[1] - p0[1], p[2] - p0[2]])).fold(0.0, f64::max) / norm(p0);
