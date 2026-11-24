@@ -543,8 +543,10 @@ checked against the DOI handle API and Crossref, as above.
   flow (App. B.2), all wavevector directions; BGK's instability arises from collisions of non-hydrodynamic with
   acoustic/shear modes as the Mach number rises (Sec. 5), on oblique waves rather than along the flow. No TRT.
 - **Used as.** `crates/lbm/tests/trt_stability.rs` applies this analysis to D3Q19 TRT about #820's uniform stream
-  (U = 0.05, 16³ modes): with Λ = 3/16 growing modes for τ⁺ ≤ 0.502, none from 0.5025; at τ⁺ = 0.5005 stable only to
-  U = 0.01, or with Λ ≤ 1e-5. No published TRT boundary covers this case; the analysis and its numbers are ours.
+  (U = 0.05 along x, 16³ modes): with Λ = 3/16 growing modes for τ⁺ ≤ 0.502, none from 0.5025; at τ⁺ = 0.5005 stable only to
+  U = 0.01, or with Λ ≤ 1e-5. About an oblique stream (#1063) it is stable up to a lattice speed of 5.6 (τ⁺ − ½) at the smallest oblique onset
+  found, a cell Reynolds number of 16.8 (`setup::TRT_STREAM_LIMIT`; 6.18 along (1, 1, 0)). Wissocq & Sagaut (J. Comput. Phys., 2022, article 110858, Sec. 7.8)
+  analyse TRT along x only. No published TRT boundary covers these cases; the analysis and its numbers are ours.
   `crates/lbm/tests/mrt_stability.rs` applies it to the MRT collision (C2.1) at rest and about streams at lattice Mach 0.1 and 0.2: the source of `mrt::MIN_VISCOSITY`.
 
 **C1.6 Guo, Zheng, Shi 2002, forcing.** **Verdict: build on.** PRE 65:046308, 2002. DOI [10.1103/PhysRevE.65.046308](https://doi.org/10.1103/PhysRevE.65.046308). The second-order body-force scheme every IB-LBM coupling (D2) needs.

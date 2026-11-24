@@ -27,6 +27,8 @@
 //! [`MAX_LATTICE_ACCELERATION`].
 //! While running, a lattice speed above [`MAX_LATTICE_SPEED`] or a non-finite or non-positive
 //! density stops the run with [`crate::Error::Unstable`].
+//! A two-relaxation-time run whose characteristic lattice velocity is past [`TRT_STREAM_LIMIT`] `(τ⁺ − ½)` is warned about at Λ = 3/16;
+//! at any other Λ the setup warns that the stream limit is not established for it.
 
 use fieldcraft_mesh::surface::BoundarySurface;
 use fieldcraft_model::fluid_zones::DEFAULT_FAN_RELAXATION;
@@ -77,6 +79,16 @@ pub const SA_INFLOW_RATIO: std::ops::RangeInclusive<f64> = 0.0..=100.0;
 /// The default two-relaxation-time parameter Λ: bounce-back walls exactly halfway between cells
 /// (Ginzburg, Verhaeghe & d'Humières 2008).
 pub const DEFAULT_MAGIC: f64 = 3.0 / 16.0;
+/// The smallest growth-free stream speed over τ⁺ − ½ of the two-relaxation-time collision at Λ = 3/16,
+/// over the sampled directions, measured on this scheme; unpublished. A uniform stream of lattice speed
+/// |u| ≤ TRT_STREAM_LIMIT (τ⁺ − ½) is linearly stable in every sampled direction, a cell Reynolds number
+/// |u| Δx/ν of 3 × this (16.8). The limit is found by a von Neumann analysis of the collision (Sterling &
+/// Chen 1996; Wissocq, Sagaut & Boussuge 2019, App. B.2). The smallest onset, 5.606, is a long wave beside
+/// the staggered mode k = π e_y, for a stream along (1, 0.437, 0.01); it is rounded down. The value rests on
+/// a search over the stream's direction, so it is sampled, not a proof. Along (1, 1, 0) the limit is 6.18 and
+/// along a lattice axis 24.5 (`docs/manual/fluid/collision.md`, `tests/trt_stability.rs`); the axis-aligned
+/// analysis it extends is Wissocq & Sagaut (2022, Sec. 7.8).
+pub const TRT_STREAM_LIMIT: f64 = 5.6;
 /// The thermal lattice's two-relaxation-time parameter `Λ_T = (τ_T⁺ − ½)(τ_T⁻ − ½)` (#629). With
 /// `Λ_T` fixed a steady temperature field, its anti-bounce-back walls included, does not depend
 /// on `τ_T`, so neither do the local wall heat fluxes. At 1/12 the heat an anti-bounce-back link
@@ -1220,15 +1232,28 @@ impl Setup {
         if collision != Collision::Hrr && sigma.is_some() {
             warnings.push(format!("the hybrid collision's σ (`sigma`) has no effect with the {} collision", collision.name()));
         }
-        if smallest_tau < 0.51 && collision == Collision::Trt {
+        // The stream limit is measured at Λ = 3/16 only (tests/trt_stability.rs). Past TRT_STREAM_LIMIT
+        // (τ⁺ − ½) a stream oblique to the lattice is linearly unstable under two relaxation times; at any
+        // other Λ it is not established, and the setup says so once. The cell Reynolds number does not
+        // depend on the time step, so only the spacing or the collision changes it.
+        if collision == Collision::Trt && magic == DEFAULT_MAGIC {
+            if lattice_velocity > TRT_STREAM_LIMIT * (smallest_tau - 0.5) {
+                warnings.push(format!(
+                    "the lattice velocity {lattice_velocity:.4} is above {:.4} = {TRT_STREAM_LIMIT} (τ − ½) at τ = {smallest_tau:.4} with Λ = 3/16 (cell Reynolds number {:.1}, above {:.1}): there the two-relaxation-time collision is linearly unstable where the flow is oblique to the grid, and grid-scale waves grow; a finer spacing or the regularized collision (`collision: \"regularized\"`) avoids it, the time step does not change it",
+                    TRT_STREAM_LIMIT * (smallest_tau - 0.5),
+                    3.0 * lattice_velocity / (smallest_tau - 0.5),
+                    3.0 * TRT_STREAM_LIMIT
+                ));
+            }
+        } else if collision == Collision::Trt {
             warnings.push(format!(
-                "τ = {smallest_tau:.4} is close to ½: under-resolved flows may go unstable; a finer spacing or the regularized collision (`collision: \"regularized\"`) is safer"
+                "the stream-stability limit of the two-relaxation-time collision has not been established for Λ = {magic} (`magic`): it is measured only at Λ = 3/16, where it is {TRT_STREAM_LIMIT} (τ − ½) in the smallest sampled direction; for example 3.7 (τ − ½) at Λ = ½ and 4.5 at Λ = 1/24, in four sampled directions; use Λ = 3/16 or `collision: \"regularized\"`"
             ));
         }
         // Below MIN_TAU (reachable only with a turbulence model) the TRT velocity inlet did not
         // hold a 1e-6 disturbance at #820's Mach number 0.087 (16³ box: departures of 2e-3–1e-2
         // at τ = 0.5005, 5e-3 and more at 0.5025–0.503), and with Λ = 3/16 the uniform stream
-        // itself is linearly unstable for τ ≤ 0.502 at that speed (tests/trt_stability.rs); a
+        // along x is itself linearly unstable for τ ≤ 0.502 at that speed (tests/trt_stability.rs); a
         // uniform inflow has no eddy viscosity to lift the inlet cell's τ.
         if smallest_tau < MIN_TAU
             && collision == Collision::Trt

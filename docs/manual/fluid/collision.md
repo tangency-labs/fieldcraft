@@ -479,6 +479,42 @@ time, and the cavity cases of the oracle, run at τ_T 0.62–0.8, stay within th
 
 ### Stability
 
+**The stream limit of two relaxation times** (#1063). About a uniform stream the collision is linearly stable up
+to a lattice speed proportional to τ⁺ − ½: |u| ≤ C (τ⁺ − ½), a cell Reynolds number |u| Δx/ν of 3 C. With
+Λ = 3/16, C = 5.6 is the smallest onset found over the stream's direction (`setup::TRT_STREAM_LIMIT`; cell
+Reynolds number 16.8). The onset is 5.606, a long wave beside the staggered mode k = π e_y, for a stream along
+(1, 0.437, 0.01); it is rounded down. Between 5.6 and 6.18 the growth is at most 2e-5 per step. It rests on a search
+over directions, so it is sampled, not proved, and not published. Along (1, 1, 0) C is 6.18 (cell Reynolds number
+18.5), on a standing wave normal to the stream, k = π (0.336, −0.336, 0.673); 5.61–6.9 over 91 sampled oblique
+directions; along a lattice axis 24.5, and 9.3 already 9.5° off it. The (1, 1, 0) law holds from τ⁺ = 0.5001 to 0.53; above, that limit flattens
+(0.26 at 0.55, 0.42 from 0.7). As τ⁺ → ½ at a fixed Λ the symmetric modes relax by −(1 − 4(τ⁺ − ½)) and the
+antisymmetric ones by 1 − (τ⁺ − ½)/Λ, neither damped in the limit, and the stream couples them at a rate
+proportional to its speed. Past its (1, 1, 0) limit a diagonal stream grows by about 0.33 (|u| − 6.18 (τ⁺ − ½)) per step.
+
+| τ⁺ | largest growth-free lattice speed, smallest oblique onset | along an axis |
+|---|---|---|
+| 0.5001 | 0.0006 | 0.0024 |
+| 0.505 (the floor) | 0.028 | 0.12 |
+| 0.5081 | 0.045 (Mach 0.08; the automatic time step's 0.05 is past it) | above Mach 0.3 |
+| 0.516 | 0.090 (Mach 0.16) | above Mach 0.3 |
+| 0.528 | 0.157 (Mach 0.27) | above Mach 0.3 |
+
+A periodic 32³ box through the solver, 10⁻⁹ disturbance: at τ⁺ = 0.505 and 0.05 along (1, 1, 0) it grows by
+6.0e-3 per step (analysis 6.2e-3) and stops as unstable at step 3831; along x, or at 0.02, it decays. A subgrid
+model does not lift it (its eddy viscosity is zero in a uniform stream): with Smagorinsky's model (C 0.1) the same
+box saturates with a disturbance of 0.16 of the stream at τ⁺ = 0.505 and 0.5 of it at 0.5001. The regularised and
+hybrid collisions decay in the same boxes; at τ⁺ = 0.5001 they grow only near Mach 0.3 (2.9e-3 and 1.2e-3 per
+step at lattice speed 0.17). No fixed Λ removes the limit (the smallest C over four sampled directions at τ⁺ = 0.505: 4.5 at 1/24, 5.0 at
+1/12, 6.7 at 1/8, 6.0 at 3/16, 5.3 at 1/4, 3.7 at 1/2; the 3/16 figures there are the earlier four-direction
+search, not the 5.6 onset); the limit is measured at Λ = 3/16 only, and the solve says
+so at any other Λ; a single relaxation time (Λ = (τ⁺ − ½)²) holds to 0.154 there, but
+moves the bounce-back wall. The cell Reynolds number does not depend on the time step: a finer spacing or
+another collision is what changes it. The solve warns when the characteristic lattice velocity is past the limit;
+the local speed around a body is higher, which is why the runs below fail from 2.8 (τ⁺ − ½) of the inlet's.
+The analysis is the von Neumann one of Sterling & Chen (1996) and Wissocq, Sagaut & Boussuge (2019);
+`crates/lbm/tests/trt_stability.rs` holds the (1, 1, 0) limit and the warning. Wissocq & Sagaut (2022, Sec. 7.8) analyse the scheme at
+τ/Δt = 10⁻³ for a stream and waves along x only, where it is stable.
+
 **The flow-past sample** (#557): the bracket in a 240 × 120 × 100 mm box, air, the inlet raised,
 initial velocity 25 mm/s, 16 s, automatic time step, on the GPU (Apple M4 Max); the CPU gives the
 same outcome where run (75 and 90 mm/s at 2.5 mm: the two-relaxation-time scheme unstable at steps
@@ -559,6 +595,7 @@ exact 1.547615e-2 (−4.2e-7; tolerance 1e-3: `a_shear_wave_decays_at_the_exact_
 ## Limitations
 
 - D3Q19 only: no cumulant collision (it needs D3Q27).
+- Two relaxation times are linearly unstable past a cell Reynolds number of 16.8 where the flow is oblique to the grid, at the smallest oblique onset found ([Stability](#stability)); the solve warns by the characteristic velocity at Λ = 3/16 only, and says the limit is not established at any other Λ.
 - The regularised collision's walls are less accurate than the two-relaxation-time scheme's.
   Its local fallback at blocked pressure faces and convective backflow still discards stress.
 - Below τ⁺ ≈ 0.508 even the regularised collision went unstable on a coarse bluff-body grid: the
@@ -584,6 +621,7 @@ exact 1.547615e-2 (−4.2e-7; tolerance 1e-3: `a_shear_wave_decays_at_the_exact_
 ## References
 
 - I. Ginzburg, F. Verhaeghe, D. d'Humières. *Two-relaxation-time lattice Boltzmann scheme: about parametrization, velocity, pressure and mixed boundary conditions.* Commun. Comput. Phys. 3(2):427–478, 2008. doi:[10.4208/cicp.2008.v3.p427](https://doi.org/10.4208/cicp.2008.v3.p427)
+- G. Wissocq, P. Sagaut. *Hydrodynamic limits and numerical errors of isothermal lattice Boltzmann schemes.* J. Comput. Phys., 2022, article 110858. doi:[10.1016/j.jcp.2021.110858](https://doi.org/10.1016/j.jcp.2021.110858)
 - J. Latt, B. Chopard. *Lattice Boltzmann method with regularized pre-collision distribution functions.* Math. Comput. Simul. 72:165–168, 2006. doi:[10.1016/j.matcom.2006.05.017](https://doi.org/10.1016/j.matcom.2006.05.017)
 - C. Coreixas, G. Wissocq, G. Puigt, J.-F. Boussuge, P. Sagaut. *Recursive regularization step for high-order lattice Boltzmann methods.* Phys. Rev. E 96:033306, 2017. doi:[10.1103/PhysRevE.96.033306](https://doi.org/10.1103/PhysRevE.96.033306)
 - C. Coreixas, B. Chopard, J. Latt. *Comprehensive comparison of collision models in the lattice Boltzmann framework: Theoretical investigations.* Phys. Rev. E 100:033305, 2019. doi:[10.1103/PhysRevE.100.033305](https://doi.org/10.1103/PhysRevE.100.033305)
