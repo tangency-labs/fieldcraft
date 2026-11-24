@@ -30,13 +30,15 @@ struct Run {
     flow_rate: f64,
     /// Drift of the mean density over the fluid cells per 10 000 steps (lattice density 1).
     drift: f64,
+    /// Wall links interpolated where the surface crosses them.
+    interpolated: u64,
     /// Wall links on which no crossing with the surface was found (kept halfway).
     no_crossing: u64,
 }
 
-/// The channel `cells` cells across, turned `a:b`, its walls moved `phase` cells, run [`STEPS`]
+/// The channel `cells` cells across, turned `a:b`, its walls moved `phase` cells, run `steps`
 /// steps with the wall treatment `walls`.
-fn rotated_channel((a, b): (usize, usize), cells: usize, phase: f64, walls: WallTreatment) -> Run {
+fn rotated_channel((a, b): (usize, usize), cells: usize, phase: f64, walls: WallTreatment, steps: u64) -> Run {
     let nu_lat = 0.05;
     let dx = 1.0 / cells as f64;
     let dt = nu_lat * dx * dx;
@@ -73,15 +75,15 @@ fn rotated_channel((a, b): (usize, usize), cells: usize, phase: f64, walls: Wall
     // g = 12 ν U / H² gives the exact mean speed (ν = 1 in the model, U in physical units).
     let g = 12.0 * MEAN_SPEED * dx / dt / (ho * ho);
     d.acceleration = [g * dir[0], g * dir[1], 0.0];
-    let proc = with_walls(step(STEPS as f64 * dt, dt, None), walls);
+    let proc = with_walls(step(steps as f64 * dt, dt, None), walls);
     let (_, mut flow) = prepare(&model(1.0, 1.0, d, proc), &obstacles);
     let fluid: Vec<usize> = (0..flow.grid().len()).filter(|&c| flow.is_fluid(c)).collect();
     let mean_density = |flow: &fieldcraft_lbm::Flow| fluid.iter().map(|&c| flow.moments(c).map_or(0.0, |(r, _)| r)).sum::<f64>() / fluid.len() as f64;
     let start = mean_density(&flow);
-    for _ in 0..STEPS {
+    for _ in 0..steps {
         flow.step().unwrap();
     }
-    let drift = (mean_density(&flow) - start) / STEPS as f64 * 10_000.0;
+    let drift = (mean_density(&flow) - start) / steps as f64 * 10_000.0;
     let along: f64 = fluid.iter().map(|&c| flow.moments(c).map_or(0.0, |(_, u)| u[0] * dir[0] + u[1] * dir[1])).sum();
     // The exact parabola at a cell centre: its distance across the channel from the wall plane at s0, in cells, folded
     // into one period of the strips.
@@ -95,7 +97,13 @@ fn rotated_channel((a, b): (usize, usize), cells: usize, phase: f64, walls: Wall
         })
         .sum();
     let flow_rate = along / exact - 1.0;
-    Run { flow_rate: 100.0 * flow_rate, drift, no_crossing: flow.wall_links().map_or(0, |w| w.no_crossing) }
+    let links = flow.wall_links();
+    Run {
+        flow_rate: 100.0 * flow_rate,
+        drift,
+        interpolated: links.map_or(0, |w| w.interpolated),
+        no_crossing: links.map_or(0, |w| w.no_crossing),
+    }
 }
 
 /// One expected case: the angle, the grid, the wall offset in cells, the flow-rate error in
@@ -134,7 +142,7 @@ const LINEAR: [Case; 12] = [
 fn check(cases: &[&Case], walls: WallTreatment) {
     let mut failures = Vec::new();
     for c in cases {
-        let r = rotated_channel(c.angle, c.cells, c.phase, walls);
+        let r = rotated_channel(c.angle, c.cells, c.phase, walls, STEPS);
         println!(
             "{:?} {} cells, offset {}: flow rate {:+.4} % (expected {:+.4}), drift {:+.3e} (expected {:+.3e})",
             c.angle, c.cells, c.phase, r.flow_rate, c.flow_rate, r.drift, c.drift
@@ -150,6 +158,14 @@ fn check(cases: &[&Case], walls: WallTreatment) {
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// A wall plane through cell centres on a spacing that is not a power of two (45°, offset 0, 12
+/// cells): every wall link finds its crossing.
+#[test]
+fn a_wall_through_cell_centres_leaves_no_link_without_a_crossing() {
+    let r = rotated_channel((1, 1), 12, 0.0, WallTreatment::Interpolated, 1);
+    assert_eq!((r.no_crossing, r.interpolated), (0, 1472), "{r:?}");
 }
 
 /// Two of the coarse cases, the linear rule's numbers (known misses).
