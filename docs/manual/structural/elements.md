@@ -17,7 +17,7 @@ from the published literature, and the deck writers map each element to each sol
 | **Step procedure** | every structural procedure; which elements each accepts is in [Availability by procedure](#availability-by-procedure) |
 | **Solver** | `crates/fem` kernels, assembled by `crates/solver` (implicit, CPU, f64) and `crates/explicit` |
 | **Method** | isoparametric displacement elements (Zienkiewicz, Taylor & Zhu 2013; Hughes 2000), incompatible modes (Wilson et al. 1973; Taylor, Beresford & Wilson 1976), mixed u–p (Hughes 2000 §4.3–4.5), MITC shells (Dvorkin & Bathe 1984; Lee & Bathe 2004), interdependent Timoshenko beam (Friedman & Kosmatka 1993) |
-| **Verified by** | patch tests of every element and formulation, `patch-*`, `mh-solid-patch`, `cantilever-*`, `lame-cylinder*`, `kirsch-plate*`, `mh-thick-cylinder`, NAFEMS LE1–LE7, `scordelis-lo-roof-*`, `pinched-cylinder`; `crates/solver/tests/{verification,plane,structural,hybrid,one_d}.rs`, `crates/fem/src/basis.rs` tests |
+| **Verified by** | patch tests of every element and formulation, `patch-*`, `mh-solid-patch`, `cantilever-*`, `lame-cylinder*`, `kirsch-plate*`, `mh-thick-cylinder`, NAFEMS LE1–LE7, `scordelis-lo-roof-*`, `pinched-cylinder`, `pinched-hemisphere`; `crates/solver/tests/{verification,plane,structural,hybrid,one_d}.rs`, `crates/fem/src/basis.rs` tests |
 
 ## Synopsis
 
@@ -535,7 +535,7 @@ four: equilibrium does not depend on the formulation.
 | Shell membrane and bending patch tests (MITC4, MITC3, irregular patch in a tilted plane) | theory | < 10⁻⁹ (moments < 10⁻⁸) | exact | `shell_membrane_patch_test`, `shell_bending_patch_test` |
 | Simply supported square plate, deflection and first frequency (Navier) | theory | < 1 % at 16 × 16 cells, quad4 and tri3 | 1 % | `simply_supported_plate_deflection_and_frequency` |
 | NAFEMS LE2, LE3, LE6 (MITC4) | benchmark | −0.107 % / −0.161 %, −0.446 %, +2.21 % against the thin-plate target (known failure; −0.037 % against the converged thin-solid value) | 1–2 % | `nafems-le2`, `nafems-le3`, `nafems-le6` |
-| Scordelis–Lo roof, pinched cylinder (MITC4) | benchmark | 1.12 %, 1.15 % | 2 % | `scordelis-lo-roof-shell`, `pinched-cylinder` |
+| Scordelis–Lo roof, pinched cylinder, pinched hemisphere with an 18° hole (MITC4) | benchmark | 1.12 %, 1.15 %, 1.86 % | 2 % | `scordelis-lo-roof-shell`, `pinched-cylinder`, `pinched-hemisphere` |
 | Timoshenko cantilever beam, deflection and end forces | theory | < 10⁻⁹ | exact | `cantilever_beam_deflection_is_exact` |
 | Portal frame (slope-deflection with Timoshenko members) | theory | sway and base moment < 5·10⁻⁴, joint rotation < 3·10⁻³ | as stated | `portal_frame_matches_the_slope_deflection_solution` |
 | Trusses by the method of joints (Pratt, tripod), three-bar truss, rod3 patch, hanging bar | theory | < 10⁻¹⁰ | exact | `crates/solver/tests/one_d.rs` |
