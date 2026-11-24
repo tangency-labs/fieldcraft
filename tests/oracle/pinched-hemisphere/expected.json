@@ -2,13 +2,52 @@
  "title": "Hemispherical shell with an 18° hole under alternating point loads",
  "kind": "benchmark",
  "source": "MacNeal and Harder, 'A proposed standard set of problems to test finite element accuracy', Finite Elements in Analysis and Design 1 (1985) 3–20, Fig. 9 (p. 9), Table 5(b) (p. 11): 0.0940 (lower bound 0.0924 from their [7])",
- "status": "pending",
- "requires": "a doubly curved shell mesh: mesh.block's 2D form is planar and takes z = 0, so the quarter hemisphere with its 18° polar hole must be written node by node (as scordelis-lo-roof-shell and pinched-cylinder are), or a new patch command must mesh a doubly curved face",
  "quantities": [
   {
    "id": "u",
-   "quantity": "displacement under the load along the load",
-   "value": 0.094
+   "quantity": "displacement under the outward load along the load",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Load",
+     "at": [
+      [
+       10.0,
+       0,
+       0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/displacement/0"
+   },
+   "value": 0.094,
+   "tolerance": {
+    "relative": 0.02
+   },
+   "reason": "MacNeal and Harder grade an element A within 2% of the theoretical value on this prescribed coarse mesh (p. 14); the source quotes 0.0940 with a lower bound 0.0924 from their ref. [7]; on the 8 × 8 mesh it is 1.86% low (0.092253), and refinement moves it monotonically towards the reference (16 × 16 1.25%, 32 × 32 0.78%, 64 × 64 0.54% low; 4 × 4 is 7.6% low)"
+  },
+  {
+   "id": "v",
+   "quantity": "displacement along y under the inward load (the load acts along −y)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Load",
+     "at": [
+      [
+       0,
+       10.0,
+       0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/displacement/1"
+   },
+   "value": -0.094,
+   "tolerance": {
+    "relative": 0.02
+   },
+   "reason": "the symmetric counterpart of u (the same magnitude, along −y), graded by the same source figure (MacNeal and Harder, p. 14; 0.0940, lower bound 0.0924 from their ref. [7])"
   }
  ]
 }
