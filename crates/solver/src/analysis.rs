@@ -3,6 +3,7 @@
 use fieldcraft_fem::ElementType;
 use fieldcraft_fem::beam::BeamForces;
 use fieldcraft_fem::element::{Extrapolation, extrapolation};
+use fieldcraft_fem::pipe::PipeStress;
 use fieldcraft_fem::quadrature::Rule;
 use fieldcraft_fem::shell::ShellStress;
 use fieldcraft_fem::{DofKind, DofLayout, PointStress, von_mises};
@@ -18,8 +19,8 @@ use crate::ldlt::{Kind, Symmetric};
 use crate::ordering::fill_reducing_order;
 use crate::sparse::{Csr, NodeGraph, add_block, add_diagonal, add_scalar};
 use crate::system::{
-    InitialState, Mesh, Structural, StructuralKernel, add_thermal_loads, inelastic_warnings, loads, prescribed, structural_body_forces,
-    temperature_loads, translation_block,
+    InitialState, Mesh, Structural, StructuralKernel, add_thermal_loads, inelastic_warnings, loads, pipe_pressures, prescribed,
+    structural_body_forces, temperature_loads, translation_block,
 };
 use crate::{Error, Limits, Result};
 
@@ -45,12 +46,15 @@ pub struct ShellResult {
     pub stress: ShellStress,
 }
 
-/// End section forces of one beam element.
+/// End section forces of one beam element and, for a pipe under a pipe pressure, its wall
+/// stresses.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BeamResult {
     pub label: u32,
     pub kind: ElementKind,
     pub forces: BeamForces,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipe: Option<PipeStress>,
 }
 
 /// Stresses of one element.
@@ -523,7 +527,8 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     elements.sort_by_key(|e| e.label);
     let (mut shells, mut beams) = (Vec::new(), Vec::new());
     let per_volume = structural_body_forces(model, resolved, mesh, step)?;
-    for (s, body) in mesh.structural.iter().zip(&per_volume) {
+    let pressures = pipe_pressures(model, resolved, mesh, step)?;
+    for ((s, body), pressure) in mesh.structural.iter().zip(&per_volume).zip(&pressures) {
         let at = |err| Error::element(s.label, err);
         let dofs = mesh
             .layout
@@ -543,7 +548,11 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
                 }
                 shells.push(ShellResult { label: s.label, kind: s.kind, stress });
             }
-            StructuralKernel::Beam(beam) => beams.push(BeamResult { label: s.label, kind: s.kind, forces: beam.forces(&ue, *body, None).map_err(at)? }),
+            StructuralKernel::Beam(beam) => {
+                let forces = beam.forces(&ue, *body, *pressure).map_err(at)?;
+                let pipe = pressure.map(|p| beam.pipe_stress(&forces, p)).transpose().map_err(at)?;
+                beams.push(BeamResult { label: s.label, kind: s.kind, forces, pipe });
+            }
         }
     }
     let stress: Vec<[f64; 6]> = sum.iter().zip(&count).map(|(s, c)| s.map(|v| if *c > 0 { v / f64::from(*c) } else { 0.0 })).collect();

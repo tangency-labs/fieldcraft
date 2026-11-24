@@ -12,6 +12,7 @@ use fieldcraft_fem::constitutive::MaterialModel;
 use fieldcraft_fem::dense::Matrix;
 use fieldcraft_fem::element::{Formulation, Solid, ThermalStrain};
 use fieldcraft_fem::finite::{Kinematics, Temperature};
+use fieldcraft_fem::pipe::PipePressure;
 use fieldcraft_fem::plane::{Plane, Theory};
 use fieldcraft_fem::plasticity::J2;
 use fieldcraft_fem::shell::{Shell, ShellSection};
@@ -946,8 +947,16 @@ pub fn loads(model: &Model, resolved: &Resolved, mesh: &Mesh, step: &Step, activ
                     body(&mut f, mesh, e, *vector)?;
                 }
             }
-            // Temporary: the solver's beam pressure arm (piece 3) replaces this refusal.
-            Load::PipePressure { .. } => return Err(Error::NotSupported(format!("pipe pressures (load `{name}`)"))),
+            Load::PipePressure { set, internal, external } => {
+                let pressure = PipePressure { internal: *internal, external: *external };
+                for label in resolved.sets.get(set).map(|r| r.elements.as_slice()).unwrap_or_default() {
+                    let not_a_pipe = || Error::Invalid(format!("load `{name}`: element {label} is not a pipe"));
+                    let e = mesh.structural_index(*label).and_then(|i| mesh.structural.get(i)).ok_or_else(not_a_pipe)?;
+                    let StructuralKernel::Beam(beam) = e.kernel()? else { return Err(not_a_pipe()) };
+                    let forces = beam.pressure_load(pressure).map_err(|err| Error::element(e.label, err))?;
+                    add_structural(&mut f, mesh, e, &forces)?;
+                }
+            }
             Load::Centrifugal { angular_velocity, point, axis, set } => {
                 let chosen: Option<&[u32]> = set.as_ref().map(|s| resolved.sets.get(s).map(|r| r.elements.as_slice()).unwrap_or_default());
                 if let Some(t) = mesh.trusses.iter().find(|t| chosen.is_none_or(|c| c.binary_search(&t.label).is_ok())) {
@@ -990,9 +999,14 @@ fn bar_body(f: &mut [f64], mesh: &Mesh, t: &Bar, b: [f64; 3]) -> Result<()> {
 /// Consistent forces and moments of a uniform force per volume on a shell or beam.
 fn structural_body(f: &mut [f64], mesh: &Mesh, e: &Structural, b: [f64; 3]) -> Result<()> {
     let forces = e.kernel()?.body_force(b).map_err(|err| Error::element(e.label, err))?;
+    add_structural(f, mesh, e, &forces)
+}
+
+/// Add a shell or beam element's nodal forces and moments (six per node).
+fn add_structural(f: &mut [f64], mesh: &Mesh, e: &Structural, forces: &[f64]) -> Result<()> {
     let dofs =
         mesh.layout.element_dofs(&e.nodes, Structural::KINDS).ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", e.label)))?;
-    for (d, v) in dofs.iter().zip(&forces) {
+    for (d, v) in dofs.iter().zip(forces) {
         if let Some(x) = f.get_mut(*d) {
             *x += v;
         }
@@ -1159,6 +1173,25 @@ pub fn structural_body_forces(model: &Model, resolved: &Resolved, mesh: &Mesh, s
                 }
             }
             _ => {}
+        }
+    }
+    Ok(out)
+}
+
+/// The pressures a step's pipe pressures put inside and around each shell and beam element
+/// ([`Mesh::structural`] order; `None` where none acts): a pipe's wall force and stresses are
+/// recovered with them.
+pub fn pipe_pressures(model: &Model, resolved: &Resolved, mesh: &Mesh, step: &Step) -> Result<Vec<Option<PipePressure>>> {
+    let mut out = vec![None; mesh.structural.len()];
+    for name in &step.loads {
+        let load = model.load(name).ok_or_else(|| Error::Invalid(format!("load `{name}` is missing")))?;
+        let Load::PipePressure { set, internal, external } = load else { continue };
+        for label in resolved.sets.get(set).map(|r| r.elements.as_slice()).unwrap_or_default() {
+            if let Some(p) = mesh.structural_index(*label).and_then(|i| out.get_mut(i)) {
+                let sum = p.get_or_insert(PipePressure::default());
+                sum.internal += internal;
+                sum.external += external;
+            }
         }
     }
     Ok(out)
