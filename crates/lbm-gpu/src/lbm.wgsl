@@ -127,6 +127,8 @@ override HRR: bool = false;
 override VREMAN: bool = false;
 // The hybrid collision's dynamic σ from the subgrid model's eddy viscosity (with HRR); likewise.
 override DYNAMIC: bool = false;
+// The hybrid collision's trace relaxation (Flow::set_trace_bulk_one): the non-equilibrium density mode is removed in every cell.
+override TRACE_BULK: bool = false;
 // Fans and porous zones (fieldcraft_lbm::flow's zone actions, data in `fluid`: zones.rs); likewise.
 override ZONES: bool = false;
 // The Spalart–Allmaras model (fieldcraft_lbm::sa): ν̃'s passes and its ν_t in the collision; likewise.
@@ -2068,6 +2070,20 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
         }
         out[q] = even + odd;
         out[q + 1u] = even - odd;
+    }
+    // The trace relaxation: with h_q = c² − 1 and a = Σ out_q h_q − ρ u² − u·F (the deviations from the weights have Σ w h = 0; Guo's forcing
+    // keeps u·F of the trace at this rate), out_q −= 1.5 a w_q h_q; density and momentum are untouched.
+    if TRACE_BULK {
+        var a = -rho * uu;
+        if forced { a = a - uf; }
+        for (var q = 0u; q < Q; q = q + 1u) {
+            let cq = vec3<f32>(c_of(q));
+            a = a + out[q] * (dot(cq, cq) - 1.0);
+        }
+        for (var q = 0u; q < Q; q = q + 1u) {
+            let cq = vec3<f32>(c_of(q));
+            out[q] = out[q] - 1.5 * a * w_of(q) * (dot(cq, cq) - 1.0);
+        }
     }
     // The f32 rebuild keeps mass and momentum only to rounding, which beside walls has one sign every step;
     // project back onto the exact budget, summing the defects as per-direction differences so small meets small.

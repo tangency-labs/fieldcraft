@@ -719,6 +719,8 @@ struct Variant {
     hrr: bool,
     vreman: bool,
     dynamic: bool,
+    /// The hybrid collision's trace relaxation (`Flow::set_trace_bulk_one`).
+    trace_bulk: bool,
     /// Fans or porous zones.
     zones: bool,
     /// Interpolated wall links.
@@ -742,11 +744,61 @@ struct Kernel {
 
 type Kernels = HashMap<&'static str, Kernel>;
 
+/// The values of `lbm.wgsl`'s override constants for `variant`: what every kernel of a flow is compiled with
+/// (the switches, and the physical constants taken from `fieldcraft_lbm` so the device and the CPU share one source).
+fn pipeline_constants(variant: Variant) -> Vec<(&'static str, f64)> {
+    let fieldcraft_lbm::sa_law::Factors { p: [p1, p2], q: [q1, q2], a: [a1, a2], b: [b1, b2] } = fieldcraft_lbm::sa_law::factors();
+    vec![
+        ("AA_MODE", if variant.aa { 1.0 } else { 0.0 }),
+        ("INLETS", if variant.inlets { 1.0 } else { 0.0 }),
+        ("REGULARIZED", if variant.regularized { 1.0 } else { 0.0 }),
+        ("MRT", if variant.mrt { 1.0 } else { 0.0 }),
+        ("SMAGORINSKY", if variant.smagorinsky { 1.0 } else { 0.0 }),
+        ("WALL_MODEL", if variant.wall_model { 1.0 } else { 0.0 }),
+        ("VAN_DRIEST", if variant.van_driest { 1.0 } else { 0.0 }),
+        ("WALL_BOUNCE", if variant.wall_bounce { 1.0 } else { 0.0 }),
+        ("ON_NODE", if variant.on_node { 1.0 } else { 0.0 }),
+        ("HRR", if variant.hrr { 1.0 } else { 0.0 }),
+        ("VREMAN", if variant.vreman { 1.0 } else { 0.0 }),
+        ("DYNAMIC", if variant.dynamic { 1.0 } else { 0.0 }),
+        ("TRACE_BULK", if variant.trace_bulk { 1.0 } else { 0.0 }),
+        ("ZONES", if variant.zones { 1.0 } else { 0.0 }),
+        ("INTERPOLATED", if variant.interpolated { 1.0 } else { 0.0 }),
+        ("SA", if variant.sa { 1.0 } else { 0.0 }),
+        ("SA_MAX_SUBSTEPS", f64::from(SA_MAX_SUBSTEPS)),
+        ("SA_LAW", if variant.sa_law { 1.0 } else { 0.0 }),
+        ("SA_KAPPA", fieldcraft_lbm::sa::KAPPA),
+        ("SA_CV1_3", fieldcraft_lbm::sa::C_V1.powi(3)),
+        ("NODE", f64::from(NODE)),
+        ("LAYER_ROWS", f64::from(variant.layer_rows)),
+        ("BOUNCE_KAPPA", fieldcraft_lbm::wall::BOUNCE_KAPPA),
+        ("BOUNCE_B", fieldcraft_lbm::wall::BOUNCE_B),
+        ("MIXING_KAPPA", fieldcraft_lbm::wall::MIXING_KAPPA),
+        ("MIXING_A_PLUS", fieldcraft_lbm::wall::MIXING_A_PLUS),
+        ("SPALDING_ITERATIONS", fieldcraft_lbm::wall::SPALDING_ITERATIONS as f64),
+        ("RESET", f64::from(RESET)),
+        ("INTERP", f64::from(INTERP)),
+        ("QUAD", f64::from(QUAD)),
+        ("SA_LAW_P1", p1),
+        ("SA_LAW_Q1", q1),
+        ("SA_LAW_A1", a1),
+        ("SA_LAW_B1", b1),
+        ("SA_LAW_P2", p2),
+        ("SA_LAW_Q2", q2),
+        ("SA_LAW_A2", a2),
+        ("SA_LAW_B2", b2),
+        ("SA_LAW_STEPS", f64::from(SA_LAW_STEPS)),
+        ("SA_LAW_RE_MAX", sa_law_re_max()),
+        ("QUADRATIC", if variant.quadratic { 1.0 } else { 0.0 }),
+        ("MAX_SPEED", MAX_LATTICE_SPEED),
+    ]
+}
+
 /// The kernels of `variant` on `device`, each with the layout of the bindings it uses.
 fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
     let module =
         device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("fieldcraft lbm"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
-    let fieldcraft_lbm::sa_law::Factors { p: [p1, p2], q: [q1, q2], a: [a1, a2], b: [b1, b2] } = fieldcraft_lbm::sa_law::factors();
+    let constants = pipeline_constants(variant);
     let mut kernels = HashMap::with_capacity(KERNELS.len());
     for (name, bindings) in &reflection()?.kernels {
         let entries: Vec<wgpu::BindGroupLayoutEntry> = bindings
@@ -769,52 +821,7 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
             layout: Some(&pipeline_layout),
             module: &module,
             entry_point: Some(name),
-            compilation_options: wgpu::PipelineCompilationOptions {
-                constants: &[
-                    ("AA_MODE", if variant.aa { 1.0 } else { 0.0 }),
-                    ("INLETS", if variant.inlets { 1.0 } else { 0.0 }),
-                    ("REGULARIZED", if variant.regularized { 1.0 } else { 0.0 }),
-                    ("MRT", if variant.mrt { 1.0 } else { 0.0 }),
-                    ("SMAGORINSKY", if variant.smagorinsky { 1.0 } else { 0.0 }),
-                    ("WALL_MODEL", if variant.wall_model { 1.0 } else { 0.0 }),
-                    ("VAN_DRIEST", if variant.van_driest { 1.0 } else { 0.0 }),
-                    ("WALL_BOUNCE", if variant.wall_bounce { 1.0 } else { 0.0 }),
-                    ("ON_NODE", if variant.on_node { 1.0 } else { 0.0 }),
-                    ("HRR", if variant.hrr { 1.0 } else { 0.0 }),
-                    ("VREMAN", if variant.vreman { 1.0 } else { 0.0 }),
-                    ("DYNAMIC", if variant.dynamic { 1.0 } else { 0.0 }),
-                    ("ZONES", if variant.zones { 1.0 } else { 0.0 }),
-                    ("INTERPOLATED", if variant.interpolated { 1.0 } else { 0.0 }),
-                    ("SA", if variant.sa { 1.0 } else { 0.0 }),
-                    ("SA_MAX_SUBSTEPS", f64::from(SA_MAX_SUBSTEPS)),
-                    ("SA_LAW", if variant.sa_law { 1.0 } else { 0.0 }),
-                    ("SA_KAPPA", fieldcraft_lbm::sa::KAPPA),
-                    ("SA_CV1_3", fieldcraft_lbm::sa::C_V1.powi(3)),
-                    ("NODE", f64::from(NODE)),
-                    ("LAYER_ROWS", f64::from(variant.layer_rows)),
-                    ("BOUNCE_KAPPA", fieldcraft_lbm::wall::BOUNCE_KAPPA),
-                    ("BOUNCE_B", fieldcraft_lbm::wall::BOUNCE_B),
-                    ("MIXING_KAPPA", fieldcraft_lbm::wall::MIXING_KAPPA),
-                    ("MIXING_A_PLUS", fieldcraft_lbm::wall::MIXING_A_PLUS),
-                    ("SPALDING_ITERATIONS", fieldcraft_lbm::wall::SPALDING_ITERATIONS as f64),
-                    ("RESET", f64::from(RESET)),
-                    ("INTERP", f64::from(INTERP)),
-                    ("QUAD", f64::from(QUAD)),
-                    ("SA_LAW_P1", p1),
-                    ("SA_LAW_Q1", q1),
-                    ("SA_LAW_A1", a1),
-                    ("SA_LAW_B1", b1),
-                    ("SA_LAW_P2", p2),
-                    ("SA_LAW_Q2", q2),
-                    ("SA_LAW_A2", a2),
-                    ("SA_LAW_B2", b2),
-                    ("SA_LAW_STEPS", f64::from(SA_LAW_STEPS)),
-                    ("SA_LAW_RE_MAX", sa_law_re_max()),
-                    ("QUADRATIC", if variant.quadratic { 1.0 } else { 0.0 }),
-                    ("MAX_SPEED", MAX_LATTICE_SPEED),
-                ],
-                ..Default::default()
-            },
+            compilation_options: wgpu::PipelineCompilationOptions { constants: &constants, ..Default::default() },
             cache: None,
         });
         kernels.insert(*name, Kernel { pipeline, layout, bindings: bindings.iter().map(|(b, _)| *b).collect() });
@@ -946,11 +953,6 @@ impl GpuFlow {
         if flow.radiates() {
             return Err(Error::Invalid(
                 "radiation from conducting solids is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),
-            ));
-        }
-        if flow.trace_bulk_one() {
-            return Err(Error::Invalid(
-                "not supported yet: the hybrid collision's trace relaxation (`trace_bulk_one`) on the GPU: solve on the CPU (`backend: \"cpu\"`)".into(),
             ));
         }
         let sa_faces = match flow.spalart_allmaras() {
@@ -1544,6 +1546,7 @@ impl GpuFlow {
             hrr: hybrid.is_some(),
             vreman: flow.vreman() > 0.0,
             dynamic: hybrid == Some(HrrSigma::Dynamic),
+            trace_bulk: flow.trace_bulk_one() && flow.hybrid_sigma().is_some(),
             zones: zones.zones > 0,
             interpolated,
             sa: sa_faces.is_some(),
@@ -2303,6 +2306,62 @@ fn readback_size(size: u64, source: u64) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    /// `lbm.wgsl` parses and validates with naga (wgpu's own front end and validator) with the override constants the
+    /// collision variants are compiled with (`pipeline_constants`, the same list the device gets), so a WGSL error
+    /// or an override left without a value shows up without a device.
+    #[test]
+    fn lbm_wgsl_validates_for_the_collision_variants() {
+        use super::{SHADER, Variant, pipeline_constants};
+        use wgpu::naga::{
+            back::{PipelineConstants, pipeline_constants::process_overrides},
+            front::wgsl,
+            valid::{Capabilities, ValidationFlags, Validator},
+        };
+        let validate = |variant: Variant| -> std::result::Result<(), String> {
+            let module = wgsl::parse_str(SHADER).map_err(|e| e.emit_to_string(SHADER))?;
+            let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module).map_err(|e| format!("{e:?}"))?;
+            let mut constants = PipelineConstants::default();
+            for (k, v) in pipeline_constants(variant) {
+                constants.insert(k.to_string(), v);
+            }
+            let (module, _) = process_overrides(&module, &info, None, &constants).map_err(|e| format!("{e:?}"))?;
+            Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module).map_err(|e| format!("{e:?}"))?;
+            Ok(())
+        };
+        let plain = Variant {
+            aa: false,
+            inlets: false,
+            regularized: false,
+            mrt: false,
+            smagorinsky: false,
+            wall_model: false,
+            van_driest: false,
+            wall_bounce: false,
+            on_node: false,
+            hrr: false,
+            vreman: false,
+            dynamic: false,
+            trace_bulk: false,
+            zones: false,
+            interpolated: false,
+            sa: false,
+            sa_law: false,
+            layer_rows: 0,
+            quadratic: false,
+        };
+        let hybrid = Variant { regularized: true, hrr: true, ..plain };
+        let cases = [
+            ("defaults", plain),
+            ("hybrid", hybrid),
+            ("hybrid with the trace relaxation", Variant { trace_bulk: true, ..hybrid }),
+            ("hybrid at σ 1 (regularised kernel, HRR off) with the trace relaxation", Variant { regularized: true, trace_bulk: true, ..plain }),
+            ("hybrid, trace relaxation, dynamic σ", Variant { dynamic: true, vreman: true, trace_bulk: true, ..hybrid }),
+            ("hybrid, on-node wall and trace relaxation", Variant { on_node: true, trace_bulk: true, ..hybrid }),
+        ];
+        let failures: Vec<String> = cases.iter().filter_map(|(name, v)| validate(*v).err().map(|e| format!("{name}: {e}"))).collect();
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
     /// A readback never copies past its source (a padding to 16 bytes overran a 3-float buffer, 12 bytes, and
     /// wgpu's validation panicked), keeps the copy alignment, reads nothing from an empty buffer, and refuses to
     /// read more than the buffer holds.
