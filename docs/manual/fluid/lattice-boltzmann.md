@@ -161,7 +161,7 @@ The setup refuses a step, naming the numbers and what to change, when:
 | Check | Limit | Reason |
 |---|---|---|
 | Lattice Mach number U Δt/(Δx c_s) | at most 0.3 | The scheme is weakly compressible and loses stability towards Ma ≈ 0.5. |
-| τ⁺ | at least 0.505; 0.5001 with a turbulence model | The stable velocity range shrinks to nothing as τ → ½ (Lallemand & Luo 2000). The message gives the cell Reynolds number and suggests refining, a longer time step or a turbulence model. |
+| τ⁺ | at least 0.505; 0.5001 with a turbulence model (0.50354 with `"mrt"`) | The stable velocity range shrinks to nothing as τ → ½ (Lallemand & Luo 2000). The message gives the cell Reynolds number and suggests refining, a longer time step or a turbulence model. |
 | Lattice acceleration a Δt²/Δx | at most 0.01 | |
 | Thermal τ_T | at least 0.505 | With heat; the message gives the cell Péclet number. |
 | Cells across an inlet or outlet face | at least 2 | |

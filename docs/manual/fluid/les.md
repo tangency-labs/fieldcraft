@@ -8,15 +8,16 @@ run, and the wall is **modelled** instead: the first cell lies in the log layer,
 wall supplies what the grid cannot resolve.
 
 FieldCraft has two wall models. Each is named by the authors of the paper it is written from, and
-each is first reproduced against that paper's own case, then documented here with its
-measurements.
+each is documented here with its measurements against that paper's own case. There is no
+valid wall-modelled run yet: the MRT runs below are void (below the collision's stability bound), and the
+hybrid collision does not reproduce Han, Ooka & Kikumoto.
 
 | Wall model | `wall_model` | What it imposes | Status |
 |---|---|---|---|
-| [Malaspinas & Sagaut (2014)](#malaspinas--sagaut-2014) | `"musker"` | a velocity on the first fluid cell | **Reproduced** at Re_τ 950. The drag the flow carries is 14–17 % below Dean's correlation. |
-| [Han, Ooka & Kikumoto (2021)](#han-ooka--kikumoto-2021) | `"spalding_bounce"` | a stress on the wall | **Not reproduced** at A20, on the paper's collision or on the hybrid one. |
+| [Malaspinas & Sagaut (2014)](#malaspinas--sagaut-2014) | `"musker"` | a velocity on the first fluid cell | **No valid run.** Its Re_τ 950 reproduction ran the MRT collision below its stability bound and is void. |
+| [Han, Ooka & Kikumoto (2021)](#han-ooka--kikumoto-2021) | `"spalding_bounce"` | a stress on the wall | **Not reproduced** at A20 on the hybrid collision; the run on the paper's MRT collision is void. |
 
-Neither passes the drag gate yet (the carried skin friction within 5 % of the DNS), so neither is
+Neither has passed the drag gate (the carried skin friction within 5 % of the DNS), so neither is
 recommended for engineering skin friction or pressure drop. [Compared](#the-two-wall-models-compared)
 below.
 
@@ -29,22 +30,24 @@ below.
 
 ## Synopsis
 
-Malaspinas & Sagaut's wall model, on the collision it is validated with:
+Malaspinas & Sagaut's wall model:
 
 ```json
 {"name": "Flow", "procedure": {
   "type": "fluid", "domain": "Channel", "end_time": 2.0,
-  "collision": "mrt",
+  "collision": "hrr",
   "turbulence": {"type": "smagorinsky", "constant": 0.1, "wall_model": "musker"}
 }}
 ```
 
-Han, Ooka & Kikumoto's wall-function bounce, as their paper sets it up:
+Han, Ooka & Kikumoto's wall-function bounce:
 
 ```json
-"collision": "mrt",
+"collision": "hrr",
 "turbulence": {"type": "smagorinsky", "constant": 0.1, "van_driest": 26, "wall_model": "spalding_bounce"}
 ```
+
+Both papers run the MRT collision. At the relaxation times a wall-modelled grid needs (τ⁺ 0.5001–0.5005) FieldCraft's MRT is below its [stability bound](collision.md#the-stability-bound) and is refused, so the examples use the hybrid collision.
 
 `model.step.create` takes these fields. `solve.fluid` runs the step with `"backend": "cpu"` or
 `"backend": "gpu"`.
@@ -53,16 +56,16 @@ Han, Ooka & Kikumoto's wall-function bounce, as their paper sets it up:
 
 | Field | Value | Meaning |
 |---|---|---|
-| `turbulence.type` | `"smagorinsky"`, `"vreman"` | The subgrid model ([Turbulence](turbulence.md)). Malaspinas & Sagaut's wall model is validated with Smagorinsky's only. |
+| `turbulence.type` | `"smagorinsky"`, `"vreman"` | The subgrid model ([Turbulence](turbulence.md)). Malaspinas & Sagaut's wall model was run with Smagorinsky's only. |
 | `turbulence.constant` | 0.08–0.1 | Smagorinsky's C. Malaspinas & Sagaut use 0.08, Han, Ooka & Kikumoto 0.1. |
 | `turbulence.wall_model` | `"musker"` | Malaspinas & Sagaut: rebuild the cells next to no-slip walls from Musker's profile. |
 | | `"spalding_bounce"` | Han, Ooka & Kikumoto's eq. 14, on-node: the outermost cell layer at each plane no-slip box face is the wall. The box is periodic along the walls; no obstacles, moving walls or heat. |
 | | `"spalding_bounce_halfway"` | Disabled because its wall-row checkerboard grows. Files preserve this selection when loaded, but solves refuse it at setup. Select a supported treatment explicitly; the on-node variant changes the wall location. |
 | | omitted | The bounce-back alone. |
 | `turbulence.van_driest` | 26 or omit | Van Driest's damping. Han, Ooka & Kikumoto use it with their wall model; Malaspinas & Sagaut's model replaces it, so don't combine the two. |
-| `collision` | `"mrt"`, `"hrr"` | Malaspinas & Sagaut is validated with `"mrt"` (d'Humières et al. 2002). The wall-function bounce was run with `"mrt"` and `"hrr"` ([Collision operators](collision.md)). |
+| `collision` | `"hrr"`, `"regularized"` | The papers' `"mrt"` (d'Humières et al. 2002) is refused below τ⁺ = 0.50354 ([Collision operators](collision.md#the-stability-bound)), which is where a wall-modelled grid puts it. |
 
-With a wall model the fluid's own relaxation time may go down to τ = 0.5001. A grid that needs a
+With a wall model the fluid's own relaxation time may go down to τ = 0.5001 (0.50354 with `"mrt"`). A grid that needs a
 lower τ is refused with the value it needs.
 
 ## When to use it
@@ -91,17 +94,18 @@ Malaspinas & Sagaut's halfway wall, one cell with Han, Ooka & Kikumoto's on-node
 | The first cell | rebuilt: equilibrium plus regularised stress, relaxed with a mixing-length ν_t | the boundary node does not collide: bounce-back plus the stress on its diagonals |
 | Drag the flow carries | what the rebuilt cell carries; the model's u_τ is 8–11 % above it | τ_w exactly, to round-off (7 × 10⁻¹⁵) |
 | Walls | any no-slip wall: exact on plane walls, within a fraction of a cell on curved ones | plane box faces only |
-| Reproduced | yes, Re_τ 950, E within 8 % of the paper on three grids | no, at A20 on MRT or the hybrid collision |
-| Carried C_f against Dean | −14 to −17 % (Re_τ 950, MRT) | +53 % (MRT), −52 to −55 % (hybrid) at Re_τ 640 |
+| Reproduced | no valid run: the Re_τ 950 runs are void (MRT below its bound) | no, at A20 on the hybrid collision; the MRT run is void |
+| Carried C_f against Dean | no valid run | −52 to −55 % (hybrid) at Re_τ 640 |
 
 Imposing the stress closes the gap between the model and the drag that Malaspinas & Sagaut leave
 open: the wall takes exactly what Spalding's law gives for the sampled velocity. It does not make
-the drag right. That now depends on the velocity at x₁, which the LES above the wall sets, and the
-LES gets it wrong in both directions: MRT at C_s 0.1 mixes the channel into a plug and carries
-too much drag, the hybrid collision's own dissipation slows the near-wall exchange and carries
-half the right drag. Both models still face the log-layer mismatch of wall-modelled LES (Kawai &
-Larsson 2012), which samples the wall model's input in the first cells, where the LES is least
-accurate.
+the drag right. That now depends on the velocity at x₁, which the LES above the wall sets. On the hybrid
+collision the first three to four rows cannot carry the stress: the eddies there are smaller than the cell, the
+resolved stress is a third of what is needed and Smagorinsky's ν_t is ten times too small, so the mean velocity
+gains 15 u_τ over rows 1–5 where the log law gains 4.6, and the wall carries half the right drag. Taking the
+hybrid collision's filter away (σ 0.99 → 0.999 → 1) does not change that (U_b⁺ 26.8, 27.4, 27.6). This is the
+log-layer mismatch of wall-modelled LES (Kawai & Larsson 2012) at full size. The MRT runs say nothing about
+either wall model: they were below the collision's stability bound.
 
 ## Malaspinas & Sagaut (2014)
 
@@ -137,7 +141,7 @@ moments, each relaxed at its own rate:
 | the five stresses | 1 / (3 (ν + ν_t) + ½), per cell |
 
 Guo's forcing enters through the moments. The rates are those Malaspinas & Sagaut use, from
-d'Humières et al.'s stability analysis.
+d'Humières et al.'s stability analysis. That analysis is for d'Humières et al.'s optimised equilibria; with the equilibria used here the collision is linearly unstable below τ⁺ = 0.50354 ([Collision operators](collision.md#the-stability-bound)), and a step below it is refused. Every channel in this section ran below it.
 
 **Walls.** The wall distance and normal come from each wall cell's bounce-back links: exact for
 plane walls, and within a fraction of a cell for curved ones. A moving wall is taken relative to its
@@ -168,6 +172,13 @@ channel the total mass drifts by 1e-7 to 1e-5 over the first 40 steps.
 
 ### Verification: the paper's channel at Re_τ 950
 
+> **Void (#1057).** These runs used the MRT collision at lattice viscosities of 5.4 × 10⁻⁵ (N = 10),
+> 1.08 × 10⁻⁴ (N = 20) and 1.62 × 10⁻⁴ (N = 30), 22, 11 and 7 times below its stability bound of 1.18 × 10⁻³
+> ([Collision operators](collision.md#the-stability-bound)). At those viscosities the collision alone, at rest
+> and without walls, fills a periodic box with isotropic noise of 1.5–1.8 u_τ rms per component. The numbers
+> below are kept as the record of what was run; none is a reproduction, a pass or a property of the wall model,
+> and `solve.fluid` now refuses these set-ups. A rerun needs a collision that is stable there.
+
 The paper's channel (its §5), run exactly as it sets it up and compared on its own measures.
 
 | Item | Setting (as printed in the paper) |
@@ -190,8 +201,7 @@ Dean, and the profile error E within 15 % of the paper's Table 1 on every grid.
 | 20 | 0.99 | 1.07 (−7.5 %) | +0.8 % | −13.7 % | 1.081 |
 | 30 | 0.87 | 0.83 (+4.8 %) | +3.5 % | −14.1 % | 1.098 |
 
-**The reproduction passes:** E within 8 % of the paper on every grid, and C_f by the model's u_τ
-within its 4.22 %.
+Recorded as passing at the time; void, as above.
 
 ![C_f against Dean's correlation, by the wall model's u_τ and by the drag the flow carries](../../media/les/cf-950.svg)
 
@@ -213,12 +223,11 @@ the DNS.
 **The drag the flow carries.** The paper reports C_f from the friction velocity the wall model
 infers at x₂. The flow carries less: the body force that holds the bulk velocity, which equals the
 drag on the walls at steady state, gives a C_f 14–17 % below Dean's correlation on every grid. The
-model's u_τ is 8–11 % above the carried one. This is a property of the method: it imposes a
+model's u_τ is 8–11 % above the carried one. This was read as a property of the method (it imposes a
 velocity on x₁, and the stress the flow then carries comes from the rebuilt populations and the
-bounce-back on x₁'s wall links, which nothing makes equal to ρ u_τ². In the velocity profile the
+bounce-back on x₁'s wall links, which nothing makes equal to ρ u_τ²); with the collision unstable it is not established. In the velocity profile the
 gap shows as the whole curve lying about 1–2.5 U⁺ above the DNS once it is scaled by the carried
-u_τ. `solve.fluid` reports the carried drag, so expect skin friction and pressure drop about 15 %
-low on these grids.
+u_τ. `solve.fluid` reports the carried drag, so the 15 % is not a figure to plan with.
 
 **Reported velocity of the wall cells.** Before #755 the velocity field the solver reported came
 from x₁'s populations as streamed, before the rebuild: 0.72–0.79 of the velocity the wall model
@@ -226,6 +235,10 @@ imposes in this channel. The reported field now gives each rebuilt cell its impo
 the CPU and the GPU. The flow itself is unchanged.
 
 ### Verification: Lee & Moser at Re_τ 1000 and 2000
+
+> **Void (#1057).** MRT at lattice viscosities of 5.1 × 10⁻⁵ to 1.53 × 10⁻⁴ (Re_τ 1000) and 4.6 × 10⁻⁵ to
+> 6.9 × 10⁻⁵ (Re_τ 2000): 8 to 26 times below the stability bound. Kept as the record, as above; the agreement
+> at Re_τ 2000, N = 30 is not a result.
 
 Before the reproduction, the wall model ran at Re_τ 1000 and 2000 against Lee & Moser's DNS, with
 the bulk held at Dean's correlation, Smagorinsky's C 0.08 at Re_τ 1000 and 0.1 at Re_τ 2000, and
@@ -252,6 +265,9 @@ Re_τ 2000 at N = 30 is the one grid where the carried drag lands within 5 %; ac
 FIELDCRAFT_PAPER_CHANNEL=950 cargo test --release -p fieldcraft-lbm-gpu --test verification \
   -- --ignored study_malaspinas_and_sagaut_s_channel_against_lee_and_moser --nocapture
 ```
+
+These runs use the MRT collision at the paper's relaxation times, which `solve.fluid` now refuses (below its
+[stability bound](collision.md#the-stability-bound)); the command is kept as the record of how they were run.
 
 `FIELDCRAFT_PAPER_CHANNEL=950:20` runs one grid; `1` runs the Re_τ 1000 and 2000 study. The runs
 take 2 minutes (N = 10) to an hour (N = 30) each on a GB10.
@@ -294,6 +310,10 @@ measurements below are diagnostic evidence, not a supported solve configuration.
 
 ### Verification: the paper's channel on MRT
 
+> **Void (#1057).** A20 runs at a lattice viscosity of 5.0 × 10⁻⁵ (τ⁺ 0.50015), 24 times below the MRT's
+> stability bound; A40 lower still. Every MRT row of this section, the sensitivity table included, is the
+> collision's own instability and not the channel's turbulence. Kept as the record.
+
 Their channel (Fluid Dyn. Res. 53:045506, 2021) as the paper sets it up: 2πD × 2D × πD, periodic
 in x and z, MRT with d'Humières et al.'s rates, Smagorinsky C_s 0.1 with Van Driest's damping
 (A⁺ 26), driven by the constant pressure gradient of u_τ = 1, at their Mach numbers. A20 (20
@@ -310,8 +330,7 @@ f32 unless stated; Hoyas & Jiménez's U_b⁺ is about 21.7.
 | WFB, halfway variant, CPU f64 | 9.54 | +217 % | 0.500 (0.057) | −2.66 (6.4) | 1.03 |
 
 A40 with the halfway variant went unstable at 93 δ/u_τ (U_b⁺ ≈ 6.9 throughout); A40 BB was
-stopped at 52.5 δ/u_τ, U_b⁺ 7.88 and falling. **Not reproduced.** CPU and GPU agree, and the
-walls carry the body force, so neither the port nor the momentum budget is the cause.
+stopped at 52.5 δ/u_τ, U_b⁺ 7.88 and falling. **Void.** CPU and GPU agree and the walls carry the body force: the port and the momentum budget are sound, and the collision is the cause (below).
 
 ![U_b⁺ over time in A20 with bounce-back: MRT at C_s 0.1 falls from 19 to 9.4, more slowly with the optimised equilibria; C_s 0.2 levels off near 20.7, against Hoyas & Jiménez's 21.7](../../media/les/han-bulk.svg)
 
@@ -330,7 +349,7 @@ k_x δ ≈ 43 (the cutoff is 63). That band mixes the channel into a plug, which
 Van Driest's y is measured from the wall point; the energy mode's rate is 1.19, not near 2;
 forcing and units are covered by the MRT Poiseuille tests.
 
-**Sensitivity** (A20, BB unless stated, 10–35 δ/u_τ averaged, diagnostic switches not merged):
+**Sensitivity** (A20, BB unless stated, 10–35 δ/u_τ averaged, diagnostic switches not merged; the MRT rows are void):
 
 | A20, 10–35 δ/u_τ | U_b⁺ | ε whole | b | C_f vs Dean |
 |---|---|---|---|---|
@@ -347,15 +366,28 @@ forcing and units are covered by the MRT Poiseuille tests.
 Tuning the model's constant until the bulk fits is not a reproduction, and none of these rows
 passes on both measures.
 
-**Without walls the scheme dissipates as it should** (`study_taylor_green_vortex_dissipation`, 64³,
-lattice speed 0.05): MRT with C_s 0.1 peaks at −dk/dt 0.0121 (t 8.4) at Re 1600 and 0.0122 (t 8.1)
-at Re 12000, against the spectral DNS's 0.0127 near t 9. The pile-up is driven at the walls.
+**Cause: the collision is linearly unstable at this viscosity, at rest, without walls.** A von Neumann analysis
+of the MRT collision ([Collision operators](collision.md#the-stability-bound)) finds a band of waves growing by
+7.9 × 10⁻³ per step at A20's lattice viscosity of 5 × 10⁻⁵, in fluid at rest; the bound is 1.18 × 10⁻³. A
+periodic 12³ box at rest, with no force and no subgrid model, grows from 10⁻⁹ at that rate and overflows by step
+3000, where a single relaxation time decays. With Smagorinsky's model at C_s 0.1 a 24³ box at rest saturates by
+step 4000 at u′, v′, w′ rms of 4.4–4.8 u_τ (A20's u_τ), isotropic, with ⟨ν_t⟩/ν ≈ 8.5. The channel shows that
+state: u′ ≈ v′ ≈ w′ ≈ 5 u_τ on every row from y⁺ 64 to the centreline, already at 1–3 δ/u_τ, and its resolved
+field dissipates 28 times what the pressure gradient feeds it. The band in the spectrum, the plug profile and the
+drag are the saturated instability, not turbulence, and none of it is driven at the walls.
 
-**Cause.** The documented failure of this MRT in under-resolved channels: Nathen et al. (2018),
-with the same rates, find an unphysical state in channels at Re_τ 395 and 590 (spurious
-oscillations, energy moving to high wavenumbers, no mesh convergence) where BGK is fine. Han,
-Ooka & Kikumoto's clean MRT result at C_s 0.1 is not explained by anything they publish (the
-2021 paper and their 2019 LBM-LES paper, IJHMT 130:700, read).
+Three earlier readings on this page were wrong and are withdrawn. "The pile-up is driven at the walls": it grows
+at rest in a periodic box. The Taylor–Green control (`study_taylor_green_vortex_dissipation`, 64³, MRT with
+C_s 0.1, Re 1600 and 12000) "dissipates as it should": those runs were at lattice viscosities of 3.2 × 10⁻⁴ and
+4.2 × 10⁻⁵, below the bound too, and a few thousand steps from an f64 start are over before a wave growing by
+7 × 10⁻³ per step shows; they are void as a control. "The documented failure of this MRT in under-resolved
+channels (Nathen et al. 2018)": the cause is the viscosity bound of the collision itself, not the channel's
+resolution. Smagorinsky's model cannot hold it: its ν_t in lattice units scales with the Mach number
+(C² u_τ/(κ y) ≈ 8 × 10⁻⁶ at A20) and the bound does not.
+
+Han, Ooka & Kikumoto's clean MRT fields at lattice viscosities of 5 × 10⁻⁵ and 3.3 × 10⁻⁵ cannot come from an
+MRT with the published d'Humières rates and these equilibria. The paper gives neither its rates nor its damping
+constant, so its result cannot be reproduced from what is published.
 
 ### Verification: the odd–even mode of the wall rows
 
@@ -366,7 +398,7 @@ rows, about 3 × 10⁻⁵ per step, until the run broke. A numerical linear anal
 a body force holding the laminar base steady, and a checkerboard of 10⁻⁶ in u_x added to the
 first fluid row at each wall. The growth rate per step is the least-squares slope of ½ ln E of the
 mode's energy over the second half of 20 000 steps, shown as the range over the regularised,
-hybrid (σ 0.99), MRT and TRT collisions and both aimed u⁺ (the first node's u⁺ in brackets).
+hybrid (σ 0.99), MRT and TRT collisions and both aimed u⁺ (the first node's u⁺ in brackets). The MRT entries at τ̄ 0.50015 and 0.5015 were below its stability bound; the heavy test no longer runs MRT there, and the ranges of those two rows as recorded here still include them until the sweep is rerun.
 
 | τ̄ | eq. 14, on-node | halfway variant |
 |---|---|---|
@@ -386,7 +418,7 @@ error at solve setup rather than silently moving the wall to an on-node position
 ### Verification: the paper's channel on the hybrid collision
 
 The same channel on the hybrid recursive regularised collision (Jacob, Malaspinas & Sagaut 2018),
-a labelled change of collision: it holds the turbulent channel where MRT piles up energy.
+a labelled change of collision: it is not unstable at rest at this viscosity, as MRT is.
 
 | set-up | collision | subgrid model |
 |---|---|---|
@@ -411,12 +443,10 @@ collision went unstable at 39 δ/u_τ (fixed σ) and 113 δ/u_τ (dynamic σ).
 
 **Where the dissipation sits.** With σ 0.99 the hybrid collision's own viscosity ν_s/ν at
 k_x Δx 1.5–2.1 is about 10–18 at y⁺ 48 and on the centreline, against the subgrid ⟨ν_t⟩/ν of
-0.2–1.4: the collision's filter, not Vreman's or Smagorinsky's model, damps the band that MRT
-piled up. Dynamic σ drives σ to 0.006–0.007 with eq. 14 and 0.57–0.74 with BB.
+0.2–1.4: the collision's filter dissipates more than Vreman's or Smagorinsky's model there. It is not what sets the drag: with the filter weakened and removed (σ 0.999, 1) U_b⁺ goes 26.8 → 27.4 → 27.6. Dynamic σ drives σ to 0.006–0.007 with eq. 14 and 0.57–0.74 with BB.
 
 **Result: not reproduced at A20, with their own eq. 14.** No set-up meets the gate on any wall.
-MRT at C_s 0.1 carries too much drag, the hybrid collision with eq. 14 too little (C_f about half
-Dean's, b two to three times theirs); the paper's result lies between them. BB on the hybrid
+The hybrid collision with eq. 14 carries too little drag (C_f about half Dean's, b two to three times theirs); the MRT run is void. BB on the hybrid
 collision with Vreman's model comes nearest the DNS bulk (C_f +5 %), but it is a no-slip run at
 y⁺ 32, not the paper's wall model, and its ε is three times theirs. A40 was not run.
 
@@ -431,7 +461,7 @@ FIELDCRAFT_STUDY_RECORDS=<dir> \
 `FIELDCRAFT_HAN_SETUP` takes a comma-separated list or `all` (`paper` when unset).
 WFB runs use the on-node `spalding_bounce` model. `FIELDCRAFT_HAN_START`
 and `FIELDCRAFT_HAN_END` (δ/u_τ, default 20 and 150) shorten a smoke test, which is not a result;
-`FIELDCRAFT_HAN_CPU=1` runs on the CPU in f64. Every run records
+`FIELDCRAFT_HAN_CPU=1` runs on the CPU in f64. The `paper` set-up uses the MRT collision at A20's relaxation time, which `solve.fluid` now refuses (below its [stability bound](collision.md#the-stability-bound)); the hybrid set-ups are unaffected. Every run records
 (`<dir>/han-<setup>-<case>-<wall>.json`), from a velocity readback every 0.05 δ/u_τ:
 
 - per row of the folded half channel: U⁺, u′, v′, w′ rms⁺, the shear budget −⟨u′v′⟩⁺ + viscous +
@@ -447,10 +477,9 @@ and `FIELDCRAFT_HAN_END` (δ/u_τ, default 20 and 150) shorten a smoke test, whi
 
 ## Limitations
 
-- **No wall model passes the drag gate.** Malaspinas & Sagaut carry 14–17 % less wall drag than
-  Dean's correlation at Re_τ 950 on 10 to 30 cells per δ, and 9–15 % off either way at Re_τ 1000
-  and 2000, except at Re_τ 2000 with 30 cells per δ (within 2 %). Han, Ooka & Kikumoto is not
-  reproduced: +53 % on MRT, about −53 % on the hybrid collision.
+- **No wall model has a valid passing run.** Every Malaspinas & Sagaut channel recorded here ran the MRT
+  collision below its stability bound and is void; the model has not been run on a collision that is stable
+  there. Han, Ooka & Kikumoto is not reproduced on the hybrid collision (C_f about −53 %); its MRT run is void.
 - **Equilibrium boundary layers.** Both laws of the wall assume an attached, equilibrium boundary
   layer. Separation, reattachment and strong pressure gradients are not validated.
 - **Smooth walls only.** No roughness.
@@ -475,6 +504,7 @@ and `FIELDCRAFT_HAN_END` (δ/u_τ, default 20 and 150) shorten a smoke test, whi
 - D. d'Humières, I. Ginzburg, M. Krafczyk, P. Lallemand, L.-S. Luo. *Multiple-relaxation-time
   lattice Boltzmann models in three dimensions.* Phil. Trans. R. Soc. Lond. A 360:437–451, 2002.
   doi:[10.1098/rsta.2001.0955](https://doi.org/10.1098/rsta.2001.0955)
+- P. Lallemand, L.-S. Luo. *Theory of the lattice Boltzmann method: dispersion, dissipation, isotropy, Galilean invariance, and stability.* Phys. Rev. E 61:6546–6562, 2000. doi:[10.1103/PhysRevE.61.6546](https://doi.org/10.1103/PhysRevE.61.6546)
 - P. Nathen, D. Gaudlitz, M. J. Krause, N. A. Adams. *On the stability and accuracy of the BGK,
   MRT and RLB Boltzmann schemes for the simulation of turbulent flows.* Commun. Comput. Phys.
   23:846–876, 2018. doi:[10.4208/cicp.OA-2016-0229](https://doi.org/10.4208/cicp.OA-2016-0229)
@@ -517,7 +547,7 @@ drag reference. Displayed wall velocities can contain reconstruction targets;
 they do not measure the momentum stored in the populations.
 
 The original Re_τ 950 N10 case still fails carried-drag validation: requested/
-carried stress is about 1.245, and carried C_f is 0.0043803 versus DNS 0.00509.
+carried stress is about 1.245, and carried C_f is 0.0043803 versus DNS 0.00509. That case ran MRT below its stability bound, so the numbers are a record of that run and not a measurement of the wall model.
 Reproducing the paper's inferred C_f or profile measure does not establish accurate
 drag. The diagnostics do not repair the wall model, and completion of a study
 does not certify physical validation. See the

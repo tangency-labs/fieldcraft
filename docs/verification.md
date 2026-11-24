@@ -242,7 +242,12 @@ Observed orders (L2, L∞): 1.937, 1.941 (96→144) and 1.982, 1.996 (144→216)
 closer to MKM only because their discretisation error has the opposite sign to the model's.
 The heavy study took 245 s.
 
-### Wall-modelled LES: Malaspinas & Sagaut reproduced at Re_τ 950
+### Wall-modelled LES: Malaspinas & Sagaut at Re_τ 950 (void)
+
+**Void (#1057).** The MRT collision is linearly unstable at rest below a lattice viscosity of 1.1801 × 10⁻³
+(τ⁺ 0.50354; [Collision operators](manual/fluid/collision.md#the-stability-bound),
+`crates/lbm/tests/mrt_stability.rs`). These runs were at 5.4 × 10⁻⁵, 1.08 × 10⁻⁴ and 1.62 × 10⁻⁴ (N 10, 20, 30):
+22, 11 and 7 times below it. `solve.fluid` now refuses them. The table is kept as the record of what was run.
 
 Malaspinas & Sagaut's channel run exactly as their paper sets it up (Re_τ 950, Re_m 37 042, N 10,
 20 and 30, Smagorinsky C 0.08, MRT, their forcing), against the paper's own measures and Hoyas &
@@ -257,8 +262,7 @@ u_τ within its 4.22 % of Dean.
 | 20 | 0.99 (1.07) | +0.8 % | −13.7 % |
 | 30 | 0.87 (0.83) | +3.5 % | −14.1 % |
 
-**Passes** on the paper's measures. The drag the flow carries is 14–17 % low on every grid, a
-property of the published method that its C_f (from the model's u_τ) does not show.
+Recorded as passing on the paper's measures at the time; void, as above. The 14–17 % low carried drag is not established as a property of the method.
 
 ### Requested, applied and carried wall stress
 
@@ -281,7 +285,7 @@ momentum fluxes and are outside this diagnostic's scope.
 Carried drag is compared independently with DNS at 5%; requested/carried stress
 has a proposed 1% agreement gate. The original Re_τ 950 N10 audit fails both:
 requested/carried ≈1.245, carried C_f 0.0043803 versus DNS 0.00509 (−16.75% versus
-Dean, reported separately). The fast frozen-data regression
+Dean, reported separately). That audit's run used MRT below its stability bound (above), so the two numbers are frozen data of that run, not a measurement of the wall model; the test checks the classification of frozen data only. The fast frozen-data regression
 `measured_n10_discrepancy_remains_a_failed_validation` asserts both failures and
 fails if either starts passing; a changed validator must not silently accept
 this known discrepancy.
@@ -331,24 +335,34 @@ fixtures. The synthetic unit tests reject alternating, lag-2, drifting and pair-
 
 Han, Ooka & Kikumoto's channel (Fluid Dyn. Res. 53:045506, 2021) at A20 (Re_τ 640), with their
 wall-function bounce (eq. 14, on-node) and with plain bounce-back, on the paper's MRT collision
-at C_s 0.1 and on the hybrid recursive regularised collision. Gate fixed before the runs: ε_u⁺
+at C_s 0.1 (void: below the collision's stability bound) and on the hybrid recursive regularised collision. Gate fixed before the runs: ε_u⁺
 over the whole channel and the log-law intercept b within 15 % of their Tables 2 and 3. Recorded
-on Linux aarch64 (NVIDIA GB10), GPU, f32. Set-up, the flow's diagnosis (the MRT pile-up band,
-what was ruled out, the Taylor–Green control), the odd–even mode of the wall rows, figures and
+on Linux aarch64 (NVIDIA GB10), GPU, f32. Set-up, the flow's diagnosis (the MRT collision's instability at this viscosity),
+the odd–even mode of the wall rows, figures and
 how to rerun: [Large-eddy simulation](manual/fluid/les.md).
 
 | A20, wall-function bounce | U_b⁺ | C_f vs Dean | ε whole (paper) | b (paper) |
 |---|---|---|---|---|
-| MRT, Smagorinsky C_s 0.1, Van Driest (the paper's) | 14.44 | +53 % | 0.248 (0.057) | 1.92 (6.4) |
+| MRT, Smagorinsky C_s 0.1, Van Driest (the paper's): **void**, lattice viscosity 5.0 × 10⁻⁵, 24 times below the bound | 14.44 | +53 % | 0.248 (0.057) | 1.92 (6.4) |
 | hybrid σ 0.99, Vreman C_s 0.18 | 28.77 | −54 % | 0.535 (0.057) | 15.23 (6.4) |
 | hybrid σ 0.99, Smagorinsky C_s 0.1, Van Driest | 27.94 | −52 % | 0.491 (0.057) | 14.30 (6.4) |
 | hybrid, dynamic σ, Vreman C_s 0.18 | 28.94 | −55 % | 0.607 (0.057) | 9.04 (6.4) |
 
-**Not reproduced**, on either collision. MRT at C_s 0.1 piles energy up at the grid scale and
-carries too much drag, the documented failure of this MRT in under-resolved channels (Nathen et
-al. 2018); the hybrid collision carries about half the right drag. A40 was not run.
+**Not reproduced** on the hybrid collision, which carries about half the right drag: the first rows above the
+wall cannot carry the stress (the log-layer mismatch). **The MRT row is void**: at A20's lattice viscosity the
+MRT collision is linearly unstable at rest, without walls (growth 7.9 × 10⁻³ per step), and the channel's
+u′ ≈ v′ ≈ w′ ≈ 5 u_τ is that instability's saturated state, which a periodic box at rest reaches too
+(4.4–4.8 u_τ). The earlier reading, "driven at the walls" and "the documented failure in under-resolved
+channels", is withdrawn. The paper states neither its MRT rates nor its damping constant, so its result is not
+reproducible from what is published. A40 was not run.
 
 ### Wall-modelled LES: Malaspinas & Sagaut against Lee & Moser and Dean (#664, #749)
+
+**Void (#1057).** Every run of this section used the MRT collision below its stability bound (lattice viscosity
+1.1801 × 10⁻³): Re_τ 1000 at 5.1 × 10⁻⁵, 1.02 × 10⁻⁴ and 1.53 × 10⁻⁴ (10, 20, 30 cells per δ); Re_τ 2000 at
+4.6 × 10⁻⁵ and 6.9 × 10⁻⁵ (20, 30); Re_τ 550 at 1.0 × 10⁻⁴ to 1.8 × 10⁻⁴. They are 7 to 26 times below it. The
+tables are kept as the record of what was run; none of the numbers, the Re_τ 2000, 30-cell agreement included,
+is a result, and the Kawai & Larsson reading of the 9–15 % is not established.
 
 Malaspinas & Sagaut's wall model with Musker's profile and the multiple-relaxation-time collision
 ([Large-eddy simulation](manual/fluid/les.md)), on the GPU in f32. Periodic channel, half-height δ, with the flow rate
@@ -363,6 +377,9 @@ the runs: C_f and the log layer's mean velocity within 5 % of Lee & Moser.
 FIELDCRAFT_PAPER_CHANNEL=1 cargo test --release -p fieldcraft-lbm-gpu --test verification \
   -- --ignored study_malaspinas_and_sagaut_s_channel_against_lee_and_moser --nocapture
 ```
+
+This study uses the MRT collision at the paper's relaxation times, which `solve.fluid` now refuses (below its
+[stability bound](manual/fluid/collision.md#the-stability-bound)); the command records how the void runs were made.
 
 Two minutes to an hour per grid. Recorded on Linux aarch64 (NVIDIA GB10), PR #749. C_f by the
 force balance is the drag the flow carries, which equals the body force at steady state and is

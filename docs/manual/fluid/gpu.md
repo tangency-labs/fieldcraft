@@ -298,7 +298,7 @@ density 10⁻⁵, the largest ν_t/ν 10⁻³ of itself, wall drag 10⁻³. Meas
 |---|---|---|---|
 | `hrr` σ 0.9 | 7.9e-7 | 1.2e-7 | — |
 | `hrr` σ 0.9 + Smagorinsky 0.1 | 4.4e-6 | 1.4e-7 | 1.1e-4 |
-| Vreman 0.18 with `trt` / `regularized` / `mrt` / `hrr` | 3.0e-6 / 6.9e-6 / 3.8e-7 / 4.4e-6 | 6.3e-7 / 3.4e-7 / 7.4e-8 / 1.4e-7 | 3.1e-5 / 6.0e-6 / 3.3e-5 / 5.2e-6 |
+| Vreman 0.18 with `trt` / `regularized` / `hrr` | 3.0e-6 / 6.9e-6 / 4.4e-6 | 6.3e-7 / 3.4e-7 / 1.4e-7 | 3.1e-5 / 6.0e-6 / 5.2e-6 |
 | dynamic σ, Vreman 0.18 / Smagorinsky 0.1 | 5.4e-6 / 5.7e-6 | 1.1e-7 / 9.5e-8 | 1.6e-7 / 2.3e-6 |
 | `hrr` σ 0.9 + Smagorinsky with Van Driest / the wall-function bounce (channel) | 4.4e-6 / 2.2e-6 | 1.5e-7 / 1.2e-7 | 6.3e-6 / 1.6e-6 (drag 4.0e-6 / 2.5e-7) |
 
@@ -324,7 +324,7 @@ the six face orientations has its assignments written out (no loop over the latt
 tests c_q, which the GB10's driver miscompiles). `node_bounce` binds two storage buffers (the
 populations and the wall rows).
 
-Against the CPU from step 0, both layouts, regularised, `hrr` σ 0.99, `mrt` and `trt`, each with
+Against the CPU from step 0, both layouts, regularised, `hrr` σ 0.99 and `trt`, each with
 Smagorinsky 0.1 + Van Driest 26 and with Vreman 0.18
 (`the_on_node_wall_function_bounce_follows_the_cpu`: the CPU's perturbed coarse channel, 13 cells
 across, 150 steps; `the_on_node_wall_function_bounce_follows_the_cpu_in_han_s_a20_channel`, heavy:
