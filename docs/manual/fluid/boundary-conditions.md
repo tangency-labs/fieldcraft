@@ -123,10 +123,10 @@ segment from the fluid cell's centre to the solid cell's, decided with exact `or
 (an edge or a vertex hit counts) and constructed from the plane distances. Where the face has an
 exact curved surface (a cylinder, sphere, cone or torus of the design), the crossing is taken on
 that surface instead of on its triangles' chords, as the voxeliser decides the cells near it. q is
-held at 0.01 or above, where curved-boundary schemes' small-q trouble starts (Mei, Luo & Shyy
-1999): the linear interpolation's weights are convex for every q, and the floor keeps the q ≥ ½
-line's 1/(2q) and the crossing of a centre lying on the surface bounded. It moves the wall by less
-than a hundredth of a link.
+taken as it is, from 0 (the surface through the fluid cell's centre) to 1. At q = 0 both
+interpolations return the population that left x_ff toward the wall, unchanged, with one exception:
+the linear rule's moving-wall term δ does not vanish at q = 0 on a moving wall. q divides only on
+the q ≥ ½ line. A floor on q would move the wall by a fixed fraction of a link, a first-order error.
 
 **Links that keep halfway bounce-back.** A link with q < ½ needs the second fluid cell x_ff
 (across a periodic face if the link leaves the box there). Where x_ff is solid (a gap a cell or

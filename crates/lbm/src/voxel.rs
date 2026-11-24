@@ -305,20 +305,13 @@ pub fn decide_near_curved(surface: &BoundarySurface, exact: &[Option<AnalyticSur
     Ok(changed)
 }
 
-/// The smallest link fraction an interpolated wall link takes. Bouzidi et al.'s linear
-/// interpolation has convex weights for every q in [0, 1], so a small q does not destabilise
-/// it; the floor keeps the q ≥ ½ branch's 1/(2q) and the constructed crossing of a fluid centre
-/// lying on the surface (t = 0 to rounding) bounded. 0.01 is where the curved-boundary schemes'
-/// small-q trouble starts (docs/solvers/literature.md C3.2, after R. Mei, L.-S. Luo, W. Shyy, JCP
-/// 155:307, 1999): clamping a crossing closer than that moves the wall by under a hundredth of a
-/// link.
-pub const MIN_LINK_FRACTION: f64 = 0.01;
-
-/// The fraction `q ∈ [MIN_LINK_FRACTION, 1]` of the link from the fluid centre `fluid` to the
+/// The fraction `q ∈ [0, 1]` of the link from the fluid centre `fluid` to the
 /// solid centre `solid` (its geometric position, unwrapped across periodic faces) before it meets
 /// the obstacle's surface: the triangles' crossing nearest `fluid`, or the exact curved surface's
 /// of that face (see the module notes). `tags` are the surface's face tags by triangle, `exact`
-/// its exact surfaces by tag. `None` when neither crosses the link.
+/// its exact surfaces by tag. `None` when neither crosses the link. q is taken as the surface gives
+/// it, down to 0 (the surface through the fluid centre): Bouzidi et al.'s rules are defined there,
+/// and the clamp only removes the rounding of a constructed crossing.
 pub fn link_fraction(tree: &TriangleTree, tags: &[u32], exact: &[Option<AnalyticSurface>], fluid: [f64; 3], solid: [f64; 3]) -> Option<f64> {
     let tri = tree.crossing(fluid, solid);
     let face = match tri {
@@ -335,7 +328,7 @@ pub fn link_fraction(tree: &TriangleTree, tags: &[u32], exact: &[Option<Analytic
         (Some((t, _)), _) => t,
         (None, e) => e?,
     };
-    Some(t.clamp(MIN_LINK_FRACTION, 1.0))
+    Some(t.clamp(0.0, 1.0))
 }
 
 /// Where the segment from `a` to `b` crosses the exact surface `s`, as a fraction of it from `a`:
@@ -744,9 +737,11 @@ mod tests {
         assert!((diag - 0.5).abs() < 1e-15, "{diag}");
         let corner = q([0.0, -0.3, -0.3], [0.6, 0.3, 0.3]).unwrap();
         assert!((corner - 0.5).abs() < 1e-15, "{corner}");
-        // An end on the side, and a crossing nearer than the floor.
-        assert_eq!(q([0.3, 0.5, 0.5], [0.8, 0.5, 0.5]), Some(MIN_LINK_FRACTION));
-        assert_eq!(q([0.299, 0.5, 0.5], [1.299, 0.5, 0.5]), Some(MIN_LINK_FRACTION));
+        // An end on the side (q = 0), and a crossing a thousandth of a link from the fluid end: taken as they are.
+        let on_side = q([0.3, 0.5, 0.5], [0.8, 0.5, 0.5]).unwrap();
+        assert!(on_side.abs() < 1e-15, "{on_side}");
+        let near = q([0.299, 0.5, 0.5], [1.299, 0.5, 0.5]).unwrap();
+        assert!((near - 0.001).abs() < 1e-12, "{near}");
         assert_eq!(q([-0.7, 0.5, 0.5], [0.3, 0.5, 0.5]), Some(1.0));
         // A link that stays outside.
         assert_eq!(q([-0.5, 0.5, 0.5], [0.2, 0.5, 0.5]), None);
