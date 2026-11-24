@@ -242,6 +242,64 @@ Observed orders (L2, L∞): 1.937, 1.941 (96→144) and 1.982, 1.996 (144→216)
 closer to MKM only because their discretisation error has the opposite sign to the model's.
 The heavy study took 245 s.
 
+### Spalart–Allmaras: its wall law in the channel against the wall-resolved 1-D solution and Lee & Moser
+
+The Spalart–Allmaras model with its own wall law (`wall_model: "spalart_allmaras_bounce"`) in a column
+1 × (2N + 1) × 1, δ = N cells, periodic in x and z, on-node walls, the body force u_τ²/δ, the regularized
+collision (TRT keeps the 0.505 floor with this law and cannot run these grids, #1063), lattice bulk speed 0.1
+(`crates/lbm/tests/sa_wall_channel.rs`). Re_τ 182.088 at N 3 and N 6, and Re_τ 1000.512 at N 10, 16 and 32, each
+run to 1e-6 u_τ. The 1-D solutions are Richardson-extrapolated from the reference grid (1728 or 3200 cells) and
+its double (the Re_τ 1000.512 solve starts from the Re_τ 182.088 solution scaled in wall units near the wall and
+in outer units above, χ = min(κ y⁺, χ₁₈₂ Re_τ/182.088)), and the wall-modelled 1-D solution starts at y₁ = Re_τ / N with the law's stress share.
+
+- **Theory (asserted).** (1) The 1-D solutions are turbulent and converge at second order at shared faces, wall-resolved
+  and wall-modelled (trunk test, and heavy test for Re_τ 1000.512). (2) The momentum balance: the walls' force equals
+  a × the fluid mass, within the run's last change Δ, since per δ/u_τ the momentum moves at most M Δ u_τ. (3) The
+  walls' friction velocity is √(a (N − ½)), within Δ: the boundary nodes take no force, so each wall carries the
+  share 1 − 1/(2N) (#1101). (4) The first node: U₁ = u_τ u⁺(u_τ y₁ / ν) and ν̃₁ = κ u_τ · 1 cell, exactly. (5) The
+  trapezoid identity u_{j+1} − u_j = ½ (g_j + g_{j+1}), g_j = a (N − j) / (ν + ν_t,j), on every link, within Δ u_τ²/(ν + ν_t,1)
+  (derived in the test's module docs). Each bar uses the run's own Δ.
+- **Benchmark (reported, not asserted).** Lee & Moser, J. Fluid Mech. 774:395–415, 2015: U_b⁺ 1/0.0637309 = 15.69 (Re_τ 182.088),
+  U_b⁺ 1/0.0500256 = 19.99 and U_c⁺ 22.593 (Re_τ 1000.512).
+
+| Re_τ | N per δ | y₁⁺ | U_b⁺ | U_c⁺ | C_f | against wall-resolved 1-D: U_b, U_c, C_f | of which the law alone: U_b, C_f | lattice − law (as run), L∞ (u_τ) | against Lee & Moser: U_b, U_c, C_f |
+|---|---|---|---|---|---|---|---|---|---|
+| 182.088 | 3 | 60.7 | 13.390 | 15.458 | 1.1155e-2 | −15.79 %, −16.38 %, +41.0 % | −6.49 %, +14.4 % | 6.5e-2 | −14.66 %, —, +37.3 % |
+| 182.088 | 6 | 30.3 | 14.567 | 17.006 | 9.4253e-3 | −8.38 %, −8.01 %, +19.1 % | −4.13 %, +8.8 % | 4.2e-2 | −7.16 %, —, +16.0 % |
+| 1000.512 | 10 | 100.1 | 19.163 | 21.410 | 5.4463e-3 | −3.45 %, −3.21 %, +7.3 % | −1.06 %, +2.2 % | 2.2e-2 | −4.14 %, −5.24 %, +8.8 % |
+| 1000.512 | 16 | 62.5 | 19.478 | 21.741 | 5.2718e-3 | −1.87 %, −1.71 %, +3.9 % | −0.61 %, +1.2 % | 5.7e-2 | −2.56 %, −3.77 %, +5.3 % |
+| 1000.512 | 32 | 31.3 | 19.773 | 22.050 | 5.1155e-3 | −0.38 %, −0.32 %, +0.8 % | −0.28 %, +0.6 % | 1.3e-1 | −1.09 %, −2.41 %, +2.2 % |
+
+The 1-D wall-resolved solutions: Re_τ 182.088 U_b⁺ 15.899968, U_c⁺ 18.485491 (correction 8.3e-6); Re_τ 1000.512
+U_b⁺ 19.848774, U_c⁺ 22.119259 (correction 8.6e-5). Each lattice run settled after 108 to 147 δ/u_τ with
+Δ ≈ 1e-7 u_τ and 1e-6 u_τ left.
+
+The column "lattice − law (as run)" compares the run with the continuum wall-modelled solution at the same
+stress. It is reported, not asserted, and it grows with N: in lattice units the log profile is ln(y/Δx) whatever N,
+and the trapezoid sum of 1/(κ j) over the rows exceeds ln j/κ by (γ − ½)/κ = 0.19 u_τ as j grows (γ is Euler's
+constant), so the more rows lie in the log layer, the closer the offset comes to that value (2.2e-2, 5.7e-2 and
+1.3e-1 u_τ at N 10, 16 and 32). SA's own discrete ν̃ in the first rows moves it by a few hundredths.
+
+- The walls carry a(δ − Δx/2) (#1101), not aδ: the law gets 1 − 1/(2N) of the stress. That half cell is most of
+  the gap between the law alone and the run (at Re_τ 1000.512, C_f +1.2 % and +2.2 % for the law alone against
+  +3.9 % and +7.3 % as run, first node at y⁺ 62 and 100).
+- The law's own error is negative and large in these cases: in the wall-resolved solution ν̃ falls below κ u_τ y
+  faster than the stress, so the law under-predicts U_b (−1.06 % at Re_τ 1000.512, N 10, the first node at y⁺ 100).
+- **Limitation: the law assumes a log layer of constant stress.** At Re_τ 182.088 the first node at y⁺ 30 or 61 is at
+  y/δ 1/6 or 1/3, where the stress has fallen by that share and there is no constant-stress layer: C_f is +19 % and
+  +41 % against the wall-resolved model (the law alone +8.8 % and +14.4 %). The law is for first nodes well inside a
+  log layer, y₁/δ small; at Re_τ 1000.512 with y₁/δ 1/32 to 1/10 the error is +0.8 % to +7.3 %.
+- y⁺ 100 at Re_τ 182.088 is not run: it needs fewer than 2 cells per δ. Re_τ 2000 is not run in this study: its
+  1-D reference was not solved (from the plain start the Newton iteration does not converge within its cap; the
+  start scaled from the Re_τ 182.088 solution, which the Re_τ 1000.512 reference uses, was not tried there).
+- **The first rows carry the stress.** Wall-modelled LES loses the stress of the first rows (the resolved part is
+  missing there, so the law must be read three or more cells up; Kawai & Larsson 2012). In RANS the model's own
+  ν_t carries it: the modelled share (1 − ω_j/2)(−Π_xy)/(ρ a (N − j)) of rows 1 to 3, ω_j with the cell's eddy
+  viscosity, is 1.000000 in every case, as the link identity makes it. Reading the law higher would add error here,
+  since the law's own error grows with y₁/δ. (The finite-difference readings (ν + ν_t) dU/dy of 0.73 to 1.22 are the
+  difference quotient's error at one to three cells, not the stress.)
+- Setup warns that τ⁺ 0.5001 to 0.5006 is below 0.508 (the regularized collision's stability note); the bars hold.
+
 ### Wall-modelled LES: Malaspinas & Sagaut at Re_τ 950 (void)
 
 **Void (#1057).** The MRT collision is linearly unstable at rest below a lattice viscosity of 1.1801 × 10⁻³
