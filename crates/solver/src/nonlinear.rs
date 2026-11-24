@@ -1132,6 +1132,9 @@ impl Run<'_> {
 /// Refuse what nonlinear steps cannot take yet, and warn about what they simplify.
 fn check_supported(model: &Model, mesh: &Mesh, step: &Step, settings: &NonlinearStatic, warnings: &mut Vec<String>) -> Result<()> {
     let at = |what: String| Error::NotSupported(format!("{what} in nonlinear steps (step `{}`)", step.name));
+    if mesh.twist {
+        return Err(at("axisymmetric elements with twist".into()));
+    }
     if let Some(t) = mesh.trusses.first() {
         return Err(at(format!("trusses (element {})", t.label)));
     }

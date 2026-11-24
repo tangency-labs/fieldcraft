@@ -120,6 +120,11 @@ pub fn solve_buckle(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
     let resolved = model.resolve()?;
     crate::system::refuse_contact(model, "buckling")?;
     let mesh = Mesh::new(model, &resolved, limits.max_dofs)?;
+    if mesh.twist {
+        return Err(Error::NotSupported(
+            "axisymmetric elements with twist in buckling steps: their initial-stress stiffness is not implemented".into(),
+        ));
+    }
     if let Some(t) = mesh.trusses.first() {
         return Err(Error::NotSupported(format!(
             "trusses in buckling steps (element {}): their initial-stress stiffness is not implemented",

@@ -4,8 +4,9 @@
 //! load vector of a step.
 //!
 //! Degrees of freedom ([`DofLayout`]): the kinds each mesh node's elements declare (three
-//! translations for solids, six for shells and beams, Ux and Uy for 2D elements, Ux, Uy and Rz
-//! for the beams of a 2D model), nodes by label, then six per coupled reference point (points by
+//! translations for solids, six for shells and beams, Ux and Uy for 2D elements (and Uz, the hoop
+//! displacement, with twist), Ux, Uy and Rz for the beams of a 2D model), nodes by label, then six
+//! per coupled reference point (points by
 //! name): translations along X, Y, Z and rotations about them.
 
 use fieldcraft_fem::beam::{Beam, BeamSection};
@@ -18,6 +19,7 @@ use fieldcraft_fem::plane::{Plane, Theory};
 use fieldcraft_fem::plasticity::J2;
 use fieldcraft_fem::shell::{Shell, ShellSection};
 use fieldcraft_fem::truss::{Truss, young_modulus};
+use fieldcraft_fem::twist::Twisted;
 use fieldcraft_fem::{DofKind, DofLayout, DofSet, Elasticity, ElementDofs, PointStress, elasticity, face, plane};
 use fieldcraft_model::nodal::edge_pressure;
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,6 +43,8 @@ pub struct Elem {
     pub density: Option<f64>,
     /// The 2D theory of an element of a 2D section; `None` for solids.
     pub theory: Option<Theory>,
+    /// An axisymmetric element with twist: its nodes carry the hoop displacement too.
+    pub twist: bool,
     /// The expansion coefficients along X, Y, Z and the reference temperature, when the
     /// material expands.
     pub expansion: Option<([f64; 3], f64)>,
@@ -51,11 +55,12 @@ pub struct Elem {
     pub plastic: Option<Arc<J2>>,
 }
 
-/// An element's kernel: a solid or a 2D element.
+/// An element's kernel: a solid, a 2D element, or an axisymmetric element with twist.
 #[derive(Debug, Clone, Copy)]
 pub enum Kernel<'a> {
     Solid(Solid<'a>),
     Plane(Plane<'a>),
+    Twist(Twisted<'a>),
 }
 
 impl Kernel<'_> {
@@ -64,6 +69,7 @@ impl Kernel<'_> {
         match self {
             Kernel::Solid(s) => s.dofs(),
             Kernel::Plane(p) => p.dofs(),
+            Kernel::Twist(t) => t.dofs(),
         }
     }
 
@@ -71,6 +77,7 @@ impl Kernel<'_> {
         match self {
             Kernel::Solid(s) => s.stiffness(d),
             Kernel::Plane(p) => p.stiffness(d),
+            Kernel::Twist(t) => t.stiffness(d),
         }
     }
 
@@ -78,6 +85,7 @@ impl Kernel<'_> {
         match self {
             Kernel::Solid(s) => s.mass(density),
             Kernel::Plane(p) => p.mass(density),
+            Kernel::Twist(t) => t.plane().mass(density),
         }
     }
 
@@ -85,14 +93,17 @@ impl Kernel<'_> {
         match self {
             Kernel::Solid(s) => s.lumped_mass(density),
             Kernel::Plane(p) => p.lumped_mass(density),
+            Kernel::Twist(t) => t.plane().lumped_mass(density),
         }
     }
 
-    /// Consistent nodal forces of a uniform force per volume, as 3-vectors (Z zero for 2D).
+    /// Consistent nodal forces of a uniform force per volume, as 3-vectors (Z zero for 2D, and
+    /// for twist: the model refuses a body force along the hoop).
     pub fn body_force(&self, b: [f64; 3]) -> fieldcraft_fem::Result<Vec<[f64; 3]>> {
         match self {
             Kernel::Solid(s) => s.body_force(b),
             Kernel::Plane(p) => Ok(p.body_force_field(|_| b)?.into_iter().map(|v| [v[0], v[1], 0.0]).collect()),
+            Kernel::Twist(t) => Ok(t.plane().body_force_field(|_| b)?.into_iter().map(|v| [v[0], v[1], 0.0]).collect()),
         }
     }
 
@@ -101,6 +112,7 @@ impl Kernel<'_> {
         match self {
             Kernel::Solid(s) => s.body_force_field(b),
             Kernel::Plane(p) => Ok(p.body_force_field(b)?.into_iter().map(|v| [v[0], v[1], 0.0]).collect()),
+            Kernel::Twist(t) => Ok(t.plane().body_force_field(b)?.into_iter().map(|v| [v[0], v[1], 0.0]).collect()),
         }
     }
 
@@ -110,6 +122,7 @@ impl Kernel<'_> {
         match self {
             Kernel::Solid(s) => s.stresses_with(d, u, thermal),
             Kernel::Plane(p) => p.stresses_with(d, &u.iter().map(|v| [v[0], v[1]]).collect::<Vec<_>>(), thermal),
+            Kernel::Twist(t) => t.stresses_with(d, u, thermal),
         }
     }
 
@@ -124,8 +137,8 @@ impl Kernel<'_> {
     ) -> fieldcraft_fem::Result<Vec<PointStress>> {
         match (self, initial) {
             (Kernel::Solid(s), _) => s.stresses_from(d, u, thermal, initial),
-            (Kernel::Plane(_), None) => self.stresses_with(d, u, thermal),
-            (Kernel::Plane(_), Some(_)) => Err(fieldcraft_fem::Error::NotSupported("an initial stress in 2D elements".into())),
+            (Kernel::Plane(_) | Kernel::Twist(_), None) => self.stresses_with(d, u, thermal),
+            (Kernel::Plane(_) | Kernel::Twist(_), Some(_)) => Err(fieldcraft_fem::Error::NotSupported("an initial stress in 2D elements".into())),
         }
     }
 
@@ -133,15 +146,17 @@ impl Kernel<'_> {
     pub fn initial_stress_load(&self, d: &Elasticity, initial: &[[f64; 6]]) -> fieldcraft_fem::Result<Vec<[f64; 3]>> {
         match self {
             Kernel::Solid(s) => s.initial_stress_load(d, initial),
-            Kernel::Plane(_) => Err(fieldcraft_fem::Error::NotSupported("an initial stress in 2D elements".into())),
+            Kernel::Plane(_) | Kernel::Twist(_) => Err(fieldcraft_fem::Error::NotSupported("an initial stress in 2D elements".into())),
         }
     }
 
-    /// The equivalent nodal forces of a thermal strain, as 3-vectors (Z zero for 2D).
+    /// The equivalent nodal forces of a thermal strain, as 3-vectors (Z zero for 2D, and the
+    /// hoop component is zero for twist: an expansion has no shear).
     pub fn thermal_load(&self, d: &Elasticity, thermal: &ThermalStrain) -> fieldcraft_fem::Result<Vec<[f64; 3]>> {
         match self {
             Kernel::Solid(s) => s.thermal_load(d, thermal),
             Kernel::Plane(p) => Ok(p.thermal_load(d, thermal)?.into_iter().map(|v| [v[0], v[1], 0.0]).collect()),
+            Kernel::Twist(t) => Ok(t.plane().thermal_load(d, thermal)?.into_iter().map(|v| [v[0], v[1], 0.0]).collect()),
         }
     }
 
@@ -162,6 +177,7 @@ impl Kernel<'_> {
         match self {
             Kernel::Solid(s) => s.nonlinear(m, u.as_chunks::<3>().0, kin, thermal, committed, updated, tangent),
             Kernel::Plane(p) => p.nonlinear(m, u.as_chunks::<2>().0, kin, thermal, committed, updated, tangent),
+            Kernel::Twist(_) => Err(twist_unsupported()),
         }
     }
 
@@ -171,6 +187,7 @@ impl Kernel<'_> {
         match self {
             Kernel::Solid(s) => s.nonlinear_history_len(m),
             Kernel::Plane(p) => p.nonlinear_history_len(m),
+            Kernel::Twist(t) => t.plane().nonlinear_history_len(m),
         }
     }
 
@@ -192,6 +209,7 @@ impl Kernel<'_> {
         match self {
             Kernel::Solid(s) => s.nonlinear_stresses(m, u.as_chunks::<3>().0, kin, thermal, committed),
             Kernel::Plane(p) => p.nonlinear_stresses(m, u.as_chunks::<2>().0, kin, thermal, committed),
+            Kernel::Twist(_) => Err(twist_unsupported()),
         }
     }
 
@@ -200,6 +218,7 @@ impl Kernel<'_> {
         match self {
             Kernel::Solid(s) => s.geometric_stiffness(stress),
             Kernel::Plane(p) => p.geometric_stiffness(stress),
+            Kernel::Twist(_) => Err(twist_unsupported()),
         }
     }
 
@@ -207,6 +226,7 @@ impl Kernel<'_> {
         match self {
             Kernel::Solid(s) => s.rule(),
             Kernel::Plane(p) => p.rule(),
+            Kernel::Twist(t) => t.plane().rule(),
         }
     }
 
@@ -214,14 +234,21 @@ impl Kernel<'_> {
         match self {
             Kernel::Solid(s) => s.ty,
             Kernel::Plane(p) => p.ty,
+            Kernel::Twist(t) => t.plane().ty,
         }
     }
+}
+
+/// The refusal of twist in the steps that have no formulation for it yet.
+fn twist_unsupported() -> fieldcraft_fem::Error {
+    fieldcraft_fem::Error::NotSupported("axisymmetric elements with twist in nonlinear and buckling steps".into())
 }
 
 impl Elem {
     pub fn kernel(&self) -> Result<Kernel<'_>> {
         let k = match self.theory {
             None => Solid::new(self.kind, &self.xyz, self.formulation).map(Kernel::Solid),
+            Some(t) if self.twist => Plane::new(self.kind, &self.xyz, self.formulation, t).and_then(Twisted::new).map(Kernel::Twist),
             Some(t) => Plane::new(self.kind, &self.xyz, self.formulation, t).map(Kernel::Plane),
         };
         k.map_err(|e| Error::element(self.label, e))
@@ -292,6 +319,7 @@ struct SolidEntry {
     d: Elasticity,
     density: Option<f64>,
     theory: Option<Theory>,
+    twist: bool,
     dofs: ElementDofs,
     expansion: Option<([f64; 3], f64)>,
     hyperelastic: Option<Hyperelastic>,
@@ -368,10 +396,11 @@ impl StructuralKernel {
     }
 }
 
-/// The translations of a model's nodes: X and Y in a 2D model, else X, Y and Z. Trusses and
-/// translational discrete elements declare these.
-pub fn translation_kinds(planar: bool) -> DofSet {
-    if planar { DofSet::PLANE } else { DofSet::TRANSLATIONS }
+/// The translations of a model's nodes: X and Y in a 2D model, else X, Y and Z (in an
+/// axisymmetric model with twist Z is the hoop one). Trusses and translational discrete elements
+/// declare these.
+pub fn translation_kinds(planar: bool, twist: bool) -> DofSet {
+    if planar && !twist { DofSet::PLANE } else { DofSet::TRANSLATIONS }
 }
 
 /// The rotations a discrete element can act on: all three, or the one about Z in a 2D model.
@@ -444,6 +473,8 @@ pub struct Mesh {
     pub layout: DofLayout,
     /// The 2D theory when this is a 2D model (a model is 2D as a whole).
     pub theory: Option<Theory>,
+    /// Whether the axisymmetric elements carry twist (the hoop displacement on `Uz`).
+    pub twist: bool,
     pub trusses: Vec<Bar>,
     /// Shells and beams, by label.
     pub structural: Vec<Structural>,
@@ -467,9 +498,10 @@ impl Mesh {
         self.structural.binary_search_by_key(&label, |e| e.label).ok()
     }
 
-    /// The kinds trusses and translational discrete elements carry at their nodes.
+    /// The kinds trusses and translational discrete elements carry at their nodes
+    /// ([`translation_kinds`]).
     pub fn translation_kinds(&self) -> DofSet {
-        translation_kinds(self.theory.is_some())
+        translation_kinds(self.theory.is_some(), self.twist)
     }
 
     /// The rotations discrete elements act on (see [`rotation_kinds`]).
@@ -631,7 +663,8 @@ impl Mesh {
                 let el = model.element(label).ok_or_else(|| Error::Invalid(format!("element {label} is missing")))?;
                 let (formulation, dofs) = match theory {
                     None => Formulation::from_section(el.kind, &section.formulation).map(|f| (f, f.dofs())),
-                    Some(_) => plane::formulation(el.kind, &section.formulation).map(|f| (f, ElementDofs::new(DofSet::PLANE))),
+                    Some(_) => plane::formulation(el.kind, &section.formulation)
+                        .map(|f| (f, ElementDofs::new(if section.kind.twist() { DofSet::TRANSLATIONS } else { DofSet::PLANE }))),
                 }
                 .map_err(|e| Error::element(label, e))?;
                 let expansion = material.thermal.and_then(|t| t.expansion.map(|a| (a.axes(), t.reference_temperature)));
@@ -643,6 +676,7 @@ impl Mesh {
                     d,
                     density: material.density,
                     theory,
+                    twist: section.kind.twist(),
                     dofs,
                     expansion,
                     hyperelastic: material.hyperelastic,
@@ -656,7 +690,7 @@ impl Mesh {
         elements.sort_by_key(|e| e.label);
         trusses.sort_by_key(|e| e.0);
         structural.sort_by_key(|e| e.0);
-        let translations = translation_kinds(planar.is_some());
+        let translations = translation_kinds(planar.is_some(), resolved.twist);
         // What discrete elements need: at mesh nodes (some only they use), and at reference
         // points, which then get their six degrees of freedom like coupled ones.
         let needs: Vec<(u32, DofSet)> = crate::discrete::needs(resolved, planar.is_some()).collect();
@@ -708,6 +742,7 @@ impl Mesh {
             points,
             layout,
             theory: planar,
+            twist: resolved.twist,
             trusses: Vec::with_capacity(trusses.len()),
             structural: Vec::with_capacity(structural.len()),
             warnings,
@@ -725,6 +760,7 @@ impl Mesh {
                 d: e.d,
                 density: e.density,
                 theory: e.theory,
+                twist: e.twist,
                 expansion: e.expansion,
                 hyperelastic: e.hyperelastic,
                 plastic: e.plastic,
@@ -835,22 +871,29 @@ pub fn prescribed(
             }
         }
     }
-    // Axisymmetric: a node on the axis cannot move radially.
+    // Axisymmetric: a node on the axis cannot move radially, nor around the axis with twist
+    // (u_θ is continuous through r = 0).
     if mesh.theory == Some(Theory::Axisymmetric) {
+        let held: &[(DofKind, &str)] = if mesh.twist { &[(DofKind::Ux, "radial"), (DofKind::Uz, "hoop")] } else { &[(DofKind::Ux, "radial")] };
         for (n, p) in mesh.xyz.iter().enumerate() {
-            let index = mesh.dof(n, DofKind::Ux)?;
-            if p[0] != 0.0 || !active.get(index).copied().unwrap_or(false) {
+            if p[0] != 0.0 {
                 continue;
             }
-            let slot = out.get_mut(index).ok_or_else(|| Error::Internal("dof index".into()))?;
-            match *slot {
-                Some(v) if v != 0.0 && values => {
-                    return Err(Error::Invalid(format!(
-                        "{} is on the axis, where the radial displacement is zero, not {v}",
-                        mesh.describe_dof(index)
-                    )));
+            for (kind, what) in held {
+                let index = mesh.dof(n, *kind)?;
+                if !active.get(index).copied().unwrap_or(false) {
+                    continue;
                 }
-                _ => *slot = Some(0.0),
+                let slot = out.get_mut(index).ok_or_else(|| Error::Internal("dof index".into()))?;
+                match *slot {
+                    Some(v) if v != 0.0 && values => {
+                        return Err(Error::Invalid(format!(
+                            "{} is on the axis, where the {what} displacement is zero, not {v}",
+                            mesh.describe_dof(index)
+                        )));
+                    }
+                    _ => *slot = Some(0.0),
+                }
             }
         }
     }
@@ -906,6 +949,27 @@ pub fn loads(model: &Model, resolved: &Resolved, mesh: &Mesh, step: &Step, activ
                 // Moments act on the rotations, which reference points and the nodes of shells
                 // and beams have.
                 let rotation = matches!(load, Load::Moment { .. });
+                // With twist a moment is a torque about the axis, resolved to ring torques Mᵢ about Y:
+                // the hoop force of each is −Mᵢ / rᵢ: the hoop direction is the model's Z, and a right-handed
+                // rotation about +Y carries +X toward −Z (M_y = z F_x − x F_z).
+                if rotation && mesh.twist {
+                    for (label, v) in resolved.nodal_loads.get(name).map(Vec::as_slice).unwrap_or_default() {
+                        if v[1] == 0.0 {
+                            continue;
+                        }
+                        let slot =
+                            mesh.layout.slot(*label).ok_or_else(|| Error::Invalid(format!("load `{name}`: node {label} belongs to no element")))?;
+                        let radius = mesh.xyz.get(slot).map_or(0.0, |p| p[0]);
+                        if radius <= 0.0 {
+                            return Err(Error::Invalid(format!("load `{name}`: node {label} is on the axis, where a torque has no lever arm")));
+                        }
+                        let dof = mesh.dof(slot, DofKind::Uz)?;
+                        if let Some(x) = f.get_mut(dof) {
+                            *x -= v[1] / radius;
+                        }
+                    }
+                    continue;
+                }
                 for (label, v) in resolved.nodal_loads.get(name).map(Vec::as_slice).unwrap_or_default() {
                     let slot =
                         mesh.layout.slot(*label).ok_or_else(|| Error::Invalid(format!("load `{name}`: node {label} belongs to no solid element")))?;
