@@ -388,12 +388,30 @@ pub(super) struct Control {
 /// resolve 10^(1−d). A running mean (DOC "fieldAverage"; `writeTime`: "alongside standard field
 /// output", DOC "Function objects") starts where the step's own averaging does: the velocity's
 /// mean and fluctuation, as the step reports them, and the pressure's mean.
+/// `timePrecision`: significant digits of the time directories' names. The written times are
+/// k·T/frames; neighbours differ by a relative 1/frames at the end, and d digits resolve
+/// 10^(1−d), so d ≥ ⌊log₁₀ frames⌋ + 2; never fewer than [`WRITE_PRECISION`].
+pub(super) fn time_precision(frames: u32) -> u32 {
+    WRITE_PRECISION.max(frames.max(1).ilog10() + 2)
+}
+
+/// How far (metres) a point of the meshed fluid may be from the centre of the OpenFOAM cell
+/// nearest it, for a case of background cell `background` whose surfaces are refined to
+/// `spacing`. A point inside a cell is within that cell's diameter of its centre: at most a
+/// background cell's diagonal √3·b, or, for a cell snapped to a surface at the spacing h, its
+/// diagonal √3·h (≤ √3·b) grown by two of its points each moved up to τ·h ([`SNAP_TOLERANCE`]
+/// local edge lengths, DOC v2212 "Snapping"). A lattice cell the voxeliser counts as fluid may lie
+/// outside the snapped mesh by up to one more snap displacement, τ·h. So √3·b + 3τ·h bounds it.
+pub fn sample_reach(background: f64, spacing: f64) -> f64 {
+    3f64.sqrt() * background + 3.0 * SNAP_TOLERANCE * spacing
+}
+
 pub(super) fn control(c: &Control) -> String {
     let interval = c.duration / f64::from(c.frames);
     // The first step at the Courant limit on the finest cell for the boundaries' speed; a fluid
     // at rest has no limit: the write interval.
     let first = if c.speed > 0.0 { (c.courant * c.finest / c.speed).min(interval) } else { interval };
-    let time_precision = WRITE_PRECISION.max(c.frames.max(1).ilog10() + 2);
+    let time_precision = time_precision(c.frames);
     let functions = match c.average_from {
         Some(start) => format!(
             "\nfunctions\n{{\n    fieldAverage\n    {{\n        type fieldAverage;\n        libs (fieldFunctionObjects);\n        timeStart {};\n\
