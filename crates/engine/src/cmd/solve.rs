@@ -165,7 +165,7 @@ pub const FLUID: CommandSpec = CommandSpec {
 pub const PROBE: CommandSpec = CommandSpec {
     id: "solve.probe",
     label: "Probe Results",
-    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top stresses, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Heat transfer steps: `frame` selects temperature and heat_flux together (from 0, the last by default); reaction is included only in the last frame, including the sole frame of a steady step. Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|fill|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero; `fill` is a free surface's fill level, 1 liquid to 0 gas; {"step": "Flow", "front": {"axis": "x", "end": "max", "at": [[x, y, z], …]}} gives a free surface's liquid front: the liquid's extent along the axis at every history time (the `max` (default) or `min` face of the cells at least half full) and its `volume`, and per point in `at` the time the extent first reached the point's coordinate along the axis, coming or going (`arrivals`; between two samples by linear interpolation; null when it never did); {"step": "Flow", "depth": {"axis": "z", "at": [[x, y, z], …]}, "frame": 10} gives, per point, the liquid in the column of cells through it along the axis in that frame (the fill levels summed times the spacing: a wave gauge's depth, a collapsing column's height at its wall)"#,
+    params: r#"{"step": "Load", "nodes": [1, 2] (or "set": "fillet", a set's nodes), "mode": 1, "frame": 0} — the stored result at nodes (with `max_von_mises`, the largest among them, for static steps): displacement, rotation, reaction, reaction moment, stress, principal stresses (the values, largest first, without their directions) and von Mises (static, with `elements` each element's results: solid, 2D and truss nodal stresses (and, in a nonlinear step, the equivalent plastic strain at the integration points of a plastic element), shell section forces (N, M, Q per length in the element's axes) and bottom, middle and top stresses, beam end forces (N, V_y, V_z, T, M_y, M_z in its axes; a pipe under a pipe pressure also gives `pipe`: the wall's `radial` and `hoop` stresses at the bore and at the outside, and its `axial` stress N/A at the two ends)), the shape of mode `mode` with its rotations (frequency, from 1), or displacement and velocity in field frame `frame` (explicit, from 0; the last by default) at `nodes` (or at the nodes nearest to points: "at": [[x, y, z], ...], lowest label on a tie, each entry then giving its `xyz` and `distance`) and, with `elements` (explicit), each element's stress, von Mises stress, strain, equivalent plastic strain, damage, temperature and whether it has eroded; a coupled reference point's label gives its six displacements (translations, rotations) and reactions (forces, moments). Heat transfer steps: `frame` selects temperature and heat_flux together (from 0, the last by default); reaction is included only in the last frame, including the sole frame of a steady step. Fluid steps: {"step": "Flow", "points": [[x, y, z]], "frame": 10 (default the last)} gives velocity, pressure and (with heat) temperature in the cells at the points; {"step": "Flow", "forces": ["x_min", "F2:top", "Body1/F2:top"]} gives those walls' force histories and {"step": "Flow", "heat": ["y_min"]} the heat into them over time (power, positive into the wall); {"step": "Flow", "line": {"from": [x, y, z], "to": [x, y, z], "count": 65 (default one point per cell spacing), "field": "velocity_x|velocity_y|velocity_z|speed|pressure|temperature|fill|wall_heat_flux", "face": "x_min" (wall_heat_flux: the box wall the line lies on)}, "frame": 10} gives the field at `count` points evenly along the line (`xyz`; trilinear between the cell centres, null outside the fluid; within half a cell of a box face the nearest cell centre's value, so a temperature line run onto a held wall reads the first cell, not the wall) and its `max` and `min` with their `xyz`, located between the samples by the parabola through the extreme sample and its neighbours; `wall_heat_flux` is the heat per area into a box wall (positive into the wall): at a held temperature from the second-order one-sided difference through the wall and the two cell layers beside it, at a flux face its flux, at an adiabatic face zero; `fill` is a free surface's fill level, 1 liquid to 0 gas; {"step": "Flow", "front": {"axis": "x", "end": "max", "at": [[x, y, z], …]}} gives a free surface's liquid front: the liquid's extent along the axis at every history time (the `max` (default) or `min` face of the cells at least half full) and its `volume`, and per point in `at` the time the extent first reached the point's coordinate along the axis, coming or going (`arrivals`; between two samples by linear interpolation; null when it never did); {"step": "Flow", "depth": {"axis": "z", "at": [[x, y, z], …]}, "frame": 10} gives, per point, the liquid in the column of cells through it along the axis in that frame (the fill levels summed times the spacing: a wave gauge's depth, a collapsing column's height at its wall)"#,
     form: Some(super::forms::SOLVE_PROBE),
     kind: CommandKind::Model,
     requires: &[Requirement::Result],
@@ -1586,6 +1586,8 @@ fn probe_quantity(r: &StepResult, display: &fieldcraft_model::DisplaySystem, key
         "reaction" | "force" | "final" | "mean" if !heat => Q::Force,
         "reaction_moment" => Q::Moment,
         "stress" | "principal" | "von_mises" | "pressure" | "shear" | "nodal" | "bottom" | "middle" | "top" | "value" => Q::Pressure,
+        // A pipe's wall stresses.
+        "radial" | "hoop" | "axial" => Q::Pressure,
         // Shell section forces N_x, N_y, N_xy, M_x, M_y, M_xy, Q_x, Q_y, per unit length.
         "forces" if len == 8 => {
             if (3..6).contains(&index) {
@@ -1762,7 +1764,11 @@ fn element_result(r: &StaticResult, label: u32) -> Option<Value> {
         );
     }
     let e = by_label(&r.beams, label, |e| e.label)?;
-    Some(json!({"element": label, "kind": e.kind.name(), "axes": e.forces.axes, "ends": e.forces.ends}))
+    let mut v = json!({"element": label, "kind": e.kind.name(), "axes": e.forces.axes, "ends": e.forces.ends});
+    if let Some(pipe) = &e.pipe {
+        v["pipe"] = json!(pipe);
+    }
+    Some(v)
 }
 
 /// Displacement and velocity at nodes, and element results, in one field frame of an explicit
@@ -3718,6 +3724,44 @@ pub(crate) mod tests {
         ] {
             assert!(s.execute("solve.probe", &p).is_err(), "{p}");
         }
+    }
+
+    /// A closed pipe under a pipe pressure through the commands: the pressure converts from the
+    /// display's MPa, and the probe gives Lamé's wall stresses (a = 10, b = 20, p = 100:
+    /// σ_θ = 500/3 and 200/3, σ_r = −100 and 0, σ_x = 100/3) and the stretch (1 − 2ν) σ_x L/E.
+    #[test]
+    fn pipe_pressure_stresses_the_wall() {
+        let mut s = Session::default();
+        let script = json!([
+            {"command": "mesh.node.add", "params": {"label": 1, "xyz": [0, 0, 0]}},
+            {"command": "mesh.node.add", "params": {"label": 2, "xyz": [1000, 0, 0]}},
+            {"command": "mesh.element.add", "params": {"label": 1, "kind": "beam2", "nodes": [1, 2]}},
+            {"command": "model.set.create", "params": {"name": "run", "elements": [1]}},
+            {"command": "model.set.create", "params": {"name": "anchor", "nodes": [1]}},
+            {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}}},
+            {"command": "model.section.create", "params": {"name": "pipe", "set": "run", "material": "Steel", "kind": {"type": "beam", "profile": {"type": "pipe", "radius": 20, "thickness": 10}, "orientation": [0, 0, 1]}}},
+            {"command": "model.boundary_condition.create", "params": {"name": "clamp", "type": "fixed", "target": {"set": "anchor"}}},
+            {"command": "model.load.create", "params": {"name": "steam", "type": "pipe_pressure", "set": "run", "internal": 100}},
+            {"command": "model.step.create", "params": {"name": "Press", "procedure": {"type": "static"}, "boundary_conditions": ["clamp"], "loads": ["steam"]}},
+        ]);
+        s.run_script(&script).unwrap();
+        let Some(fieldcraft_model::Load::PipePressure { internal, external, .. }) = s.model.load("steam") else { panic!("no pipe pressure") };
+        assert!((internal - 100e6).abs() < 1e-3 && *external == 0.0, "stored in pascals: {internal}");
+        s.execute("solve.static", &json!({"step": "Press"})).unwrap();
+        let probe = s.execute("solve.probe", &json!({"step": "Press", "nodes": [2], "elements": [1]})).unwrap();
+        let pipe = &probe["elements"][0]["pipe"];
+        let near = |v: &Value, want: f64| (v.as_f64().unwrap() - want).abs() < 1e-9 * 100.0;
+        assert!(near(&pipe["hoop"][0], 500.0 / 3.0) && near(&pipe["hoop"][1], 200.0 / 3.0), "{probe}");
+        assert!(near(&pipe["radial"][0], -100.0) && near(&pipe["radial"][1], 0.0), "{probe}");
+        assert!(near(&pipe["axial"][0], 100.0 / 3.0) && near(&pipe["axial"][1], 100.0 / 3.0), "{probe}");
+        let stretch = probe["nodes"][0]["displacement"][0].as_f64().unwrap();
+        assert!((stretch - 0.4 * (100.0 / 3.0) * 1000.0 / 210000.0).abs() < 1e-9 * 0.07, "{probe}");
+        assert_eq!(probe["units"]["hoop"], "MPa", "{probe}");
+        // On a beam that is no pipe the pressure is refused when the model is checked.
+        let circle = json!({"type": "beam", "profile": {"type": "circle", "radius": 20}, "orientation": [0, 0, 1]});
+        s.execute("model.section.edit", &json!({"name": "pipe", "set": "run", "material": "Steel", "kind": circle})).unwrap();
+        let err = s.execute("solve.static", &json!({"step": "Press"})).unwrap_err();
+        assert!(err.to_string().contains("pipe profile that has a bore"), "{err}");
     }
 
     /// A heat balance per load: the convection `Air` carries away what the heater's prescribed
