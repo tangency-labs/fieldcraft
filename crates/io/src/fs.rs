@@ -148,6 +148,11 @@ mod browser {
         FILES.with(|f| f.borrow().list(dir))
     }
 
+    /// Whether `dir` holds nothing (no file under it; folders are implied by files' paths).
+    pub fn is_empty_dir(dir: &Path) -> Result<bool> {
+        Ok(!FILES.with(|f| f.borrow().holds_any(dir)))
+    }
+
     /// Files in memory keep no modification time.
     pub fn modified(_path: &Path) -> Option<u64> {
         None
@@ -415,6 +420,16 @@ mod disk {
             .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
             .map(|e| e.path())
             .collect()
+    }
+
+    /// Whether `dir` holds nothing: no file and no folder. A missing directory holds nothing; one
+    /// that cannot be read is an error, never taken as empty.
+    pub fn is_empty_dir(dir: &Path) -> Result<bool> {
+        match fs::read_dir(dir) {
+            Ok(mut entries) => Ok(entries.next().is_none()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(e) => Err(io_error(dir, e)),
+        }
     }
 
     pub fn create_dir_all(dir: &Path) -> Result<()> {

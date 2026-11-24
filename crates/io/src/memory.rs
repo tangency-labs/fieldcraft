@@ -85,6 +85,13 @@ impl MemoryFs {
         Ok(())
     }
 
+    /// Whether any file lies under `dir`, at any depth. Paths order by component, so everything
+    /// under `dir` follows it at once (a file at `dir` itself is not under it).
+    pub fn holds_any(&self, dir: &Path) -> bool {
+        use std::ops::Bound::{Excluded, Unbounded};
+        self.files.range::<Path, _>((Excluded(dir), Unbounded)).next().is_some_and(|(p, _)| p.starts_with(dir))
+    }
+
     /// The files directly in `dir`, in path order.
     pub fn list(&self, dir: &Path) -> Vec<PathBuf> {
         // Paths order by component, so everything under `dir` follows it.
@@ -130,6 +137,19 @@ mod tests {
         m.remove(a).unwrap();
         assert!(m.take_writes().is_empty(), "a removed file is not handed out");
         assert!(!m.is_file(a) && m.remove(a).is_err() && m.read(a, 100).is_err());
+    }
+
+    #[test]
+    fn a_folder_holds_what_lies_under_it_at_any_depth() {
+        let mut m = MemoryFs::default();
+        m.insert(Path::new("/case2/x"), vec![]).unwrap();
+        assert!(!m.holds_any(Path::new("/case")), "a sibling folder's file is not under it");
+        m.insert(Path::new("/case/system/controlDict"), vec![]).unwrap();
+        assert!(m.holds_any(Path::new("/case")), "a file in a subfolder");
+        assert!(!m.holds_any(Path::new("/case/constant")));
+        m.insert(Path::new("/b"), vec![]).unwrap();
+        m.insert(Path::new("/b/c"), vec![]).unwrap();
+        assert!(m.holds_any(Path::new("/b")), "a file at the folder's own path does not hide what is under it");
     }
 
     #[test]
