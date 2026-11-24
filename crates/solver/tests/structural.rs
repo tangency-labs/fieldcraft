@@ -10,8 +10,8 @@
 use std::collections::BTreeMap;
 
 use fieldcraft_model::{
-    BeamProfile, BoundaryCondition, Distribution, Elastic, ElementFace, ElementKind, Formulation, Load, Material, Model, Procedure, Section,
-    SectionKind, Set, Step, Target,
+    BeamProfile, BeamTheory, BoundaryCondition, Distribution, Elastic, ElementFace, ElementKind, Formulation, Load, Material, Model, Procedure,
+    Section, SectionKind, Set, Step, Target,
 };
 use fieldcraft_solver::{FrequencyOptions, Limits, MassKind, StaticResult, solve_frequency, solve_static};
 
@@ -44,6 +44,13 @@ impl Build {
     fn section(&mut self, name: &str, elements: Vec<u32>, kind: SectionKind) {
         self.model.add_set(name, Set { elements, ..Set::default() }).unwrap();
         self.model.add_section(name, Section { set: name.into(), material: "Mat".into(), kind, formulation: Formulation::default() }).unwrap();
+    }
+
+    /// Makes the beam section `name` shear-rigid (Euler–Bernoulli).
+    fn euler_bernoulli(&mut self, name: &str) {
+        let mut section = self.model.section(name).unwrap().clone();
+        section.formulation.beam_theory = BeamTheory::EulerBernoulli;
+        self.model.replace_section(name, section).unwrap();
     }
 
     fn nodes_where(&self, f: impl Fn([f64; 3]) -> bool) -> Vec<u32> {
@@ -462,6 +469,175 @@ fn portal_frame_matches_the_slope_deflection_solution() {
     );
     assert!(rel(top, sway) < 5e-4 && rel(rot.abs(), theta.abs()) < 3e-3 && rel(m.abs(), base.abs()) < 5e-4);
     assert!((r.reaction_total[0] + load).abs() < 1e-9 * load);
+}
+
+#[test]
+fn euler_bernoulli_cantilever_deflection_is_exact() {
+    // The stocky I beam of `cantilever_beam_deflection_is_exact` with a shear-rigid section:
+    // δ = P L³/(3 E I) in each plane, at any number of elements (Przemieniecki 1968, §5.6 with Φ = 0).
+    let profile = BeamProfile::I { height: 200.0, width: 100.0, web: 6.0, flange: 10.0 };
+    let length: f64 = 1000.0;
+    let p = profile.properties(0.3);
+    let (e, g) = (210e3, 210e3 / 2.6);
+    for n in [1, 4] {
+        for (along_y, name) in [(true, "weak"), (false, "strong")] {
+            let (mut b, y, z) = cantilever(n, length, profile, Procedure::Static {});
+            b.euler_bernoulli("beam");
+            let d = if along_y { y } else { z };
+            b.force("tip", vec![n as u32 + 1], d.map(|c| 1000.0 * c));
+            let r = b.solve();
+            let u = r.displacement[at(&r, n as u32 + 1)];
+            let got = u[0] * d[0] + u[1] * d[1] + u[2] * d[2];
+            let (i, a_s) = if along_y { (p.iz, p.shear_y) } else { (p.iy, p.shear_z) };
+            let want = 1000.0 * length.powi(3) / (3.0 * e * i);
+            eprintln!(
+                "Euler–Bernoulli cantilever {n} element(s), {name} axis: tip {got:.6e} vs {want:.6e} (the shear term left out is {:.1}% of it)",
+                100.0 * 1000.0 * length / (g * a_s) / want
+            );
+            assert!(rel(got, want) < 1e-9, "{got} {want}");
+            let m = r.reaction_moment[at(&r, 1)];
+            let mm = (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]).sqrt();
+            assert!(rel(mm, 1000.0 * length) < 1e-9, "{m:?}");
+            let root = &r.beams[0].forces.ends[0];
+            let (shear, moment) = if along_y { (root[1], root[5]) } else { (root[2], root[4]) };
+            assert!(rel(shear.abs(), 1000.0) < 1e-9 && rel(moment.abs(), 1000.0 * length) < 1e-9, "{root:?}");
+        }
+    }
+}
+
+/// The portal frame of `portal_frame_matches_the_slope_deflection_solution` (fixed bases, `n`
+/// elements per member) with half the horizontal load on each joint, so it sways antisymmetrically:
+/// the sway, the joints' rotation about Y, the left joint's lift and the left base's moment about Y.
+fn sway_frame(n: usize, shear_rigid: bool) -> [f64; 4] {
+    let (h, l, load) = (SWAY_FRAME.0, SWAY_FRAME.1, SWAY_FRAME.2);
+    let mut b = Build::new(Elastic::Isotropic { young: SWAY_FRAME_YOUNG, poisson: 0.3 }, 7.85e-9, Procedure::Static {});
+    let mut path = Vec::new();
+    for i in 0..=n {
+        path.push([0.0, 0.0, h * i as f64 / n as f64]);
+    }
+    for i in 1..=n {
+        path.push([l * i as f64 / n as f64, 0.0, h]);
+    }
+    for i in 1..=n {
+        path.push([l, 0.0, h - h * i as f64 / n as f64]);
+    }
+    for (i, x) in path.iter().enumerate() {
+        b.node(i as u32 + 1, *x);
+    }
+    let count = path.len() as u32;
+    let (left, right) = (n as u32 + 1, 2 * n as u32 + 1);
+    let mut columns = Vec::new();
+    let mut beam = Vec::new();
+    for i in 1..count {
+        let el = b.element(ElementKind::Beam2, vec![i, i + 1]);
+        if (left..right).contains(&i) { beam.push(el) } else { columns.push(el) }
+    }
+    // Both members bend in the x–z plane: the orientation (local y, the width) is along global y.
+    b.section("columns", columns, SectionKind::Beam { profile: SWAY_COLUMN, orientation: [0.0, 1.0, 0.0] });
+    b.section("girder", beam, SectionKind::Beam { profile: SWAY_GIRDER, orientation: [0.0, 1.0, 0.0] });
+    if shear_rigid {
+        b.euler_bernoulli("columns");
+        b.euler_bernoulli("girder");
+    }
+    b.hold_nodes("bases", [Some(0.0); 6], vec![1, count]);
+    b.force("push", vec![left, right], [load, 0.0, 0.0]);
+    let r = b.solve();
+    assert!((r.reaction_total[0] + load).abs() < 1e-9 * load);
+    [r.displacement[at(&r, left)][0], r.rotation[at(&r, left)][1], r.displacement[at(&r, left)][2], r.reaction_moment[at(&r, 1)][1]]
+}
+
+/// Column height, girder span and total horizontal load of [`sway_frame`].
+const SWAY_FRAME: (f64, f64, f64) = (8000.0, 10000.0, 1000.0);
+const SWAY_FRAME_YOUNG: f64 = 210e3;
+const SWAY_COLUMN: BeamProfile = BeamProfile::Rectangle { width: 100.0, height: 100.0 };
+const SWAY_GIRDER: BeamProfile = BeamProfile::Rectangle { width: 100.0, height: 200.0 };
+
+#[test]
+fn euler_bernoulli_portal_frame_matches_the_slope_deflection_solution() {
+    // Slope-deflection without shear (Przemieniecki 1968, §5.6 with Φ = 0; Cook et al. 2002, ch. 2):
+    // end moments M_ij = (2 E I / L) (2 θ_i + θ_j − 3 ψ), ψ the chord rotation. Antisymmetric sway:
+    // both joints move Δ and turn θ, and the columns stretch and shorten by ±v under the girder's
+    // end shears, so the girder's chord turns by 2 v / l. With a = E I_c / h, b = E I_b / l and the
+    // column's axial stiffness s = E A_c / h:
+    //   column shear      a (6 θ' + 12 Δ / h) = H h / 2   (θ' = −θ, counter-clockwise),
+    //   joint moment      (4 a + 6 b) θ' + 6 a Δ / h + 12 b v / l = 0,
+    //   joint lift        s v = −(12 b / l) (θ' + 2 v / l),
+    // which give v = κ l θ with κ = 12 b / (s l² + 24 b), the girder's restraint softened to
+    // b' = b (1 − 2 κ), θ = H h / (4 (a + 6 b')), Δ = h (H h / 2 + 6 a θ) / (12 a) and the base
+    // moment 2 a (3 Δ / h − θ). The elements are exact for end loads, so this holds to round-off
+    // at any number of elements.
+    let (h, l, load) = SWAY_FRAME;
+    let (pc, pb) = (SWAY_COLUMN.properties(0.3), SWAY_GIRDER.properties(0.3));
+    let (a, b, s) = (SWAY_FRAME_YOUNG * pc.iy / h, SWAY_FRAME_YOUNG * pb.iy / l, SWAY_FRAME_YOUNG * pc.area / h);
+    let kappa = 12.0 * b / (s * l * l + 24.0 * b);
+    let theta = load * h / (4.0 * (a + 6.0 * b * (1.0 - 2.0 * kappa)));
+    let sway = h * (load * h / 2.0 + 6.0 * a * theta) / (12.0 * a);
+    let want = [sway, theta, kappa * l * theta, -2.0 * a * (3.0 * sway / h - theta)];
+    for n in [1, 3] {
+        let got = sway_frame(n, true);
+        let errors = [0, 1, 2, 3].map(|k| (got[k] - want[k]).abs() / want[k].abs());
+        eprintln!("Euler–Bernoulli portal frame, {n} element(s) per member: sway, rotation, lift, base moment {got:?} vs {want:?} ({errors:?})");
+        assert!(errors.iter().all(|e| *e < 1e-9), "{errors:?}");
+    }
+    // The Timoshenko frame is not this one: its sway is larger by the members' shear (about 5·10⁻⁴).
+    let timoshenko = sway_frame(1, false);
+    assert!(timoshenko[0] / want[0] - 1.0 > 1e-4, "{} {}", timoshenko[0], want[0]);
+}
+
+/// A cantilever along X that bends in the X–Z plane only (every other freedom of every node is
+/// held), `n` elements, for a frequency step of three modes.
+fn planar_cantilever(n: usize, length: f64, profile: BeamProfile, shear_rigid: bool) -> Build {
+    let procedure = Procedure::Frequency { modes: 3, min_hz: None, max_hz: None };
+    let mut b = Build::new(Elastic::Isotropic { young: 210e3, poisson: 0.3 }, 7.85e-9, procedure);
+    for i in 0..=n {
+        b.node(i as u32 + 1, [length * i as f64 / n as f64, 0.0, 0.0]);
+    }
+    let elements: Vec<u32> = (1..=n as u32).map(|i| b.element(ElementKind::Beam2, vec![i, i + 1])).collect();
+    b.section("beam", elements, SectionKind::Beam { profile, orientation: [0.0, 1.0, 0.0] });
+    if shear_rigid {
+        b.euler_bernoulli("beam");
+    }
+    b.hold_nodes("clamp", [Some(0.0); 6], vec![1]);
+    b.hold_nodes("plane", [Some(0.0), Some(0.0), FREE, Some(0.0), FREE, Some(0.0)], (2..=n as u32 + 1).collect());
+    b
+}
+
+#[test]
+fn euler_bernoulli_cantilever_frequencies() {
+    // A stocky beam (L/h = 10), where Timoshenko's third frequency is a tenth lower: the
+    // shear-rigid element has no shear and no rotary inertia in bending, so its frequencies are
+    // Euler–Bernoulli's ω_k = (β_k L)² √(E I / (ρ A L⁴)) at any slenderness.
+    let profile = BeamProfile::Rectangle { width: 50.0, height: 100.0 };
+    let length: f64 = 1000.0;
+    let p = profile.properties(0.3);
+    let base = (210e3 * p.iy / (7.85e-9 * p.area * length.powi(4))).sqrt() / (2.0 * std::f64::consts::PI);
+    let beta = [1.875_104_068_711_961, 4.694_091_132_974_175, 7.854_757_438_237_613];
+    let errors = |n: usize, mass: MassKind, shear_rigid: bool| -> [f64; 3] {
+        let b = planar_cantilever(n, length, profile, shear_rigid);
+        let r = solve_frequency(&b.model, None, &FrequencyOptions { mass, shift: None }, &Limits::default()).unwrap();
+        [0, 1, 2].map(|k| r.modes[k].frequency / (beta[k] * beta[k] * base) - 1.0)
+    };
+    // Consistent mass: from above, fourth order in the element length. The leading term is
+    // (β_k L / n)⁴ / 1440 (measured: 6.9·10⁻⁴ to 6.94·10⁻⁴ of (β_k L / n)⁴ in all three modes).
+    let (coarse, fine) = (errors(10, MassKind::Consistent, true), errors(20, MassKind::Consistent, true));
+    eprintln!("Euler–Bernoulli cantilever frequencies, consistent mass: 10 elements {coarse:?}, 20 elements {fine:?}");
+    for k in 0..3 {
+        let leading = (beta[k] / 20.0).powi(4) / 1440.0;
+        assert!(fine[k] > 0.0 && fine[k] < 1.1 * leading, "mode {k}: {} against {leading}", fine[k]);
+        let rate = (coarse[k] / fine[k]).log2();
+        assert!((3.9..4.1).contains(&rate), "mode {k}: order {rate}");
+    }
+    // Lumped mass: from below, second order (a few 10⁻³ low at 40 elements, as the Timoshenko beam's).
+    let (coarse, fine) = (errors(20, MassKind::Lumped, true), errors(40, MassKind::Lumped, true));
+    eprintln!("Euler–Bernoulli cantilever frequencies, lumped mass: 20 elements {coarse:?}, 40 elements {fine:?}");
+    for k in 0..3 {
+        assert!(fine[k] < 0.0 && fine[k].abs() < 5e-3, "mode {k}: {}", fine[k]);
+        let rate = (coarse[k] / fine[k]).log2();
+        assert!((1.9..2.1).contains(&rate), "mode {k}: order {rate}");
+    }
+    // The Timoshenko beam on the same mesh is not Euler–Bernoulli's: its third frequency is a tenth lower.
+    let timoshenko = errors(20, MassKind::Consistent, false);
+    assert!(timoshenko[2] < -0.05, "{timoshenko:?}");
 }
 
 // ---------------------------------------------------------------------------------------------

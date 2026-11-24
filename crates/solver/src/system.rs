@@ -537,9 +537,10 @@ impl Mesh {
                     }
                     Some(Section::Shell(ShellSection::new(*thickness, *offset, elastic).map_err(bad)?))
                 }
-                SectionKind::Beam { profile, orientation } => {
-                    Some(Section::Beam { section: BeamSection::new(profile, elastic).map_err(bad)?, orientation: *orientation })
-                }
+                SectionKind::Beam { profile, orientation } => Some(Section::Beam {
+                    section: BeamSection::new(profile, elastic, section.formulation.beam_theory).map_err(bad)?,
+                    orientation: *orientation,
+                }),
                 _ => None,
             };
             if let Some(body) = shared {
