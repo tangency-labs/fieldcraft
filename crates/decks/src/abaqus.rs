@@ -116,17 +116,27 @@
 //! differs by direction and a spring along a skew fixed vector are reported (they need a local
 //! orientation, not written yet).
 //!
-//! | FieldCraft | Plane stress | Plane strain | Axisymmetric |
-//! |---|---|---|---|
-//! | tri3 | CPS3 | CPE3 | CAX3 |
-//! | tri6 | CPS6 | CPE6 | CAX6 |
-//! | quad4 | CPS4, CPS4R, CPS4I | CPE4, CPE4R, CPE4I | CAX4, CAX4R, CAX4I |
-//! | quad8 | CPS8, CPS8R | CPE8, CPE8R | CAX8, CAX8R |
+//! | FieldCraft | Plane stress | Plane strain | Axisymmetric | Axisymmetric with twist |
+//! |---|---|---|---|---|
+//! | tri3 | CPS3 | CPE3 | CAX3 | CGAX3 |
+//! | tri6 | CPS6 | CPE6 | CAX6 | CGAX6 |
+//! | quad4 | CPS4, CPS4R, CPS4I | CPE4, CPE4R, CPE4I | CAX4, CAX4R, CAX4I | CGAX4, CGAX4R |
+//! | quad8 | CPS8, CPS8R | CPE8, CPE8R | CAX8, CAX8R | CGAX8, CGAX8R |
 //!
 //! 2D models: Abaqus's axisymmetric elements, like the model, take r = x and the axis along Y,
 //! and their concentrated loads are totals over the circumference; a 2D section's thickness is
 //! the `*SOLID SECTION` data line. Surfaces of 2D elements are their edges, `S1`… in the edge
 //! order of the model; body forces of axisymmetric elements are `BR`, `BZ`.
+//!
+//! Twist sections (`twist: true`) are written with the twist elements. Their third unknown is
+//! the twist angle, on degree of freedom 5, where the model has the hoop displacement on 3, so
+//! the model's hoop displacement u_θ becomes φ = −u_z / r, the right-handed twist about Y. A hoop force F_z at radius r is the
+//! moment −F_z r on 5 (the moment about Y of a force along Z), and a torque's ring torques are written on 5 as they are. A held hoop
+//! displacement of zero is φ = 0 on 5; a non-zero one is refused, since φ differs by node. A
+//! held radial or axial displacement, and a symmetry about X or Y, are the translation alone:
+//! `XSYMM` and `YSYMM` would hold the twist angle as well, so they are never written for a twist
+//! model. A symmetry about an inclined plane is refused. Incompatible modes have no twist
+//! element and are refused. The reader does not read CGAX elements.
 //!
 //! `H` marks the hybrid variant. A four-node tetrahedron integrates at one point either way, so
 //! reduced integration writes C3D4. Not expressible: reduced integration of ten-node tetrahedra and
@@ -230,9 +240,13 @@ pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result
     if let Some(prefix) = match section.kind {
         S::PlaneStress { .. } => Some("CPS"),
         S::PlaneStrain { .. } => Some("CPE"),
-        S::Axisymmetric { .. } => Some("CAX"),
+        S::Axisymmetric { twist: false } => Some("CAX"),
+        S::Axisymmetric { twist: true } => Some("CGAX"),
         _ => None,
     } {
+        if section.kind.twist() && f.incompatible_modes {
+            return Err("incompatible modes of axisymmetric elements with twist (Abaqus has no CGAX4I)".into());
+        }
         let suffix = match (kind, reduced, f.incompatible_modes) {
             (K::Quad4, false, true) => "4I",
             (_, true, true) => return Err("incompatible modes with reduced integration".into()),
@@ -714,6 +728,20 @@ struct PipeLoad {
 /// A centrifugal load: the element set, ω², a point on the axis and its direction.
 type Centrifugal<'a> = (&'a str, f64, [f64; 3], [f64; 3]);
 
+/// The concentrated loads of an axisymmetric model with twist in Abaqus's degrees of freedom.
+/// Its twist elements carry the twist angle φ = −u_z / r, the right-handed twist about Y on 5 where the model has u_z on 3, so a
+/// hoop force F_z at radius r is the moment −F_z r on 5 (the moment about the axis Y of a force along Z, M_y = −x F_z; degree of freedom 5 is the right-handed rotation about the axial direction, Abaqus Analysis User's Guide, axisymmetric solid element library) (none on the axis, where it does no
+/// work), added to the torques already there.
+fn twist_loads(model: &Model, loads: BTreeMap<(u32, u8), f64>) -> BTreeMap<(u32, u8), f64> {
+    let mut out: BTreeMap<(u32, u8), f64> = BTreeMap::new();
+    for ((node, dof), v) in loads {
+        let (dof, v) = if dof == 3 { (5, -v * model.node(node).map_or(0.0, |n| n.xyz[0])) } else { (dof, v) };
+        *out.entry((node, dof)).or_default() += v;
+    }
+    out.retain(|_, v| *v != 0.0);
+    out
+}
+
 /// The loads of one general step, as the deck writes them.
 #[derive(Default)]
 struct StepLoads<'a> {
@@ -749,6 +777,9 @@ impl<'a> StepLoads<'a> {
     ) -> StepLoads<'a> {
         let axisymmetric = r.extent() == Some(fieldcraft_model::Extent::Revolved);
         let mut s = StepLoads { concentrated: crate::concentrated_loads(model, r, &step.loads), axisymmetric, ..StepLoads::default() };
+        if r.twist {
+            s.concentrated = twist_loads(model, std::mem::take(&mut s.concentrated));
+        }
         let (mut gravity, mut body) = (Vec::new(), Vec::new());
         for name in &step.loads {
             match model.load(name) {
@@ -1217,6 +1248,35 @@ impl Deck {
         Ok(())
     }
 
+    /// A boundary condition of an axisymmetric model with twist. Abaqus's twist elements carry
+    /// u_r (1), u_z (2) and the twist angle φ = −u_z / r, the right-handed twist about Y (5); the model has u_z on 3. So u_z = 0
+    /// is φ = 0, a non-zero u_z is a φ that differs by node (not written), and the model's
+    /// rotations, which hold nothing in a 2D model, are left out: a symmetry about X is its
+    /// translation alone, since `XSYMM` would hold φ.
+    fn twist_boundary(&mut self, name: &str, target: &str, bc: &BoundaryCondition) -> Result<()> {
+        let no = |what: &str| Error::Unsupported { format: FORMAT, what: format!("boundary condition `{name}`: {what}") };
+        match bc {
+            BoundaryCondition::Fixed { .. } => self.line(&format!("{target}, ENCASTRE")),
+            // Refused up front (check_expressible).
+            BoundaryCondition::Temperature { .. } => {}
+            BoundaryCondition::Symmetry { plane, .. } if plane.axis().is_none() => {
+                return Err(no("an inclined symmetry plane in an axisymmetric model with twist"));
+            }
+            _ => {
+                for (model_dof, deck_dof) in [(1u8, 1u8), (2, 2), (3, 5)] {
+                    let Some(v) = bc.value(model_dof) else { continue };
+                    if model_dof == 3 && v != 0.0 {
+                        return Err(no(
+                            "a non-zero hoop displacement (Abaqus's twist elements prescribe the twist angle, −u_z / r, which differs by node)",
+                        ));
+                    }
+                    self.numbers_line(&format!("{target}, {deck_dof}, {deck_dof}"), &[v])?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn boundary_lines<'n>(&mut self, model: &Model, r: &Resolved, names: impl IntoIterator<Item = &'n String>) -> Result<()> {
         for name in names {
             let Some(bc) = model.boundary_condition(name) else { continue };
@@ -1228,6 +1288,10 @@ impl Deck {
                 },
             };
             self.comment(&format!("boundary condition {name}"));
+            if r.twist {
+                self.twist_boundary(name, &target, bc)?;
+                continue;
+            }
             match bc {
                 BoundaryCondition::Fixed { .. } => self.line(&format!("{target}, ENCASTRE")),
                 BoundaryCondition::Symmetry { plane, .. } => {

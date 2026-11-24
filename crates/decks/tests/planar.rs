@@ -6,8 +6,8 @@ mod common;
 use common::{abaqus, lsdyna, nastran};
 use fieldcraft_decks::{Error, edge_pressure_loads};
 use fieldcraft_model::{
-    BeamProfile, BeamTheory, BoundaryCondition, Elastic, ElementEdge, ElementKind, Formulation, Integration, Load, Material, Model, Procedure,
-    Section, SectionKind, Set, Step, Symmetry, Target,
+    BeamProfile, BeamTheory, BoundaryCondition, Distribution, Elastic, ElementEdge, ElementKind, Formulation, Integration, Load, Material, Model,
+    Procedure, Section, SectionKind, Set, Step, Symmetry, Target,
 };
 
 /// Two quad4 over [1, 3] × [0, 1] (or the given kind on the same corners), the left edge held,
@@ -42,7 +42,7 @@ fn plate(kind: SectionKind, element: ElementKind, formulation: Formulation) -> M
     m.add_section("plate", Section { set: "all".into(), material: "Steel".into(), kind, formulation }).unwrap();
     m.add_boundary_condition("hold", BoundaryCondition::Fixed { target: Target::Set("left".into()) }).unwrap();
     m.add_load("press", Load::Pressure { set: "right".into(), magnitude: 5.0 }).unwrap();
-    let axis = if kind == (SectionKind::Axisymmetric { twist: false }) { [0.0, 1.0, 0.0] } else { [0.0, 0.0, 1.0] };
+    let axis = if matches!(kind, SectionKind::Axisymmetric { .. }) { [0.0, 1.0, 0.0] } else { [0.0, 0.0, 1.0] };
     m.add_load("spin", Load::Centrifugal { angular_velocity: 100.0, point: [0.0; 3], axis, set: None }).unwrap();
     let mut s = Step::new("Load", Procedure::Static {});
     s.boundary_conditions.insert("hold".into());
@@ -308,4 +308,73 @@ fn inclined_symmetry_at_a_planar_beam_node_has_no_terms_on_rotations_about_x_and
     }
     assert!(!components.is_empty(), "{deck}");
     assert!(components.iter().all(|c| c == "6"), "{components:?}\n{deck}");
+}
+
+#[test]
+fn axisymmetric_elements_with_twist_in_every_format() {
+    let twist = SectionKind::Axisymmetric { twist: true };
+    let full = Formulation::default();
+    let red = Formulation { integration: Integration::Reduced, ..Formulation::default() };
+    let im = Formulation { incompatible_modes: true, ..Formulation::default() };
+    for (element, f, want) in [(ElementKind::Quad4, full, "CGAX4"), (ElementKind::Quad4, red, "CGAX4R"), (ElementKind::Tri3, full, "CGAX3")] {
+        let deck = abaqus::write(&plate(twist, element, f)).unwrap();
+        assert!(deck.contains(&format!("*ELEMENT, TYPE={want}\n")), "{want}\n{deck}");
+        assert!(deck.contains("*SOLID SECTION, ELSET=all, MATERIAL=Steel\n,\n"), "{deck}");
+        assert!(deck.contains("left, ENCASTRE\n"), "{deck}");
+    }
+    assert!(unsupported(abaqus::write(&plate(twist, ElementKind::Quad4, im))).contains("CGAX4I"));
+
+    // A hoop force −2 along Z at node 3 (r = 3: the moment about Y is −x F_z = 6) and a torque 12 on the right edge
+    // (nodes 3 and 6, r = 3, 6 each): moments on 5.
+    let mut m = plate(twist, ElementKind::Quad4, full);
+    m.add_set("rim", Set { nodes: vec![3], ..Set::default() }).unwrap();
+    m.add_set("top", Set { nodes: vec![5, 6], ..Set::default() }).unwrap();
+    m.add_set("mid", Set { nodes: vec![2], ..Set::default() }).unwrap();
+    m.add_load("ring", Load::Force { target: Target::Set("rim".into()), vector: [0.0, 0.0, -2.0], distribution: Distribution::Total }).unwrap();
+    m.add_load("torque", Load::Moment { target: Target::Set("right".into()), vector: [0.0, 12.0, 0.0], distribution: Distribution::Total }).unwrap();
+    m.add_boundary_condition(
+        "still",
+        BoundaryCondition::Displacement { target: Target::Set("top".into()), values: [None, Some(0.5), Some(0.0), None, Some(0.0), None] },
+    )
+    .unwrap();
+    m.add_boundary_condition("mirror", BoundaryCondition::Symmetry { target: Target::Set("mid".into()), plane: Symmetry::X }).unwrap();
+    for load in ["ring", "torque"] {
+        m.set_load_active("Load", load, true).unwrap();
+    }
+    for bc in ["still", "mirror"] {
+        m.set_boundary_condition_active("Load", bc, true).unwrap();
+    }
+    let deck = abaqus::write(&m).unwrap();
+    let cload: Vec<(&str, f64)> = deck
+        .lines()
+        .skip_while(|l| !l.starts_with("*CLOAD"))
+        .skip(1)
+        .take_while(|l| !l.starts_with('*'))
+        .map(|l| l.rsplit_once(", ").map(|(head, v)| (head, v.parse().unwrap())).unwrap())
+        .collect();
+    assert_eq!(cload.iter().map(|c| c.0).collect::<Vec<_>>(), ["3, 5", "6, 5"], "{deck}");
+    assert!((cload[0].1 - 12.0).abs() < 1e-9 && (cload[1].1 - 6.0).abs() < 1e-9, "{cload:?}");
+    let held = |start: &str| deck.lines().filter(|l| l.starts_with(start)).count();
+    // u_z and u_θ = 0 (as φ = 0 on 5) are written, once per *BOUNDARY block each; the model's rotation 5 adds nothing.
+    assert!(held("top, 2, 2, ") >= 1 && held("top, 5, 5, ") == held("top, 2, 2, "), "{deck}");
+    assert_eq!((held("top, 3, 3"), held("top, 1, 1"), held("top, 4, 4"), held("top, 6, 6")), (0, 0, 0, 0), "{deck}");
+    assert!(held("mid, 1, 1, ") >= 1 && held("mid, 5, 5") == 0 && held("mid, XSYMM") == 0, "{deck}");
+
+    // A prescribed hoop displacement has no counterpart: Abaqus prescribes the twist angle.
+    let mut m = plate(twist, ElementKind::Quad4, full);
+    m.add_set("top", Set { nodes: vec![5, 6], ..Set::default() }).unwrap();
+    m.add_boundary_condition(
+        "turn",
+        BoundaryCondition::Displacement { target: Target::Set("top".into()), values: [None, None, Some(0.1), None, None, None] },
+    )
+    .unwrap();
+    m.set_boundary_condition_active("Load", "turn", true).unwrap();
+    assert!(unsupported(abaqus::write(&m)).contains("hoop displacement"));
+
+    // Nastran and LS-DYNA write no axisymmetric elements, with twist or without.
+    assert!(unsupported(nastran::write(&plate(twist, ElementKind::Quad4, full))).contains("differ between dialects"));
+    match lsdyna::write(&plate(twist, ElementKind::Tri3, red)) {
+        Err(Error::Unsupported { what, .. }) => assert!(what.contains("axisymmetric"), "{what}"),
+        other => panic!("{other:?}"),
+    }
 }
