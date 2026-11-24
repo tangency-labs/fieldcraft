@@ -641,6 +641,134 @@ fn euler_bernoulli_cantilever_frequencies() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Pipes under pressure
+// ---------------------------------------------------------------------------------------------
+
+/// Lamé's constant A = (p_i a² − p_o b²)/(b² − a²) of a pipe under pressure (S. P. Timoshenko,
+/// J. N. Goodier, *Theory of Elasticity*, 3rd ed., 1970, §28): half of σ_r + σ_θ anywhere in the
+/// wall, and the wall's axial stress under the closed-end force.
+fn lame_mean(profile: BeamProfile, internal: f64, external: f64) -> f64 {
+    let (a, b) = profile.bore().unwrap();
+    (internal * a * a - external * b * b) / (b * b - a * a)
+}
+
+#[test]
+fn a_closed_pipe_under_pressure_follows_lame() {
+    // a = 10, b = 20, p_i = 100, p_o = 40: A = −20 and B = 8000, so σ_r = −100 and −40 and
+    // σ_θ = 60 and 0 at the bore and outside. Free to stretch, the closed pipe carries σ_x = A
+    // and lengthens by (1 − 2ν) A/E; held at both ends it keeps σ_x = 2νA and its anchors
+    // carry the effective force, (1 − 2ν) A A_w along the axis at the first.
+    let profile = BeamProfile::Pipe { radius: 20.0, thickness: 10.0 };
+    let (length, e, nu): (f64, f64, f64) = (1000.0, 210e3, 0.3);
+    let (internal, external) = (100.0, 40.0);
+    let mean = lame_mean(profile, internal, external);
+    assert!((mean + 20.0).abs() < 1e-12, "{mean}");
+    let area = profile.area();
+    let scale = (mean * area).abs();
+    let dir = [2.0 / 3.0, 2.0 / 3.0, 1.0 / 3.0];
+    let along = |v: [f64; 3]| v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2];
+    for held in [false, true] {
+        let (mut b, _, _) = cantilever(4, length, profile, Procedure::Static {});
+        if held {
+            b.hold_nodes("end", [Some(0.0); 6], vec![5]);
+        }
+        b.load("steam", Load::PipePressure { set: "beam".into(), internal, external });
+        let r = b.solve();
+        let (stretch, wall, anchor) = if held {
+            (0.0, 2.0 * nu * mean * area, (1.0 - 2.0 * nu) * mean * area)
+        } else {
+            (length * (1.0 - 2.0 * nu) * mean / e, mean * area, 0.0)
+        };
+        let (tip, pull) = (along(r.displacement[at(&r, 5)]), along(r.reaction[at(&r, 1)]));
+        eprintln!("closed pipe, held {held}: stretch {tip:.9e} vs {stretch:.9e}, anchor {pull:.9e} vs {anchor:.9e}");
+        assert!((tip - stretch).abs() < 1e-9 * (length * mean / e).abs(), "{tip} {stretch}");
+        assert!((pull - anchor).abs() < 1e-9 * scale, "{pull} {anchor}");
+        assert_eq!(r.beams.len(), 4);
+        for beam in &r.beams {
+            for end in beam.forces.ends {
+                assert!((end[0] - wall).abs() < 1e-9 * scale && end[1].abs() < 1e-9 * scale && end[2].abs() < 1e-9 * scale, "{end:?} {wall}");
+            }
+            let pipe = beam.pipe.expect("a pipe under pressure reports its wall stresses");
+            let want = [-100.0, -40.0, 60.0, 0.0, wall / area, wall / area];
+            for (got, want) in pipe.radial.iter().chain(&pipe.hoop).chain(&pipe.axial).zip(want) {
+                assert!((got - want).abs() < 1e-9 * 100.0, "{pipe:?}");
+            }
+        }
+    }
+    // Two pressures on the same pipes add up; without one a pipe reports no wall stress.
+    let (mut b, _, _) = cantilever(2, length, profile, Procedure::Static {});
+    b.load("inside", Load::PipePressure { set: "beam".into(), internal, external: 0.0 });
+    b.load("outside", Load::PipePressure { set: "beam".into(), internal: 0.0, external });
+    let r = b.solve();
+    assert!((r.beams[0].pipe.unwrap().hoop[0] - 60.0).abs() < 1e-9 * 100.0, "{:?}", r.beams[0].pipe);
+    assert!((r.beams[1].forces.ends[1][0] - mean * area).abs() < 1e-9 * scale, "{:?}", r.beams[1].forces);
+    let (mut b, _, _) = cantilever(2, length, profile, Procedure::Static {});
+    b.force("tip", vec![3], [1.0, 0.0, 0.0]);
+    assert!(b.solve().beams.iter().all(|beam| beam.pipe.is_none()));
+    // A pressure on a beam that is no pipe is refused by the model's check.
+    let (mut b, _, _) = cantilever(2, length, BeamProfile::Circle { radius: 20.0 }, Procedure::Static {});
+    b.load("steam", Load::PipePressure { set: "beam".into(), internal, external });
+    let err = solve_static(&b.model, None, &Limits::default()).unwrap_err();
+    assert!(err.to_string().contains("pipe profile that has a bore"), "{err}");
+}
+
+#[test]
+fn a_pressurised_pipe_loop_between_two_anchors() {
+    // A pipe loop in the x–z plane: two legs of height h up from anchors a span w apart, joined
+    // by a run, under internal pressure. Unrestrained, every member would lengthen by the
+    // strain ε = (1 − 2ν) A/E (A Lamé's constant), a similar loop; the anchors hold the span,
+    // so the run's growth ε w is taken up by the thrust X between the anchors, which acts at
+    // the height ȳ of the loop's elastic centre (the centroid of its centre line; no moment and
+    // no vertical force there, by the centroid and by symmetry). With bending, axial and shear
+    // flexibility (Castigliano; Timoshenko members, Przemieniecki 1968, §5.6):
+    // X (I_c/(E I) + w/(E A) + 2h/(G A_s)) = ε w, I_c = ∫ (y − ȳ)² ds over the centre line.
+    // The legs carry no effective force, so the corners rise by ε h; the run is compressed by
+    // X and bent by the constant moment X (h − ȳ), which lifts its middle by κ w²/8.
+    let profile = BeamProfile::Pipe { radius: 50.0, thickness: 5.0 };
+    let (h, w, internal): (f64, f64, f64) = (2000.0, 3000.0, 10.0);
+    let (e, nu): (f64, f64) = (210e3, 0.3);
+    let g = e / (2.0 * (1.0 + nu));
+    let p = profile.properties(nu);
+    let mean = lame_mean(profile, internal, 0.0);
+    let (end_force, strain) = (mean * p.area, (1.0 - 2.0 * nu) * mean / e);
+    let mut b = Build::new(Elastic::Isotropic { young: e, poisson: nu }, 7.85e-9, Procedure::Static {});
+    let path = [[0.0, 0.0, 0.0], [0.0, 0.0, h / 2.0], [0.0, 0.0, h], [w / 2.0, 0.0, h], [w, 0.0, h], [w, 0.0, h / 2.0], [w, 0.0, 0.0]];
+    for (i, x) in path.iter().enumerate() {
+        b.node(i as u32 + 1, *x);
+    }
+    let elements: Vec<u32> = (1..7).map(|i| b.element(ElementKind::Beam2, vec![i, i + 1])).collect();
+    b.section("loop", elements, SectionKind::Beam { profile, orientation: [0.0, 1.0, 0.0] });
+    b.hold_nodes("anchors", [Some(0.0); 6], vec![1, 7]);
+    b.load("steam", Load::PipePressure { set: "loop".into(), internal, external: 0.0 });
+    let r = b.solve();
+    let centre = (h * h + w * h) / (2.0 * h + w);
+    let inertia = 2.0 * (h.powi(3) / 12.0 + h * (h / 2.0 - centre).powi(2)) + w * (h - centre).powi(2);
+    let thrust = strain * w / (inertia / (e * p.iy) + w / (e * p.area) + 2.0 * h / (g * p.shear_z));
+    let corner = w * (strain - thrust / (e * p.area)) / 2.0;
+    let crown = strain * h + thrust * (h - centre) / (e * p.iy) * w * w / 8.0;
+    let got = [
+        ("thrust at the first anchor", r.reaction[at(&r, 1)][0], thrust),
+        ("thrust at the second anchor", -r.reaction[at(&r, 7)][0], thrust),
+        ("anchor moment", r.reaction_moment[at(&r, 1)][1].abs(), thrust * centre),
+        ("corner 5 along x", r.displacement[at(&r, 5)][0], corner),
+        ("corner 3 along x", -r.displacement[at(&r, 3)][0], corner),
+        ("corner 3 along z", r.displacement[at(&r, 3)][2], strain * h),
+        ("crown along z", r.displacement[at(&r, 4)][2], crown),
+        ("wall force in the run", r.beams[2].forces.ends[1][0], end_force - thrust),
+        ("wall force in a leg", r.beams[0].forces.ends[0][0], end_force),
+    ];
+    for (what, value, want) in got {
+        eprintln!("pipe loop, {what}: {value:.12e} vs {want:.12e} ({:.1e})", rel(value, want));
+        // The thrust is 1.1 · 10⁻³ of the pressure pair it balances, so its round-off is that much larger.
+        assert!(rel(value, want) < 1e-8, "{what}: {value} {want}");
+    }
+    assert!(r.reaction_total.iter().all(|v| v.abs() < 1e-9 * end_force), "{:?}", r.reaction_total);
+    let hoop = r.beams[3].pipe.unwrap().hoop;
+    let (a2, b2) = (45.0 * 45.0, 50.0 * 50.0);
+    assert!(rel(hoop[0], internal * (a2 + b2) / (b2 - a2)) < 1e-12 && rel(hoop[1], 2.0 * internal * a2 / (b2 - a2)) < 1e-12, "{hoop:?}");
+}
+
+// ---------------------------------------------------------------------------------------------
 // Mixed meshes
 // ---------------------------------------------------------------------------------------------
 
