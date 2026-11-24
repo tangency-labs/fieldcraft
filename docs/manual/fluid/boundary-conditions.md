@@ -326,6 +326,66 @@ bounce-back applies.
 
 ![The unknown populations of an inlet cell](../../media/manual/boundary-conditions-2.svg)
 
+### Raising the inlet (`inlet_ramp`)
+
+A velocity face that is at its full value from the first step sends a pressure wave through the box. A velocity
+step U at a velocity face sends a density pulse of U / c_s = Ma, with Ma = √3 U the lattice Mach number, since a
+travelling wave has p′ = ρ c v′ (Joukowsky's relation: N. Joukowsky, Mém. Acad. Imp. Sci. St-Pétersbourg, sér. 8,
+9(5), 1900). At the default lattice speed 0.05 that is a pressure coefficient of 2 / Ma = 23 dynamic pressures.
+`inlet_ramp` (the time T of a fluid step) raises every velocity face from the initial field as
+
+    u(t) = u0 + r(t) (u − u0),    r(t) = ½ (1 − cos(π t / T)) for t < T, and 1 from T on,
+
+with u0 the domain's initial velocity (rest unless given) and u the face's velocity. The raised cosine is the
+lowest-order trigonometric rise with r(0) = 0, r(T) = 1 and r′ = 0 at both ends, so the inlet's acceleration is
+continuous at the start and at the end. Without `inlet_ramp` nothing changes.
+
+**What is left after it.** A velocity step U at a velocity face sends a density pulse U / c_s = Ma (Ma = √3 U, the
+lattice Mach number). Its pressure coefficient, against ½ρU², is 2 / Ma. In a box of length L between the velocity
+face and a pressure face, the fundamental period is T₀ = 4 L / c_s (c_s = 1/√3 cells per step, a closed–open tube).
+The step's fundamental standing wave has (4/π) of the step's amplitude (the odd harmonics of a square wave,
+4 / (π (2n + 1))). A ramp of T = m T₀ multiplies it by |cos(π m)| / |4 m² − 1|, the Fourier transform of the rise's
+slope at the fundamental. So the residual pressure coefficient of the fundamental is
+
+    C_p,res ≈ (4/π) · (2/Ma) · |cos(π m)| / |4 m² − 1|
+
+The cosine is at most 1, which gives the envelope
+
+    C_p,res ≤ (8 / (π Ma)) / (4 m² − 1)
+
+For a tolerance ε on the residual, the envelope is below ε when 4 m² − 1 ≥ 8 / (π ε Ma), that is
+
+    m ≥ ½ √(1 + 8 / (π ε Ma))
+
+The time T is yours to choose: the code recommends none. The measured rows below are the evidence.
+
+**Measured against theory.** The heavy test `crates/lbm/tests/inlet_ramp_cylinder.rs` prints these rows: a 2-D
+cylinder in a 24 D × 12 D box, 16 cells per D, Hrr with Smagorinsky C = 0.1 at Re 3900, halfway walls, CPU, f64,
+started at rest, run to 120 D/U. The far-field C_p rms is at the probe 3 D upstream of the centre and 3 D above it,
+over the second half of the run. The printed values are frozen, since the run is deterministic. The theory column is
+the envelope's fundamental at that probe: its residual amplitude (4/π)(2/Ma)|cos πm|/|4m² − 1|, taken as an rms (÷ √2),
+times cos(π/16), the closed–open mode's cosine at the probe's distance 3 D from the inlet (k = π/(2L), L = 24 D).
+
+The residual C_p,res and the tolerance ε in the formulas above are amplitudes at the velocity face: the peak of the
+standing wave's pressure coefficient. They are not rms values; the rms of a sinusoid of amplitude A is A / √2.
+
+| ramp T | m | far-field C_p rms (measured) | theory, fundamental (rms) | measured against theory |
+|---|---|---|---|---|
+| none | 0 | 20.190 | the step's own wave (no single mode) | regression value |
+| 2660 steps (T₀) | 1 | 7.020 | 6.797 | +3.3 % (open discrepancy, #1134) |
+| 5320 steps (2 T₀) | 2 | 1.350 | 1.359 | −0.7 % |
+| 6650 steps (2.5 T₀) | 2.5 | 0.049 | 0 (cos 2.5π = 0) | regression value |
+
+The one- and two-period rows give the ratio rms(T₀)/rms(2 T₀) = 5.198, against 5 from theory (|cos π|/|4 − 1| over
+|cos 2π|/|16 − 1|): +4.0 %. The one-period row is 3.3 % above its theory, and the two-period row is within 0.7 % of its
+own, so the excess is open and tracked in #1134; the ratio is printed in the heavy test, not asserted. Measured
+against theory, the two-period row is −0.7 %, not asserted (#1134). A period shift to T₀ / (1 − Ma²) would move it to about −2.3 %, so that agreement is coincidence, not evidence; the one-period row's +3.3 % has no diagnosis yet. Of the measured
+ramps, 2.5 T₀ removes most of the start's pulse for this case: 0.049 against 20.190 with no ramp.
+
+The refusals: `inlet_ramp` needs a velocity face; a free surface is not supported yet; a ramp longer than the run
+is refused, since the faces would never reach their velocities; and the time must be positive and finite. Moving
+walls are not ramped, and the temperature of a velocity inlet is not ramped.
+
 ### Convective outlets
 
 A uniform pressure outlet holds its cell at the face's density with no tangential velocity. Where an
@@ -575,7 +635,7 @@ this resolution: c_D 3.4 % above).
 - A uniform pressure outlet distorts the last cell layer where an unrecovered wake reaches it. The
   reported speed extremes (`max_speed`, slice ranges) leave every inlet and outlet layer out for
   this reason, convective outlets included.
-- Inlets and outlets reflect pressure waves; there are no absorbing layers. The characteristic
+- Inlets and outlets reflect pressure waves; there are no absorbing layers. A start from rest should raise its inlets (`inlet_ramp`). The characteristic
   outlet is partially non-reflecting, not non-reflecting: its balance is one-dimensional along the
   face's normal (oblique waves and vortices crossing it were not measured); through its pressure
   relaxation it reflects waves slower than about K / 2, |R| = K / √(K² + 4ω²); and its closure
