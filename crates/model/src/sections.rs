@@ -362,6 +362,31 @@ pub enum Integration {
     Reduced,
 }
 
+/// The beam theory of a beam section's elements.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BeamTheory {
+    /// Shear-deformable, with rotary inertia.
+    #[default]
+    Timoshenko,
+    /// Shear-rigid, without rotary inertia of the cross-section in bending.
+    EulerBernoulli,
+}
+
+impl BeamTheory {
+    /// `timoshenko` or `euler_bernoulli`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            BeamTheory::Timoshenko => "timoshenko",
+            BeamTheory::EulerBernoulli => "euler_bernoulli",
+        }
+    }
+
+    pub fn is_timoshenko(&self) -> bool {
+        *self == BeamTheory::Timoshenko
+    }
+}
+
 /// How the section's elements are formulated, independent of any solver's element names.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -375,6 +400,9 @@ pub struct Formulation {
     /// Mixed displacement–pressure formulation for nearly incompressible materials: solids only.
     #[serde(default)]
     pub hybrid: bool,
+    /// The beam theory: beam sections only.
+    #[serde(default, skip_serializing_if = "BeamTheory::is_timoshenko")]
+    pub beam_theory: BeamTheory,
 }
 
 impl Formulation {
@@ -390,6 +418,9 @@ impl Formulation {
         let volume_constrained = kind.dimension() == 3 || matches!(kind, SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric {});
         if self.hybrid && !volume_constrained {
             return Err(Error::Invalid(format!("hybrid formulations are for solid, plane strain and axisymmetric sections, not {}", kind.name())));
+        }
+        if !self.beam_theory.is_timoshenko() && !matches!(kind, SectionKind::Beam { .. }) {
+            return Err(Error::Invalid(format!("the {} beam theory is for beam sections, not {}", self.beam_theory.name(), kind.name())));
         }
         Ok(())
     }
@@ -461,7 +492,9 @@ mod tests {
         let shell = SectionKind::Shell { thickness: 2.0, offset: 0.0, points: 5 };
         assert!(Formulation { hybrid: true, ..Formulation::default() }.validate_for(&shell).is_err());
         assert!(
-            Formulation { incompatible_modes: true, integration: Integration::Reduced, hybrid: false }.validate_for(&SectionKind::Solid {}).is_err()
+            Formulation { incompatible_modes: true, integration: Integration::Reduced, ..Formulation::default() }
+                .validate_for(&SectionKind::Solid {})
+                .is_err()
         );
         Formulation { incompatible_modes: true, hybrid: true, ..Formulation::default() }.validate_for(&SectionKind::Solid {}).unwrap();
         for bad in [
@@ -481,6 +514,24 @@ mod tests {
         );
         assert!(serde_json::from_value::<SectionKind>(serde_json::json!({"type": "solid", "x": 1})).is_err());
         assert!(serde_json::from_value::<SectionKind>(serde_json::json!({"type": "membrane"})).is_err());
+    }
+
+    #[test]
+    fn beam_theory_is_a_beam_section_formulation() {
+        let beam = SectionKind::Beam { profile: BeamProfile::Circle { radius: 1.0 }, orientation: [0.0, 0.0, 1.0] };
+        let shear_rigid = Formulation { beam_theory: BeamTheory::EulerBernoulli, ..Formulation::default() };
+        shear_rigid.validate_for(&beam).unwrap();
+        for other in [SectionKind::Solid {}, SectionKind::Shell { thickness: 1.0, offset: 0.0, points: 5 }, SectionKind::Rod { area: 1.0 }] {
+            let e = shear_rigid.validate_for(&other).unwrap_err().to_string();
+            assert!(e.contains("euler_bernoulli beam theory is for beam sections") && e.contains(other.name()), "{e}");
+        }
+        // Written by name; the default (Timoshenko) is left out, so files without it read and write unchanged.
+        assert_eq!(serde_json::to_value(shear_rigid).unwrap()["beam_theory"], "euler_bernoulli");
+        assert!(serde_json::to_value(Formulation::default()).unwrap().get("beam_theory").is_none());
+        let parsed: Formulation = serde_json::from_value(serde_json::json!({"beam_theory": "euler_bernoulli"})).unwrap();
+        assert_eq!(parsed, shear_rigid);
+        assert_eq!(serde_json::from_value::<Formulation>(serde_json::json!({})).unwrap().beam_theory, BeamTheory::Timoshenko);
+        assert!(serde_json::from_value::<Formulation>(serde_json::json!({"beam_theory": "rayleigh"})).is_err());
     }
 
     #[test]

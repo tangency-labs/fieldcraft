@@ -7,15 +7,19 @@
 //! rotations about them; element matrices are built in local axes and rotated to the global ones
 //! ([`crate::frame`]).
 //!
-//! **Beam.** Axial and torsional stiffness are the exact two-node ones (EA/L, GJ/L). Each bending
-//! plane uses the interdependent interpolation of the Timoshenko beam: cubic deflection and
-//! quadratic rotation, coupled through Φ = 12 EI / (G A_s L²) so the shear strain is constant and
-//! the element is exact for end loads (any number of elements gives the nodal displacements of
+//! **Beam.** Axial and torsional stiffness are the exact two-node ones (EA/L, GJ/L). Each section
+//! names its bending theory ([`BeamTheory`]). Timoshenko (the default): each bending plane uses
+//! the interdependent interpolation of the Timoshenko beam: cubic deflection and quadratic
+//! rotation, coupled through Φ = 12 EI / (G A_s L²) so the shear strain is constant and the
+//! element is exact for end loads (any number of elements gives the nodal displacements of
 //! Timoshenko beam theory; J. S. Przemieniecki, *Theory of Matrix Structural Analysis*,
 //! McGraw-Hill 1968, §5.6; Z. Friedman, J. B. Kosmatka, *An improved two-node Timoshenko beam
 //! finite element*, Computers & Structures 47(3):473–481, 1993, whose shape functions are used
-//! here). With these functions w(ξ) and θ(ξ), ξ = x/L,
-//! K = ∫ (EI θ'ᵀ θ' + G A_s (w' − θ)ᵀ (w' − θ)) dx and the consistent mass
+//! here). Euler–Bernoulli: Φ = 0, the cubic Hermite element of the classical theory, with no
+//! shear strain energy and no rotary inertia of the cross-section in bending (Przemieniecki
+//! 1968, §5.6; R. D. Cook, D. S. Malkus, M. E. Plesha, R. J. Witt, *Concepts and Applications of
+//! Finite Element Analysis*, 4th ed., Wiley 2002, §2.3). With these functions w(ξ) and θ(ξ),
+//! ξ = x/L, K = ∫ (EI θ'ᵀ θ' + G A_s (w' − θ)ᵀ (w' − θ)) dx and the consistent mass
 //! M = ∫ (ρA N_wᵀ N_w + ρI N_θᵀ N_θ) dx (translational and rotary inertia) are integrated with
 //! four Gauss points, exactly; Φ → 0 recovers the Euler–Bernoulli (Hermite) element. The
 //! rotation about y is −dw/dx in the x–z plane, so that plane's rotations enter with a minus
@@ -30,7 +34,7 @@
 //! torsion constant and the shear areas; the polar moment I_y + I_z is the rotary inertia of
 //! torsion.
 
-use fieldcraft_model::{BeamProfile, BeamProperties, Elastic};
+use fieldcraft_model::{BeamProfile, BeamProperties, BeamTheory, Elastic};
 
 use crate::dense::Matrix;
 use crate::dof::{DofSet, ElementDofs};
@@ -51,13 +55,14 @@ pub struct BeamSection {
     pub properties: BeamProperties,
     pub young: f64,
     pub shear_modulus: f64,
+    pub theory: BeamTheory,
 }
 
 impl BeamSection {
-    pub fn new(profile: &BeamProfile, elastic: &Elastic) -> Result<BeamSection> {
+    pub fn new(profile: &BeamProfile, elastic: &Elastic, theory: BeamTheory) -> Result<BeamSection> {
         profile.validate().map_err(|e| Error::Invalid(e.to_string()))?;
         let (young, shear_modulus, poisson) = moduli(elastic, "beam")?;
-        Ok(BeamSection { properties: profile.properties(poisson), young, shear_modulus })
+        Ok(BeamSection { properties: profile.properties(poisson), young, shear_modulus, theory })
     }
 }
 
@@ -70,8 +75,11 @@ pub struct BeamForces {
 
 /// One bending plane's stiffness and mass (deflection, rotation at node 1, then node 2), with
 /// θ = dw/dx in the plane's own convention.
-fn bending_plane(ei: f64, gas: f64, rho_a: f64, rho_i: f64, l: f64) -> ([[f64; 4]; 4], [[f64; 4]; 4]) {
-    let phi = 12.0 * ei / (gas * l * l);
+fn bending_plane(ei: f64, shear: Option<f64>, rho_a: f64, rho_i: f64, l: f64) -> ([[f64; 4]; 4], [[f64; 4]; 4]) {
+    let (phi, gas) = match shear {
+        Some(gas) => (12.0 * ei / (gas * l * l), gas),
+        None => (0.0, 0.0),
+    };
     let mu = 1.0 / (1.0 + phi);
     let (mut k, mut m) = ([[0.0; 4]; 4], [[0.0; 4]; 4]);
     for &(x, w) in gauss_legendre(4) {
@@ -181,7 +189,11 @@ impl Beam {
         // x–y plane: v and θ_z = dv/dx; x–z plane: w and θ_y = −dw/dx.
         let planes = [([1, 5, 7, 11], [1.0; 4], p.iz, p.shear_y), ([2, 4, 8, 10], [1.0, -1.0, 1.0, -1.0], p.iy, p.shear_z)];
         for (dofs, sign, i, shear) in planes {
-            let (kp, mp) = bending_plane(e * i, g * shear, density * p.area, density * i, l);
+            let (shear, rotary) = match self.section.theory {
+                BeamTheory::Timoshenko => (Some(g * shear), density * i),
+                BeamTheory::EulerBernoulli => (None, 0.0),
+            };
+            let (kp, mp) = bending_plane(e * i, shear, density * p.area, rotary, l);
             for a in 0..4 {
                 for b in 0..4 {
                     k.add(dofs[a], dofs[b], sign[a] * sign[b] * kp[a][b]);
@@ -278,7 +290,7 @@ mod tests {
     fn one_beam_element_is_exact_for_a_tip_load() {
         // Cantilever along a skew axis; tip force along the local z axis: δ = PL³/3EI + PL/(G A_s).
         let profile = BeamProfile::Rectangle { width: 3.0, height: 5.0 };
-        let section = BeamSection::new(&profile, &STEEL).unwrap();
+        let section = BeamSection::new(&profile, &STEEL, BeamTheory::Timoshenko).unwrap();
         let xyz = [[1.0, 2.0, 3.0], [41.0, 32.0, 3.0]];
         let beam = Beam::new(&xyz, [0.0, 0.0, 1.0], section).unwrap();
         let l = beam.length();
@@ -320,5 +332,56 @@ mod tests {
         assert!((lumped.get(0, 0) - total / 2.0).abs() < 1e-12 * total);
         assert!(Beam::new(&xyz, [40.0, 30.0, 0.0], section).is_err(), "orientation along the axis");
         assert!(Beam::new(&[xyz[0], xyz[0]], [0.0, 0.0, 1.0], section).is_err(), "zero length");
+    }
+
+    #[test]
+    fn shear_rigid_bending_plane_is_the_hermite_element() {
+        let (ei, rho_a, l): (f64, f64, f64) = (3.0e5, 2.5e-3, 7.0);
+        let (k, m) = bending_plane(ei, None, rho_a, 0.0, l);
+        let kc = ei / l.powi(3);
+        let want_k = [
+            [12.0, 6.0 * l, -12.0, 6.0 * l],
+            [6.0 * l, 4.0 * l * l, -6.0 * l, 2.0 * l * l],
+            [-12.0, -6.0 * l, 12.0, -6.0 * l],
+            [6.0 * l, 2.0 * l * l, -6.0 * l, 4.0 * l * l],
+        ];
+        let mc = rho_a * l / 420.0;
+        let want_m = [
+            [156.0, 22.0 * l, 54.0, -13.0 * l],
+            [22.0 * l, 4.0 * l * l, 13.0 * l, -3.0 * l * l],
+            [54.0, 13.0 * l, 156.0, -22.0 * l],
+            [-13.0 * l, -3.0 * l * l, -22.0 * l, 4.0 * l * l],
+        ];
+        let (mut ek, mut em) = (0.0f64, 0.0f64);
+        for a in 0..4 {
+            for b in 0..4 {
+                ek = ek.max((k[a][b] - kc * want_k[a][b]).abs() / (kc * want_k[a][b]).abs());
+                em = em.max((m[a][b] - mc * want_m[a][b]).abs() / (mc * want_m[a][b]).abs());
+            }
+        }
+        assert!(ek < 1e-12 && em < 1e-12, "{ek} {em}");
+        // One element, clamped: the tip deflection under a tip force is L³/(3 E I), no shear term.
+        let profile = BeamProfile::Rectangle { width: 3.0, height: 5.0 };
+        let section = BeamSection::new(&profile, &STEEL, BeamTheory::EulerBernoulli).unwrap();
+        let xyz = [[1.0, 2.0, 3.0], [41.0, 32.0, 3.0]];
+        let beam = Beam::new(&xyz, [0.0, 0.0, 1.0], section).unwrap();
+        let (kg, axes, len) = (beam.stiffness(), beam.axes(), beam.length());
+        let mut k22 = Matrix::zeros(6);
+        for i in 0..6 {
+            for j in 0..6 {
+                k22.add(i, j, kg.get(6 + i, 6 + j));
+            }
+        }
+        let mut f = vec![0.0; 6];
+        f[..3].copy_from_slice(&axes[2]);
+        crate::dense::Cholesky::new(&k22).unwrap().solve(&mut f);
+        let want = len.powi(3) / (3.0 * section.young * section.properties.iy);
+        let got = dot([f[0], f[1], f[2]], axes[2]);
+        assert!((got - want).abs() < 1e-12 * want, "{got} vs {want}");
+        // Lumped rotary inertia of bending: ρ A L³ / 78 per node (the consistent diagonal scaled like the translations).
+        let rho = 7.8e-9;
+        let lumped = Beam::new(&[[0.0; 3], [len, 0.0, 0.0]], [0.0, 1.0, 0.0], section).unwrap().lumped_mass(rho);
+        let want = rho * section.properties.area * len.powi(3) / 78.0;
+        assert!((lumped.get(4, 4) - want).abs() < 1e-12 * want && (lumped.get(5, 5) - want).abs() < 1e-12 * want);
     }
 }

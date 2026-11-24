@@ -1148,7 +1148,7 @@ mod tests {
 
     #[test]
     fn formulations_map_or_are_named() {
-        let f = |integration, incompatible_modes, hybrid| Formulation { integration, incompatible_modes, hybrid };
+        let f = |integration, incompatible_modes, hybrid| Formulation { integration, incompatible_modes, hybrid, ..Formulation::default() };
         assert_eq!(solid_rule(ElementKind::Hex8, f(Integration::Full, false, false)), Ok((Some("TWO"), Some("FULL"))));
         assert_eq!(solid_rule(ElementKind::Hex8, f(Integration::Full, true, false)), Ok((Some("BUBBLE"), None)));
         assert_eq!(solid_rule(ElementKind::Hex20, f(Integration::Reduced, false, false)), Ok((Some("TWO"), Some("FULL"))));
