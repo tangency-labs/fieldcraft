@@ -37,6 +37,7 @@ pub struct StartPage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Over {
     document: u64,
+    external_generation: u64,
     revision: u64,
     forms: u64,
 }
@@ -93,7 +94,12 @@ impl ModelApp {
     }
 
     fn over(&self) -> Over {
-        Over { document: self.session.opened(), revision: self.session.revision(), forms: self.forms_opened }
+        Over {
+            document: self.session.opened(),
+            external_generation: self.session.external_generation(),
+            revision: self.session.revision(),
+            forms: self.forms_opened,
+        }
     }
 
     /// Nothing the page started is still on its way: no chooser, question or background job.
@@ -246,7 +252,7 @@ fn start<'a>(app: &'a ModelApp, ctx: &egui::Context) -> Start<'a, Action> {
         actions_title: "New".into(),
         actions: Tiles { grid: "fc_start_new", tiles: actions },
         recent_title: "Recent".into(),
-        recent_empty: "Models, designs and meshes you open or save are listed here.".into(),
+        recent_empty: "Models, designs, meshes and results you open or save are listed here.".into(),
         recent,
         samples_title: "Samples".into(),
         samples,
@@ -261,6 +267,7 @@ fn recent_row(path: &str) -> Recent<'static, Action> {
         Some(Kind::Design) => "CAD geometry",
         Some(Kind::Mesh) => "Tagged mesh",
         Some(Kind::Orphan) => "Orphan mesh",
+        Some(Kind::Results) => "External results",
         None => "",
     };
     Recent {

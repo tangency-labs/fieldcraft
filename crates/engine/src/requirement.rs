@@ -81,6 +81,10 @@ pub enum Requirement {
     ActiveStep,
     /// A solved step's result (current or stale).
     Result,
+    /// A grid or time series imported from VTU.
+    ExternalResults,
+    /// A native result or the visible imported time series.
+    AnimationSource,
     /// Results on the display.
     ResultsShown,
     /// A saved view.
@@ -137,7 +141,15 @@ impl Requirement {
             Requirement::Step => !m.steps().is_empty(),
             Requirement::ActiveStep => m.idle_steps().next().is_none(),
             Requirement::Result => s.result_steps().next().is_some(),
-            Requirement::ResultsShown => s.results_view.is_some(),
+            Requirement::ExternalResults => s.external_results().is_some(),
+            Requirement::AnimationSource => {
+                if crate::external_view::visible(s).is_some() {
+                    s.external_results().is_some_and(|data| data.frames.len() > 1)
+                } else {
+                    s.result_steps().next().is_some()
+                }
+            }
+            Requirement::ResultsShown => s.results_view.is_some() || crate::external_view::visible(s).is_some(),
             Requirement::SavedView => !s.view.views.is_empty(),
             Requirement::Render => !s.view.renders.is_empty(),
         }
@@ -180,6 +192,8 @@ impl Requirement {
             Requirement::Step => "a step",
             Requirement::ActiveStep => "every static step with its boundary conditions and loads active",
             Requirement::Result => "a solved step",
+            Requirement::ExternalResults => "imported VTU results",
+            Requirement::AnimationSource => "a solved step or an imported time series",
             Requirement::ResultsShown => "results on the display",
             Requirement::SavedView => "a saved view",
             Requirement::Render => "a render",
@@ -220,6 +234,8 @@ impl Requirement {
             Requirement::Step => "model.step.create",
             Requirement::ActiveStep => "model.step.activate",
             Requirement::Result => "solve.run",
+            Requirement::ExternalResults => "results.import.vtu",
+            Requirement::AnimationSource => "results.import.vtu",
             Requirement::ResultsShown => "results.contour",
             Requirement::SavedView => "view.save",
             Requirement::Render => "results.render.save",

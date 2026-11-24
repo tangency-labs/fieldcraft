@@ -384,14 +384,19 @@ impl Form<'_> {
             Kind::Integer { .. } => self.number(ui, id, value, f.hint, true, fill(ui, &s)),
             Kind::Text | Kind::Path { .. } | Kind::Topology { .. } => {
                 let mut text = value.and_then(Value::as_str).unwrap_or_default().to_string();
-                let changed = fields::text(ui, id, &mut text, f.hint, fill(ui, &s));
+                let clear = f.clearable && kit::button(ui, "Clear", kit::Button::Small).clicked();
+                let hint = if f.clearable && value.and_then(Value::as_str) == Some("") { "None" } else { f.hint };
+                let changed = fields::text(ui, id, &mut text, hint, fill(ui, &s));
+                if clear {
+                    return Some(json!(""));
+                }
                 // Definition names go into solver decks, which take no spaces: a typed space
                 // becomes `_`, and the field says so.
                 if changed && is_name(f) && text.contains(' ') {
                     text = text.replace(' ', "_");
                     ui.data_mut(|d| d.insert_temp(id.with("spaced"), true));
                 }
-                changed.then(|| if text.is_empty() && !f.required { Value::Null } else { json!(text) })
+                changed.then(|| if text.is_empty() && !f.required && !f.clearable { Value::Null } else { json!(text) })
             }
             Kind::Bool => {
                 // An unset key runs with the field's default, so the box shows that.
@@ -2040,6 +2045,50 @@ pub(crate) mod tests {
             out.shapes.iter().filter_map(|c| if let egui::Shape::Text(t) = &c.shape { Some(t.galley.text().to_string()) } else { None }).collect();
         assert!(texts.iter().any(|t| t == "7"), "the block given is shown: {texts:?}");
         assert!(!params.contains_key("from"), "no half list in the parameters: {params:?}");
+    }
+
+    #[test]
+    fn external_view_form_omits_untouched_names_and_submits_intentional_clears() {
+        let form = fieldcraft_engine::find_command("results.external.view").unwrap().form.unwrap();
+        let ctx = egui::Context::default();
+        let units = DisplaySystem::default();
+        let cx = Context {
+            units: &units,
+            names: &|_| Vec::new(),
+            salt: Id::unique("external-clear"),
+            touched: &BTreeSet::new(),
+            attempted: false,
+            refused: None,
+            problems: &[],
+            picked: Picked::default(),
+            selection: None,
+        };
+        let draw = |params: &mut Map<String, Value>, events| {
+            let mut out = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+                ui.set_width(400.);
+                show(ui, &Tokens::get(false), &cx, form, params);
+            });
+            out.textures_delta.clear();
+            out.shapes
+                .iter()
+                .filter(|p| matches!(&p.shape, egui::Shape::Text(t) if t.galley.text() == "Clear"))
+                .map(|p| p.shape.visual_bounding_rect().center())
+                .collect::<Vec<_>>()
+        };
+        let mut params = Map::new();
+        let buttons = draw(&mut params, vec![]);
+        assert!(params.is_empty());
+        assert_eq!(buttons.len(), 2);
+        for (key, pos) in ["field", "displacement"].into_iter().zip(buttons) {
+            draw(&mut params, vec![egui::Event::PointerMoved(pos)]);
+            for pressed in [true, false] {
+                draw(
+                    &mut params,
+                    vec![egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() }],
+                );
+            }
+            assert_eq!(params.get(key), Some(&json!("")));
+        }
     }
 
     /// The text a form draws, with `units`.

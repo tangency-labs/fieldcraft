@@ -186,7 +186,7 @@ built on. On opening, a result whose hash is the model's is current; any other i
 as stale, with a warning (`file.open`'s `results` lists each step with `stale`), and an edit that
 brings the model back to its definition makes it current again. Editing the model marks results
 stale as it does in a session. A solve is an unsaved change, since the file keeps results;
-autosaves, crash reports and bug reports keep none.
+autosaves, crash reports and bug reports omit these native solver results.
 
 ## `external.bin`
 
@@ -196,9 +196,11 @@ point and cell associations, tuple widths, values and timestamps. Duplicate poin
 separate field values. Reopening the project restores the results even after the source files
 are moved. The manifest's optional `external_view` records the selected frame, field,
 association, component, visibility, displacement vector, and deformation scale. Display
-deformation leaves the stored grid coordinates and the analysis model untouched.
+deformation leaves the stored grid coordinates and the analysis model untouched. A named view saved
+while the imported grid is visible sets `external_camera` to true. Reopening that grid
+restores the saved camera target and zoom.
 
-The binary part starts with the eight ASCII bytes `FCEXT001` and a 32-bit frame count. All
+A series in meters starts with the eight ASCII bytes `FCEXT001`. A series with an explicit non-meter unit uses `FCEXT002` and prefixes each frame with a u16 byte length and that UTF-8 unit symbol (zero length means meters). Coordinates are stored in meters. Other sample values keep their source units, including vector components that the view can interpret as displacements. Both encodings continue with a 32-bit frame count. All
 numbers are little-endian. Each frame holds its 64-bit floating-point time, a 32-bit point
 count, coordinate triples of 64-bit floats, a 32-bit cell count, then cells. A cell stores its
 8-bit VTK type followed by that type's fixed number of zero-based 32-bit point indices.
@@ -314,6 +316,12 @@ model's own file. After a crash, the next launch reports the entries; `file.reco
 lists them newest first, `file.recover` opens one as unsaved work under its original path, and
 `file.recovery.discard` deletes one or all of them (File › Recover… shows each with its name,
 age and counts, with Recover, Discard and Discard all).
+
+Autosaves embed imported VTU frames and the selected external result view. Importing another
+series or changing the frame, field, or displacement scale triggers the next autosave even
+when the analysis mesh is unchanged. After that autosave the project can be recovered without
+its source VTU files. Between autosaves, the local crash journal records imports and display
+commands for replay. Replaying an import from the journal requires its source files.
 
 Entries prune themselves: each launch deletes left-behind entries older than 14 days, and those
 whose model's own file was saved after the autosave (the file's modification time is later than

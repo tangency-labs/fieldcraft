@@ -14,7 +14,7 @@
 
 use fieldcraft_model::ElementKind;
 use fieldcraft_model::units::{Quantity, Typed};
-use fieldcraft_render::contour::{banded, bands_color};
+use fieldcraft_render::contour::{Bands, banded, bands_color};
 use fieldcraft_render::glyphs::{self, GlyphColors, GlyphShow, GlyphView, Glyphs};
 use fieldcraft_render::{Aabb3, Camera, DisplayMesh, Orientation, Rgb, Scene, SceneLine, ScenePoint, SceneTri, Vec3};
 use serde_json::Value;
@@ -161,7 +161,7 @@ impl Show {
 /// Mesh edge width, geometry edge width, line element width and node size, in points.
 const EDGE_WIDTH: f64 = 1.0;
 const GEOMETRY_EDGE_WIDTH: f64 = 1.5;
-const LINE_ELEMENT_WIDTH: f64 = 3.0;
+pub(crate) const LINE_ELEMENT_WIDTH: f64 = 3.0;
 const NODE_SIZE: f64 = 5.0;
 
 /// Coordinates beyond this magnitude in a camera command are refused.
@@ -171,6 +171,12 @@ const MAX_TARGET: f64 = 1e12; // unit-factors: a cap on hostile input
 const ENCLOSES: f64 = 1e-6; // unit-factors: relative to the area times the size
 /// The smallest sine of the half angle a perspective fit divides by.
 const MIN_SINE: f64 = 1e-6; // unit-factors: the sine of an angle
+
+/// Mesh outlines carry the element color when no shaded surface backs them.
+pub(crate) fn mesh_outlines<'a>(display: &'a DisplayMesh, style: Style, p: &Palette) -> impl Iterator<Item = SceneLine> + 'a {
+    let color = if style == Style::Wireframe { p.hex } else { p.mesh_edge };
+    display.edges.iter().map(move |e| SceneLine { a: e.p[0], b: e.p[1], color, width: EDGE_WIDTH })
+}
 
 /// The scene for `display` drawn in `style` with `p`'s colours: the one builder of the window's
 /// viewport and the headless pictures, so both draw the same model.
@@ -196,10 +202,7 @@ pub fn build(display: &DisplayMesh, style: Style, show: Show, p: &Palette) -> Sc
         }
     }
     if style != Style::Shaded && show.mesh {
-        // Without faces behind them the edges take the element colour, so they read on the
-        // background.
-        let color = if style == Style::Wireframe { p.hex } else { p.mesh_edge };
-        s.lines = display.edges.iter().map(|e| SceneLine { a: e.p[0], b: e.p[1], color, width: EDGE_WIDTH }).collect();
+        s.lines = mesh_outlines(display, style, p).collect();
     }
     // Face boundaries in every style: they are the geometry's outline. Over the mesh they are
     // the element edges on geometry edges, so they lie exactly on the element faces; the
@@ -358,25 +361,28 @@ impl Section {
         Some(Section { axis, at })
     }
 
-    /// The elements on the side of the plane `toward` points to (the direction toward the eye).
-    fn beyond(&self, m: &fieldcraft_model::Model, toward: Vec3) -> std::collections::BTreeSet<u32> {
+    /// The plane's intercept and the side facing the viewer, using the midpoint of the
+    /// coordinate span when the caller requested the middle of the mesh.
+    pub(crate) fn cut(&self, coords: impl Iterator<Item = f64>, toward: Vec3) -> (f64, f64) {
         let sign = match [toward.x, toward.y, toward.z].get(self.axis) {
             Some(v) if *v < 0.0 => -1.0,
             _ => 1.0,
         };
+        let at = self.at.unwrap_or_else(|| {
+            let (lo, hi) = coords.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)));
+            if lo <= hi { (lo + hi) * 0.5 } else { 0.0 }
+        });
+        (at, sign)
+    }
+
+    /// The elements on the side of the plane `toward` points to (the direction toward the eye).
+    fn beyond(&self, m: &fieldcraft_model::Model, toward: Vec3) -> std::collections::BTreeSet<u32> {
+        let (at, sign) = self.cut(m.nodes().values().filter_map(|n| n.xyz.get(self.axis).copied()), toward);
         let coord = |label: &u32| m.node(*label).and_then(|n| n.xyz.get(self.axis).copied());
         let centroid = |nodes: &[u32]| {
             let v: Vec<f64> = nodes.iter().filter_map(coord).collect();
             (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64)
         };
-        let at = self.at.unwrap_or_else(|| {
-            let (lo, hi) = m
-                .nodes()
-                .values()
-                .filter_map(|n| n.xyz.get(self.axis).copied())
-                .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), v| (a.min(v), b.max(v)));
-            if lo <= hi { (lo + hi) * 0.5 } else { 0.0 }
-        });
         m.elements().iter().filter(|(_, e)| centroid(&e.nodes).is_some_and(|c| (c - at) * sign > 0.0)).map(|(l, _)| *l).collect()
     }
 }
@@ -507,7 +513,57 @@ impl Picture {
     }
 }
 
+#[derive(Debug)]
+pub(super) struct ExternalRange {
+    generation: u64,
+    field: String,
+    association: crate::external_view::Association,
+    component: crate::external_view::Component,
+    bands: Option<Bands>,
+}
+
+impl Session {
+    /// All frames of an imported series use the same contour scale for the selected component.
+    pub fn external_bands(&self) -> Option<Bands> {
+        let view = self.external_view.as_ref()?;
+        let field = view.field.as_ref()?;
+        let series = self.external_results()?;
+        let mut cache = self.external_range.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(range) = cache.as_ref()
+            && range.generation == self.external_generation()
+            && range.field == *field
+            && range.association == view.association
+            && range.component == view.component
+        {
+            return range.bands;
+        }
+        let bands = view.bands(series);
+        *cache = Some(ExternalRange {
+            generation: self.external_generation(),
+            field: field.clone(),
+            association: view.association,
+            component: view.component,
+            bands,
+        });
+        bands
+    }
+}
+
 fn picture(s: &Session, p: &Palette, section: Option<Section>, toward: Vec3) -> Picture {
+    if let Some((frame, view)) = crate::external_view::visible(s) {
+        let cut = section.map(|c| (Section { at: c.at.map(|x| length_si(s, x)), ..c }, toward));
+        let (scene, drawn, shown) = crate::external_view::scene(frame, view, Style::ShadedEdges, Show::DEFAULT, p, s.external_bands(), cut);
+        return Picture {
+            scene,
+            bounds: drawn.bounds,
+            shown,
+            drawn,
+            glyphs: Glyphs::default(),
+            colors: p.glyphs,
+            datums: Aabb3::EMPTY,
+            bodies: Vec::new(),
+        };
+    }
     let (base, failed, bodies) = display_parts(s, section, toward);
     let mut shown = Shown { failed, ..Shown::default() };
     let plot = s.results_view.as_ref().and_then(|v| s.latest_result(&v.step).map(|(r, _)| (v, r)));
@@ -1019,6 +1075,26 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn external_contour_range_tracks_the_series_and_component_across_pictures() {
+        let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/recipes/vtu-bending-strip");
+        let mut session = Session::default();
+        session.execute("results.import.vtu", &json!({"path":example.join("bending.pvd")})).unwrap();
+        session.execute("results.external.view", &json!({"field":"displacement","component":"z"})).unwrap();
+        let full = session.external_bands().unwrap();
+        assert_eq!((full.min, full.max), (0.0, 0.08));
+        session.execute("results.external.view", &json!({"frame":1})).unwrap();
+        let _ = picture(&session, &Palette::LIGHT, None, Vec3::Z);
+        assert_eq!(session.external_bands(), Some(full));
+        session.execute("results.external.view", &json!({"component":"x"})).unwrap();
+        assert_eq!(session.external_bands().unwrap().max, 0.0);
+        session.execute("results.external.view", &json!({"component":"z"})).unwrap();
+        assert_eq!(session.external_bands(), Some(full));
+        session.execute("results.import.vtu", &json!({"path":example.join("start.vtu")})).unwrap();
+        session.execute("results.external.view", &json!({"field":"displacement","component":"z"})).unwrap();
+        assert_eq!(session.external_bands().unwrap().max, 0.0);
+    }
 
     #[test]
     fn renders_the_model_and_its_results() {

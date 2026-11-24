@@ -815,7 +815,14 @@ pub static CATALOGUE: &[Capability] = &[
         "Files",
         "Read the results of an OpenFOAM case written from a fluid step, as the step's results for viewing",
     ),
-    soon("results.read", "Read Results", Results, "Files", "M9", "Read results in public formats"),
+    ready_more(
+        "results.import.vtu",
+        "Import VTU",
+        Results,
+        "Files",
+        "Open an external result grid or PVD time series and keep it with the model",
+        &["results.external.view"],
+    ),
     soon("results.convergence", "Convergence", Results, "Files", "M9", "Mesh convergence studies"),
     // ---- Tools ----
     // Renaming starts from a definition's item menu (Rename…); the search finds it here too.

@@ -52,7 +52,8 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     // The selection bar (an area of its own) is laid out before the overlays are measured, so a
     // model framed this frame keeps clear of it from the first frame on.
     let empty = app.display().bounds.is_empty() && app.busy().is_none();
-    if !empty {
+    let external = fieldcraft_engine::external_view::visible(&app.session).is_some();
+    if !empty && !external {
         selection_bar(app, ui, content);
     }
     app.viewport.overlays = overlays(app, ui, rect, content, &t);
@@ -65,21 +66,26 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     }
     app.apply_reframe();
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
-    let boxing = app.pick.box_mode && app.pick.filter.boxes();
-    node_drag(app, ui, &response, boxing);
+    let boxing = !external && app.pick.box_mode && app.pick.filter.boxes();
+    if !external {
+        node_drag(app, ui, &response, boxing);
+    }
     navigate(app, ui, &response, rect, boxing);
     if boxing && app.viewport.drag.is_none() {
         box_drag(app, ui, &response);
     }
-    if response.clicked()
+    if !external
+        && response.clicked()
         && let Some(at) = response.interact_pointer_pos()
     {
         click(app, at, rect, mode(ui.input(|i| i.modifiers)));
     }
-    if !app.capturing {
+    if !external && !app.capturing {
         hover(app, &response);
     }
-    context_menu(app, &response);
+    if !external {
+        context_menu(app, &response);
+    }
     let painter = ui.painter_at(rect);
     gradient(&painter, rect, t.viewport_top, t.viewport_bottom);
     if app.viewport.gpu.is_some() {
@@ -88,15 +94,19 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui) {
     } else {
         paint_cpu(app, ui, &painter, rect);
     }
-    sampled_note(app, &painter, content, &t);
-    hover_label(app, &painter, &t);
+    if !external {
+        sampled_note(app, &painter, content, &t);
+        hover_label(app, &painter, &t);
+    }
     pivot_marker(app, &painter, &t);
     if let Some((a, b)) = app.pick.dragging {
         let r = Rect::from_two_pos(a, b);
         painter.rect(r, 0.0, t.pick_selected.gamma_multiply(0.12), Stroke::new(1.0, t.pick_selected), egui::StrokeKind::Inside);
     }
     crate::results_panel::show(app, ui, rect, &t);
-    crate::path_panel::overlay(app, &painter, rect, &t);
+    if !external {
+        crate::path_panel::overlay(app, &painter, rect, &t);
+    }
     axis_view(app, ui, content);
     navigation::bar(app, ui, content);
     status_toast(app, ui, content);

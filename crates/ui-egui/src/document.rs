@@ -71,6 +71,10 @@ impl ModelApp {
             reply,
             features_open,
             results_shown: shown,
+            external_fit,
+            external_bounds,
+            external_clock,
+            external_display_error,
             shape_shown,
             // The framing the new document asks for ([`ModelApp::frame_new_document`]).
             reframe: _,
@@ -155,6 +159,10 @@ impl ModelApp {
         features_open.clear();
         // The new document's stage chose the workspace: results it opens with bring no tab.
         *shown = results_shown;
+        *external_fit = None;
+        *external_bounds = fieldcraft_render::Aabb3::EMPTY;
+        *external_clock = None;
+        *external_display_error = None;
         *shape_shown = None;
         *refused = None;
         // A question about the old document (its unsaved changes, what a deletion or a remesh

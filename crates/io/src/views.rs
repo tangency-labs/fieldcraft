@@ -73,6 +73,9 @@ pub struct SavedView {
     /// `ui.camera`'s parameters (`yaw`, `pitch`, `distance`, `target`, `fit`, `fov`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<Params>,
+    /// The camera was saved while the imported result grid was visible.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub external_camera: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub results: Option<ResultsSetup>,
 }
@@ -287,7 +290,7 @@ mod tests {
 
     #[test]
     fn views_and_renders_refer_to_each_other() {
-        let view = |name: &str| SavedView { name: name.into(), units: DisplaySystem::default(), camera: None, results: None };
+        let view = |name: &str| SavedView { name: name.into(), units: DisplaySystem::default(), camera: None, external_camera: false, results: None };
         let render = |name: &str, view: &str| Render { name: name.into(), view: view.into(), ..Render::default() };
         assert!(check(&[view("A"), view("B")], Some("B"), &[render("R", "A")]).is_ok());
         assert!(check(&[view("A"), view("A")], None, &[]).is_err());

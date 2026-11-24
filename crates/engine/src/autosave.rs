@@ -9,6 +9,7 @@ use std::path::Path;
 
 use fieldcraft_io::recovery::Slot;
 
+use crate::external_view::ExternalView;
 use crate::{Result, Session};
 
 pub use fieldcraft_io::recovery::default_dir;
@@ -17,8 +18,8 @@ pub use fieldcraft_io::recovery::default_dir;
 #[derive(Debug)]
 pub struct Autosaver {
     slot: Slot,
-    /// The revision last autosaved.
-    saved: Option<u64>,
+    /// Imported frames and their display can change without a model edit.
+    saved: Option<(u64, u64, Option<ExternalView>)>,
 }
 
 impl Autosaver {
@@ -40,13 +41,14 @@ impl Autosaver {
             self.saved = None;
             return Ok(false);
         }
-        if self.saved == Some(s.revision()) {
+        let current = (s.revision(), s.external_generation(), s.external_view.clone());
+        if self.saved.as_ref() == Some(&current) {
             return Ok(false);
         }
         // Geometry paths stay absolute: the entry is not next to the model's own file.
-        let bytes = s.file_bytes(None)?;
+        let bytes = s.recovery_bytes()?;
         self.slot.write(&bytes, s.path.as_deref(), s.model.nodes().len(), s.model.elements().len())?;
-        self.saved = Some(s.revision());
+        self.saved = Some(current);
         crate::crash::autosaved(s, &self.slot.file());
         Ok(true)
     }

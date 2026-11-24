@@ -31,6 +31,7 @@ pub use nodes::merge_preview as node_merge_preview;
 pub use plan::untagged_faces;
 pub use relax::{Preview as RelaxPreview, preview as relax_preview, sphere as relax_sphere};
 pub use solve::{FluidEstimate, fluid_estimate};
+mod external;
 mod fluid_measure;
 mod library;
 mod mirror;
@@ -254,6 +255,8 @@ pub static ALL: &[CommandSpec] = &[
     fluid_measure::MEASURE,
     results::EXPORT_CSV,
     results::EXPORT_VTU,
+    external::IMPORT,
+    external::VIEW,
     render::SAVE,
     render::DELETE,
     render::EXPORT,

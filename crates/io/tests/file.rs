@@ -496,6 +496,7 @@ fn saved_views_round_trip_and_are_checked() {
         name: "Cutaway".into(),
         units: DisplaySystem::default(),
         camera,
+        external_camera: false,
         results: Some(ResultsSetup { step: "Flow".into(), contour, slice, frame: Some(10), ..ResultsSetup::default() }),
     }];
     f.view.current = Some("Cutaway".into());

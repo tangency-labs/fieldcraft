@@ -66,7 +66,14 @@ fn child() {
         let id = list(&dir)[0].id.clone();
         let r = replay(&read(&dir, &id).unwrap(), &std::env::temp_dir()).unwrap();
         let steps: Vec<_> = r.steps.iter().map(|(c, r)| json!({"command": c, "ok": r.is_ok()})).collect();
-        println!("REPLAY {}", json!({"reproduced": r.reproduced, "nodes": r.session.model.nodes().len(), "steps": steps}));
+        println!(
+            "REPLAY {}",
+            json!({
+                "reproduced": r.reproduced, "nodes": r.session.model.nodes().len(), "steps": steps,
+                "external_frames": r.session.external_results().map_or(0, |series| series.frames.len()),
+                "external_view": r.session.external_view
+            })
+        );
         return;
     }
     let fresh = install(dir.clone(), build());
@@ -184,6 +191,29 @@ fn child() {
         "abort" => {
             activity("control ui.capture");
             let _ = s.execute("diagnostics.crash_test", &json!({"mode": "abort"}));
+        }
+        "external_autosave" | "external_journal" => {
+            let source = dir.join("source");
+            fs::create_dir_all(&source).unwrap();
+            let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/recipes/vtu-bending-strip");
+            for name in ["bending.pvd", "start.vtu", "end.vtu"] {
+                fs::copy(example.join(name), source.join(name)).unwrap();
+            }
+            let mut autosaver = crate::autosave::Autosaver::new(&dir.join("recovery")).unwrap();
+            assert!(autosaver.save(&s).unwrap());
+            let revision = s.revision();
+            s.execute("results.import.vtu", &json!({"path": source.join("bending.pvd")})).unwrap();
+            if mode == "external_autosave" {
+                assert!(autosaver.save(&s).unwrap(), "a new dataset is autosaved at the same model revision");
+            }
+            s.execute("results.external.view", &json!({"frame": 1, "displacement": "displacement", "scale": 6.0})).unwrap();
+            assert_eq!(s.revision(), revision);
+            if mode == "external_autosave" {
+                assert!(autosaver.save(&s).unwrap(), "a new display selection is autosaved");
+                assert!(!autosaver.save(&s).unwrap(), "an unchanged selection avoids a duplicate write");
+                fs::remove_dir_all(source).unwrap();
+            }
+            std::process::abort();
         }
         "autosave" => {
             // The journal starts again from each autosave.
@@ -478,6 +508,49 @@ fn an_unclean_exit_after_an_autosave_starts_from_the_autosave() {
     assert!(ok, "{out}");
     assert_eq!(printed(&out, "REPLAY ")["nodes"], 3, "the replay rebuilds the model the app had");
     let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_crashed_unsaved_external_series_recovers_without_its_source_files() {
+    let dir = fresh_dir("external-autosave");
+    assert!(!run_child(&dir, "external_autosave").1);
+    assert!(!dir.join("source").exists());
+    run_child(&dir, "idle");
+    let (_, report) = only_report(&dir);
+    let snapshot = fieldcraft_io::read(&fs::read(report["model_path"].as_str().unwrap()).unwrap()).unwrap();
+    assert_eq!(snapshot.external.as_ref().unwrap().frames.len(), 2);
+    assert_eq!(snapshot.external_view.unwrap()["scale"], 6.0);
+
+    let recovery = dir.join("recovery");
+    let mut next = Session::default();
+    let entries = next.execute("file.recovery.list", &json!({"dir": recovery})).unwrap();
+    next.execute("file.recover", &json!({"id": entries[0]["id"], "dir": recovery})).unwrap();
+    let series = next.external_results().unwrap();
+    assert_eq!(series.frames.len(), 2);
+    assert_eq!(series.frames[1].time, 1.0);
+    assert_eq!(series.frames[1].point_data["displacement"].values.last(), Some(&0.08));
+    let view = next.external_view.as_ref().unwrap();
+    assert_eq!((view.frame, view.displacement.as_deref(), view.scale), (1, Some("displacement"), 6.0));
+    assert!(next.is_dirty());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn crash_replay_keeps_import_and_display_changes_since_an_autosave() {
+    let dir = fresh_dir("external-journal");
+    assert!(!run_child(&dir, "external_journal").1);
+    run_child(&dir, "idle");
+    let (_, report) = only_report(&dir);
+    let script: Value = serde_json::from_slice(&fs::read(report["replay_path"].as_str().unwrap()).unwrap()).unwrap();
+    let commands: Vec<_> = script["commands"].as_array().unwrap().iter().map(|c| c["command"].as_str().unwrap()).collect();
+    assert_eq!(commands, ["results.import.vtu", "results.external.view"]);
+    let (out, ok) = run_child(&dir, "replay");
+    assert!(ok, "{out}");
+    let replayed = printed(&out, "REPLAY ");
+    assert_eq!(replayed["external_frames"], 2);
+    assert_eq!(replayed["external_view"]["frame"], 1);
+    assert_eq!(replayed["external_view"]["scale"], 6.0);
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]

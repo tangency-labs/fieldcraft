@@ -57,13 +57,29 @@ pub(crate) struct State {
 
 /// Which document the session is: the `.fieldcraft` file it belongs to and the revision saved
 /// there ([`Session::is_dirty`]).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Document {
     pub(crate) path: Option<String>,
     pub(crate) saved_revision: Option<u64>,
     pub(crate) migrated_from: Option<u32>,
     /// The sample it was opened as, which names it until it is saved ([`Session::sample`]).
     pub(crate) sample: Option<&'static str>,
+    external: Option<Arc<fieldcraft_io::external::Series>>,
+    external_view: Option<crate::external_view::ExternalView>,
+    saved_external_view: Option<crate::external_view::ExternalView>,
+    external_generation: u64,
+    saved_external_generation: u64,
+}
+
+impl Document {
+    /// Compare file identity without scanning the frame arrays shared by the snapshot.
+    pub(crate) fn matches(&self, session: &Session) -> bool {
+        self.path == session.path
+            && self.saved_revision == session.saved_revision
+            && self.migrated_from == session.migrated_from
+            && self.sample == session.sample
+            && self.external_generation == session.external_generation
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -170,7 +186,17 @@ impl Session {
     }
 
     pub(crate) fn document(&self) -> Document {
-        Document { path: self.path.clone(), saved_revision: self.saved_revision, migrated_from: self.migrated_from, sample: self.sample }
+        Document {
+            path: self.path.clone(),
+            saved_revision: self.saved_revision,
+            migrated_from: self.migrated_from,
+            sample: self.sample,
+            external: self.external.clone(),
+            external_view: self.external_view.clone(),
+            saved_external_view: self.saved_external_view.clone(),
+            external_generation: self.external_generation,
+            saved_external_generation: self.saved_external_generation,
+        }
     }
 
     /// Make `document` current; returns the one it replaces.
@@ -180,6 +206,11 @@ impl Session {
             saved_revision: std::mem::replace(&mut self.saved_revision, document.saved_revision),
             migrated_from: std::mem::replace(&mut self.migrated_from, document.migrated_from),
             sample: std::mem::replace(&mut self.sample, document.sample),
+            external: std::mem::replace(&mut self.external, document.external),
+            external_view: std::mem::replace(&mut self.external_view, document.external_view),
+            saved_external_view: std::mem::replace(&mut self.saved_external_view, document.saved_external_view),
+            external_generation: std::mem::replace(&mut self.external_generation, document.external_generation),
+            saved_external_generation: std::mem::replace(&mut self.saved_external_generation, document.saved_external_generation),
         }
     }
 
@@ -212,7 +243,13 @@ impl Session {
             (None, _) => 0,
         };
         let surfaces: usize = state.surfaces.iter().filter(|s| !self.surfaces.iter().any(|c| Arc::ptr_eq(c, s))).map(|s| surface_bytes(s)).sum();
-        model_bytes(&state.model) + design + surfaces
+        let external = state
+            .document
+            .as_ref()
+            .filter(|doc| doc.external_generation != self.external_generation)
+            .and_then(|doc| doc.external.as_ref())
+            .map_or(0, |data| data.frames.iter().map(fieldcraft_io::external::Frame::storage_bytes).sum::<usize>());
+        model_bytes(&state.model).saturating_add(design).saturating_add(surfaces).saturating_add(external)
     }
 
     /// A journalled command ran from `before`: keep it as an undo step.
