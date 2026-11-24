@@ -2759,6 +2759,28 @@ pub const DECK_READ: &[Field] = &[
     .hint("current display preset"),
 ];
 
+pub const DECK_OPENFOAM: &[Field] = &[
+    path("path", "Case directory", true).help("Where to write the OpenFOAM case, for running it in OpenFOAM (sh Allrun).").req(),
+    STEP,
+    int("cell_factor", "Cell factor", 1, 8)
+        .help("Background cells of the spacing times this (1, 2, 4, 8); snappyHexMesh refines the obstacles back to the spacing.")
+        .hint("1"),
+    int("processes", "Processes", 1, fieldcraft_decks::openfoam::MAX_PROCESSES as i64).help("The ranks decomposeParDict and Allrun use.").hint("1"),
+    positive("max_courant", "Max Courant", D::None).help("The Courant number the time step adapts to (at most 1).").hint("1"),
+    rows_up_to(
+        "refine_boxes",
+        "Refine boxes",
+        &[
+            xyz("min", "Min", D::Length).help("A corner of the box.").req(),
+            xyz("max", "Max", D::Length).help("The opposite corner.").req(),
+            positive("spacing", "Spacing", D::Length).help("The cell size in the box.").hint("the domain's"),
+        ],
+        fieldcraft_decks::openfoam::MAX_REFINE_BOXES,
+    )
+    .help("Boxes refined to their own spacing (rounded to the background cell over a power of two)."),
+    xyz("location", "Location", D::Length).help("A point in the fluid, the side snappyHexMesh keeps.").hint("found"),
+];
+
 pub const EXPORT_STL: &[Field] = &[
     path("path", "File", true).help("Where to write the STL file.").req(),
     reference("set", "Set", C::Set).help("Write only this set's element faces; the whole outer surface when empty.").hint("the outer surface"),

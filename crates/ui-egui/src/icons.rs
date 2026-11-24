@@ -62,6 +62,7 @@ pub const ALIASES: &[(&str, &str, &str)] = &[
     ("deck.write.abaqus", "export", ""),
     ("deck.write.nastran", "export", ""),
     ("deck.write.lsdyna", "export", ""),
+    ("deck.openfoam", "export", ""),
     ("mesh.export.stl", "export", ""),
     ("results.read", "import", ""),
     ("results.export.vtu", "export", ""),

@@ -719,6 +719,13 @@ pub static CATALOGUE: &[Capability] = &[
     deck("deck.write.nastran", "Nastran Deck", "nastran", "Write Nastran bulk data (SOL 101, 103)"),
     deck("deck.write.lsdyna", "LS-DYNA Deck", "lsdyna", "Write an LS-DYNA keyword file"),
     ready(
+        "deck.openfoam",
+        "OpenFOAM Case",
+        Solve,
+        "Decks",
+        "Write a fluid step as an OpenFOAM case directory, for running it in OpenFOAM (snappyHexMesh, pimpleFoam, an Allrun script)",
+    ),
+    ready(
         "deck.read",
         "Read Deck",
         Solve,
