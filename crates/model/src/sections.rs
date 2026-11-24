@@ -108,6 +108,15 @@ impl BeamProfile {
         }
     }
 
+    /// The inner and outer radii of a pipe with a bore (a wall thinner than its radius, with a
+    /// ring b² − a² the numbers resolve): what a pipe pressure acts on. `None` for every other
+    /// profile.
+    pub fn bore(&self) -> Option<(f64, f64)> {
+        let BeamProfile::Pipe { radius, thickness } = *self else { return None };
+        let inner = radius - thickness;
+        (inner > 0.0 && radius * radius - inner * inner > 0.0).then_some((inner, radius))
+    }
+
     /// The section properties ([`BeamProperties`]); `poisson` enters the shear coefficients.
     pub fn properties(&self, poisson: f64) -> BeamProperties {
         let pi = std::f64::consts::PI;
@@ -488,6 +497,10 @@ mod tests {
         i.validate().unwrap();
         assert_eq!(i.area(), 2.0 * 5.0 + 8.0);
         assert!((BeamProfile::Pipe { radius: 2.0, thickness: 2.0 }.area() - BeamProfile::Circle { radius: 2.0 }.area()).abs() < 1e-12);
+        assert_eq!(BeamProfile::Pipe { radius: 2.0, thickness: 0.5 }.bore(), Some((1.5, 2.0)));
+        assert_eq!(BeamProfile::Pipe { radius: 2.0, thickness: 2.0 }.bore(), None, "no bore");
+        assert_eq!(BeamProfile::Pipe { radius: 1e20, thickness: 1.0 }.bore(), None, "a wall the numbers cannot resolve");
+        assert_eq!(BeamProfile::Circle { radius: 2.0 }.bore(), None);
 
         let shell = SectionKind::Shell { thickness: 2.0, offset: 0.0, points: 5 };
         assert!(Formulation { hybrid: true, ..Formulation::default() }.validate_for(&shell).is_err());

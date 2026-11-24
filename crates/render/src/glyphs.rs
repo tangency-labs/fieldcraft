@@ -651,6 +651,8 @@ impl Builder<'_> {
                 }
             }
             Load::HeatSource { set, .. } => self.thermal(owner, &Target::Set(set.clone()), Shape::Thermal),
+            // Inside the wall of line elements: no glyph yet.
+            Load::PipePressure { .. } => {}
         }
     }
 

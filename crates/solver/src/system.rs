@@ -946,6 +946,8 @@ pub fn loads(model: &Model, resolved: &Resolved, mesh: &Mesh, step: &Step, activ
                     body(&mut f, mesh, e, *vector)?;
                 }
             }
+            // Temporary: the solver's beam pressure arm (piece 3) replaces this refusal.
+            Load::PipePressure { .. } => return Err(Error::NotSupported(format!("pipe pressures (load `{name}`)"))),
             Load::Centrifugal { angular_velocity, point, axis, set } => {
                 let chosen: Option<&[u32]> = set.as_ref().map(|s| resolved.sets.get(s).map(|r| r.elements.as_slice()).unwrap_or_default());
                 if let Some(t) = mesh.trusses.iter().find(|t| chosen.is_none_or(|c| c.binary_search(&t.label).is_ok())) {
