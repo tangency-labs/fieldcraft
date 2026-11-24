@@ -90,7 +90,7 @@
 //! | hex20 | C3D20, C3D20R (H) | | | |
 //! | tri3, quad4 | | S3 / S3R, S4 / S4R | | |
 //! | quad8 | | S8R (reduced only) | | |
-//! | beam2, rod2 | | | B31 | T3D2 |
+//! | beam2, rod2 | | | B31, B33 (Euler–Bernoulli) | T3D2 |
 //! | rod3 | | | | T3D3 |
 //!
 //! Trusses in a 2D model are T2D2 and T2D3.
@@ -148,8 +148,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use fieldcraft_model::{
-    BeamProfile, BoundaryCondition, ContactSurfaces, CouplingKind, Elastic, Element, ElementKind, Hardening, Hyperelastic, InitialPenetration,
-    Integration, Load, Model, OutputVariable, Plastic, Procedure, Resolved, Section, SectionKind, Step, Target,
+    BeamProfile, BeamTheory, BoundaryCondition, ContactSurfaces, CouplingKind, Elastic, Element, ElementKind, Hardening, Hyperelastic,
+    InitialPenetration, Integration, Load, Model, OutputVariable, Plastic, Procedure, Resolved, Section, SectionKind, Step, Target,
 };
 
 use fieldcraft_model::units::Preset;
@@ -253,7 +253,10 @@ pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result
             return Err("full integration of quad8 shells (Abaqus's eight-node shell, S8R, uses reduced integration)".into());
         }
         (S::Shell { .. }, K::Tri6, ..) => return Err("tri6 shells (Abaqus has no general-purpose six-node triangular shell)".into()),
-        (S::Beam { .. }, K::Beam2, ..) => "B31",
+        (S::Beam { .. }, K::Beam2, ..) => match f.beam_theory {
+            BeamTheory::Timoshenko => "B31",
+            BeamTheory::EulerBernoulli => "B33",
+        },
         (S::Rod { .. }, K::Rod2, ..) => "T3D2",
         (S::Rod { .. }, K::Rod3, ..) => "T3D3",
         (s, ..) => return Err(format!("{} elements in a {} section", kind.name(), s.name())),

@@ -792,7 +792,7 @@ fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result
     let len = |value: f64| quantity(units, Quantity::Length, value, line);
     if raw.keyword == "BEAMSECTION" {
         if typ.family != Family::Beam {
-            return Err(error(line, "*BEAM SECTION needs B31 elements"));
+            return Err(error(line, "*BEAM SECTION needs B31 or B33 elements"));
         }
         let shape = canonical(raw.params.get("SECTION").and_then(|v| v.as_deref()).ok_or_else(|| error(line, "*BEAM SECTION needs SECTION="))?);
         let count = match shape.as_str() {

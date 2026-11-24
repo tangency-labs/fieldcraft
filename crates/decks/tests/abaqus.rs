@@ -10,8 +10,8 @@ mod common;
 use common::{abaqus, lsdyna, nastran};
 use fieldcraft_decks::Error;
 use fieldcraft_model::{
-    BeamProfile, BoundaryCondition, Coupling, CouplingKind, Distribution, Dofs, Elastic, ElementFace, ElementKind, Formulation, Integration, Load,
-    Material, Model, OutputVariable, Procedure, ReferencePoint, Section, SectionKind, Set, Step, Symmetry, Target,
+    BeamProfile, BeamTheory, BoundaryCondition, Coupling, CouplingKind, Distribution, Dofs, Elastic, ElementFace, ElementKind, Formulation,
+    Integration, Load, Material, Model, OutputVariable, Procedure, ReferencePoint, Section, SectionKind, Set, Step, Symmetry, Target,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -765,6 +765,17 @@ fn orthotropic_solids_beams_and_rods_are_written() {
     ] {
         assert!(deck.contains(expected), "{expected}\n{deck}");
     }
+    // An Euler–Bernoulli section: the cubic beam, with the same profile.
+    let shear_rigid = Formulation { beam_theory: BeamTheory::EulerBernoulli, ..Formulation::default() };
+    f.replace_section("b", Section { set: "beam".into(), material: "Steel".into(), kind: beam, formulation: shear_rigid }).unwrap();
+    let deck = abaqus::write(&f).unwrap();
+    for expected in [
+        "*ELEMENT, TYPE=B33\n1, 1, 2\n",
+        "*BEAM SECTION, SECTION=I, ELSET=beam, MATERIAL=Steel\n50.0, 100.0, 50.0, 50.0, 8.0, 8.0, 5.0\n0.0, 1.0, 0.0\n",
+    ] {
+        assert!(deck.contains(expected), "{expected}\n{deck}");
+    }
+    assert!(!deck.contains("B31"), "{deck}");
 }
 
 #[test]

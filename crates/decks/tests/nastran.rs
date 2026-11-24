@@ -11,8 +11,8 @@ mod common;
 use common::nastran;
 use fieldcraft_decks::{Error, with_steps};
 use fieldcraft_model::{
-    BeamProfile, BoundaryCondition, Coupling, CouplingKind, Distribution, Dofs, Elastic, ElementFace, ElementKind, Formulation, Integration, Load,
-    Material, Model, Procedure, ReferencePoint, Section, SectionKind, Set, Step, Target,
+    BeamProfile, BeamTheory, BoundaryCondition, Coupling, CouplingKind, Distribution, Dofs, Elastic, ElementFace, ElementKind, Formulation,
+    Integration, Load, Material, Model, Procedure, ReferencePoint, Section, SectionKind, Set, Step, Target,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -627,6 +627,41 @@ fn beams_rods_orthotropy_couplings_and_prescribed_motion() {
         assert_eq!(dofs.iter().map(|(d, v)| (*d, *v)).collect::<Vec<_>>(), vec![(1, 0.0), (2, 0.0), (3, 0.25)]);
     }
     assert_ne!(r.subcases[0]["SPC"], r.subcases[1]["SPC"]);
+}
+
+/// An Euler–Bernoulli beam section is a `CBAR` with a `PBAR` of the profile's own properties and
+/// no shear factors (blank K1 and K2: no transverse shear flexibility).
+#[test]
+fn euler_bernoulli_beams_are_bars_without_shear_flexibility() {
+    let mut m = cantilever();
+    m.set_node(50, [5.0, 0.0, 0.0]).unwrap();
+    m.set_element(10, ElementKind::Beam2, vec![13, 50]).unwrap();
+    m.add_set("beam", Set { elements: vec![10], ..Set::default() }).unwrap();
+    let profile = BeamProfile::I { height: 10.0, width: 6.0, web: 1.0, flange: 1.5 };
+    m.add_section(
+        "beam",
+        Section {
+            set: "beam".into(),
+            material: "Steel".into(),
+            kind: SectionKind::Beam { profile, orientation: [0.0, 0.0, 1.0] },
+            formulation: Formulation { beam_theory: BeamTheory::EulerBernoulli, ..Formulation::default() },
+        },
+    )
+    .unwrap();
+    let r = read(&nastran::write(&m).unwrap());
+    assert!(r.cards("PBEAML").next().is_none() && r.cards("CBEAM").next().is_none());
+    let pbar = r.cards("PBAR").next().unwrap();
+    let p = profile.properties(0.3);
+    let close = |s: &str, v: f64| (real(s) - v).abs() <= 1e-12 * v.abs();
+    // PID, MID, A, I1 (the model's I_y: the I's strong axis), I2, J; then nothing.
+    assert!(close(&pbar[2], p.area) && close(&pbar[3], p.iy) && close(&pbar[4], p.iz) && close(&pbar[5], p.torsion), "{pbar:?}");
+    assert!(p.iy > p.iz && pbar[6..].iter().all(|f| f.is_empty()), "no K1 or K2: {pbar:?}");
+    let cbar = r.cards("CBAR").next().unwrap();
+    assert_eq!((int(&cbar[0]), int(&cbar[1]), int(&cbar[2]), int(&cbar[3])), (10, int(&pbar[0]), 13, 50));
+    let v = [real(&cbar[4]), real(&cbar[5]), real(&cbar[6])];
+    let axis = [2.0, 0.0, 0.0];
+    let z = [axis[1] * v[2] - axis[2] * v[1], axis[2] * v[0] - axis[0] * v[2], axis[0] * v[1] - axis[1] * v[0]];
+    assert!(z[0] == 0.0 && z[1] == 0.0 && z[2] != 0.0, "element z along the orientation: {z:?}");
 }
 
 #[test]

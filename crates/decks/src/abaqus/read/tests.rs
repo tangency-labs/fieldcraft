@@ -237,7 +237,12 @@ fn supported_writer_table_has_canonical_inverse_formulations() {
     {
         assert_eq!(Type::parse(name, 1).unwrap().kind, kind);
     }
-    for name in ["C3D4R", "C3D10M", "S8", "S6", "B32", "CPS4H", "T3D2H"] {
+    use fieldcraft_model::BeamTheory;
+    for (name, theory) in [("B31", BeamTheory::Timoshenko), ("B33", BeamTheory::EulerBernoulli)] {
+        let parsed = Type::parse(name, 1).unwrap();
+        assert_eq!((parsed.kind, parsed.formulation.beam_theory), (K::Beam2, theory), "{name}");
+    }
+    for name in ["C3D4R", "C3D10M", "S8", "S6", "B32", "B33H", "CPS4H", "T3D2H"] {
         assert!(Type::parse(name, 1).is_err(), "{name}");
     }
 }

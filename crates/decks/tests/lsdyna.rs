@@ -754,6 +754,12 @@ fn what_lsdyna_cannot_take_is_named() {
         .unwrap();
         unsupported(&m, &format!("section `girder`: {what}"));
     }
+    // The resultant beam always takes a shear area: no Euler–Bernoulli counterpart.
+    let mut m = frame();
+    let shear_rigid = Formulation { beam_theory: BeamTheory::EulerBernoulli, ..Formulation::default() };
+    let girder = beam(BeamProfile::Rectangle { width: 20.0, height: 60.0 });
+    m.replace_section("girder", Section { set: "girder".into(), material: "Steel".into(), kind: girder, formulation: shear_rigid }).unwrap();
+    unsupported(&m, "section `girder`: the Euler–Bernoulli beam theory has no LS-DYNA counterpart");
     let mut m = frame();
     let bilinear = Plastic::Bilinear { yield_stress: 250.0, hardening_modulus: 1000.0, hardening: Hardening::Isotropic };
     m.replace_material("Steel", Material { plastic: Some(bilinear), ..steel() }).unwrap();

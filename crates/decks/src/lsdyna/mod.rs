@@ -78,7 +78,8 @@
 //! (`*LOAD_NODE_POINT`).
 //!
 //! What LS-DYNA cannot take is an [`Error::Unsupported`] naming the item: beam profiles whose
-//! shear areas differ by direction and beams of plastic or orthotropic materials, body forces per
+//! shear areas differ by direction, beams of plastic or orthotropic materials and Euler–Bernoulli
+//! beam sections (the resultant beam always takes a shear area), body forces per
 //! volume, kinematic couplings of some degrees of freedom only, boundary
 //! conditions on a coupled reference point, gravity on different sets, hybrid formulations other
 //! than on tet4, reduced integration of quadratic elements, materials without a density, more
