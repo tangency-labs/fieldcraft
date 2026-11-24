@@ -231,6 +231,17 @@ fn nodes_in(model: &str) -> usize {
 }
 
 #[test]
+fn ordinary_solver_records_list_the_same_version_as_crash_reports() {
+    let d = fresh_dir("solver_version");
+    solver_error(&d, "solve.fluid", &json!({"max_cells": 1}), &json!({"cells": 8}), "limit reached: 8 cells").unwrap();
+    let listed = list(&d);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].version, Build::current().version);
+    let (_, report) = only_report(&d);
+    assert_eq!(report["app"]["commit"], Build::current().commit);
+}
+
+#[test]
 fn ordinary_solver_records_are_readable_without_a_startup_crash_prompt() {
     let d = fresh_dir("solver_error");
     let (out, ok) = run_child(&d, "solver_error");
@@ -700,4 +711,15 @@ fn both_homes_and_the_short_profile_name_are_hidden() {
     assert_eq!(short_home(profile, ""), None);
     assert_eq!(short_home("", r"C:\Users\ADAMSM~1\Temp"), None);
     assert_eq!(short_home(r"C:\", r"C:\PROGRA~1\Temp"), None);
+}
+
+#[test]
+fn a_diagnostic_path_is_shown_without_the_windows_verbatim_prefix() {
+    // `canonicalize` gives `\\?\C:\…` on Windows; with the home replaced after it, the reply
+    // read `\\?\~\…`, which nothing opens (#965).
+    assert_eq!(shown_path(std::path::Path::new(r"\\?\C:\Data\job\crash\report.json")), r"C:\Data\job\crash\report.json");
+    assert_eq!(shown_path(std::path::Path::new(r"\\?\UNC\server\share\crash")), r"\\server\share\crash");
+    // The home under the prefix: the prefix goes first, so the home becomes a plain `~`.
+    let homes = [r"C:\Users\Ada".to_string()];
+    assert_eq!(shown_path_with(std::path::Path::new(r"\\?\C:\Users\Ada\Dev\crash"), &homes), r"~\Dev\crash");
 }

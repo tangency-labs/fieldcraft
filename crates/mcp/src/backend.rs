@@ -151,7 +151,7 @@ impl Backend for Headless {
         let result = self.session.execute(command, &params);
         // A stopped result names its record itself (`diagnostic_report`); an error gets it after
         // its message, with the home folder shown as `~`.
-        let report = self.session.take_solver_diagnostic().map(|p| fieldcraft_engine::crash::without_home(&p.to_string_lossy()));
+        let report = self.session.take_solver_diagnostic().map(|p| fieldcraft_engine::crash::shown_path(&p));
         result.map_err(|e| match report {
             Some(report) => format!("{e} (solver diagnostic: {report})"),
             None => e.to_string(),

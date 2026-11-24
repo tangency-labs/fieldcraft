@@ -99,7 +99,7 @@ pub(crate) fn finish(
     });
     let Some(path) = crash::solver_error(&dir, id, params, &context, &message) else { return result };
     log::info!("solver diagnostic of {id}: {}", path.display());
-    let shown = crash::without_home(&path.to_string_lossy());
+    let shown = crash::shown_path(&path);
     s.solver_diagnostic = Some(path);
     result.map(|mut v| {
         v["diagnostic_report"] = json!(shown);

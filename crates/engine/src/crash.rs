@@ -203,7 +203,7 @@ pub(crate) fn solver_error(dir: &Path, command: &str, params: &Value, context: &
         "command": {"command": limited(command, 128), "params": parameters, "params_omitted": parameters.is_none().then_some("parameters exceed the 16 KiB record bound")},
         "solve": solve,
         "solve_omitted": solve.is_none().then_some("context exceeds the 64 KiB record bound"),
-        "app": {"version": Build::current().version_line()},
+        "app": {"version": Build::current().version, "commit": Build::current().commit},
         "system": {"os": std::env::consts::OS, "arch": std::env::consts::ARCH, "environment": environment},
         "first_seen": previous.as_ref().map(|s| s.time.clone()).unwrap_or_else(|| utc(t)),
         "last_seen": utc(t),
@@ -334,15 +334,33 @@ fn bounded_json(v: &Value, limit: usize) -> Option<String> {
     String::from_utf8(w.0).ok()
 }
 
+/// A path as a reply or record shows it: without the Windows verbatim prefix
+/// ([`fieldcraft_io::roots::without_verbatim`]; diagnostics folders come through the write-root
+/// check, which canonicalizes) and with the home folder as `~` ([`without_home`]).
+pub fn shown_path(path: &Path) -> String {
+    shown_path_with(path, &homes())
+}
+
+/// [`shown_path`] with the given home folders: the prefix goes before the home does, or the
+/// home would become `\\?\~`.
+fn shown_path_with(path: &Path, homes: &[String]) -> String {
+    replace_homes(&fieldcraft_io::roots::without_verbatim(path).to_string_lossy(), homes)
+}
+
 /// The user's home folder in `s` shown as `~` (reports and drafts name no user folders): both
 /// `HOME` and `USERPROFILE` (Git Bash and Cygwin set `HOME` beside the Windows profile), and the
 /// profile's 8.3 short name when `TEMP` or `TMP` reveals it.
 pub fn without_home(s: &str) -> String {
+    replace_homes(s, &homes())
+}
+
+/// The user's home folders as [`without_home`] finds them.
+fn homes() -> Vec<String> {
     let var = |k| std::env::var(k).unwrap_or_default();
     let profile = var("USERPROFILE");
     let mut homes: Vec<String> = ["TEMP", "TMP"].into_iter().filter_map(|t| short_home(&profile, &var(t))).collect();
     homes.extend([var("HOME"), profile]);
-    replace_homes(s, &homes)
+    homes
 }
 
 /// Every home in `homes` shown as `~` in `s`, the longest first (a home inside another one
