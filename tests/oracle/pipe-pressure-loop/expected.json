@@ -1,0 +1,79 @@
+{
+ "title": "Pressurised pipe loop between two anchors: thrust, deflection and wall force",
+ "kind": "theory",
+ "source": "closed form by Castigliano's theorem at the loop's elastic centre with bending, axial and shear flexibility (Timoshenko members: J. S. Przemieniecki, Theory of Matrix Structural Analysis, McGraw-Hill 1968, §5.6), the pressure acting as the free axial strain (1 − 2ν) A/E of Lamé's solution with the closed-end force (Timoshenko and Goodier 1970, §28; C. P. Sparks, J. Energy Resources Technology 106(1):46-54, 1984)",
+ "quantities": [
+  {
+   "id": "thrust",
+   "quantity": "thrust X at the first anchor (reaction along x)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {"step": "Pressure", "nodes": [1]},
+    "pointer": "/nodes/0/reaction/0"
+   },
+   "value": 28.10216955191226,
+   "tolerance": {"relative": 1e-8},
+   "reason": "the two-node Timoshenko element is exact for end loads and a uniform initial strain; the thrust is 1.1e-3 of the pressure force pair it balances, which amplifies round-off by about 900"
+  },
+  {
+   "id": "corner_x",
+   "quantity": "displacement of corner 5 along x, w (ε − X/(E A))/2",
+   "measure": {
+    "command": "solve.probe",
+    "params": {"step": "Pressure", "nodes": [5]},
+    "pointer": "/nodes/0/displacement/0"
+   },
+   "value": 0.12166999701666789,
+   "tolerance": {"relative": 1e-8},
+   "reason": "the two-node Timoshenko element is exact for end loads and a uniform initial strain; the thrust is 1.1e-3 of the pressure force pair it balances, which amplifies round-off by about 900"
+  },
+  {
+   "id": "corner_z",
+   "quantity": "rise of corner 3, ε h",
+   "measure": {
+    "command": "solve.probe",
+    "params": {"step": "Pressure", "nodes": [3]},
+    "pointer": "/nodes/0/displacement/2"
+   },
+   "value": 0.162406015037594,
+   "tolerance": {"relative": 1e-8},
+   "reason": "the two-node Timoshenko element is exact for end loads and a uniform initial strain; the thrust is 1.1e-3 of the pressure force pair it balances, which amplifies round-off by about 900"
+  },
+  {
+   "id": "crown_z",
+   "quantity": "rise of the run's middle, ε h + X (h − ȳ) w²/(8 E I)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {"step": "Pressure", "nodes": [4]},
+    "pointer": "/nodes/0/displacement/2"
+   },
+   "value": 0.21336642982311724,
+   "tolerance": {"relative": 1e-8},
+   "reason": "the two-node Timoshenko element is exact for end loads and a uniform initial strain; the thrust is 1.1e-3 of the pressure force pair it balances, which amplifies round-off by about 900"
+  },
+  {
+   "id": "run_wall_force",
+   "quantity": "wall force N in the run, p A_i − X",
+   "measure": {
+    "command": "solve.probe",
+    "params": {"step": "Pressure", "elements": [3]},
+    "pointer": "/elements/0/ends/1/0"
+   },
+   "value": 63589.149065641395,
+   "tolerance": {"relative": 1e-8},
+   "reason": "the two-node Timoshenko element is exact for end loads and a uniform initial strain; the thrust is 1.1e-3 of the pressure force pair it balances, which amplifies round-off by about 900"
+  },
+  {
+   "id": "hoop_bore",
+   "quantity": "hoop stress at the bore, p (a² + b²)/(b² − a²), a = 45, b = 50, p = 10",
+   "measure": {
+    "command": "solve.probe",
+    "params": {"step": "Pressure", "elements": [3]},
+    "pointer": "/elements/0/pipe/hoop/0"
+   },
+   "value": 95.26315789473685,
+   "tolerance": {"relative": 1e-8},
+   "reason": "Lamé's closed form: the wall stresses follow from the pressure alone, so only round-off remains"
+  }
+ ]
+}

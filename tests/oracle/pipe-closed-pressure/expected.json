@@ -1,0 +1,79 @@
+{
+ "title": "Closed pipes under internal pressure: Lamé's wall stresses, the closed-end axial stress and the thin-wall limit",
+ "kind": "theory",
+ "source": "Lamé's solution, Timoshenko and Goodier, Theory of Elasticity, 3rd ed., McGraw-Hill 1970, §28; closed-end force and effective tension, C. P. Sparks, J. Energy Resources Technology 106(1):46-54, 1984",
+ "quantities": [
+  {
+   "id": "hoop_bore",
+   "quantity": "hoop stress at the bore, p (a² + b²)/(b² − a²), a = 10, b = 20, p = 100",
+   "measure": {
+    "command": "solve.probe",
+    "params": {"step": "Pressure", "elements": [1]},
+    "pointer": "/elements/0/pipe/hoop/0"
+   },
+   "value": 166.66666666666666,
+   "tolerance": {"relative": 1e-9},
+   "reason": "the element evaluates Lamé's closed form: round-off only"
+  },
+  {
+   "id": "hoop_outside",
+   "quantity": "hoop stress outside, 2 p a²/(b² − a²)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {"step": "Pressure", "elements": [1]},
+    "pointer": "/elements/0/pipe/hoop/1"
+   },
+   "value": 66.66666666666667,
+   "tolerance": {"relative": 1e-9},
+   "reason": "as hoop_bore"
+  },
+  {
+   "id": "radial_bore",
+   "quantity": "radial stress at the bore, −p",
+   "measure": {
+    "command": "solve.probe",
+    "params": {"step": "Pressure", "elements": [1]},
+    "pointer": "/elements/0/pipe/radial/0"
+   },
+   "value": -100.0,
+   "tolerance": {"relative": 1e-9},
+   "reason": "as hoop_bore"
+  },
+  {
+   "id": "axial",
+   "quantity": "axial wall stress of the closed pipe, p a²/(b² − a²)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {"step": "Pressure", "elements": [1]},
+    "pointer": "/elements/0/pipe/axial/0"
+   },
+   "value": 33.333333333333336,
+   "tolerance": {"relative": 1e-9},
+   "reason": "the two-node beam is exact for end loads and a uniform initial strain"
+  },
+  {
+   "id": "stretch",
+   "quantity": "elongation of the 1000 mm pipe, (1 − 2ν) σ_x L/E",
+   "measure": {
+    "command": "solve.probe",
+    "params": {"step": "Pressure", "nodes": [3]},
+    "pointer": "/nodes/0/displacement/0"
+   },
+   "value": 0.06349206349206349,
+   "tolerance": {"relative": 1e-9},
+   "reason": "as axial"
+  },
+  {
+   "id": "thin_hoop",
+   "quantity": "bore hoop stress of the thin pipe (a = 97.5, b = 102.5, p = 5), p (a² + b²)/(b² − a²)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {"step": "Pressure", "elements": [11]},
+    "pointer": "/elements/0/pipe/hoop/0"
+   },
+   "value": 100.0625,
+   "tolerance": {"relative": 1e-8},
+   "reason": "Lamé's closed form, which the element evaluates from the pressure alone; the membrane formula p r_m/t = 100 is (t/2r_m)² = 6.25 × 10⁻⁴ below it"
+  }
+ ]
+}

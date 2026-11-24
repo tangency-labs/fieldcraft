@@ -61,6 +61,7 @@ of threads.
 | `pressure` | `set`, `magnitude` | uniform, positive pushing in, consistent nodal forces on the faces (2D models: on element edges) |
 | `gravity` | `acceleration`, `set` (optional) | ρ a on the set's elements (or the whole model, point masses included) |
 | `body_force` | `set`, `vector` | force per volume |
+| `pipe_pressure` | `set`, `internal`, `external` | uniform pressures inside and around the set's pipes (beams with a pipe profile that has a bore): Lamé's wall stresses, and the axial force pair (1 − 2ν) A A_w per element of the closed-end force and the wall's Poisson strain ([Element library](elements.md#pipes-under-pressure)) |
 | `centrifugal` | `angular_velocity`, `point`, `axis`, `set` (optional) | ρ ω² r away from the axis; solid and 2D elements only |
 | `temperature` | `target`, `value` | thermal strain α (T − T_ref) of the target's nodes ([Heat transfer](heat-transfer.md)) |
 
