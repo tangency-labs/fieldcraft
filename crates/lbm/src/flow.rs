@@ -959,22 +959,25 @@ impl Flow {
             let k = owner.get(solid as usize).copied().unwrap_or(NONE) as usize;
             let Some((tree, tags, exact)) = trees.get(k) else { return rule };
             let (mut centre, cq) = (grid.centre(cell), c(q));
-            // The solid centre where the link really ends (unwrapped across a periodic face).
-            let mut end = [0, 1, 2].map(|a| centre[a] - cq[a] * grid.spacing);
-            // A solid cell across a periodic face: the surface lies on its own side of the box, so
-            // the whole segment moves by a box length to put its solid end inside the box.
+            // The solid end is the centre the voxeliser classified for that cell, so the link meets
+            // the surface exactly where the voxeliser put it (a centre computed here by stepping
+            // from the fluid centre can differ by an ulp and land on the wrong side of the surface).
+            let end = grid.centre(solid as usize);
+            // The unwrapped solid end (one cell beyond the fluid centre) tells whether the link
+            // crosses a periodic face: it then lies half a cell outside the box, so rounding cannot
+            // change the decision. The fluid end moves by a box length to the solid cell's side.
             for a in 0..3 {
                 let length = grid.cells[a] as f64 * grid.spacing;
-                let shift = if end[a] < grid.origin[a] {
+                let unwrapped = centre[a] - cq[a] * grid.spacing;
+                let shift = if unwrapped < grid.origin[a] {
                     length
-                } else if end[a] > grid.origin[a] + length {
+                } else if unwrapped > grid.origin[a] + length {
                     -length
                 } else {
                     0.0
                 };
                 if periodic[a] && shift != 0.0 {
                     centre[a] += shift;
-                    end[a] += shift;
                 }
             }
             let Some(frac) = crate::voxel::link_fraction(tree, tags, exact, centre, end) else {
