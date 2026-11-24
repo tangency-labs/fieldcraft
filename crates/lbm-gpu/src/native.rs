@@ -1725,9 +1725,14 @@ impl GpuFlow {
         Ok(())
     }
 
-    /// Copy `size` bytes of `src` back to the host.
+    /// Copy `size` bytes of `src` back to the host (a copy is a multiple of the copy alignment and within the
+    /// source: a buffer of 3 floats gives its 12 bytes). Asking for more than the buffer holds is an error.
     fn read(&self, src: &wgpu::Buffer, size: u64) -> Result<Vec<u8>> {
-        let size = size.max(16);
+        let size =
+            readback_size(size, src.size()).ok_or_else(|| gpu_error(format!("a readback of {size} bytes from a buffer of {} bytes", src.size())))?;
+        if size == 0 {
+            return Ok(Vec::new());
+        }
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("lbm readback"),
             size,
@@ -2157,8 +2162,37 @@ impl Backend for GpuFlow {
     }
 }
 
+/// The bytes a readback of `size` bytes copies from a buffer of `source` bytes: `size` rounded up to the copy
+/// alignment (`wgpu::COPY_BUFFER_ALIGNMENT`), within the source (whose size is a multiple of it, so the rounding
+/// fits). `None` when more is asked than the buffer holds.
+fn readback_size(size: u64, source: u64) -> Option<u64> {
+    (size <= source).then(|| size.next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT).min(source))
+}
+
 #[cfg(test)]
 mod tests {
+    /// A readback never copies past its source (a padding to 16 bytes overran a 3-float buffer, 12 bytes, and
+    /// wgpu's validation panicked), keeps the copy alignment, reads nothing from an empty buffer, and refuses to
+    /// read more than the buffer holds.
+    #[test]
+    fn a_readback_stays_within_its_source_and_its_alignment() {
+        use super::readback_size;
+        let align = wgpu::COPY_BUFFER_ALIGNMENT;
+        assert_eq!(readback_size(12, 12), Some(12));
+        assert_eq!(readback_size(0, 0), Some(0));
+        assert_eq!(readback_size(0, 64), Some(0));
+        for source in (0..=64).map(|k| k * align) {
+            for size in 0..=source + 2 * align {
+                match readback_size(size, source) {
+                    Some(got) => {
+                        assert!(size <= source && got >= size && got <= source && got.is_multiple_of(align), "size {size} of {source}: {got}")
+                    }
+                    None => assert!(size > source, "size {size} of {source}"),
+                }
+            }
+        }
+    }
+
     use super::*;
 
     /// Reproduce the ownership window from #800 deterministically: the first poll returns
