@@ -13,17 +13,19 @@
 //!   coupled. Coupled rotations tie the rotations of shell and beam nodes, θ_s = θ_r; solid
 //!   nodes have none.
 //! - **Distributing** (an interpolation constraint): the reference point moves with the rigid
-//!   motion that fits the set's nodal translations best in the least-squares sense, with equal
-//!   weights (as the model and the deck writers define it). About the nodes' centroid c, with
-//!   rᵢ = xᵢ − c, the fit is u_c = Σ uᵢ / N and θ = J⁻¹ Σ rᵢ × uᵢ with
-//!   J = Σ (|rᵢ|² I − rᵢ rᵢᵀ); the reference point's motion is θ_r = θ and
-//!   u_r = u_c + θ × (x_r − c). Only the coupled degrees of freedom are tied. By virtual work a
-//!   force or moment on the point is spread over the nodes as the forces whose resultant and
-//!   moment about the point equal it, weighted like the fit, and the region stays free to deform
-//!   (G. H. K. Heirman, W. Desmet, *Interface reduction of flexible bodies for efficient modeling
-//!   of body flexibility in multibody dynamics*, Multibody Syst. Dyn. 24(2):219–234, 2010, on
-//!   interpolation constraints). Nodes on one line cannot carry a rotation about that line: that
-//!   is an error when rotations are coupled, and their mean motion is used otherwise.
+//!   motion that fits the set's displacement best in the least-squares sense. For a set with
+//!   element faces the fit is taken over those faces, ∫ |u_h − u_c − θ × r|² dA with u_h = Σ Nᵢ uᵢ,
+//!   so the point's force reaches the nodes as the consistent nodal loads of a uniform plus a linear
+//!   traction (Zienkiewicz, Taylor & Zhu, *The Finite Element Method*, 7th ed., 2013, §6.6); a set
+//!   of nodes only (no faces) is fitted with equal weights. About the centroid c, with the fit's
+//!   weights, u_c = Σ sᵢ uᵢ and θ = J⁻¹ Σ pᵢ × uᵢ with J the inertia of the fit; the reference
+//!   point's motion is θ_r = θ and u_r = u_c + θ × (x_r − c). Only the coupled degrees of freedom
+//!   are tied. By virtual work a force or moment on the point is spread over the nodes with the same
+//!   weights, and the region stays free to deform (G. H. K. Heirman, W. Desmet, *Interface reduction
+//!   of flexible bodies for efficient modeling of body flexibility in multibody dynamics*, Multibody
+//!   Syst. Dyn. 24(2):219–234, 2010, on interpolation constraints). Nodes on one line cannot carry a
+//!   rotation about that line: that is an error when rotations are coupled, and their mean motion is
+//!   used otherwise. A set with faces and nodes off them is refused: the surface does not reach them.
 //!
 //! **Elimination** (master–slave by transformation, Cook et al. 2002 §9.2; C. A. Felippa,
 //! *Introduction to Finite Element Methods*, ch. 8, University of Colorado lecture notes): every
@@ -53,7 +55,8 @@ use std::collections::BTreeMap;
 
 use fieldcraft_fem::dense::inverse3;
 use fieldcraft_fem::{DofKind, DofLayout, DofSet};
-use fieldcraft_model::{BoundaryCondition, CouplingKind, Model, Resolved, Step};
+use fieldcraft_model::nodal::integrate_face;
+use fieldcraft_model::{BoundaryCondition, CouplingKind, Model, Resolved, ResolvedSet, Step};
 
 use crate::sparse::Csr;
 use crate::system::Mesh;
@@ -125,6 +128,139 @@ fn mat_mul(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
     c
 }
 
+/// The weights of a distributing coupling's set and the rigid fit they define about the centroid.
+struct Fit {
+    /// The centroid c about which the rotations and levers are taken.
+    centroid: [f64; 3],
+    /// Per set node: the share sᵢ of the point's translation, u_c = Σ sᵢ uᵢ.
+    share: Vec<f64>,
+    /// Per set node: the lever pᵢ, θ = J⁻¹ Σ pᵢ × uᵢ.
+    lever: Vec<[f64; 3]>,
+    /// J, the inertia of the fit about the centroid.
+    inertia: [[f64; 3]; 3],
+}
+
+/// The fit of a set of nodes, each a point with equal weight: u_c = Σ uᵢ / N, pᵢ = rᵢ.
+fn points_fit(xs: &[[f64; 3]]) -> Fit {
+    let count = xs.len() as f64;
+    let mut centroid = [0.0; 3];
+    for x in xs {
+        for k in 0..3 {
+            centroid[k] += x[k] / count;
+        }
+    }
+    let lever: Vec<[f64; 3]> = xs.iter().map(|x| sub(*x, centroid)).collect();
+    let mut inertia = [[0.0; 3]; 3];
+    for r in &lever {
+        let rr = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+        for a in 0..3 {
+            for b in 0..3 {
+                inertia[a][b] += if a == b { rr } else { 0.0 } - r[a] * r[b];
+            }
+        }
+    }
+    Fit { centroid, share: vec![1.0 / count; xs.len()], lever, inertia }
+}
+
+/// The fit of a set with element faces: the weights are the consistent ones, sᵢ = ∫ Nᵢ dA / A and
+/// pᵢ = ∫ Nᵢ r dA, with J = ∫ (|r|² I − r rᵀ) dA over the faces. Two passes over the faces, so the
+/// centroid is known before the inertia is summed (no large terms cancel far from the origin).
+fn surface_fit(
+    name: &str,
+    set_name: &str,
+    set: &ResolvedSet,
+    model: &Model,
+    mesh: &Mesh,
+    nodes: &[usize],
+    xyz: &impl Fn(usize) -> [f64; 3],
+) -> Result<Fit> {
+    let position: BTreeMap<usize, usize> = nodes.iter().enumerate().map(|(i, n)| (*n, i)).collect();
+    // Each face: the set positions of its nodes and their coordinates, in the face's node order.
+    let mut patches: Vec<(Vec<usize>, Vec<[f64; 3]>)> = Vec::with_capacity(set.faces.len());
+    for face in &set.faces {
+        let labels = model.face_nodes(*face).ok_or_else(|| Error::Internal(format!("coupling `{name}`: a face of set `{set_name}` has no nodes")))?;
+        let mut idx = Vec::with_capacity(labels.len());
+        let mut xs = Vec::with_capacity(labels.len());
+        for label in labels {
+            let n = mesh.node(label).ok_or_else(|| Error::Internal(format!("coupling `{name}`: face node {label} is not a mesh node")))?;
+            let i = *position.get(&n).ok_or_else(|| Error::Internal(format!("coupling `{name}`: face node {label} is not in set `{set_name}`")))?;
+            idx.push(i);
+            xs.push(xyz(n));
+        }
+        patches.push((idx, xs));
+    }
+    // Pass 1: the area, the centroid, and ∫ Nᵢ dA and ∫ Nᵢ x dA per set node.
+    let mut area = 0.0;
+    let mut first = [0.0; 3];
+    let mut s = vec![0.0; nodes.len()];
+    let mut q = vec![[0.0; 3]; nodes.len()];
+    for (idx, xs) in &patches {
+        integrate_face(xs, |shape, nda| {
+            let da = (nda[0] * nda[0] + nda[1] * nda[1] + nda[2] * nda[2]).sqrt();
+            let xh = interpolate(shape, xs);
+            area += da;
+            for k in 0..3 {
+                first[k] += xh[k] * da;
+            }
+            for (&i, &ni) in idx.iter().zip(shape.iter()) {
+                // `i` came from `position`, whose values are positions in `nodes`: in range.
+                if let Some(si) = s.get_mut(i) {
+                    *si += ni * da;
+                }
+                if let Some(qi) = q.get_mut(i) {
+                    for k in 0..3 {
+                        qi[k] += ni * xh[k] * da;
+                    }
+                }
+            }
+        })?;
+    }
+    if !(area > 0.0 && area.is_finite()) {
+        return Err(Error::Invalid(format!("coupling `{name}`: the faces of set `{set_name}` have no area")));
+    }
+    let centroid = first.map(|v| v / area);
+    // Pass 2: the inertia about the centroid, and which set nodes the faces reach.
+    let mut inertia = [[0.0; 3]; 3];
+    let mut reached = vec![false; nodes.len()];
+    for (idx, xs) in &patches {
+        integrate_face(xs, |shape, nda| {
+            let da = (nda[0] * nda[0] + nda[1] * nda[1] + nda[2] * nda[2]).sqrt();
+            let r = sub(interpolate(shape, xs), centroid);
+            let rr = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+            for a in 0..3 {
+                for b in 0..3 {
+                    inertia[a][b] += da * (if a == b { rr } else { 0.0 } - r[a] * r[b]);
+                }
+            }
+            for &i in idx {
+                if let Some(seen) = reached.get_mut(i) {
+                    *seen = true;
+                }
+            }
+        })?;
+    }
+    // A set node no face reaches would carry no motion of the surface: refuse it, naming it.
+    if let Some((label, _)) = set.nodes.iter().zip(&reached).find(|(_, seen)| !**seen) {
+        return Err(Error::Invalid(format!(
+            "coupling `{name}`: node {label} of set `{set_name}` is on none of the set's element faces, so the coupling's surface does not reach it (a set with element faces, such as a body's, couples through its faces); couple a set of the faces only, or of nodes only"
+        )));
+    }
+    let share = s.iter().map(|si| si / area).collect();
+    let lever = q.iter().zip(&s).map(|(qi, si)| [0, 1, 2].map(|k| qi[k] - centroid[k] * si)).collect();
+    Ok(Fit { centroid, share, lever, inertia })
+}
+
+/// The value of an interpolated field at a point with shape values `shape` over `xs`: Σ Nⱼ xⱼ.
+fn interpolate(shape: &[f64], xs: &[[f64; 3]]) -> [f64; 3] {
+    let mut x = [0.0; 3];
+    for (nj, xj) in shape.iter().zip(xs) {
+        for k in 0..3 {
+            x[k] += nj * xj[k];
+        }
+    }
+    x
+}
+
 /// The constraint rows of every coupling: couplings by name, nodes by label, directions in order.
 pub fn coupling_rows<'m>(model: &'m Model, resolved: &Resolved, mesh: &Mesh) -> Result<Vec<Row<'m>>> {
     let mut rows = Vec::new();
@@ -181,24 +317,13 @@ pub fn coupling_rows<'m>(model: &'m Model, resolved: &Resolved, mesh: &Mesh) -> 
                 }
             }
             CouplingKind::Distributing => {
-                let count = nodes.len() as f64;
-                let mut centroid = [0.0; 3];
-                for &n in &nodes {
-                    let x = xyz(n);
-                    for k in 0..3 {
-                        centroid[k] += x[k] / count;
-                    }
-                }
-                let arms: Vec<[f64; 3]> = nodes.iter().map(|n| sub(xyz(*n), centroid)).collect();
-                let mut j = [[0.0; 3]; 3];
-                for r in &arms {
-                    let rr = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
-                    for a in 0..3 {
-                        for b in 0..3 {
-                            j[a][b] += if a == b { rr } else { 0.0 } - r[a] * r[b];
-                        }
-                    }
-                }
+                let fit = if set.faces.is_empty() {
+                    let xs: Vec<[f64; 3]> = nodes.iter().map(|n| xyz(*n)).collect();
+                    points_fit(&xs)
+                } else {
+                    surface_fit(name, &c.set, set, model, mesh, &nodes, &xyz)?
+                };
+                let j = fit.inertia;
                 let trace = j[0][0] + j[1][1] + j[2][2];
                 let inverse = inverse3(&j).filter(|(_, det)| *det > 1e-10 * trace.powi(3) / 27.0).map(|(inv, _)| inv);
                 if inverse.is_none() && coupled(3..6).next().is_some() {
@@ -207,18 +332,18 @@ pub fn coupling_rows<'m>(model: &'m Model, resolved: &Resolved, mesh: &Mesh) -> 
                         c.set
                     )));
                 }
-                // θ = Σ Gᵢ uᵢ with Gᵢ = J⁻¹ [rᵢ]×; u_r = Σ (I/N − [d]× Gᵢ) uᵢ with d = x_r − c.
-                let d = cross_matrix(sub(xr, centroid));
-                let g: Vec<[[f64; 3]; 3]> = arms.iter().map(|r| inverse.map_or([[0.0; 3]; 3], |inv| mat_mul(&inv, &cross_matrix(*r)))).collect();
+                // θ = Σ Gᵢ uᵢ with Gᵢ = J⁻¹ [pᵢ]×; u_r = Σ (sᵢ I − [d]× Gᵢ) uᵢ with d = x_r − c.
+                let d = cross_matrix(sub(xr, fit.centroid));
+                let g: Vec<[[f64; 3]; 3]> = fit.lever.iter().map(|p| inverse.map_or([[0.0; 3]; 3], |inv| mat_mul(&inv, &cross_matrix(*p)))).collect();
                 for k in coupled(0..6) {
                     let mut terms = Vec::with_capacity(1 + 3 * nodes.len());
                     let pivot = rp(k)?;
                     terms.push((pivot, 1.0));
-                    for (&n, gi) in nodes.iter().zip(&g) {
+                    for ((&n, gi), share) in nodes.iter().zip(&g).zip(&fit.share) {
                         for comp in 0..3 {
                             let a = if k < 3 {
                                 let dg: f64 = (0..3).map(|m| d[k][m] * gi[m][comp]).sum();
-                                if k == comp { 1.0 / count - dg } else { -dg }
+                                if k == comp { *share - dg } else { -dg }
                             } else {
                                 gi[k - 3][comp]
                             };

@@ -276,7 +276,9 @@ module docs; ADR 0001 records why the linear algebra is our own.
 3. **Ordering and elimination** (`constraints`). Nested dissection of the nodes by coordinate
    bisection. Couplings become linear constraint rows: kinematic = rigid link of each coupled
    translation to the point's translation and rotation; distributing = the point follows the
-   least-squares rigid fit of the set's translations (equal weights, the deck writers' choice).
+   least-squares rigid fit of the set's translations: over the set's faces the L2 fit with the consistent
+   nodal weights (Zienkiewicz, Taylor & Zhu, *The Finite Element Method*, 7th ed., 2013, §6.6); over a set
+   of nodes only, equal weights.
    Prescribed values and rows are eliminated master–slave in a fixed order, one dependent degree
    of freedom per row (the coupled node or the distributing point while it is free, else the
    largest coefficient), giving u = T_f q + T_p u_p; the reduced matrix T_fᵀ K T_f stays

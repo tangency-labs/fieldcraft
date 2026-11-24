@@ -1405,8 +1405,9 @@ the module docs):
   Finite Element Methods*, ch. 8 (University of Colorado lecture notes); automatic choice of the
   dependent degree of freedom, J. F. Abel, M. S. Shephard, IJNME 14(3):464–467, 1979; the
   distributing (interpolation) constraint as a least-squares rigid fit with loads spread by
-  virtual work, G. H. K. Heirman, W. Desmet, Multibody Syst. Dyn. 24(2):219–234, 2010; the
-  reduced matrix product T_fᵀ K T_f row by row, F. G. Gustavson, ACM TOMS 4(3):250–269, 1978.
+  virtual work, G. H. K. Heirman, W. Desmet, Multibody Syst. Dyn. 24(2):219–234, 2010, with the
+  consistent (L2) weights over the set's faces from O. C. Zienkiewicz, R. L. Taylor, J. Z. Zhu, *The Finite
+  Element Method*, 7th ed., 2013, §6.6; the reduced matrix product T_fᵀ K T_f row by row, F. G. Gustavson, ACM TOMS 4(3):250–269, 1978.
 - Trusses and discrete elements: the isoparametric bar along its arc, R. D. Cook, D. S. Malkus,
   M. E. Plesha, R. J. Witt, *Concepts and Applications of Finite Element Analysis*, 4th ed.,
   Wiley 2002, §3.6 and §6.2, and Hughes 2000, §1.10; springs k [n nᵀ, −n nᵀ; −n nᵀ, n nᵀ],

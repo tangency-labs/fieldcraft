@@ -1,0 +1,19 @@
+[
+ {"command": "model.units", "params": {"system": "mm-t-s-N-MPa"}},
+ {"command": "mesh.block", "params": {"body": "Bar", "kind": "hex20", "corners": [[0,0,0],[100,0,0],[100,10,0],[0,10,0],[0,0,10],[100,0,10],[100,10,10],[0,10,10]], "divisions": [20,2,2], "faces": {"6": "x0", "4": "x1", "3": "y0", "1": "z0"}}},
+ {"command": "model.set.create", "params": {"name": "all", "geometry": [{"body": "Bar"}]}},
+ {"command": "model.set.create", "params": {"name": "x0", "geometry": [{"body": "Bar", "face": "x0"}]}},
+ {"command": "model.set.create", "params": {"name": "x1", "geometry": [{"body": "Bar", "face": "x1"}]}},
+ {"command": "model.set.create", "params": {"name": "y0", "geometry": [{"body": "Bar", "face": "y0"}]}},
+ {"command": "model.set.create", "params": {"name": "z0", "geometry": [{"body": "Bar", "face": "z0"}]}},
+ {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}}},
+ {"command": "model.section.create", "params": {"name": "solid", "set": "all", "material": "Steel", "kind": {"type": "solid"}}},
+ {"command": "model.boundary_condition.create", "params": {"name": "symx", "type": "symmetry", "target": {"set": "x0"}, "plane": "x"}},
+ {"command": "model.boundary_condition.create", "params": {"name": "symy", "type": "symmetry", "target": {"set": "y0"}, "plane": "y"}},
+ {"command": "model.boundary_condition.create", "params": {"name": "symz", "type": "symmetry", "target": {"set": "z0"}, "plane": "z"}},
+ {"command": "model.reference_point.create", "params": {"name": "RP", "xyz": [100, 5, 5]}},
+ {"command": "model.coupling.create", "params": {"name": "end", "reference_point": "RP", "set": "x1", "kind": "distributing", "dofs": [1, 2, 3]}},
+ {"command": "model.load.create", "params": {"name": "pull_rp", "type": "force", "target": {"reference_point": "RP"}, "vector": [1000, 0, 0]}},
+ {"command": "model.step.create", "params": {"name": "Coupled", "procedure": {"type": "static"}, "boundary_conditions": ["symx", "symy", "symz"], "loads": ["pull_rp"]}},
+ {"command": "solve.static", "params": {"step": "Coupled"}, "id": "coupled"}
+]

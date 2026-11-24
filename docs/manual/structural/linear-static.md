@@ -257,7 +257,8 @@ probe at the foot's end lies within 0.13 % of the fine tet10 solution.
 | Scordelis–Lo roof with solids | benchmark | 0.33 % | 2 % | `scordelis-lo-roof-solid` |
 | Tie patch test, non-matching meshes | theory | < 10⁻⁴ % | 10⁻⁹ rel. | `tie-patch` |
 | Tube torsion through a kinematic coupling | theory | rotation 0.0006 %, shear stress 0.29 % | 0.5 %, 1 % | `tube-torsion-coupling` |
-| Pure bending through a distributing coupling | theory | stress < 10⁻⁴ %; rotation +1.18 % (known failure: equal weights at corner and mid-side nodes of hex20) | 0.5 %, 1 % | `pure-bending-coupling` |
+| Pure bending through a distributing coupling | theory | stress < 10⁻⁴ %; rotation < 10⁻⁴ % (the coupling is the L2 fit over the end face's element faces, Zienkiewicz, Taylor & Zhu 2013, §6.6) | 0.5 %, 1 % | `pure-bending-coupling` |
+| Uniform tension through a distributing coupling on the end face | theory | displacement and stress < 10⁻⁴ % | 10⁻⁸ rel. | `tension-coupling` |
 | Inclined symmetry plane against the axis-aligned image and the whole part | theory (frame indifference) | displacements < 10⁻⁹, stresses < 10⁻⁸; balance < 10⁻⁸ | as stated | `crates/solver/tests/inclined_symmetry.rs` |
 | Filleted bracket, peak fillet stress (mesh-converged reference) | theory (convergence study) | within 3 % (fine), 5 % (coarse); reaction exact | 3 %, 5 % | `filleted-bracket-fillet-stress`, `-coarse` |
 | A buckling preload equals the static solution, 1 and 3 threads | determinism | bit for bit | exact | `buckling_preloads_match_static_with_loads_motion_and_temperature` |

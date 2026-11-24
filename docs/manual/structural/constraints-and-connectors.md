@@ -49,8 +49,8 @@ springs, dashpots and point masses with rotary inertia.
 |---|---|---|---|
 | `name` | text | required | |
 | `reference_point` | name | required | The point coupled. |
-| `set` | node set | required | The nodes it is coupled to. |
-| `kind` | `"kinematic"` \| `"distributing"` | required | Rigid link, or least-squares interpolation constraint. |
+| `set` | node or face set | required | The nodes it is coupled to, or the element faces whose surface it is coupled to. |
+| `kind` | `"kinematic"` \| `"distributing"` | required | Rigid link, or least-squares interpolation constraint (over the set's faces, the consistent L2 fit; over a set of nodes, equal weights). |
 | `dofs` | subset of 1–6 | all | The coupled degrees of freedom (1–3 translations, 4–6 rotations, global axes). |
 
 **Tie** (`interaction.tie`, `interaction.tie.edit`):
@@ -115,19 +115,24 @@ arms, so a moment on it reaches the face as a couple even when only translations
 Coupled rotations tie the rotations of shell and beam nodes, θ_s = θ_r; solid nodes have none.
 
 **Distributing** (an interpolation constraint): the point moves with the rigid motion that fits the
-set's nodal translations best in the least-squares sense, with equal weights. About the nodes'
-centroid c, with rᵢ = xᵢ − c,
+set's displacement best in the least-squares sense. For a set with element faces the fit is taken
+over those faces, ∫ |u_h − u_c − θ × r|² dA with u_h = Σ Nᵢ uᵢ, so the point's force reaches the
+nodes as the consistent nodal loads of a uniform plus a linear traction (Zienkiewicz, Taylor & Zhu,
+*The Finite Element Method*, 7th ed., 2013, §6.6). About the surface's centroid c, with r = x − c,
 
 ```text
-u_c = Σ uᵢ / N,   θ = J⁻¹ Σ rᵢ × uᵢ,   J = Σ (|rᵢ|² I − rᵢ rᵢᵀ)
+u_c = Σ sᵢ uᵢ,   θ = J⁻¹ Σ pᵢ × uᵢ,   J = ∫ (|r|² I − r rᵀ) dA
+sᵢ = ∫ Nᵢ dA / A,   pᵢ = ∫ Nᵢ r dA,   A = ∫ dA
 θ_r = θ,   u_r = u_c + θ × (x_r − c)
 ```
 
-Only the coupled degrees of freedom are tied. By virtual work a force or moment on the point is
-spread over the nodes as the forces whose resultant and moment about the point equal it, weighted
-like the fit, and the region stays free to deform (Heirman & Desmet 2010). Nodes on one line cannot
-carry a rotation about that line: an error when rotations are coupled, their mean motion
-otherwise.
+Over a set of nodes only (no faces), each node is a point of equal weight: u_c = Σ uᵢ / N,
+pᵢ = rᵢ, J = Σ (|rᵢ|² I − rᵢ rᵢᵀ). A set whose faces leave some of its nodes out is refused: the
+surface does not reach them. Only the coupled degrees of freedom are tied. By virtual work a force
+or moment on the point is spread over the nodes with the same weights, so a uniform or linear
+traction on the faces is carried exactly, and the region stays free to deform (Heirman & Desmet
+2010). Nodes on one line cannot carry a rotation about that line: an error when rotations are
+coupled, their mean motion otherwise.
 
 ![Kinematic and distributing couplings of a reference point to an end face](../../media/manual/constraints-and-connectors-1.svg)
 
@@ -314,10 +319,10 @@ under 0.05 s, Apple M4 Max, CPU). The references: tip deflection
 | Quantity | Kinematic | Distributing | Reference | Difference |
 |---|---|---|---|---|
 | Equations | 3 015 | 3 120 | — | — |
-| `Tip` u_z, ν = 0.3 | −1.905469 mm | −1.905602 mm | −1.919619 mm | −0.74 %, −0.73 % |
-| `Tip` rotation about y, ν = 0.3 | 0.0142169 rad | 0.0142251 rad | 0.0142857 rad | −0.48 %, −0.42 % |
-| `Tip` u_z, ν = 0 | −1.916102 mm | −1.916226 mm | −1.916190 mm | −0.005 %, +0.002 % |
-| `Tip` rotation about y, ν = 0 | 0.0142857143 rad | 0.0142937 rad | 0.0142857 rad | < 10⁻⁸, +0.056 % |
+| `Tip` u_z, ν = 0.3 | −1.905469 mm | −1.905526 mm | −1.919619 mm | −0.74 %, −0.73 % |
+| `Tip` rotation about y, ν = 0.3 | 0.0142169 rad | 0.0142176 rad | 0.0142857 rad | −0.48 %, −0.48 % |
+| `Tip` u_z, ν = 0 | −1.916102 mm | −1.916155 mm | −1.916190 mm | −0.005 %, −0.002 % |
+| `Tip` rotation about y, ν = 0 | 0.0142857143 rad | 0.0142857143 rad | 0.0142857 rad | < 10⁻⁸, < 10⁻⁸ |
 | `max_von_mises`, ν = 0.3 | 304.98 MPa (node 65, at the root) | 304.98 MPa | σ = 300 MPa | +1.7 % |
 | `reaction_total` z | 1 000.0 N | 1 000.0 N | 1 000 N | < 10⁻¹⁰ |
 
@@ -328,10 +333,11 @@ The ν = 0 rows are the same script with `"poisson": 0`.
 **What to look at.** The force acts on one point, and the coupling carries it into the whole end
 face; one depth or two from the end the stress is the beam's, peaking where the bending moment
 peaks, at the root. A kinematic coupling makes the end face move rigidly with the point, so the
-point's rotation is the face's; a distributing coupling spreads the force over the nodes and lets
-the face warp, and its point follows the least-squares rigid fit of the face's motion. The two
-differ only near the end, so the deflection and rotation agree within 0.06 % (Saint-Venant). At ν = 0 the kinematic coupling
-reproduces the beam's rotation to 10⁻⁸ and the deflection to 0.005 %; at ν = 0.3 the
+point's rotation is the face's; a distributing coupling spreads the force over the face as the
+consistent loads of a uniform plus linear traction and lets the face warp, and its point follows
+the least-squares rigid fit of the face's displacement. The two differ only near the end, so the
+deflection and rotation agree within 0.01 % (Saint-Venant). At ν = 0 both couplings reproduce
+the beam's rotation to 10⁻⁸, and the deflection to 0.005 % (kinematic) and 0.002 % (distributing); at ν = 0.3 the
 fixed root face also holds the section's Poisson contraction, which stiffens the beam by
 0.5–0.6 %.
 
@@ -342,13 +348,11 @@ Oracle cases ([results](../../oracle.md)):
 | Case | Reference | Quantity | Error | Tolerance | Result |
 |---|---|---|---|---|---|
 | `tube-torsion-coupling` | theory: φ = T L/(G J), τ = T r/J | rotation of the reference point; surface shear stress | 0.00062 %; 0.29 % | 0.5 %; 1 % | pass |
-| `pure-bending-coupling` | theory: σ = M z/I, κ = M/(E I) | bending stress at mid-span; rotation of the reference point | < 10⁻⁶; 1.18 % | 0.5 %; 1 % | pass; known failure |
+| `pure-bending-coupling` | theory: σ = M z/I, κ = M/(E I) | bending stress at mid-span; rotation of the reference point | < 10⁻⁴ %; < 10⁻⁴ % | 0.5 %; 1 % | pass |
+| `tension-coupling` | theory: u = F L/(E A), σ = F/A | axial displacement of the reference point; maximum von Mises stress | < 10⁻⁴ %; < 10⁻⁴ % | 10⁻⁸ rel. | pass |
 | `tie-patch` | theory: tie patch test | σ_zz in five elements on both sides; u_z at a tied node | < 10⁻⁶ | 10⁻⁹ rel. | pass |
 | `tie-heat-series` | theory: series conduction | temperatures at the tie and in both blocks; heat flux | < 10⁻⁶ | 10⁻⁹ rel. | pass |
 
-The `pure-bending-coupling` rotation is 1.2 % high: the distributing coupling weights every node
-of the end face equally, corner and mid-side nodes of hex20 alike, which is not the consistent
-linear traction; the end face deforms locally and the fitted rotation includes it.
 
 Tests:
 
@@ -358,7 +362,9 @@ Tests:
   (10⁻¹⁰, 10⁻⁹), the point's reaction carrying the load; a distributing force equals the
   equivalent pressure away from the end (10⁻⁴); bending through a distributing coupling
   (σ = M z/I and κ to 0.5 %); torsion of a hex20 tube (twist 10⁻³, shear stress 0.5 %);
-  determinism; errors that name the problem; oversized reductions refused before allocating.
+  determinism; errors that name the problem; oversized reductions refused before allocating;
+  uniform tension and pure bending through a distributing coupling on element faces are exact to
+  round-off (10⁻⁹), and a set whose faces leave nodes out is refused by name.
 - `crates/solver/tests/contact.rs`: `a_tie_passes_the_patch_test` (a linear field across
   non-matching hex8/tet4 meshes to round-off, to 10⁻⁶ on distorted quadrilateral faces, in linear
   and nonlinear steps; uniaxial tension across a tie σ_zz = Eε to 10⁻⁹); `heat_crosses_a_tie_exactly`
@@ -390,7 +396,6 @@ Tests:
   displacement. Nastran refuses ties.
 - Dashpots act only in explicit dynamics; static, nonlinear static and frequency steps ignore them
   with a warning.
-- The distributing coupling uses equal weights per node (see `pure-bending-coupling`).
 - Connector elements (hinges, slots, joints with stops) and nonstructural mass are not
   implemented.
 
