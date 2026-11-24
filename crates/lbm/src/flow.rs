@@ -768,6 +768,8 @@ struct SaState {
     /// ([`Flow::wall_friction`]).
     law: Option<crate::sa::WallLaw>,
     wall: Vec<(usize, f64, f64)>,
+    /// A test mode ([`Flow::freeze_sa_nu_tilde`]): ν̃ held at this field after every transport, the wall function's values included.
+    frozen: Option<Vec<f64>>,
 }
 
 /// Cells per parallel block of the collision and the streaming: about a 256th of the grid, so a
@@ -1474,7 +1476,16 @@ impl Flow {
                 let inflow = sa.inflow_ratio * nu;
                 let field = SaField::new(sides, mask.to_vec(), inflow, inflow)?;
                 let law = if on_node { Some(node_law) } else { (setup.wall_model == Some(WallModel::Musker)).then_some(crate::sa::WallLaw::Musker) };
-                Some(SaState { field, distance, vorticity: filled(n, 0.0, "vorticities")?, substeps: None, model: true, law, wall: Vec::new() })
+                Some(SaState {
+                    field,
+                    distance,
+                    vorticity: filled(n, 0.0, "vorticities")?,
+                    substeps: None,
+                    model: true,
+                    law,
+                    wall: Vec::new(),
+                    frozen: None,
+                })
             }
         };
         open.shrink_to_fit();
@@ -1826,6 +1837,28 @@ impl Flow {
     /// Whether Han et al.'s on-node wall-function bounce runs (`spalding_bounce`).
     pub fn on_node_bounce(&self) -> bool {
         self.nodes.is_some()
+    }
+
+    /// A test mode: holds ν̃ at `values` (one per cell, finite) after every transport step, so the momentum equations see a given eddy
+    /// viscosity (the one-dimensional solution's, say) and the layer's own errors can be told from the model's. The transport and the
+    /// wall function still run, their result is replaced. Not part of a checkpoint (a checkpoint of a frozen flow is refused), and the GPU
+    /// backend refuses the flow.
+    #[doc(hidden)]
+    pub fn freeze_sa_nu_tilde(&mut self, values: Vec<f64>) -> Result<()> {
+        let Some(sa) = &mut self.sa else {
+            return Err(Error::Invalid("freezing ν̃ needs the Spalart–Allmaras model".into()));
+        };
+        if values.len() != self.grid.len() || values.iter().any(|v| !v.is_finite()) {
+            return Err(Error::Invalid(format!("freezing ν̃: {} values for {} cells, or one is not finite", values.len(), self.grid.len())));
+        }
+        sa.frozen = Some(values);
+        Ok(())
+    }
+
+    /// Whether ν̃ is held at a given field ([`Flow::freeze_sa_nu_tilde`]).
+    #[doc(hidden)]
+    pub fn sa_nu_tilde_frozen(&self) -> bool {
+        self.sa.as_ref().is_some_and(|s| s.frozen.is_some())
     }
 
     /// The boundary nodes of the on-node wall-function bounce (`spalding_bounce`).
@@ -2706,6 +2739,9 @@ impl Flow {
             }
             sa.field.impose(&fixed)?;
         }
+        if let Some(values) = &sa.frozen {
+            sa.field.set_nu_tilde(values)?;
+        }
         sa.wall = wall;
         Ok(())
     }
@@ -3399,6 +3435,9 @@ impl crate::backend::Backend for Flow {
         use crate::checkpoint::{boolean, doubles, f64, fixed, u64, vectors};
         if !self.characteristic.is_empty() {
             return Err(Error::Invalid("not supported yet: a checkpoint of a characteristic outlet".into()));
+        }
+        if self.sa_nu_tilde_frozen() {
+            return Err(Error::Invalid("not supported yet: a checkpoint with ν̃ held at a given field".into()));
         }
         // Streaming targets are allocated once, not cloned into a separate snapshot.
         self.targets()?;

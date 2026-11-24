@@ -896,6 +896,9 @@ impl GpuFlow {
                         "not supported yet: the Spalart–Allmaras model on the GPU with {what}; solve on the CPU (`backend: \"cpu\"`)"
                     )))
                 };
+                if flow.sa_nu_tilde_frozen() {
+                    return refuse("ν̃ held at a given field (a test mode)");
+                }
                 if flow.wall_model() {
                     return refuse("Malaspinas and Sagaut's wall model with Musker's profile (`musker`)");
                 }

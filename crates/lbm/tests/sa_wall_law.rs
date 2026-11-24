@@ -35,6 +35,9 @@
 //! doi:10.1017/jfm.2015.268).
 
 mod common;
+#[path = "support/sa_1d.rs"]
+#[allow(dead_code)]
+mod sa_1d;
 #[path = "support/wall_balance.rs"]
 mod wall_balance;
 
@@ -56,6 +59,36 @@ const LEE_MOSER_180_CF: f64 = 2.0 * 0.0637309 * 0.0637309;
 /// The centreline U⁺ of Lee & Moser's Re_τ 182 profile, as the gate's window rounds it (17.75 to
 /// 18.65 is 18.2 ± 2.5 %; the tabulated mean at y = δ reads about 18.27).
 const LEE_MOSER_180_CENTRE: f64 = 18.2;
+
+/// What the lattice's momentum transfer alone does to C_f on `cells` per half-height, without a flow solve (the first-rows run prints it
+/// before its runs): ν̃ at the solution's profile on the lattice's nodes, row 1 at the solution's velocity, each later interval stepping by the
+/// total stress t(y_mid) = 1 − y_mid over the harmonic mean of the two nodes' ν + ν_t (the lattice's transfer rule), the bulk velocity the
+/// trapezoid sum over the nodes with the wall interval from the solution's own profile (the harness uses the law's, within 0.1 u⁺ of it), C_f = 2 / U_b².
+/// Returns the 1→2 increment's excess over the solution's, and C_f's from the solution's with the rule as it is and with the 1→2 increment
+/// taken from the solution (what `local_balance_node_one` sets, the harmonic sum floor of the layer), both as fractions.
+fn harmonic_transfer_floor(y: &[f64], nt: &[f64], u: &[f64], cf_1d: f64, cells: usize) -> (f64, f64, f64) {
+    let at = |yd: f64, f: &[f64]| {
+        let k = y.partition_point(|v| *v < yd).clamp(1, y.len() - 1);
+        f[k - 1] + (f[k] - f[k - 1]) * (yd - y[k - 1]) / (y[k] - y[k - 1])
+    };
+    let h = 1.0 / cells as f64;
+    let visc = |j: usize| sa_1d::NU + fieldcraft_lbm::sa::nu_t(at(j as f64 * h, nt), sa_1d::NU);
+    let step = |j: usize| (1.0 - (j as f64 + 0.5) * h) * h / (2.0 / (1.0 / visc(j) + 1.0 / visc(j + 1)));
+    let wall_interval: f64 = (0..200).map(|i| at((i as f64 + 0.5) * h / 200.0, u) * h / 200.0).sum();
+    let cf = |first_step: f64| {
+        let mut v = at(h, u);
+        let mut sum = 0.0;
+        for j in 1..cells {
+            let next = v + if j == 1 { first_step } else { step(j) };
+            sum += 0.5 * (v + next) * h;
+            v = next;
+        }
+        let bulk = wall_interval + sum;
+        2.0 / (bulk * bulk) / cf_1d - 1.0
+    };
+    let newton_step = at(2.0 * h, u) - at(h, u);
+    (step(1) / newton_step - 1.0, cf(step(1)), cf(newton_step))
+}
 
 /// A channel run's parameters.
 #[derive(Debug, Clone)]
@@ -107,6 +140,12 @@ struct ChannelResult {
     blocks: Blocks,
     settled: bool,
     steps: u64,
+    /// The mean u and ν̃ (lattice units) at the first rows from the wall node (row 0 is the node),
+    /// the two walls averaged, over the last averaging window.
+    profile: Vec<[f64; 5]>,
+    /// The friction velocity (lattice units) and the viscosity.
+    u_tau: f64,
+    nu: f64,
 }
 
 impl Channel {
@@ -134,8 +173,30 @@ impl Channel {
 
     /// Run to settling or the step cap.
     fn run(&self) -> ChannelResult {
+        self.run_with(false)
+    }
+
+    /// [`Channel::run`] with `freeze` ν̃ held at the one-dimensional solution's profile.
+    fn run_with(&self, freeze: bool) -> ChannelResult {
         let (setup, mut flow) = prepare(&self.model(), &[]);
         let grid = *flow.grid();
+        if freeze {
+            // ν̃/ν as a function of y/δ, y the cells from the nearer wall plane.
+            let nu = (setup.tau_plus - 0.5) / 3.0;
+            let g = sa_1d::grid(1200, 0.05 * sa_1d::NU, 1.0);
+            let (nt, y, _, _) = sa_1d::solve_newton(sa_1d::NU, &g);
+            let ratio = |yd: f64| {
+                let k = y.partition_point(|v| *v < yd).clamp(1, y.len() - 1);
+                (nt[k - 1] + (nt[k] - nt[k - 1]) * (yd - y[k - 1]) / (y[k] - y[k - 1])) / sa_1d::NU
+            };
+            let rows = grid.cells[1];
+            let mut v = vec![0.0; grid.len()];
+            for (c, out) in v.iter_mut().enumerate() {
+                let r = grid.coords(c)[1];
+                *out = nu * ratio(r.min(rows - 1 - r) as f64 / self.cells as f64);
+            }
+            flow.freeze_sa_nu_tilde(v).unwrap();
+        }
         let rows = grid.cells[1];
         let a = flow.acceleration();
         let nu = (setup.tau_plus - 0.5) / 3.0;
@@ -183,6 +244,7 @@ impl Channel {
         // Per sample interval: [carried, applied, requested, body, U_b (law), U_b (trapezoid)]
         // summed, then averaged.
         let mut history: Vec<[f64; 7]> = Vec::new();
+        let mut rows_history: Vec<Vec<[f64; 5]>> = Vec::new();
         let mut sums = [0.0; 7];
         let mut any_requested = false;
         let mut budget_ok = true;
@@ -234,6 +296,45 @@ impl Channel {
             // Past MAX_BLOCKS the stream refuses more samples; the statistics keep what they hold.
             blocks.push(cf(row[0], row[4], rho)).ok();
             history.push(row);
+            let mean_row = |j: usize, f: &dyn Fn(usize) -> f64| -> f64 {
+                (0..grid.cells[0] * grid.cells[2]).map(|k| f(grid.index([k % grid.cells[0], j, k / grid.cells[0]]))).sum::<f64>()
+                    / (grid.cells[0] * grid.cells[2]) as f64
+            };
+            let nt = |c: usize| flow.spalart_allmaras().and_then(|f| f.nu_tilde().get(c).copied()).unwrap_or(0.0);
+            let u = |c: usize| flow.moments(c).map_or(0.0, |(_, u)| u[0]);
+            let upop = |c: usize| {
+                let (m, r) = (0..fieldcraft_lbm::lattice::Q)
+                    .fold((0.0, 0.0), |(m, r), q| (m + fieldcraft_lbm::lattice::C[q][0] as f64 * flow.population(q, c), r + flow.population(q, c)));
+                if r > 0.0 { m / r } else { 0.0 }
+            };
+            let mom = |c: usize, cy: i32| {
+                (0..fieldcraft_lbm::lattice::Q)
+                    .filter(|&q| fieldcraft_lbm::lattice::C[q][1] == cy)
+                    .map(|q| fieldcraft_lbm::lattice::C[q][0] as f64 * flow.population(q, c))
+                    .sum::<f64>()
+            };
+            let pxy = |c: usize| {
+                (0..fieldcraft_lbm::lattice::Q)
+                    .map(|q| (fieldcraft_lbm::lattice::C[q][0] * fieldcraft_lbm::lattice::C[q][1]) as f64 * flow.population(q, c))
+                    .sum::<f64>()
+            };
+            rows_history.push(
+                (0..PROFILE_ROWS.min(rows / 2))
+                    .map(|j| {
+                        [
+                            0.5 * (mean_row(j, &u) + mean_row(rows - 1 - j, &u)),
+                            0.5 * (mean_row(j, &nt) + mean_row(rows - 1 - j, &nt)),
+                            0.5 * (mean_row(j, &pxy) - mean_row(rows - 1 - j, &pxy)),
+                            // The stress through the plane between rows j and j + 1 (j + ½ cells from the wall plane): the x-momentum the
+                            // populations that arrived from the other side carry across it, bottom and top wall averaged.
+                            0.5 * (mean_row(j, &|c| mom(c, -1)) - mean_row(j + 1, &|c| mom(c, 1)) + mean_row(rows - 1 - j, &|c| mom(c, 1))
+                                - mean_row(rows - 2 - j, &|c| mom(c, -1))),
+                            // The velocity the populations of the row carry (the wall node's row 0 has no fluid velocity otherwise).
+                            0.5 * (mean_row(j, &upop) + mean_row(rows - 1 - j, &upop)),
+                        ]
+                    })
+                    .collect(),
+            );
             let carried: Vec<Vec<f64>> = history.iter().map(|r| vec![cf(r[0], r[4], rho)]).collect();
             let last = mean(&history[history.len().saturating_sub(window)..]);
             let balanced = (last[1] * area / last[3] - 1.0).abs() <= self.settling.drift;
@@ -260,9 +361,20 @@ impl Channel {
             blocks,
             settled,
             steps,
+            profile: {
+                let tail = &rows_history[rows_history.len().saturating_sub(window)..];
+                (0..PROFILE_ROWS.min(rows / 2))
+                    .map(|j| [0, 1, 2, 3, 4].map(|c| tail.iter().filter_map(|r| r.get(j)).map(|r| r[c]).sum::<f64>() / tail.len().max(1) as f64))
+                    .collect()
+            },
+            u_tau,
+            nu,
         }
     }
 }
+
+/// The rows from each wall the first-rows run keeps (`Channel::run`'s profile).
+const PROFILE_ROWS: usize = 8;
 
 fn report(name: &str, r: &ChannelResult, bulk_reference: f64, cf_reference: f64) {
     let a = r.blocks.acceptance();
@@ -380,6 +492,41 @@ fn sa(wall: WallModel) -> Turbulence {
     Turbulence::SpalartAllmaras { prandtl: 0.9, wall_model: Some(wall), inflow_ratio: 3.0 }
 }
 
+/// The frozen-ν̃ test mode holds the field after every step, the wall function's first-node values included, and refuses what it cannot hold.
+#[test]
+fn a_frozen_nu_tilde_is_held_and_bad_fields_are_refused() {
+    let ch = Channel {
+        re_tau: 1000.0,
+        cells: 12,
+        bulk_guess: LEE_MOSER_1000_BULK,
+        lattice_bulk: 0.1,
+        collision: Collision::Hrr,
+        turbulence: Some(sa(WallModel::SpalartAllmarasBounce)),
+        on_node: true,
+        max_steps: 100,
+        sample: 100,
+        settling: GATED,
+        sigma: Some(0.99),
+    };
+    let (setup, mut flow) = prepare(&ch.model(), &[]);
+    let nu = (setup.tau_plus - 0.5) / 3.0;
+    let n = flow.grid().len();
+    assert!(flow.freeze_sa_nu_tilde(vec![0.0; n - 1]).is_err());
+    assert!(flow.freeze_sa_nu_tilde(vec![f64::NAN; n]).is_err());
+    let held: Vec<f64> = (0..n).map(|c| (3.0 + (c % 5) as f64) * nu).collect();
+    flow.freeze_sa_nu_tilde(held.clone()).unwrap();
+    for _ in 0..30 {
+        flow.step().unwrap();
+    }
+    let got = flow.spalart_allmaras().map(|f| f.nu_tilde().to_vec()).unwrap_or_default();
+    // The wall nodes are not fluid cells of the transport: ν̃ is 0 there.
+    let nodes: Vec<usize> = flow.wall_nodes().map(|w| w.nodes().iter().map(|n| n.cell as usize).collect()).unwrap_or_default();
+    assert!(!nodes.is_empty());
+    for (c, (g, h)) in got.iter().zip(&held).enumerate() {
+        assert!(if nodes.contains(&c) { *g == 0.0 } else { g == h }, "cell {c}: {g} vs {h}");
+    }
+}
+
 /// With SA under a wall model the harness reads the wall function's request, ρ u_τ² at each first
 /// fluid node: positive, finite and of the carried stress's order after a few hundred steps on
 /// Han's on-node wall and on Musker's halfway one (a smoke test of the reading, not the gate).
@@ -413,22 +560,21 @@ fn the_sa_wall_function_s_request_is_read() {
     }
 }
 
-/// One run of the Re_τ 1000 channel: SA on the hybrid collision (σ 0.99) under `wall` on Han's on-node wall, `cells` per δ.
-fn channel_at_re_tau_1000(wall: WallModel, cells: usize, max_steps: u64) -> ChannelResult {
+/// The Re_τ 1000 channel: SA under `wall` on Han's on-node wall, `cells` per δ, on `collision` (σ 0.99 with the hybrid one).
+fn channel_at_re_tau_1000(wall: WallModel, cells: usize, collision: Collision, max_steps: u64) -> Channel {
     Channel {
         re_tau: 1000.0,
         cells,
         bulk_guess: LEE_MOSER_1000_BULK,
         lattice_bulk: 0.1,
-        collision: Collision::Hrr,
-        sigma: Some(0.99),
+        collision,
+        sigma: (collision == Collision::Hrr).then_some(0.99),
         turbulence: Some(sa(wall)),
         on_node: true,
         max_steps,
         sample: 100,
         settling: GATED,
     }
-    .run()
 }
 
 /// The Spalart–Allmaras wall law (`spalart_allmaras_bounce`) on a periodic SA channel at
@@ -494,7 +640,7 @@ fn sa_law_channel_at_re_tau_1000_meets_lee_and_moser() {
     let mut score = Score::default();
     let mut failures = Vec::new();
     for cells in [20, 32] {
-        let r = channel_at_re_tau_1000(WallModel::SpalartAllmarasBounce, cells, 2_000_000);
+        let r = channel_at_re_tau_1000(WallModel::SpalartAllmarasBounce, cells, Collision::Hrr, 2_000_000).run();
         let name = format!("SA law, Hrr, {cells} cells per δ (first node y⁺ {:.0})", 1000.0 / cells as f64);
         report(&name, &r, LEE_MOSER_1000_BULK, LEE_MOSER_1000_CF);
         score.push(Gate::new("channel, SA law", &format!("{name}: C_f carried"), r.carried, LEE_MOSER_1000_CF, 0.05));
@@ -567,4 +713,131 @@ fn sa_law_channel_at_re_tau_550_meets_lee_and_moser() {
     println!("{}", score.table());
     assert!(failures.is_empty(), "{failures:?}");
     assert!(score.passes());
+}
+
+/// The rows of the Re_τ 1000 channel beside the one-dimensional SA solution at the same y⁺: for each of the first rows from the wall
+/// node, the lattice u⁺ and ν̃/(κ u_τ y) against the solution's, the carried C_f against the solution's, the stress rows, and the
+/// velocity step of each of the first intervals against the harmonic prediction and the solution's. It prints, and asserts nothing: it
+/// is how the C_f rows of the wall-layer corrections are produced, and runs only with `FIELDCRAFT_FIRST_ROWS=1` (hours at four grids):
+///
+/// ```text
+/// FIELDCRAFT_FIRST_ROWS=1 [FIELDCRAFT_CHANNEL_CELLS=24,32,48] [FIELDCRAFT_CHANNEL_COLLISION=regularized|hrr]
+///   [FIELDCRAFT_SA_FREEZE=newton]
+///   cargo test --release -p fieldcraft-lbm --test sa_wall_law -- --ignored --nocapture first_rows
+/// ```
+///
+/// `FIELDCRAFT_SA_FREEZE=newton` holds ν̃ at the solution's profile (the momentum equations then see the model's own eddy viscosity and
+/// the layer's errors are told from the model's); `FIELDCRAFT_CHANNEL_COLLISION` defaults to `hrr` (σ 0.99).
+#[test]
+#[ignore = "local: FIELDCRAFT_FIRST_ROWS=1, hours"]
+fn the_first_rows_of_the_sa_law_channel_beside_the_one_dimensional_solution() {
+    const SWITCH: &str = "FIELDCRAFT_FIRST_ROWS";
+    if std::env::var(SWITCH).is_err() {
+        println!("the first-rows run prints only with {SWITCH}=1 (hours long): skipped");
+        return;
+    }
+    let cells: Vec<usize> = std::env::var("FIELDCRAFT_CHANNEL_CELLS")
+        .ok()
+        .map(|v| v.split(',').filter_map(|c| c.trim().parse().ok()).collect())
+        .unwrap_or_else(|| vec![16, 24, 32, 48]);
+    let wall = WallModel::SpalartAllmarasBounce;
+    let collision =
+        if std::env::var("FIELDCRAFT_CHANNEL_COLLISION").is_ok_and(|v| v == "regularized") { Collision::Regularized } else { Collision::Hrr };
+    let freeze = std::env::var("FIELDCRAFT_SA_FREEZE").is_ok_and(|v| v == "newton");
+    let grid = sa_1d::grid(1200, 0.05 * sa_1d::NU, 1.0);
+    let (nt, y, _, _) = sa_1d::solve_newton(sa_1d::NU, &grid);
+    let u = sa_1d::velocity(&y, &nt, sa_1d::NU);
+    let bulk: f64 = (1..y.len()).map(|i| 0.5 * (u[i] + u[i - 1]) * (y[i] - y[i - 1])).sum();
+    let cf_1d = 2.0 / (bulk * bulk);
+    let at = |yp: f64, f: &[f64]| {
+        let target = yp * sa_1d::NU;
+        let k = y.partition_point(|v| *v < target).clamp(1, y.len() - 1);
+        f[k - 1] + (f[k] - f[k - 1]) * (target - y[k - 1]) / (y[k] - y[k - 1])
+    };
+    for &cells in &cells {
+        let (excess, cf_rule, cf_floor) = harmonic_transfer_floor(&y, &nt, &u, cf_1d, cells);
+        println!(
+            "{cells} cells per δ, the momentum transfer alone: 1→2 increment {:+.1} % from the solution's; C_f {:+.2} % from the solution's with the harmonic rule, {:+.2} % with the 1→2 increment from the solution",
+            100.0 * excess,
+            100.0 * cf_rule,
+            100.0 * cf_floor
+        );
+    }
+    for cells in cells {
+        let r = channel_at_re_tau_1000(wall, cells, collision, 2_000_000).run_with(freeze);
+        println!(
+            "{wall:?}, {cells} cells per δ: settled {}, C_f {:.5e}, {:+.2} % from the 1-D solution's {cf_1d:.5e}",
+            r.settled,
+            r.carried,
+            100.0 * (r.carried / cf_1d - 1.0)
+        );
+        println!("  row   y+     u+ lattice   u+ 1-D     diff      nu~/(k y ut) lattice   1-D");
+        for (j, [uj, ntj, _, _, _]) in r.profile.iter().enumerate().skip(1) {
+            let yp = j as f64 * r.u_tau / r.nu;
+            let (up, ratio) = (uj / r.u_tau, ntj / (fieldcraft_lbm::sa::KAPPA * j as f64 * r.u_tau));
+            println!(
+                "  {j:3} {yp:7.1} {up:11.3} {:10.3} {:+9.3} {ratio:16.3} {:10.3}",
+                at(yp, &u),
+                up - at(yp, &u),
+                at(yp, &nt) / (fieldcraft_lbm::sa::KAPPA * yp * sa_1d::NU)
+            );
+        }
+        // The stress rows: u_τ² is 1; expected 1 − y/δ with y the row's distance from the wall plane, δ the cells per half-height.
+        println!("  row   expected   constitutive (nu+nu_t) dU/dy   population stress   population / expected");
+        let cells_f = cells as f64;
+        for j in 1..r.profile.len().saturating_sub(1) {
+            let (u_tau2, nu) = (r.u_tau * r.u_tau, r.nu);
+            let ntj = r.profile[j][1];
+            let nu_t = fieldcraft_lbm::sa::nu_t(ntj, nu);
+            let tau_bar = 3.0 * (nu + nu_t) + 0.5;
+            let constitutive = (nu + nu_t) * 0.5 * (r.profile[j + 1][0] - r.profile[j - 1][0]) / u_tau2;
+            let population = -(1.0 - 0.5 / tau_bar) * r.profile[j][2] / u_tau2;
+            let expected = 1.0 - j as f64 / cells_f;
+            println!("  {j:3} {expected:10.4} {constitutive:28.4} {population:19.4} {:22.4}", population / expected);
+        }
+        println!("  plane (cells from the wall plane)   stress / u_tau^2 through it (population flux)");
+        for j in 0..r.profile.len().saturating_sub(1) {
+            println!("  {:4.1} {:34.4}", j as f64 + 0.5, r.profile[j][3] / (r.u_tau * r.u_tau));
+        }
+        // The ledger in the reference solution's u_τ units: rows 0-4, the lattice u (row 0 from its populations) beside Newton's,
+        // ν + ν_t per row, and per interval the lattice step, the harmonic prediction with τ_w (1 − y_mid/δ) and Newton's step.
+        let u_ref = (cf_1d / 2.0).sqrt() * r.bulk * r.u_tau;
+        let one = |yp: f64| at(yp, &u);
+        println!("  ledger (u_ref {u_ref:.5e}, Newton's u_tau of the lattice bulk velocity)");
+        println!("  row   u/u_ref   Newton u   (nu+nu_t)/nu");
+        for j in 0..5.min(r.profile.len()) {
+            let yp = j as f64 * u_ref / r.nu;
+            let visc = 1.0 + fieldcraft_lbm::sa::nu_t(r.profile[j][1], r.nu) / r.nu;
+            println!("  {j:3} {:9.4} {:10.4} {visc:14.3}", r.profile[j][4] / u_ref, one(yp));
+        }
+        println!("  interval   lattice step   harmonic prediction   Newton step");
+        for j in 0..4.min(r.profile.len().saturating_sub(1)) {
+            let (a, c) =
+                (1.0 + fieldcraft_lbm::sa::nu_t(r.profile[j][1], r.nu) / r.nu, 1.0 + fieldcraft_lbm::sa::nu_t(r.profile[j + 1][1], r.nu) / r.nu);
+            let harmonic = 2.0 / (1.0 / a + 1.0 / c);
+            let dy_plus = u_ref / r.nu;
+            let tau_mid = 1.0 - (j as f64 + 0.5) / cells as f64;
+            let ys = [j as f64 * dy_plus, (j as f64 + 1.0) * dy_plus];
+            println!(
+                "  {j}-{}   {:12.4} {:21.4} {:13.4}",
+                j + 1,
+                (r.profile[j + 1][4] - r.profile[j][4]) / u_ref,
+                tau_mid * dy_plus / harmonic,
+                one(ys[1]) - one(ys[0])
+            );
+        }
+        // The implied effective viscosity across the interval between rows j and j+1: the carried stress there
+        // (the mean of the two rows' population stresses) over the measured du/dy, beside ν + ν_t at each row and their mean.
+        println!("  interval   implied nu_eff/nu   (nu+nu_t)/nu at row j   at row j+1   mean");
+        for j in 1..r.profile.len().saturating_sub(2) {
+            let nu = r.nu;
+            let stress = |k: usize| {
+                let nu_t = fieldcraft_lbm::sa::nu_t(r.profile[k][1], nu);
+                -(1.0 - 0.5 / (3.0 * (nu + nu_t) + 0.5)) * r.profile[k][2]
+            };
+            let implied = 0.5 * (stress(j) + stress(j + 1)) / (r.profile[j + 1][0] - r.profile[j][0]);
+            let (a, c) = (1.0 + fieldcraft_lbm::sa::nu_t(r.profile[j][1], nu) / nu, 1.0 + fieldcraft_lbm::sa::nu_t(r.profile[j + 1][1], nu) / nu);
+            println!("  {j}-{}   {:17.4} {a:23.4} {c:12.4} {:8.4}", j + 1, implied / nu, 0.5 * (a + c));
+        }
+    }
 }
