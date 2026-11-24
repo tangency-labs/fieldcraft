@@ -2795,6 +2795,17 @@ pub const DECK_OPENFOAM: &[Field] = &[
     xyz("location", "Location", D::Length).help("A point in the fluid, the side snappyHexMesh keeps.").hint("found"),
 ];
 
+pub const RESULTS_OPENFOAM: &[Field] = &[
+    path("path", "Case directory", false)
+        .help("An OpenFOAM case written from a fluid step and run in OpenFOAM: reconstructed, or its processor directories.")
+        .req(),
+    positive("spacing", "Spacing", D::Length).help("The lattice the results are sampled on.").hint("the domain's"),
+    int("max_cells", "Max cells", 1, fieldcraft_lbm::Limits::MAX_ADDRESSABLE_CELLS as i64).help("Cap on the lattice cells.").hint("16000000"),
+    int("every", "Every", 1, i64::MAX).help("Every n-th written time, always with the last.").hint("1"),
+    num("from", "From", D::Time).help("The first written time read (inclusive).").hint("the first"),
+    num("to", "To", D::Time).help("The last written time read (inclusive).").hint("the last"),
+];
+
 pub const EXPORT_STL: &[Field] = &[
     path("path", "File", true).help("Where to write the STL file.").req(),
     reference("set", "Set", C::Set).help("Write only this set's element faces; the whole outer surface when empty.").hint("the outer surface"),

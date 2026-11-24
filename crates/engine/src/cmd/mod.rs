@@ -228,6 +228,7 @@ pub static ALL: &[CommandSpec] = &[
     deck::WRITE,
     deck::READ,
     openfoam::WRITE,
+    openfoam::read::READ,
     solve::RUN,
     solve::STATIC,
     solve::NONLINEAR,

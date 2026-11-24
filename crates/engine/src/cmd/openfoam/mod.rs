@@ -4,6 +4,51 @@
 //! theory and published benchmarks (docs/verification.md), never against OpenFOAM's.
 
 mod location;
+pub mod read;
+
+/// The record `deck.openfoam` writes beside the case, from which `results.openfoam` reads it
+/// back: what the case was written with.
+pub(crate) const MARKER: &str = "fieldcraft.json";
+
+/// The marker's content. Every field is required: a marker that lacks one is refused, never
+/// filled in.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Marker {
+    /// The fluid step the case was written from.
+    pub step: String,
+    /// The OpenFOAM solver application.
+    pub solver: String,
+    /// The fluid's density (kg/m³): the case's pressure is kinematic, p/ρ.
+    pub density: f64,
+    /// The background cell (m).
+    pub background: f64,
+    /// The lattice spacing the surfaces are refined to (m).
+    pub spacing: f64,
+    /// Significant digits of the time directories' names.
+    pub time_precision: u32,
+}
+
+impl Marker {
+    /// The most bytes a marker may have: it holds a step name (at most
+    /// [`fieldcraft_model::MAX_NAME_LEN`] characters) and five numbers, a few hundred bytes.
+    pub const MAX_BYTES: u64 = 4096;
+
+    /// Refuse a marker whose numbers cannot be what `deck.openfoam` writes.
+    pub fn check(&self) -> Result<()> {
+        let positive = |v: f64| v.is_finite() && v > 0.0;
+        // An f64 has at most 17 significant decimal digits (IEEE 754-2008 §5.12.2).
+        const F64_DIGITS: u32 = 17;
+        if !(positive(self.density) && positive(self.background) && positive(self.spacing)) || !(1..=F64_DIGITS).contains(&self.time_precision) {
+            return Err(crate::EngineError::invalid(
+                "path",
+                format!("{MARKER} holds a density, cell size or time precision deck.openfoam does not write"),
+            ));
+        }
+        Ok(())
+    }
+}
+mod nearest;
 
 use std::path::Path;
 
@@ -97,8 +142,17 @@ fn write(s: &mut Session, p: &Value) -> Result<Value> {
     if given.is_some_and(|l| l != location) {
         case.notes.push("`location` moved to the centre of the finest cell holding it, which lies on no cell face".into());
     }
+    let marker = Marker {
+        step: step_name.clone(),
+        solver: case.solver.to_string(),
+        density: case.density,
+        background: case.background,
+        spacing: domain.spacing,
+        time_precision: case.time_precision,
+    };
+    let marker_text = serde_json::to_string_pretty(&marker).map_err(|e| crate::EngineError::Params(e.to_string()))?;
     let mut bytes = 0;
-    for (rel, text) in &case.files {
+    for (rel, text) in case.files.iter().map(|(k, v)| (k.as_str(), v.as_str())).chain([(MARKER, marker_text.as_str())]) {
         let path = root.join(rel);
         if let Some(parent) = path.parent() {
             fieldcraft_io::fs::create_dir_all(parent)?;

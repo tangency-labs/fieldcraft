@@ -65,6 +65,7 @@ pub const ALIASES: &[(&str, &str, &str)] = &[
     ("deck.openfoam", "export", ""),
     ("mesh.export.stl", "export", ""),
     ("results.read", "import", ""),
+    ("results.openfoam", "import", ""),
     ("results.export.vtu", "export", ""),
     ("results.animate", "play", ""),
     ("solve.probe", "measure", ""),
