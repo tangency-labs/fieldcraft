@@ -75,7 +75,7 @@ the current document; save existing work before running it in a session you are 
 
 The reader inverts the writer's supported solid, shell, planar, beam and truss element types:
 tet4/tet10/wedge6/pyramid5/hex8/hex20; tri3/quad4/quad8 shells; plane stress, plane strain and
-axisymmetric triangles/quadrilaterals; B31 and two-/three-node trusses. Encoded reduced,
+axisymmetric triangles/quadrilaterals; B31 and B33 beams and two-/three-node trusses. Encoded reduced,
 incompatible-mode and hybrid formulations are assigned to sections. A section mixing full and
 reduced hex elements is refused by name instead of being guessed or split.
 
