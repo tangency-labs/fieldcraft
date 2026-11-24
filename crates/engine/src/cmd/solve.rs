@@ -661,7 +661,7 @@ fn analytic_in_model(a: AnalyticSurface) -> AnalyticSurface {
 
 /// A cap of a fluid solve that may be raised: its default when left out; when given, a whole
 /// number from 1 up to `ceiling`, what the session's memory bound (`bound`) holds.
-fn raisable(p: &Value, key: &str, default: u64, ceiling: u64, bound: u64) -> Result<u64> {
+pub(super) fn raisable(p: &Value, key: &str, default: u64, ceiling: u64, bound: u64) -> Result<u64> {
     let Some(v) = p.get(key) else { return Ok(default) };
     match whole(v) {
         Some(n) if (1..=ceiling).contains(&n) => Ok(n),

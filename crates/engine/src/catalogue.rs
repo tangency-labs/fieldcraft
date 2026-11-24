@@ -808,6 +808,13 @@ pub static CATALOGUE: &[Capability] = &[
         "Write a solved step as VTK unstructured grids for ParaView",
         &["results.export.animation", "results.render.save", "results.render.delete"],
     ),
+    ready(
+        "results.openfoam",
+        "OpenFOAM Results",
+        Results,
+        "Files",
+        "Read the results of an OpenFOAM case written from a fluid step, as the step's results for viewing",
+    ),
     soon("results.read", "Read Results", Results, "Files", "M9", "Read results in public formats"),
     soon("results.convergence", "Convergence", Results, "Files", "M9", "Mesh convergence studies"),
     // ---- Tools ----

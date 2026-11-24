@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-98 ready, 27 coming soon.
+99 ready, 27 coming soon.
 
 ## Geometry
 
@@ -165,6 +165,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Plots | Display Group — Show and hide parts of the model | coming soon (M9) |  |
 | Plots | Streamlines — A fluid step's velocity, pressure or temperature on slices and obstacles, speed or temperature along streamlines, and signed wall heat per area | ready | `results.streamlines`, `results.slice`, `results.surface` |
 | Files | Export VTU — Write a solved step as VTK unstructured grids for ParaView | ready | `results.export.vtu`, `results.export.animation`, `results.render.save`, `results.render.delete` |
+| Files | OpenFOAM Results — Read the results of an OpenFOAM case written from a fluid step, as the step's results for viewing | ready | `results.openfoam` |
 | Files | Read Results — Read results in public formats | coming soon (M9) |  |
 | Files | Convergence — Mesh convergence studies | coming soon (M9) |  |
 

@@ -480,6 +480,7 @@ pub fn with_units(form: &[Field], params: &Value, input: &DisplaySystem) -> Valu
 /// system by these, and get a `units` object naming the unit of each quantity they hold.
 pub const REPLIES: &[(&str, &[(&str, Dim)])] = &[
     ("deck.openfoam", &[("/location", Dim::Length)]),
+    ("results.openfoam", &[("/spacing", Dim::Length), ("/end_time", Dim::Time), ("/max_speed", Dim::Velocity)]),
     ("model.initial_field.map", &[("/max_distance", Dim::Length), ("/tolerance", Dim::Length)]),
     (
         "model.material.specific_volume",
