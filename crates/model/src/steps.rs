@@ -397,6 +397,14 @@ pub enum WallModel {
     /// region, finite Reynolds number"; La Recherche Aérospatiale 1994(1):5–21). Only
     /// with `spalart_allmaras` turbulence; where it runs is `spalding_bounce`'s.
     SpalartAllmarasBounce,
+    /// [`WallModel::SpaldingBounce`]'s wall with Spalding's law read at the node four cells from the wall instead
+    /// of the first, and Malaspinas and Sagaut's mixing-length eddy viscosity (J. Comput. Phys. 275:25–40, 2014,
+    /// eqs. 57–58, κ 0.384, A⁺ 26) in place of the subgrid model on the three rows below it. Reading the law
+    /// away from the first cells follows Kawai & Larsson (Phys. Fluids 24:015105, 2012, §III.B), who ask
+    /// for a sample away from the wall's first cells (§III) and a matching height of about 0.1δ (§III.B). Four cells
+    /// is our choice for the first; it satisfies the second only from about 40 cells per δ (0.25δ, 0.167δ and 0.125δ
+    /// at 16, 24 and 32).
+    SpaldingBounceMatched,
     /// Our halfway variant of a wall-function bounce, not Han, Ooka and Kikumoto's scheme: a
     /// plane no-slip box face at rest lies halfway along the links and reflects its populations
     /// specularly (no drag of its own), and after streaming each wall cell gives the face the
@@ -411,7 +419,7 @@ pub enum WallModel {
 impl WallModel {
     /// Whether it is Han, Ooka and Kikumoto's on-node wall (with either law).
     pub fn is_on_node(self) -> bool {
-        matches!(self, WallModel::SpaldingBounce | WallModel::SpalartAllmarasBounce)
+        matches!(self, WallModel::SpaldingBounce | WallModel::SpaldingBounceMatched | WallModel::SpalartAllmarasBounce)
     }
 }
 

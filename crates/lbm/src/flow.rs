@@ -152,7 +152,7 @@ use fieldcraft_model::{BoxFace, Collision, FaceCondition, Outflow, Profile, Ther
 
 use fieldcraft_parallel as parallel;
 
-use crate::bounce::{NodeLaw, WallNode, WallNodes};
+use crate::bounce::{MATCHING_ROWS, NodeLaw, WallNode, WallNodes};
 use crate::conduction::{Interface, Layout, SolidHeat};
 use crate::lattice::{C, Q, W, c, equilibrium, moving_wall, opposite};
 use crate::outlet::{Action, Outlets, Populations};
@@ -1124,12 +1124,17 @@ impl Flow {
         // is its boundary nodes ([`crate::bounce`]), with Spalding's law or the Spalart–Allmaras
         // model's own.
         let on_node = setup.wall_model.is_some_and(WallModel::is_on_node);
-        let (node_law, node_model) = if setup.wall_model == Some(WallModel::SpalartAllmarasBounce) {
-            (NodeLaw::SpalartAllmaras, "spalart_allmaras_bounce")
-        } else {
-            (NodeLaw::Spalding, "spalding_bounce")
+        let matched = setup.wall_model == Some(WallModel::SpaldingBounceMatched);
+        let (node_law, node_model) = match setup.wall_model {
+            Some(WallModel::SpalartAllmarasBounce) => (NodeLaw::SpalartAllmaras, "spalart_allmaras_bounce"),
+            Some(WallModel::SpaldingBounceMatched) => (NodeLaw::Spalding, "spalding_bounce_matched"),
+            _ => (NodeLaw::Spalding, "spalding_bounce"),
         };
+        // The rows from each boundary node's interior node to the law's sample (the matched wall reads
+        // the law higher up and relaxes the rows below it, [`crate::bounce::MATCHING_ROWS`]).
+        let rows = if matched { MATCHING_ROWS } else { 1 };
         let mut node_list: Vec<WallNode> = Vec::new();
+        let mut layer_cells: Vec<u32> = Vec::new();
         let mut bulk = Vec::new();
         if on_node {
             let refuse = |what: String| {
@@ -1137,6 +1142,9 @@ impl Flow {
                     "not supported yet: Han et al.'s on-node wall-function bounce (`{node_model}`) {what}; choose another supported wall treatment"
                 )))
             };
+            if matched && setup.van_driest.is_some() {
+                return refuse("with Van Driest's damping (`van_driest`): the rows below the matching height have their own damping".to_string());
+            }
             if let Some(face) = BoxFace::ALL.iter().find(|f| matches!(domain.faces.get(**f), FaceCondition::MovingWall { .. })) {
                 return refuse(format!("on a moving wall (`{}`)", face.name()));
             }
@@ -1156,8 +1164,11 @@ impl Flow {
                         other.name()
                     ));
                 }
-                if grid.cells[a] < 3 {
-                    return refuse(format!("on a box {} cells across its wall `{}`: it needs at least 3", grid.cells[a], face.name()));
+                // The boundary node, its interior node and the sample rows must lie inside the box, and
+                // the two walls' layers must not meet: 2 rows + 1 cells across the wall.
+                let needed = 2 * rows + 1;
+                if grid.cells[a] < needed {
+                    return refuse(format!("on a box {} cells across its wall `{}`: it needs at least {needed}", grid.cells[a], face.name()));
                 }
                 let (t1, t2) = ((a + 1) % 3, (a + 2) % 3);
                 let (layer, inward) = if face.is_max() { (grid.cells[a] - 1, -1i32) } else { (0, 1) };
@@ -1169,21 +1180,33 @@ impl Flow {
                         ijk[t2] = j;
                         let cell = grid.index(ijk);
                         ijk[a] = if inward > 0 { layer + 1 } else { layer - 1 };
+                        let interior = grid.index(ijk);
+                        ijk[a] = if inward > 0 { layer + rows } else { layer - rows };
                         node_list.push(WallNode {
                             cell: cell as u32,
-                            interior: grid.index(ijk) as u32,
+                            interior: interior as u32,
+                            sample: grid.index(ijk) as u32,
                             axis: a as u8,
                             inward: inward as i8,
                             group: face.index() as u32,
+                            friction: 0.0,
                             stress: [0.0; 3],
                             taken: [0.0; 3],
-                            friction: 0.0,
                             body: [0.0; 3],
                         });
                     }
                 }
             }
             node_list.sort_by_key(|w| w.cell);
+            // The layer cells: rows 1 … rows − 1 of each node, in the sorted node order.
+            for w in &node_list {
+                let a = usize::from(w.axis);
+                let mut ijk = grid.coords(w.cell as usize);
+                for _ in 1..rows {
+                    ijk[a] = if w.inward > 0 { ijk[a] + 1 } else { ijk[a] - 1 };
+                    layer_cells.push(grid.index(ijk) as u32);
+                }
+            }
             bulk = fluid.clone();
             for w in &node_list {
                 if let Some(b) = bulk.get_mut(w.cell as usize) {
@@ -1710,7 +1733,7 @@ impl Flow {
             wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounceHalfway),
             #[cfg(test)]
             general_collision: false,
-            nodes: on_node.then(|| WallNodes::new(node_list, nu, node_law)),
+            nodes: on_node.then(|| WallNodes::new(node_list, nu, node_law, rows, grid.len(), layer_cells)),
             bulk,
             rheology: setup.rheology.clone(),
             clamps: Clamps::default(),
@@ -2044,6 +2067,11 @@ impl Flow {
     /// The boundary nodes of the on-node wall-function bounce (`spalding_bounce`).
     pub fn wall_nodes(&self) -> Option<&WallNodes> {
         self.nodes.as_ref()
+    }
+
+    /// The relaxation rate of a layer cell of the matched wall (`spalding_bounce_matched`), else `None`.
+    pub fn layer_rate(&self, cell: usize) -> Option<f64> {
+        self.nodes.as_ref().and_then(|n| n.layer_rate(cell))
     }
 
     pub fn groups(&self) -> &[Group] {
@@ -2993,6 +3021,8 @@ impl Flow {
         let walls = self.walls.as_ref();
         let wall_model = self.wall_model;
         let model_walls = walls.filter(|_| wall_model);
+        // The matched wall's layer cells relax with their own rates ([`WallNodes::layer_rate`]).
+        let layer = self.nodes.as_ref();
         let rheology = self.rheology.as_ref();
         // The lattice temperatures a temperature-dependent viscosity reads (the last step's).
         let temperatures: &[f64] = self.thermal.as_ref().map_or(&[], |t| &t.temperature);
@@ -3080,6 +3110,7 @@ impl Flow {
                     removed.push(((b * block + i) as u32, taken));
                     rate
                 });
+                let wall_rate = wall_rate.or_else(|| layer.and_then(|l| l.layer_rate(b * block + i)));
                 let uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
                 max_u2 = max_u2.max(uu);
                 if let Some(slot) = u_out.as_mut().and_then(|u| u.get_mut(i)) {
