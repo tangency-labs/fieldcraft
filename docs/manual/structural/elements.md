@@ -261,7 +261,7 @@ stress has no volume constraint and is refused.
 ### Shells
 
 Flat MITC4 quadrilaterals and MITC3 triangles (`crate::shell`) with six unknowns per node. Each
-element is projected onto its mean plane, where membrane, Reissner–Mindlin plate and drilling
+element is built on its mean plane, where membrane, Reissner–Mindlin plate and drilling
 stiffness are superposed in local axes and rotated to the global ones (the facet approach;
 Zienkiewicz, Taylor & Fox 2014, ch. 9–10). Quadrilaterals on a cylinder whose edges follow the
 generators and the circumference are exactly flat.
@@ -285,7 +285,12 @@ generators and the circumference are exactly flat.
   in-plane rotation of a parallelogram is linear, which θ_z interpolates exactly, so the penalty
   does not lock; scaled with G t, it ties each node's normal rotation to the membrane as the mesh
   is refined. The Scordelis–Lo and pinched-cylinder results change by less than 0.5 % for γ from
-  G/1000 to G.
+  G/1000 to G. On twisted surfaces the penalty adds (t τ)² / (6 (1 − ν) γ/G) to the plate-bending
+  compliance at any mesh (τ the twist rate), so a thick twisted shell is soft by that amount.
+- **Warped quadrilaterals.** The four nodes lie h, −h, h, −h off the mean plane; each corner of the
+  flat element is rigidly tied to its node (u − h θ_y, v + h θ_x), so rigid motions strain nothing
+  (MacNeal 1978; Belytschko, Wong & Chiang 1992). Elements warped by more than a tenth of their
+  size are refused.
 - **Mass.** Consistent: ρ t on the translations, ρ (t³/12 + t e²) on the rotations, ρ t e
   coupling translations and bending rotations when the reference surface is offset; the drilling
   rotation takes the bending rotary inertia, which keeps the mass matrix positive definite.
@@ -547,7 +552,9 @@ explicit, engine and io test suites hashed identically before and after.
 
 ## Limitations
 
-- Shells: tri3 and quad4 only (tri6 and quad8 shells are refused); flat facets; isotropic,
+- Shells: tri3 and quad4 only (tri6 and quad8 shells are refused); flat facets (warped quadrilaterals
+  tied to their mean plane by rigid links; a twisted thick shell is soft by (t τ)² / (6 (1 − ν) γ/G),
+  see Shells); isotropic,
   homogeneous sections; no initial-stress stiffness (refused in buckling), no large rotations
   (refused in nonlinear steps), no heat conduction, no thermal strain.
 - Beams: two-node Timoshenko only; isotropic material; no warping of open sections; refused in
