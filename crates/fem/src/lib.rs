@@ -26,6 +26,7 @@
 //! - [`shell`]: flat MITC4 quadrilateral and MITC3 triangle shells with a drilling rotation, six
 //!   degrees of freedom per node;
 //! - [`beam`]: two-node Timoshenko beams with profile section properties;
+//! - [`pipe`]: pressure inside and around a pipe: Lamé's wall stresses and the loads on its beam;
 //! - [`frame`]: local axes of shells and beams and the rotation of their matrices;
 //! - [`face`]: consistent nodal forces of pressure on element faces;
 //! - [`contact`]: contact geometry: the closest point of an element face to a point and the
@@ -76,6 +77,7 @@ pub mod jet;
 pub mod locate;
 pub mod material;
 pub mod mortar;
+pub mod pipe;
 pub mod plane;
 pub mod plasticity;
 pub mod quadrature;

@@ -29,6 +29,11 @@
 //! reported as the section forces at each end (axial force N, shears V_y, V_z, torque T, moments
 //! M_y, M_z on the cut whose outward normal is +x).
 //!
+//! **Pipes under pressure.** A beam whose profile is a pipe with a bore takes a pressure inside
+//! and around it ([`crate::pipe`]): the axial pair (1 − 2ν) A A_w of the closed-end force and
+//! the wall's Poisson strain as loads, the wall force N (the closed-end force is an external
+//! load, the Poisson strain an initial one) and Lamé's radial and hoop stresses as results.
+//!
 //! **Section properties** are the profile's ([`fieldcraft_model::BeamProperties`], computed in
 //! the model so the deck writers give other solvers the same numbers): area, second moments, the
 //! torsion constant and the shear areas; the polar moment I_y + I_z is the rotary inertia of
@@ -39,6 +44,7 @@ use fieldcraft_model::{BeamProfile, BeamProperties, BeamTheory, Elastic};
 use crate::dense::Matrix;
 use crate::dof::{DofSet, ElementDofs};
 use crate::frame::{Axes, Vec3, cross, dot, norm, rotate_matrix, rotate_to_global, rotate_to_local, sub, to_local, translation, unit};
+use crate::pipe::{PipePressure, PipeStress, PipeWall};
 use crate::quadrature::gauss_legendre;
 use crate::{Error, Result};
 
@@ -56,14 +62,25 @@ pub struct BeamSection {
     pub young: f64,
     pub shear_modulus: f64,
     pub theory: BeamTheory,
+    pub poisson: f64,
+    /// The wall of a pipe profile with a bore: what a pipe pressure acts on.
+    pub wall: Option<PipeWall>,
 }
 
 impl BeamSection {
     pub fn new(profile: &BeamProfile, elastic: &Elastic, theory: BeamTheory) -> Result<BeamSection> {
         profile.validate().map_err(|e| Error::Invalid(e.to_string()))?;
         let (young, shear_modulus, poisson) = moduli(elastic, "beam")?;
-        Ok(BeamSection { properties: profile.properties(poisson), young, shear_modulus, theory })
+        Ok(BeamSection { properties: profile.properties(poisson), young, shear_modulus, theory, poisson, wall: PipeWall::of(profile) })
     }
+}
+
+/// An axial force pair in local axes: `force` along +x at node 2, against it at node 1.
+fn axial_pair(force: f64) -> [f64; 12] {
+    let mut f = [0.0; 12];
+    f[0] = -force;
+    f[6] = force;
+    f
 }
 
 /// The section forces at the two ends of a beam: N, V_y, V_z, T, M_y, M_z in its local axes.
@@ -244,14 +261,49 @@ impl Beam {
         rotate_to_global(&self.local_body_force(b), &self.axes)
     }
 
+    /// The axial force pairs of a pipe pressure ([`crate::pipe`]): the closed-end force
+    /// F = A A_w, and the force E A_w ε₀ = −2νA A_w of the wall's Poisson strain.
+    fn pressure_pairs(&self, pressure: PipePressure) -> Result<[f64; 2]> {
+        let end = self.wall()?.mean_transverse(pressure)? * self.section.properties.area;
+        let pairs = [end, -2.0 * self.section.poisson * end];
+        if pairs.iter().all(|f| f.is_finite()) { Ok(pairs) } else { Err(Error::Invalid("the loads of a pipe pressure are not finite".into())) }
+    }
+
+    fn wall(&self) -> Result<PipeWall> {
+        self.section.wall.ok_or_else(|| Error::Invalid("a pipe pressure acts on a beam with a pipe profile that has a bore".into()))
+    }
+
+    /// Nodal forces (global, 12) of a pressure inside and around a pipe: the axial pair
+    /// (1 − 2ν) A A_w of the closed-end force and the wall's Poisson strain.
+    pub fn pressure_load(&self, pressure: PipePressure) -> Result<Vec<f64>> {
+        let [end, poisson] = self.pressure_pairs(pressure)?;
+        Ok(rotate_to_global(&axial_pair(end + poisson), &self.axes))
+    }
+
+    /// The wall stresses of a pipe under `pressure` whose end forces are `forces`.
+    pub fn pipe_stress(&self, forces: &BeamForces, pressure: PipePressure) -> Result<PipeStress> {
+        let wall = self.wall()?;
+        let [inner, outer] = wall.radii();
+        let (bore, outside) = (wall.stresses(pressure, inner)?, wall.stresses(pressure, outer)?);
+        let area = self.section.properties.area;
+        Ok(PipeStress { radial: [bore[0], outside[0]], hoop: [bore[1], outside[1]], axial: forces.ends.map(|end| end[0] / area) })
+    }
+
     /// Section forces at the ends for the nodal displacements and rotations `u` (global, 12)
-    /// under a uniform force per volume `body` acting on the element.
-    pub fn forces(&self, u: &[f64], body: [f64; 3]) -> Result<BeamForces> {
+    /// under a uniform force per volume `body` acting on the element and, in a pipe, the
+    /// pressure inside and around it: N is then the force in the wall.
+    pub fn forces(&self, u: &[f64], body: [f64; 3], pressure: Option<PipePressure>) -> Result<BeamForces> {
         if u.len() != 12 {
             return Err(Error::Invalid(format!("{} values for a beam element with 12 degrees of freedom", u.len())));
         }
+        // The wall's Poisson strain is an initial strain of the element; the closed-end force
+        // is an external load, like a force at the nodes.
+        let initial = match pressure {
+            Some(p) => axial_pair(self.pressure_pairs(p)?[1]),
+            None => [0.0; 12],
+        };
         let ku = self.local(0.0).0.mul_vec(&rotate_to_local(u, &self.axes));
-        let end: Vec<f64> = ku.iter().zip(self.local_body_force(body)).map(|(a, b)| a - b).collect();
+        let end: Vec<f64> = ku.iter().zip(self.local_body_force(body)).zip(initial).map(|((a, b), c)| a - b - c).collect();
         let at = |i: usize| end.get(i).copied().unwrap_or(0.0);
         Ok(BeamForces { axes: self.axes, ends: [std::array::from_fn(|c| -at(c)), std::array::from_fn(|c| at(6 + c))] })
     }
@@ -318,7 +370,7 @@ mod tests {
         // Section forces at the clamp: V_z = 1, M_y = −L (the moment about y of a +z load at +x).
         let mut u = vec![0.0; 12];
         u[6..].copy_from_slice(&f);
-        let forces = beam.forces(&u, [0.0; 3]).unwrap();
+        let forces = beam.forces(&u, [0.0; 3], None).unwrap();
         assert!((forces.ends[0][2] - 1.0).abs() < 1e-9 && (forces.ends[0][4] + l).abs() < 1e-8, "{forces:?}");
         assert!((forces.ends[1][2] - 1.0).abs() < 1e-9 && forces.ends[1][4].abs() < 1e-8, "{forces:?}");
         // Mass: the translational entries sum to the mass along each direction.
@@ -383,5 +435,58 @@ mod tests {
         let lumped = Beam::new(&[[0.0; 3], [len, 0.0, 0.0]], [0.0, 1.0, 0.0], section).unwrap().lumped_mass(rho);
         let want = rho * section.properties.area * len.powi(3) / 78.0;
         assert!((lumped.get(4, 4) - want).abs() < 1e-12 * want && (lumped.get(5, 5) - want).abs() < 1e-12 * want);
+    }
+
+    #[test]
+    fn a_closed_pipe_under_pressure_stretches_and_carries_the_end_force() {
+        // a = 10, b = 20, p_i = 100, p_o = 40: Lamé's A = −20 (Timoshenko & Goodier 1970, §28).
+        let profile = BeamProfile::Pipe { radius: 20.0, thickness: 10.0 };
+        let section = BeamSection::new(&profile, &STEEL, BeamTheory::Timoshenko).unwrap();
+        let xyz = [[1.0, 2.0, 3.0], [41.0, 32.0, 3.0]];
+        let beam = Beam::new(&xyz, [0.0, 0.0, 1.0], section).unwrap();
+        let pressure = PipePressure { internal: 100.0, external: 40.0 };
+        let (mean, area, nu, l) = (-20.0, section.properties.area, 0.3, beam.length());
+        let scale = (mean * area).abs();
+        // The load: the pair (1 − 2ν) A A_w along the axis, no moments.
+        let f = beam.pressure_load(pressure).unwrap();
+        let axis = beam.axes()[0];
+        let pair = (1.0 - 2.0 * nu) * mean * area;
+        for c in 0..3 {
+            assert!((f[c] + pair * axis[c]).abs() < 1e-12 * scale && (f[6 + c] - pair * axis[c]).abs() < 1e-12 * scale, "{f:?}");
+            assert!(f[3 + c] == 0.0 && f[9 + c] == 0.0, "{f:?}");
+        }
+        // Clamped at node 1 and free to stretch: ε_x = (1 − 2ν) A/E, N = A A_w, σ_x = A.
+        let k = beam.stiffness();
+        let mut k22 = Matrix::zeros(6);
+        for i in 0..6 {
+            for j in 0..6 {
+                k22.add(i, j, k.get(6 + i, 6 + j));
+            }
+        }
+        let mut u2 = f[6..].to_vec();
+        crate::dense::Cholesky::new(&k22).unwrap().solve(&mut u2);
+        let stretch = dot([u2[0], u2[1], u2[2]], axis);
+        let want = l * (1.0 - 2.0 * nu) * mean / section.young;
+        assert!((stretch - want).abs() < 1e-12 * want.abs(), "{stretch} vs {want}");
+        let mut u = vec![0.0; 12];
+        u[6..].copy_from_slice(&u2);
+        let forces = beam.forces(&u, [0.0; 3], Some(pressure)).unwrap();
+        for end in forces.ends {
+            assert!((end[0] - mean * area).abs() < 1e-9 * scale, "{forces:?}");
+            assert!(end[1..3].iter().all(|v| v.abs() < 1e-9 * scale), "{forces:?}");
+        }
+        let stress = beam.pipe_stress(&forces, pressure).unwrap();
+        for (got, want) in stress.radial.iter().chain(&stress.hoop).chain(&stress.axial).zip([-100.0, -40.0, 60.0, 0.0, mean, mean]) {
+            assert!((got - want).abs() < 1e-9 * 100.0, "{stress:?}");
+        }
+        // Held at both ends: the wall keeps the Poisson force N = 2νA A_w.
+        let held = beam.forces(&[0.0; 12], [0.0; 3], Some(pressure)).unwrap();
+        assert!(held.ends.iter().all(|end| (end[0] - 2.0 * nu * mean * area).abs() < 1e-12 * scale), "{held:?}");
+        // Without a pressure nothing changes; a profile without a bore takes none.
+        assert!(beam.forces(&[0.0; 12], [0.0; 3], None).unwrap().ends.iter().flatten().all(|v| *v == 0.0));
+        let rod = Beam::new(&xyz, [0.0, 0.0, 1.0], BeamSection::new(&BeamProfile::Circle { radius: 20.0 }, &STEEL, BeamTheory::Timoshenko).unwrap())
+            .unwrap();
+        assert!(rod.pressure_load(pressure).is_err() && rod.forces(&u, [0.0; 3], Some(pressure)).is_err());
+        assert!(beam.pressure_load(PipePressure { internal: 1e308, external: -1e308 }).is_err());
     }
 }
