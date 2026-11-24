@@ -7,7 +7,7 @@
 mod common;
 
 use common::*;
-use fieldcraft_lbm::Limits;
+use fieldcraft_lbm::{Limits, Setup};
 use fieldcraft_model::{Collision, FaceCondition, Procedure, Turbulence};
 
 const PERIODIC: FaceCondition = FaceCondition::Periodic {};
@@ -156,4 +156,41 @@ fn results_are_bit_for_bit_the_same_on_one_and_many_threads() {
     let one = solve(1);
     assert_eq!(one, solve(7));
     assert_eq!(one, solve(3));
+}
+
+/// A periodic 8³ box at rest at the lattice viscosity `nu` (Δx = Δt = 1) with Smagorinsky's model, which is what
+/// lets a fluid's own τ⁺ go below 0.505.
+fn box_at_rest(nu: f64, collision: Collision) -> Result<Setup, fieldcraft_lbm::Error> {
+    let mut d = domain([0.0; 3], [8.0; 3], 1.0);
+    for f in fieldcraft_model::BoxFace::ALL {
+        *d.faces.get_mut(f) = PERIODIC;
+    }
+    let mut p = collide(10.0, 1.0, None, collision);
+    if let Procedure::Fluid { turbulence, .. } = &mut p {
+        *turbulence = Some(Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: None });
+    }
+    Setup::new(&model(1.0, nu, d, p), None, &[], &Limits::default())
+}
+
+/// Below `mrt::MIN_VISCOSITY` the collision is linearly unstable at rest (`mrt_stability.rs`), so the step is
+/// refused whatever the subgrid model: at Han, Ooka & Kikumoto's A20 viscosity (5e-5) and one per cent below the
+/// bound. From the bound up it is set up, with a warning until the bound at lattice Mach 0.1. The other
+/// collisions keep the floor of 0.5001.
+#[test]
+fn below_its_stability_bound_the_collision_is_refused() {
+    use fieldcraft_lbm::mrt::{MIN_VISCOSITY, MIN_VISCOSITY_AT_MACH_0_1};
+    for nu in [5.0e-5, 0.99 * MIN_VISCOSITY] {
+        let err = match box_at_rest(nu, MRT) {
+            Ok(_) => panic!("ν {nu}: set up"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("stability bound of the MRT collision") && err.contains("0.50354") && err.contains("regularized"), "{err}");
+    }
+    let warned = |s: &Setup| s.warnings.iter().any(|w| w.contains("the MRT collision is stable at rest"));
+    assert!(warned(&box_at_rest(MIN_VISCOSITY, MRT).unwrap()));
+    assert!(!warned(&box_at_rest(MIN_VISCOSITY_AT_MACH_0_1, MRT).unwrap()));
+    for collision in [Collision::Trt, Collision::Regularized, Collision::Hrr] {
+        let setup = box_at_rest(5.0e-5, collision).unwrap();
+        assert!(!warned(&setup), "{collision:?}");
+    }
 }

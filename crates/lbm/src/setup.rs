@@ -22,7 +22,9 @@
 //! characteristic velocity exceeds [`MAX_MACH`] (the scheme is weakly compressible and loses
 //! stability toward Ma ≈ 0.5), when `τ⁺ < `[`MIN_TAU`] (the grid cannot resolve this viscosity at
 //! this velocity; linear stability analysis, Lallemand & Luo 2000, shows the stable velocity range
-//! shrinks to nothing as τ → ½), or when the lattice acceleration exceeds [`MAX_LATTICE_ACCELERATION`].
+//! shrinks to nothing as τ → ½), when the multiple-relaxation-time collision's lattice viscosity is below
+//! [`crate::mrt::MIN_VISCOSITY`] (linearly unstable at rest), or when the lattice acceleration exceeds
+//! [`MAX_LATTICE_ACCELERATION`].
 //! While running, a lattice speed above [`MAX_LATTICE_SPEED`] or a non-finite or non-positive
 //! density stops the run with [`crate::Error::Unstable`].
 
@@ -1185,6 +1187,23 @@ impl Setup {
             ));
         }
         let collision = collision.unwrap_or_default();
+        // The multiple-relaxation-time collision is linearly unstable at rest below
+        // `mrt::MIN_VISCOSITY`, and a subgrid model does not lift it (tests/mrt_stability.rs).
+        let mrt_tau = |nu: f64| 3.0 * nu + 0.5;
+        if collision == Collision::Mrt && !(smallest_tau >= mrt_tau(crate::mrt::MIN_VISCOSITY)) {
+            return Err(Error::Invalid(format!(
+                "the relaxation time τ = {smallest_tau:.5}, a lattice viscosity ν Δt/Δx² of {:e}, is below {:.5}, the stability bound of the MRT collision (`collision: \"mrt\"`): under a lattice viscosity of {:e} it is linearly unstable in fluid at rest, with or without a turbulence model, and fills the flow with grid-scale noise (von Neumann analysis of its rates; d'Humières et al. 2002, appendix A, state ν > 2.54e-3 for theirs); use `collision: \"regularized\"` or `\"hrr\"`, or refine the spacing or raise the time step",
+                (smallest_tau - 0.5) / 3.0,
+                mrt_tau(crate::mrt::MIN_VISCOSITY),
+                crate::mrt::MIN_VISCOSITY
+            )));
+        }
+        if collision == Collision::Mrt && smallest_tau < mrt_tau(crate::mrt::MIN_VISCOSITY_AT_MACH_0_1) {
+            warnings.push(format!(
+                "τ = {smallest_tau:.5}: the MRT collision is stable at rest here, but its bound rises with the flow's speed to τ = {:.5} at lattice Mach 0.1; where the flow is faster than its bound allows it gains grid-scale noise; `collision: \"regularized\"` or `\"hrr\"`, a finer spacing or a longer time step avoids it",
+                mrt_tau(crate::mrt::MIN_VISCOSITY_AT_MACH_0_1)
+            ));
+        }
         // The model checked σ's range; a dynamic σ comes from a subgrid model's eddy viscosity.
         let dynamic_sigma = collision == Collision::Hrr && *sigma == Some(HrrSigma::Dynamic);
         if dynamic_sigma && turbulence.is_none() {
@@ -1223,8 +1242,9 @@ impl Setup {
         // Under MRT a velocity inlet below MIN_TAU with a uniform pressure outlet can carry a bounded
         // plane stress wave (#1005): the deviatoric normal stress crosses the box and reflects off the
         // outlet, and MRT relaxes it at about ω = 2, so it damps only with the bulk. Measured on
-        // 4-cell and 16-cell boxes, its growth vanishes at τ⁺ 0.5048 and near 0.5015; the convective
-        // outlet does not carry it.
+        // 4-cell and 16-cell boxes, its growth vanishes at τ⁺ 0.5048; MRT is refused below
+        // `mrt::MIN_VISCOSITY` (τ⁺ 0.50354), so this applies to the band above that bound only.
+        // The convective outlet does not carry it.
         if smallest_tau < MIN_TAU
             && collision == Collision::Mrt
             && domain.free_surface.is_none()

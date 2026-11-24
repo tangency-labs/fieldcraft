@@ -239,7 +239,7 @@ fn spalding_y_plus(up: f64) -> f64 {
 /// the wall, u_τ the root of Spalding's law (κ 0.41, B 5.5) at one cell from the wall.
 #[test]
 fn the_on_node_bounce_gives_the_walls_exactly_the_law_s_stress() {
-    for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt, Collision::Hrr] {
+    for collision in [Collision::Trt, Collision::Regularized, Collision::Hrr] {
         let (setup, mut flow) = perturbed_on_node_channel(collision, 40.0);
         assert!(flow.on_node_bounce() && !flow.wall_bounce() && !flow.wall_model());
         let a = flow.acceleration();
@@ -395,7 +395,7 @@ fn on_node_results_are_bit_for_bit_the_same_on_one_and_many_threads() {
     d.acceleration = [1.0, 0.0, 0.0];
     d.initial_velocity = [ub, 0.0, 0.0];
     let dt = 0.1 * dx / ub;
-    for collision in [Collision::Mrt, Collision::Hrr] {
+    for collision in [Collision::Regularized, Collision::Hrr] {
         let m = model(1.0, 1.0 / re_tau, d.clone(), bounced(30.0 * dt, dt, collision));
         let solve =
             |threads: usize| fieldcraft_parallel::with_threads(threads, || fieldcraft_lbm::solve_fluid(&m, None, &[], &Limits::default()).unwrap());

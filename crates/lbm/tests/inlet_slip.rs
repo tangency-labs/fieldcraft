@@ -138,10 +138,10 @@ fn an_mrt_velocity_inlet_with_a_uniform_outlet_below_the_floor_is_warned_about()
         Setup::new(&model(1.0, (tau - 0.5) / 3.0, d, p), None, &[], &Limits::default()).unwrap().warnings
     };
     let warned = |w: Vec<String>| w.iter().any(|w| w.contains("plane stress wave"));
-    assert!(warned(setup(0.5001, Collision::Mrt, true, Outflow::Uniform)));
-    assert!(!warned(setup(0.5001, Collision::Mrt, true, Outflow::Convective)));
+    assert!(warned(setup(0.504, Collision::Mrt, true, Outflow::Uniform)));
+    assert!(!warned(setup(0.504, Collision::Mrt, true, Outflow::Convective)));
     assert!(!warned(setup(0.51, Collision::Mrt, true, Outflow::Uniform)));
-    assert!(!warned(setup(0.5001, Collision::Mrt, false, Outflow::Uniform)));
+    assert!(!warned(setup(0.504, Collision::Mrt, false, Outflow::Uniform)));
     assert!(!warned(setup(0.5001, Collision::Trt, true, Outflow::Uniform)));
 }
 

@@ -62,15 +62,14 @@ fn uniform_outlet_acceptance_sweep() {
     let mut failures = Vec::new();
     for collision in [Collision::Trt, Collision::Mrt, Collision::Regularized, Collision::Hrr] {
         for tau in [0.5001, 0.505, 0.518, 0.55] {
+            // The MRT collision is refused below its own stability bound (`mrt::MIN_VISCOSITY`).
+            if collision == Collision::Mrt && (tau - 0.5) / 3.0 < fieldcraft_lbm::mrt::MIN_VISCOSITY {
+                continue;
+            }
             for size in [[4, 1, 1], [16, 8, 2]] {
                 for axis in 0..3 {
                     for sign in [-1.0, 1.0] {
-                        // Under MRT below τ⁺ 0.505 the uniform outlet lets a plane stress wave resonate
-                        // with the projected velocity inlet of #1005 (a property of the outlet: the
-                        // inlet's projection holds it at every τ⁺ above 0.5048 on a 4-cell box and near
-                        // 0.5015 on a 16-cell box, and the convective outlet decays it at every length and
-                        // τ⁺ from 0.5001 to 0.51 tried). Those cases run with the convective outlet.
-                        let outlet = if collision == Collision::Mrt && tau < 0.505 { "convective" } else { "uniform" };
+                        let outlet = "uniform";
                         let result = uniform(collision, tau, size, axis, sign, outlet, 30_000);
                         let label = format!("{collision:?} tau={tau} size={size:?} axis={axis} sign={sign} outlet={outlet}");
                         println!("{label}: {result:?}");
