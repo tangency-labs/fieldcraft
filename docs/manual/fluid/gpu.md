@@ -117,7 +117,7 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Fans and porous zones (curves, Darcy–Forchheimer, loss coefficients), with every collision and wall treatment | yes |
 | The halfway wall-function bounce (`wall_model: "spalding_bounce_halfway"`) | yes |
 | Han et al.'s on-node wall-function bounce (`wall_model: "spalding_bounce"`, their eq. 14) | yes |
-| The Spalart–Allmaras model's own wall law on the on-node wall (`wall_model: "spalart_allmaras_bounce"`) | not yet: refused, naming the CPU |
+| The Spalart–Allmaras model's own wall law on the on-node wall (`wall_model: "spalart_allmaras_bounce"`) | yes |
 
 ## Algorithm
 
@@ -325,7 +325,24 @@ the six face orientations has its assignments written out (no loop over the latt
 tests c_q, which the GB10's driver miscompiles). `node_bounce` binds two storage buffers (the
 populations and the wall rows).
 
-Against the CPU from step 0, both layouts, regularised, `hrr` σ 0.99 and `trt`, each with
+With the Spalart–Allmaras model's own wall law (`wall_model: "spalart_allmaras_bounce"`) `bounce_sample` takes
+u_τ from the model's constant-stress law in closed form (`crates/lbm/src/sa_law.rs`) instead of Spalding's, and
+keeps it in the node's row. The law's eight factor constants reach the shader as pipeline constants from the CPU's
+`factors()`. After ν̃'s sub-steps `sa_impose` sets ν̃ = κ u_τ d at each interior node and its ν_t for the
+collision, and ν̃'s transport sees a boundary node as a wall one cell away, as on the CPU. In single precision the
+logarithm ln(1 + s) below κy⁺ = 1 is the series 2 atanh(s/(2 + s)) to its fourth term (the terms left out are
+below 2⁻²⁴ of it), and the inversion takes Newton steps inside its bracket, a bisection when one leaves it, at
+most 24.
+
+The law has its own bars, apart from the Spalding ones below (`crates/lbm-gpu/tests/verification/sa.rs`:
+`the_wall_law_follows_the_cpu_in_a_box`, `..._in_its_column`, `..._where_two_nodes_share_an_interior_node`,
+`the_wall_law_at_rest_gives_no_stress_on_the_gpu`). u_τ 5.18e-4 relative to the CPU's, about 5.1e-4 of it
+WGSL's allowance for `atan2`; the node's stress 1.04e-3; ν̃ at the interior nodes against κ u_τ d 2.38e-7;
+velocity and density at the suite's LES tolerances (`check_les`). Measured on the GB10: coarse channel at
+Re_τ 180, regularised, u_τ 5.73e-7, stress 1.15e-6, ν̃ 5.62e-8; the column at Re_τ 1000, regularised, u_τ
+1.45e-7, and with `hrr`, 6.12e-8.
+
+Against the CPU from step 0 with Spalding's law on the nodes, both layouts, regularised, `hrr` σ 0.99 and `trt`, each with
 Smagorinsky 0.1 + Van Driest 26 and with Vreman 0.18
 (`the_on_node_wall_function_bounce_follows_the_cpu`: the CPU's perturbed coarse channel, 13 cells
 across, 150 steps; `the_on_node_wall_function_bounce_follows_the_cpu_in_han_s_a20_channel`, heavy:

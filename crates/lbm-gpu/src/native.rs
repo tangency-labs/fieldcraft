@@ -22,7 +22,8 @@ const KIND_PULL: u32 = 0;
 const KIND_BOUNCE: u32 = 1;
 const KIND_REFLECT: u32 = 2;
 const KIND_OPEN: u32 = 3;
-/// Marks a link into a cell whose scalar populations the open boundary sets (see lbm.wgsl).
+/// Marks a link into a cell whose scalar populations the open boundary sets (see lbm.wgsl). This and the
+/// link flags below reach the shader as overrides, so each is written once.
 const RESET: u32 = 1 << 24;
 /// Marks a bounce link that interpolates where the obstacle's surface crosses it (see lbm.wgsl).
 const INTERP: u32 = 1 << 25;
@@ -249,6 +250,8 @@ pub struct GpuFlow {
     wall_bounce: bool,
     /// Whether they are the on-node bounce's boundary nodes (`bounce_sample`, `node_bounce`).
     on_node: bool,
+    /// Whether the Spalart–Allmaras model's own wall law runs on them (`sa_impose`).
+    sa_law: bool,
     /// Whether the collision takes the finite-difference velocity gradient (the hybrid collision,
     /// Vreman's model): `gradient_velocity` runs before it.
     gradients: bool,
@@ -336,6 +339,19 @@ impl SaDevice {
 
 /// The Spalart–Allmaras sub-steps per lattice step, at most (`fieldcraft_lbm::sa::MAX_SUBSTEPS`).
 const SA_MAX_SUBSTEPS: u32 = fieldcraft_lbm::sa::MAX_SUBSTEPS;
+/// The most steps of the wall law's inversion on the device (lbm.wgsl, `sa_law_y_plus`): f32's mantissa bits. The
+/// residual y⁺u⁺(y⁺) − Re is convex (for c_v1 below 7.15; the model's is 7.1), so Newton's steps from the bracket's
+/// upper end come down on the root from above, and each cuts the distance to it by more than half (the residual's
+/// slope at that end is within 3 % of its slope at the root): 24 steps would reach the last of 24 bits by halving
+/// alone. It bounds the loop and is not reached (at most 8 evaluations for Re from 1e-8 to the largest it takes).
+const SA_LAW_STEPS: u32 = f32::MANTISSA_DIGITS;
+
+/// The largest Reynolds number U y / ν the wall law's inversion takes on the device: its y⁺ is at most Re, and
+/// (κ y⁺)³ (f_v1's) is finite in f32 below ∛f32::MAX / κ, so the kernel forms no infinity. The lattice's own values
+/// are below 1e5.
+fn sa_law_re_max() -> f64 {
+    f64::from(f32::MAX).cbrt() / fieldcraft_lbm::sa::KAPPA
+}
 /// `params.sa`'s byte offset in the uniforms, and the fixed sub-step count's within it (0: none).
 const SA_PARAMS: u64 = 192;
 const SA_FIXED: u64 = SA_PARAMS + 8;
@@ -352,8 +368,9 @@ const SA_GATE_UPDATE: u64 = 12;
 
 /// The Spalart–Allmaras model's box-face kinds for `lbm.wgsl` (2 bits per face: 1 wall,
 /// 2 inflow, 3 open), checked against every fluid cell's faces on the CPU: the device's rule is a
-/// fluid neighbour, a solid cell (a halfway wall) or, beyond a face that is not periodic, that
-/// face's one kind. A face it cannot reproduce (an inlet patch, an on-node wall) is refused.
+/// fluid neighbour, a boundary node of the on-node wall (a wall one cell away), a solid cell (a
+/// halfway wall) or, beyond a face that is not periodic, that face's one kind. A face it cannot
+/// reproduce (an inlet patch) is refused.
 fn sa_faces(flow: &Flow, field: &fieldcraft_lbm::sa::SaField) -> Result<u32> {
     use fieldcraft_lbm::sa::Side;
     let refuse = |what: String| {
@@ -389,6 +406,8 @@ fn sa_faces(flow: &Flow, field: &fieldcraft_lbm::sa::SaField) -> Result<u32> {
             }
         }
     }
+    // The boundary nodes of the on-node wall, in cell order (lbm.wgsl, `sa_side`: flag NODE).
+    let nodes = flow.wall_nodes().map_or(&[][..], |n| n.nodes());
     for (cell, sides) in field.sides().iter().enumerate() {
         if !flow.is_fluid(cell) {
             continue;
@@ -409,6 +428,8 @@ fn sa_faces(flow: &Flow, field: &fieldcraft_lbm::sa::SaField) -> Result<u32> {
                 let nb = grid.index(q);
                 if flow.is_fluid(nb) {
                     Side::Cell(u32::try_from(nb).map_err(|_| Error::Limit("too many cells for the GPU solver".into()))?)
+                } else if nodes.binary_search_by_key(&nb, |w| w.cell as usize).is_ok() {
+                    Side::Node
                 } else {
                     Side::Wall
                 }
@@ -558,7 +579,7 @@ fn solid_data(solid: &fieldcraft_lbm::conduction::SolidHeat, t0: f64) -> Result<
 }
 
 /// The entry points of `lbm.wgsl` a flow dispatches.
-const KERNELS: [&str; 41] = [
+const KERNELS: [&str; 42] = [
     "clear_eddy",
     "gradient_velocity",
     "fan_partials",
@@ -600,6 +621,7 @@ const KERNELS: [&str; 41] = [
     "sa_rate",
     "sa_plan",
     "sa_update",
+    "sa_impose",
 ];
 
 /// The bindings each kernel uses, read from the shader (naga's analysis of which globals an entry
@@ -693,6 +715,8 @@ struct Variant {
     interpolated: bool,
     /// The Spalart–Allmaras model.
     sa: bool,
+    /// Its own wall law on the on-node wall (`spalart_allmaras_bounce`).
+    sa_law: bool,
     /// Some of them take the quadratic form.
     quadratic: bool,
 }
@@ -710,6 +734,7 @@ type Kernels = HashMap<&'static str, Kernel>;
 fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
     let module =
         device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("fieldcraft lbm"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
+    let fieldcraft_lbm::sa_law::Factors { p: [p1, p2], q: [q1, q2], a: [a1, a2], b: [b1, b2] } = fieldcraft_lbm::sa_law::factors();
     let mut kernels = HashMap::with_capacity(KERNELS.len());
     for (name, bindings) in &reflection()?.kernels {
         let entries: Vec<wgpu::BindGroupLayoutEntry> = bindings
@@ -750,6 +775,23 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("INTERPOLATED", if variant.interpolated { 1.0 } else { 0.0 }),
                     ("SA", if variant.sa { 1.0 } else { 0.0 }),
                     ("SA_MAX_SUBSTEPS", f64::from(SA_MAX_SUBSTEPS)),
+                    ("SA_LAW", if variant.sa_law { 1.0 } else { 0.0 }),
+                    ("SA_KAPPA", fieldcraft_lbm::sa::KAPPA),
+                    ("SA_CV1_3", fieldcraft_lbm::sa::C_V1.powi(3)),
+                    ("NODE", f64::from(NODE)),
+                    ("RESET", f64::from(RESET)),
+                    ("INTERP", f64::from(INTERP)),
+                    ("QUAD", f64::from(QUAD)),
+                    ("SA_LAW_P1", p1),
+                    ("SA_LAW_Q1", q1),
+                    ("SA_LAW_A1", a1),
+                    ("SA_LAW_B1", b1),
+                    ("SA_LAW_P2", p2),
+                    ("SA_LAW_Q2", q2),
+                    ("SA_LAW_A2", a2),
+                    ("SA_LAW_B2", b2),
+                    ("SA_LAW_STEPS", f64::from(SA_LAW_STEPS)),
+                    ("SA_LAW_RE_MAX", sa_law_re_max()),
                     ("QUADRATIC", if variant.quadratic { 1.0 } else { 0.0 }),
                     ("MAX_SPEED", MAX_LATTICE_SPEED),
                 ],
@@ -898,9 +940,6 @@ impl GpuFlow {
                 };
                 if flow.thermal().is_some() {
                     return refuse("heat");
-                }
-                if flow.wall_nodes().is_some() {
-                    return refuse("its wall law (`wall_model: \"spalart_allmaras_bounce\"`)");
                 }
                 if flow.hybrid_sigma() == Some(fieldcraft_model::HrrSigma::Dynamic) {
                     return refuse("the hybrid collision's dynamic σ");
@@ -1078,6 +1117,8 @@ impl GpuFlow {
             }
         }
         let on_node = !node_links.is_empty();
+        // The model's own wall law: the nodes' stress from it, and ν̃ set at their interior nodes.
+        let sa_law = sa_faces.is_some() && flow.wall_nodes().is_some_and(|n| n.law() == fieldcraft_lbm::bounce::NodeLaw::SpalartAllmaras);
         let wall_count = wall_rows.len() / WALL_ROW;
 
         // The links, by cell, and the ones with a force by group.
@@ -1458,6 +1499,7 @@ impl GpuFlow {
             zones: zones.zones > 0,
             interpolated,
             sa: sa_faces.is_some(),
+            sa_law,
             quadratic,
         })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).
@@ -1536,6 +1578,7 @@ impl GpuFlow {
             wall_groups: if wall_count > 0 { Some(groups(wall_count)?) } else { None },
             wall_bounce: bounce,
             on_node,
+            sa_law,
             gradients,
             walls: walls_buf,
             wall_count,
@@ -1789,7 +1832,8 @@ impl GpuFlow {
 
     /// The wall model's last sample: each modelled wall cell's grid cell, its modelled velocity
     /// and relaxation rate (lattice units), in the order of [`fieldcraft_lbm::wall::Walls::wall_cells`]
-    /// that have a second cell. Empty without the wall model.
+    /// that have a second cell. Empty without the wall model. With a wall-function bounce: each row's sampled stress
+    /// and its friction velocity u_τ (the on-node bounce's rows in the order of its boundary nodes).
     pub fn wall_targets(&self) -> Result<Vec<([f64; 3], f64)>> {
         if self.wall_count == 0 {
             return Ok(Vec::new());
@@ -1831,7 +1875,7 @@ impl GpuFlow {
     /// solids' with their sub-steps).
     fn dispatches_per_step(&self) -> usize {
         let solid = self.solid.as_ref().map_or(0, |sd| 3 + sd.substeps as usize);
-        let sa = self.sa.as_ref().map_or(0, |s| 2 + 3 * s.slots() as usize);
+        let sa = self.sa.as_ref().map_or(0, |s| 2 + 3 * s.slots() as usize + usize::from(self.sa_law));
         13 + solid + sa + if self.zones.fans > 0 { 2 } else { 0 }
     }
 
@@ -1869,6 +1913,10 @@ impl GpuFlow {
                     commands.push((self.current, "sa_rate", Groups::SaGate(SA_GATE_RATE)));
                     commands.push((self.current, "sa_plan", Groups::Fixed((1, 1))));
                     commands.push((self.current, "sa_update", Groups::SaGate(SA_GATE_UPDATE)));
+                }
+                // The model's own wall law: ν̃ at the interior nodes, after its transport and before the collision.
+                if let Some(groups) = self.wall_groups.filter(|_| self.sa_law) {
+                    commands.push((self.current, "sa_impose", Groups::Fixed(groups)));
                 }
             }
             commands.push((self.current, "collide", Groups::Fixed(self.cells)));
