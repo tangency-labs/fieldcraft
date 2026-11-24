@@ -2434,11 +2434,13 @@ fn wall_modelled_channel(lm: &LeeMoser, n: usize) -> Option<ChannelResult> {
             }
             samples += 1;
         }
-        if monitor.samples_at(k)
-            && let Some(reason) = monitor.sample(&setup, &mut *gpu, k).unwrap()
-        {
-            stop = format!("{} at {:.1} δ/u_τ", reason.name(), k as f64 * dt);
-            break;
+        if monitor.samples_at(k) {
+            // The monitor watches the mass flow only; its wall forces are the last step's, as the backend gives them.
+            let wall_forces = gpu.forces().unwrap();
+            if let Some(reason) = monitor.sample(&setup, &mut *gpu, k, &wall_forces).unwrap() {
+                stop = format!("{} at {:.1} δ/u_τ", reason.name(), k as f64 * dt);
+                break;
+            }
         }
         if k % (setup.steps / 20).max(1) < every {
             println!("  Re_τ {} {n}/δ: t = {:.1} δ/u_τ, {:.0} s", lm.re_tau.round(), k as f64 * dt, clock.elapsed().as_secs_f64());

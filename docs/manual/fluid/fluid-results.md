@@ -125,7 +125,9 @@ half force), the gauge pressure (ρ − 1) c_s² ρ₀ Δx²/Δt², and with hea
 single precision; solid cells hold zero. The fluid mass of the frame is kept in double precision.
 The initial frame and `frames` more, evenly spaced to the end, are recorded; a run stopped by its
 steady rule adds a frame at the stop. Force, heat and zone histories are sampled every
-⌈steps/10 000⌉ steps.
+⌈steps/10 000⌉ steps. Each wall-force entry is the mean of the last two steps, because a wall's force alternates
+step by step near τ⁺ = ½ (A. J. C. Ladd, J. Fluid Mech. 271:285–309, 1994): it is the force at (k − ½)Δt for the
+step k. The first step of a run has no step before it, so its entry is that step's force alone.
 
 ### Interpolation
 
