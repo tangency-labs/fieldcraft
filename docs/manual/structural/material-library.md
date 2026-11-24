@@ -2,8 +2,9 @@
 
 The Material menu offers **Browse Material Library** and **Add Library Material**. The same
 actions are `model.material.library.list` and `model.material.library.add` in scripts, the CLI and
-MCP. Browse all fourteen entries, or filter `family` to `steel`, `stainless`, `aluminium`,
-`titanium` or `fluid`. Adding an entry creates an ordinary editable material; it refuses a taken name.
+MCP. Browse all twenty entries, or filter `family` to `steel`, `stainless`, `cast_iron`,
+`aluminium`, `copper`, `titanium` or `fluid`. Adding an entry creates an ordinary editable
+material; it refuses a taken name.
 
 ```json
 {"command":"model.material.library.list","params":{"family":"stainless"}}
@@ -24,14 +25,20 @@ not supplied by this small catalogue. No network request or external data file i
 | `EN10025-S275` | S275JR hot-rolled steel; published DoP strength minimums for nominal thickness up to 16 mm |
 | `EN10025-S355` | S355 hot-rolled steel, nominal thickness up to 40 mm |
 | `EN10025-S460N` | S460N normalized fine-grain steel plate; published DoP strength minimums for nominal thickness 3-16 mm |
+| `EN10083-C45-QT` | C45+QT quenched and tempered engineering steel; Saarstahl strength minimums for diameter below 16 mm (flat thickness below 8 mm); Ovako typical physical constants |
+| `EN10083-42CrMo4-QT` | 42CrMo4+QT quenched and tempered alloy steel; Saarstahl strength minimums for diameter below 16 mm (flat thickness below 8 mm); Ovako typical physical constants |
 | `EN10088-14301` | 1.4301 / 304 stainless, hot-rolled plate up to 75 mm |
 | `EN10088-14401` | 1.4401 / 316 stainless, hot-rolled plate up to 75 mm |
+| `EN1561-GJL-250` | EN-GJL-250 grey cast iron (BS EN 1561-2023); lower end of the published 103-118 GPa modulus range and 100-500 C conductivity curve; brittle (Rp0.1 listed in sheet, no Rp0.2) |
+| `EN1563-GJS-400-15` | EN-GJS-400-15 ductile cast iron (BS EN 1563 (2018)); specific heat (20-500 C) and expansion (20-400 C) are elevated-temperature interval averages; conductivity omitted (source lists only 300 C) |
 | `AA5083-H111` | Rolled 5083-H111 sheet; EN 485-2 strength minimums for 3.0-6.3 mm (Alumeco); thermal properties from Hydro 5083 sheet |
 | `AA6061-T6` | Wrought 6061-T6; no product-specific strength selected |
 | `AA6063-T6` | Extruded 6063-T6 profile; strength row for wall thickness up to 10 mm |
 | `AA6082-T6` | Extruded 6082-T6; strength row for 5-20 mm specimen cross-section |
 | `AA7075-T6` | Wrought 7075-T6; no product-specific strength selected |
 | `AA2024-T3` | Bare 2024-T3 sheet, 0.010-0.128 inch, explicitly legacy handbook edition |
+| `Cu-ETP-R240` | Rolled Cu-ETP (CW004A / C11000) copper strip in R240 temper; Wieland room-temperature physical values |
+| `CuZn37-R350` | Rolled CuZn37 (CW508L / C27200) brass strip in R350 temper; Wieland room-temperature physical values |
 | `Ti6Al4V-annealed` | Annealed Ti-6Al-4V; strength row for ASTM B265 sheet/plate, 0.025-1 inch |
 | `air` | Dry air, 200-400 K: viscosity, conductivity and sea-level density curves, perfect-gas specific heat |
 
@@ -44,6 +51,7 @@ constant. A curve is linear between its points and held at its end values outsid
 | Entry | Curves | Source |
 |---|---|---|
 | `EN10025-S235`, `EN10025-S275`, `EN10025-S355`, `EN10025-S460N` | conductivity and specific heat 20-1200 C, through the 5000 J/(kg K) specific heat peak at 735 C | The EN 1993-1-2:2005 (3.4.1) carbon-steel design equations as an open paper reproduces them (Abeysiriwardena and Mahendran, Thin-Walled Structures 180 (2022) 109792, accepted manuscript on QUT ePrints, p. 19, Eqs. (27)-(32)), evaluated densely enough that specific-heat interpolation stays within 0.1 % of its equations |
+| `EN1561-GJL-250` | conductivity 100-500 C every 100 K (at default 20 C, the 100 C end value 48.5 W/(m K) is held with a range warning) | Ductile Castings, Grey Cast Irons Technical Data (BS EN 1561-2023, undated sheet), p. 1 |
 | `air` | viscosity, conductivity, density, 200-400 K every 10 K | U.S. Standard Atmosphere 1976, eq. (51) and (53) p. 19, eq. (42) at 101325 Pa p. 15 |
 
 Adding such an entry makes a material that keeps the whole curves (saved in the model, so a later
@@ -93,9 +101,16 @@ library. Standards are cited by number, edition, clause or table and, where chec
 not link to third-party copies. Steel/stainless calculation constants come from the explicitly
 cited EN 1993 editions, with S275JR and S460N minimum strengths taken from published
 thyssenkrupp Steel Europe EN 10025-1 Declarations of Performance;
+C45+QT and 42CrMo4+QT pair Ovako typical physical constants with Saarstahl DIN EN 10083
+quenched-and-tempered strength minimums for small sections (diameter below 16 mm);
+grey (EN-GJL-250) and ductile (EN-GJS-400-15) cast irons cite Ductile Castings' published
+BS EN 1561-2023 and BS EN 1563 (2018) technical data sheets;
 5083, 6063 and 6082 elastic constants use EN 1999-1-1, paired with product-specific
 Alumeco (5083-H111 strength) and Hydro sheets (5083 thermal properties; 6063 and 6082
-thermal and strength values). Stainless physical values
+thermal and strength values);
+Cu-ETP (CW004A) and CuZn37 (CW508L) cite Wieland rolled-strip datasheets (K32 and M37) as
+isotropic approximations.
+Stainless physical values
 are from Outokumpu's public Core/Supra Table 7. NASA's public 1972 alloy handbooks identify the
 6061/7075 elastic constants and physical-property temperature ranges. Ti-6Al-4V combines NASA's
 nominal design tensile modulus with TIMET's cited room-temperature physical values: it is an
@@ -108,9 +123,15 @@ superseding 5J (2003); these values are deliberately not relabelled as that edit
 handbook constants do not establish current procurement requirements or design allowables.
 
 Missing properties stay absent. For example, 2024 has elasticity and density here, 6061/7075
-have no conductivity or specific heat, and 6082 has conductivity but no specific heat. Supply
+have no conductivity or specific heat, C45+QT/42CrMo4+QT also omit conductivity and specific
+heat (Ovako lists them only as ranges, whereas EN-GJL-250 keeps the lower end of its 103-118 GPa
+modulus range because solid entries require Young's modulus), 6082 has conductivity but no
+specific heat, EN-GJL-250 omits `yield` (the sheet lists Rp0.1 rather than Rp0.2), and
+EN-GJS-400-15 has no conductivity (the source lists only a single value at 300 C). Supply
 independently justified missing properties with `model.material.edit` before an analysis that
-needs them. Mean expansion coefficients over a stated interval are applied as constants.
+needs them. Mean thermal properties over a stated interval are applied as constants, preferring
+the narrower interval starting at 20 C where a sheet lists more than one (for example 20-200 C
+over 20-600 C for EN-GJL-250 specific heat, and 20-200 C over 20-400 C for EN-GJL-250 expansion).
 
 ## Reproduce a conduction check
 
