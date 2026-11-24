@@ -164,6 +164,45 @@ pub fn strain(g: &[[f64; 3]; 3]) -> [f64; 6] {
     [xx, yy, zz, 0.5 * (xy + yx), 0.5 * (xz + zx), 0.5 * (yz + zy)]
 }
 
+/// A cell `j` rows from an on-node wall, for the defect-corrected wall-normal strain ([`defect_correct`]).
+#[derive(Clone, Copy, Debug)]
+pub struct DefectCell {
+    /// The wall-normal axis and the wall's inward direction (±1) along it.
+    pub axis: usize,
+    pub inward: i64,
+    /// The cell's distance from the wall node in cells, and the column's friction velocity (lattice units).
+    pub j: f64,
+    pub ut: f64,
+    /// The unit vector of the wall stress (the direction of the law's velocity).
+    pub dir: [f64; 3],
+}
+
+/// The wall-normal derivative of the tangential velocity at a cell `j` rows from the wall,
+/// `[(U − U_m)_{j+1} − (U − U_m)_{j−1}] / 2 + U_m'(j)` (cells), U_m the Spalart–Allmaras wall law `u_τ u⁺(y u_τ / ν)` and `U_m'` its
+/// constant-stress slope `u_τ² / (ν + ν_t)`, replaces the central difference in `g` (`g[axis][b]` for b ≠ axis), only where
+/// the velocity along the wall stress is positive at the cell and both neighbours (attached flow). The central difference of a
+/// profile that is logarithmic over the stencil reads the strain high (+10 to +17 % at row 2 against the model's own solution);
+/// the law's part of the profile is differentiated exactly and only the defect from it by the stencil.
+pub fn defect_correct(g: &mut [[f64; 3]; 3], u: [f64; 3], nb: &Neighbours, d: &DefectCell, nu: f64) {
+    let (toward, away) = if d.inward > 0 { (nb[d.axis][0], nb[d.axis][1]) } else { (nb[d.axis][1], nb[d.axis][0]) };
+    let (Some(t), Some(a)) = (toward, away) else { return };
+    let along = |v: [f64; 3]| v[0] * d.dir[0] + v[1] * d.dir[1] + v[2] * d.dir[2];
+    if !(along(u) > 0.0 && along(t) > 0.0 && along(a) > 0.0 && d.ut > 0.0 && d.ut.is_finite() && d.j >= 2.0 && nu > 0.0) {
+        return;
+    }
+    let um = |y: f64| d.ut * crate::sa_law::u_plus(y * d.ut / nu);
+    let slope = d.ut * d.ut / (nu + crate::sa::nu_t(crate::sa::KAPPA * d.ut * d.j, nu));
+    for b in 0..3 {
+        if b == d.axis {
+            continue;
+        }
+        let wall_normal = 0.5 * ((a[b] - d.dir[b] * um(d.j + 1.0)) - (t[b] - d.dir[b] * um(d.j - 1.0))) + d.dir[b] * slope;
+        if wall_normal.is_finite() {
+            g[d.axis][b] = d.inward as f64 * wall_normal;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

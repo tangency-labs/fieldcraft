@@ -96,6 +96,7 @@ fn layer_from(names: &str) -> SaWallLayer {
     for name in names.split(',').map(str::trim) {
         match name {
             "local" => layer.local_balance_node_one = true,
+            "defect_sa" => layer.defect_strain_sa = true,
             "" => {}
             other => panic!("unknown wall-layer correction {other}"),
         }
@@ -543,6 +544,42 @@ fn a_frozen_nu_tilde_is_held_and_bad_fields_are_refused() {
     }
 }
 
+/// The defect-corrected strain of the SA source: it acts at rows 2 to `DEFECT_ROWS` from the wall and nowhere else (a short run in, the difference
+/// from the same run without it is below 1e-3 of row 3's at row 20), and it moves those rows.
+#[test]
+fn the_defect_corrected_strain_reaches_only_the_rows_near_the_wall() {
+    let channel = Channel {
+        re_tau: 1000.0,
+        cells: 24,
+        bulk_guess: LEE_MOSER_1000_BULK,
+        lattice_bulk: 0.1,
+        collision: Collision::Regularized,
+        turbulence: Some(sa(WallModel::SpalartAllmarasBounce)),
+        on_node: true,
+        max_steps: 100,
+        sample: 100,
+        settling: GATED,
+        sigma: None,
+    };
+    let (_, mut a) = prepare(&channel.model(), &[]);
+    let (_, mut b) = prepare(&channel.model(), &[]);
+    let on = SaWallLayer { defect_strain_sa: true, ..SaWallLayer::default() };
+    b.set_sa_wall_layer(on).unwrap();
+    for _ in 0..40 {
+        a.step().unwrap();
+        b.step().unwrap();
+    }
+    let grid = *a.grid();
+    let diff = |j: usize| {
+        let (ua, ub) = (a.moments(grid.index([0, j, 0])).map_or([0.0; 3], |m| m.1), b.moments(grid.index([0, j, 0])).map_or([0.0; 3], |m| m.1));
+        (0..3).map(|d| (ua[d] - ub[d]).abs()).fold(0.0, f64::max)
+    };
+    let seen: Vec<f64> = (1..=20).map(diff).collect();
+    println!("largest velocity difference by row 1..20: {seen:?}");
+    assert!(seen[2] > 1e-10, "row 3 sees the corrected strain: {:e}", seen[2]);
+    assert!(seen[19] < 1e-3 * seen[2], "row 20 {:e} against row 3 {:e}", seen[19], seen[2]);
+}
+
 /// The first node's viscosity from the layer's own balance: with the switch, the harmonic mean of the first two nodes' ν + ν_t is the viscosity
 /// the stress balance t̄ Δy / ΔU gives over the interval (LaggedLayer), at every wall node; ν̃ is untouched; the guard counts what it switches off.
 #[test]
@@ -571,7 +608,7 @@ fn the_first_node_viscosity_follows_the_layers_stress_balance() {
         })
         .collect();
     flow.freeze_sa_nu_tilde(held).unwrap();
-    flow.set_sa_wall_layer(SaWallLayer { local_balance_node_one: true }).unwrap();
+    flow.set_sa_wall_layer(SaWallLayer { local_balance_node_one: true, ..SaWallLayer::default() }).unwrap();
     for _ in 0..200 {
         flow.step().unwrap();
     }
@@ -794,7 +831,7 @@ fn sa_law_channel_at_re_tau_550_meets_lee_and_moser() {
 ///
 /// ```text
 /// FIELDCRAFT_FIRST_ROWS=1 [FIELDCRAFT_CHANNEL_CELLS=24,32,48] [FIELDCRAFT_CHANNEL_COLLISION=regularized|hrr]
-///   [FIELDCRAFT_SA_LAYER=local] [FIELDCRAFT_SA_FREEZE=newton]
+///   [FIELDCRAFT_SA_LAYER=local,defect_sa] [FIELDCRAFT_SA_FREEZE=newton]
 ///   cargo test --release -p fieldcraft-lbm --test sa_wall_law -- --ignored --nocapture first_rows
 /// ```
 ///

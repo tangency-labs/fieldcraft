@@ -419,6 +419,12 @@ fn neighbour(grid: &Grid, periodic: [bool; 3], fluid: &[bool], p: [usize; 3], ax
     fluid.get(cell).copied().unwrap_or(false).then_some(cell)
 }
 
+/// The defect-correction entry of `cell` in a table sorted by cell ([`Flow::defect_table`]).
+fn defect_at(table: &[(u32, crate::hrr::DefectCell)], cell: usize) -> Option<&crate::hrr::DefectCell> {
+    let cell = u32::try_from(cell).ok()?;
+    table.binary_search_by_key(&cell, |c| c.0).ok().and_then(|i| table.get(i)).map(|c| &c.1)
+}
+
 /// The cell next to the cell at `p` along `axis` (towards `+axis` with `up`), fluid or not, across
 /// a periodic face its periodic image; `None` outside a face that is not periodic.
 fn across(grid: &Grid, periodic: [bool; 3], p: [usize; 3], axis: usize, up: bool) -> Option<usize> {
@@ -651,7 +657,17 @@ pub struct SaWallLayer {
     /// velocity along the wall stress does not have one sign at the first two fluid nodes, or the balance gives no usable viscosity (a
     /// non-finite or non-positive value, or one that would be negative), counted in [`Flow::sa_wall_layer_report`].
     pub local_balance_node_one: bool,
+    /// The strain the Spalart–Allmaras source reads at the cells 2 to [`DEFECT_ROWS`] from an on-node wall is the defect-corrected one
+    /// ([`crate::hrr::defect_correct`]): the central difference of a near-logarithmic profile over-reads it (+10 to +17 % at the second row), and
+    /// that sets ν̃ there. Guard: only where the velocity along the wall stress is positive at the cell and at both neighbours along the wall
+    /// normal.
+    pub defect_strain_sa: bool,
 }
+
+/// How many rows from an on-node wall the defect-corrected strain reaches (row 1 is the first fluid node). The central difference of a
+/// logarithmic profile reads the strain at row j high by (j/2) ln((j+1)/(j−1)) − 1 ≈ 1/(3j²), whatever the grid: 9.9 / 4.0 / 2.2 / 1.4 % at
+/// rows 2 to 5 (and 1.0 % at row 6). Stopping at row 5, where the over-read is 1.4 %, is a choice.
+pub const DEFECT_ROWS: usize = 5;
 
 /// How often the wall-layer corrections ran and how often their guards switched them off ([`Flow::sa_wall_layer_report`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -2732,6 +2748,36 @@ impl Flow {
         if ut.is_finite() { ut } else { 0.0 }
     }
 
+    /// The cells 2 to [`DEFECT_ROWS`] from each on-node wall with the wall's direction, stress direction and friction velocity (lattice units),
+    /// for [`crate::hrr::defect_correct`], sorted by cell (where two walls reach one cell, the nearer one's); none for a wall whose stress is
+    /// not a positive finite number. Look a cell up with [`defect_at`].
+    fn defect_table(&self) -> Vec<(u32, crate::hrr::DefectCell)> {
+        let mut out = Vec::new();
+        let Some(nodes) = &self.nodes else { return out };
+        for w in nodes.nodes() {
+            let tau = w.stress.iter().map(|s| s * s).sum::<f64>().sqrt();
+            let ut = self.wall_u_tau(w);
+            if !(tau > 0.0 && ut > 0.0) {
+                continue;
+            }
+            let k = usize::from(w.axis);
+            let dir = w.stress.map(|s| s / tau);
+            let node = self.grid.coords(w.cell as usize);
+            for j in 2..=DEFECT_ROWS {
+                let mut p = node;
+                let moved = p[k] as i64 + j as i64 * i64::from(w.inward);
+                if moved < 0 || moved as usize >= self.grid.cells[k] {
+                    break;
+                }
+                p[k] = moved as usize;
+                out.push((self.grid.index(p) as u32, crate::hrr::DefectCell { axis: k, inward: i64::from(w.inward), j: j as f64, ut, dir }));
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.j.total_cmp(&b.1.j)));
+        out.dedup_by_key(|c| c.0);
+        out
+    }
+
     /// With the hybrid collision or Vreman's model, before the collision: every fluid cell's velocity (with the half force),
     /// computed exactly as the collision computes it (the wall model's reconstruction included),
     /// into `gradient_u`, by fixed blocks in parallel (each cell writes only its own slot), for the
@@ -2778,6 +2824,8 @@ impl Flow {
             return Ok(());
         }
         let wall = self.wall_friction();
+        let dc = if self.wall_layer.defect_strain_sa { self.defect_table() } else { Vec::new() };
+        let nu_dc = (1.0 / self.omega_plus - 0.5) / 3.0;
         let Some(sa) = &mut self.sa else { return Ok(()) };
         let (grid, periodic, block, steps) = (self.grid, self.periodic, self.block, self.steps_done);
         let fluid = populated_mask(&self.fluid, &self.bulk, self.surface.as_ref());
@@ -2790,7 +2838,11 @@ impl Flow {
                 let p = grid.coords(cell);
                 let nb: crate::hrr::Neighbours =
                     [0, 1, 2].map(|axis| [false, true].map(|up| neighbour(&grid, periodic, fluid, p, axis, up).and_then(|c| u.get(c).copied())));
-                *w = crate::sa::vorticity(&crate::hrr::gradient(uc, &nb));
+                let mut g = crate::hrr::gradient(uc, &nb);
+                if let Some(d) = defect_at(&dc, cell) {
+                    crate::hrr::defect_correct(&mut g, uc, &nb, d, nu_dc);
+                }
+                *w = crate::sa::vorticity(&g);
             }
         });
         let nu = (1.0 / self.omega_plus - 0.5) / 3.0;
