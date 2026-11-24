@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fieldcraft_model::nodal::edge_pressure;
 use fieldcraft_model::units::{DisplaySystem, Preset};
-use fieldcraft_model::{BoundaryCondition, Diagnostic, Load, Model, Resolved, ResolvedDirection};
+use fieldcraft_model::{BoundaryCondition, Coupling, CouplingKind, Diagnostic, Load, Model, Resolved, ResolvedDirection};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum Error {
@@ -336,6 +336,44 @@ pub(crate) fn axis_dof(d: ResolvedDirection) -> Option<u8> {
             (n.iter().filter(|c| **c != 0.0).count() == 1).then_some(axis as u8 + 1)
         }
     }
+}
+
+/// What a deck says where a distributing coupling carries nodal weights: comment lines, each
+/// short enough for a Nastran line (80 columns with its `$ `).
+pub(crate) const NODAL_WEIGHTS: [&str; 2] = [
+    "nodal weights w = integral of N dA over the set's faces, negative at",
+    "quadratic corners; a moment spreads slightly differently than in FieldCraft",
+];
+
+/// The weight of each node of a distributing coupling's set, in the set's node order, when the
+/// set has element faces: w_i = ∫ N_i dA over them, the consistent nodal loads of a unit
+/// traction (Zienkiewicz, Taylor & Zhu 2013, §6.6), which is how FieldCraft spreads a force on
+/// the reference point. `None` for a kinematic coupling and for a set of nodes only (points,
+/// weighted equally). A weight of exactly zero is left out: the node has no term, and LS-DYNA
+/// reads a zero weight as its default of one.
+pub(crate) fn coupling_weights(model: &Model, r: &Resolved, name: &str, c: &Coupling) -> Result<Option<Vec<(u32, f64)>>> {
+    if c.kind != CouplingKind::Distributing {
+        return Ok(None);
+    }
+    let Some(set) = r.sets.get(&c.set).filter(|s| !s.faces.is_empty()) else { return Ok(None) };
+    let weights = model.surface_weights(&set.faces)?;
+    let area: f64 = weights.values().sum();
+    if !(area > 0.0 && area.is_finite()) {
+        return Err(Error::Model(fieldcraft_model::Error::Invalid(format!("coupling `{name}`: the faces of set `{}` have no area", c.set))));
+    }
+    let mut out = Vec::with_capacity(set.nodes.len());
+    for n in &set.nodes {
+        let Some(&w) = weights.get(n) else {
+            return Err(Error::Model(fieldcraft_model::Error::Invalid(format!(
+                "coupling `{name}`: node {n} of set `{}` is on none of the set's element faces, so the coupling's surface does not reach it (a set with element faces, such as a body's, couples through its faces); couple a set of the faces only, or of nodes only",
+                c.set
+            ))));
+        };
+        if w != 0.0 {
+            out.push((*n, w));
+        }
+    }
+    Ok(Some(out))
 }
 
 /// `base`, or `base-2`, `base-3`, … : the first that is not in `taken` (compared without case),

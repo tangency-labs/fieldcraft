@@ -919,3 +919,23 @@ fn nonlinear_static_steps() {
     m.replace_step(step("Bend", Procedure::Static {}, &["clamp"], &["tip_load"])).unwrap();
     assert!(lsdyna::write(&m).unwrap().text.contains("*MAT_ELASTIC_TITLE"));
 }
+
+#[test]
+fn a_distributing_coupling_on_faces_writes_a_card_per_node() {
+    let text = lsdyna::write_si(&solids()).unwrap().text;
+    let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with('$')).collect();
+    let start = lines.iter().position(|l| *l == "*CONSTRAINED_INTERPOLATION").unwrap();
+    let body = &lines[start + 1..];
+    let field = |l: &str, i: usize| l.get(20 * i..).map(|s| s.get(..20).unwrap_or(s).trim().to_string()).unwrap_or_default();
+    // Card 1, then the cards of card 2 up to the next keyword.
+    assert_eq!(field(body[0], 4), "", "ITYP is blank: card 2 names nodes");
+    let next_keyword = body.iter().skip(1).position(|l| l.starts_with('*')).map_or(body.len(), |p| p + 1);
+    let cards: Vec<&str> = body[1..next_keyword].to_vec();
+    assert_eq!(cards.len(), 8, "{cards:?}");
+    assert!(cards.iter().all(|l| field(l, 1) == "123"), "{cards:?}");
+    let weights: Vec<f64> = cards.iter().map(|l| field(l, 2).parse::<f64>().unwrap()).collect();
+    // The lid is a unit hex20 face: the weights sum to its area, corners -1/12 and mid-sides 1/3.
+    assert!((weights.iter().sum::<f64>() - 1.0).abs() < 1e-12, "{weights:?}");
+    assert_eq!(weights.iter().filter(|w| (*w + 1.0 / 12.0).abs() < 1e-12).count(), 4, "{weights:?}");
+    assert_eq!(weights.iter().filter(|w| (*w - 1.0 / 3.0).abs() < 1e-12).count(), 4, "{weights:?}");
+}

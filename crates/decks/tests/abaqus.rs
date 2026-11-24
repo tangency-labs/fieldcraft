@@ -942,3 +942,37 @@ fn arc_length_steps() {
     m.replace_step(step("Snap", Procedure::NonlinearStatic(spherical), &["clamp"], &["end"])).unwrap();
     assert!(abaqus::write(&m).is_err());
 }
+
+#[test]
+fn a_distributing_coupling_writes_nodal_weights_on_faces() {
+    let mut m = cantilever();
+    m.add_reference_point("Tip", ReferencePoint { xyz: [110.0, 5.0, 5.0], label: 0 }).unwrap();
+    m.add_coupling("tie", Coupling { reference_point: "Tip".into(), set: "tip".into(), kind: CouplingKind::Distributing, dofs: Dofs::all() })
+        .unwrap();
+    let text = abaqus::write(&m).unwrap();
+    // The tip face is 10 × 10 mm: each of its four corner nodes has a quarter of the area.
+    let block = text.split("*SURFACE, TYPE=NODE, NAME=tie-nodes\n").nth(1).unwrap();
+    let lines: Vec<&str> = block.lines().take_while(|l| !l.starts_with('*')).collect();
+    let weights: Vec<(u32, f64)> = lines
+        .iter()
+        .map(|l| {
+            let (node, w) = l.split_once(',').unwrap();
+            (node.trim().parse().unwrap(), w.trim().parse().unwrap())
+        })
+        .collect();
+    assert_eq!(weights.iter().map(|(n, _)| *n).collect::<Vec<_>>(), vec![17, 18, 19, 20]);
+    assert!(weights.iter().all(|(_, w)| (w - 25.0).abs() < 1e-12 * 25.0), "{weights:?}");
+
+    // A set of nodes only keeps the equal weights.
+    m.add_set("pins", Set { nodes: vec![17, 18, 19, 20], ..Set::default() }).unwrap();
+    m.replace_coupling("tie", Coupling { reference_point: "Tip".into(), set: "pins".into(), kind: CouplingKind::Distributing, dofs: Dofs::all() })
+        .unwrap();
+    assert!(abaqus::write(&m).unwrap().contains("NAME=tie-nodes\npins, 1.0\n"));
+
+    // A set with faces and a node on none of them is refused.
+    m.add_set("mixed", Set { faces: vec![ElementFace { element: 4, face: 4 }], nodes: vec![1], ..Set::default() }).unwrap();
+    m.replace_coupling("tie", Coupling { reference_point: "Tip".into(), set: "mixed".into(), kind: CouplingKind::Distributing, dofs: Dofs::all() })
+        .unwrap();
+    let err = abaqus::write(&m).unwrap_err().to_string();
+    assert!(err.contains("on none of the set's element faces"), "{err}");
+}
