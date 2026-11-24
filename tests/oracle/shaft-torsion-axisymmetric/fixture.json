@@ -1,0 +1,17 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "tau_radial": {
+      "band": 1e-6,
+      "value": 1.3799597450361847e-13
+    },
+    "tau_surface": {
+      "band": 7.957747154594767e-8,
+      "value": -79.57747154594695
+    },
+    "utheta_end": {
+      "band": 9.852448858069713e-11,
+      "value": -0.09852448858069646
+    }
+  }
+}

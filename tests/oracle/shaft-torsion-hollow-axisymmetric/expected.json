@@ -1,0 +1,53 @@
+{
+ "title": "Hollow circular shaft in torsion, axisymmetric with twist (Saint-Venant)",
+ "kind": "theory",
+ "source": "Saint-Venant torsion of a circular shaft, Timoshenko and Goodier, Theory of Elasticity, 3rd ed., McGraw-Hill 1970, ch. 10",
+ "quantities": [
+  {
+   "id": "utheta_end",
+   "quantity": "displacement along Z, −r θ for a right-handed twist θ about +Y, at the outer surface of the loaded end (r = 20, axial position 100)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Torsion",
+     "at": [
+      [
+       20.0,
+       100.0,
+       0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/displacement/2"
+   },
+   "value": -0.10509278781941025,
+   "tolerance": {
+    "relative": 1e-9
+   },
+   "reason": "the eight-node element with straight sides holds u_θ = κ r z and its 3 × 3 rule integrates its forces exactly: round-off"
+  },
+  {
+   "id": "tau_mid_wall",
+   "quantity": "shear stress τ_zθ at the mid wall (r = 15, z = 40)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Torsion",
+     "at": [
+      [
+       15.0,
+       40.0,
+       0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/stress/5"
+   },
+   "value": -63.66197723675814,
+   "tolerance": {
+    "relative": 1e-9
+   },
+   "reason": "the eight-node element with straight sides holds u_θ = κ r z and its 3 × 3 rule integrates its forces exactly: round-off"
+  }
+ ]
+}
