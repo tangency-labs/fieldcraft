@@ -353,6 +353,8 @@ pub struct SaField {
     /// coefficient sum, and the next sub-step's ν̃.
     rates: Vec<(f64, f64)>,
     next: Vec<f64>,
+    /// Cells (sorted) whose eddy viscosity the momentum equations read from here, in place of ν̃ f_v1 ([`SaField::set_nu_t_override`]).
+    nu_t_override: Vec<(usize, f64)>,
 }
 
 /// The bytes a field takes per cell: ν̃, its six faces, its fluid flag and the scratch.
@@ -386,7 +388,7 @@ impl SaField {
         }
         let rates = crate::flow::filled(n, (0.0, 0.0), "Spalart–Allmaras rates")?;
         let next = crate::flow::filled(n, 0.0, "Spalart–Allmaras ν̃")?;
-        Ok(SaField { nu_tilde, sides, fluid, inflow, rates, next })
+        Ok(SaField { nu_tilde, sides, fluid, inflow, rates, next, nu_t_override: Vec::new() })
     }
 
     /// A field on a box of `dims` cells (x fastest), `fluid` per cell, each box face of `faces`
@@ -475,7 +477,28 @@ impl SaField {
 
     /// The eddy viscosity ν_t = max(0, ν̃ f_v1) of `cell` (0 outside the field).
     pub fn nu_t(&self, cell: usize, nu: f64) -> f64 {
+        if let Ok(k) = self.nu_t_override.binary_search_by_key(&cell, |&(c, _)| c) {
+            return self.nu_t_override.get(k).map_or(0.0, |&(_, v)| v);
+        }
         nu_t(self.nu_tilde.get(cell).copied().unwrap_or(0.0), nu)
+    }
+
+    /// The eddy viscosity ν̃ f_v1 of `cell` whatever the override (0 outside the field).
+    pub fn nu_t_plain(&self, cell: usize, nu: f64) -> f64 {
+        nu_t(self.nu_tilde.get(cell).copied().unwrap_or(0.0), nu)
+    }
+
+    /// Whether any cell's eddy viscosity is overridden.
+    pub fn has_nu_t_override(&self) -> bool {
+        !self.nu_t_override.is_empty()
+    }
+
+    /// Replaces the eddy viscosity the momentum equations read at these cells (`(cell, ν_t)`; ν̃ and its transport are untouched), for the
+    /// wall function's first-node viscosity. An empty list clears it. Not part of a checkpoint: the caller sets it every step.
+    pub fn set_nu_t_override(&mut self, mut values: Vec<(usize, f64)>) {
+        values.sort_by_key(|&(c, _)| c);
+        values.dedup_by_key(|&mut (c, _)| c);
+        self.nu_t_override = values;
     }
 
     /// The bytes its arrays hold (their capacities).

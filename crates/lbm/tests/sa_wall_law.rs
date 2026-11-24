@@ -43,8 +43,8 @@ mod wall_balance;
 
 use common::cases::*;
 use common::*;
-use fieldcraft_lbm::Flow;
 use fieldcraft_lbm::statistics::Blocks;
+use fieldcraft_lbm::{Flow, SaWallLayer};
 use fieldcraft_model::{Collision, FaceCondition, Procedure, Turbulence, WallModel};
 
 /// Lee & Moser (2015), Re_τ = 1000.512: U_b⁺ and C_f on the bulk velocity (see the module docs).
@@ -88,6 +88,19 @@ fn harmonic_transfer_floor(y: &[f64], nt: &[f64], u: &[f64], cf_1d: f64, cells: 
     };
     let newton_step = at(2.0 * h, u) - at(h, u);
     (step(1) / newton_step - 1.0, cf(step(1)), cf(newton_step))
+}
+
+/// The wall-layer corrections named in a comma-separated list (`FIELDCRAFT_SA_LAYER` of the first-rows run).
+fn layer_from(names: &str) -> SaWallLayer {
+    let mut layer = SaWallLayer::default();
+    for name in names.split(',').map(str::trim) {
+        match name {
+            "local" => layer.local_balance_node_one = true,
+            "" => {}
+            other => panic!("unknown wall-layer correction {other}"),
+        }
+    }
+    layer
 }
 
 /// A channel run's parameters.
@@ -173,13 +186,16 @@ impl Channel {
 
     /// Run to settling or the step cap.
     fn run(&self) -> ChannelResult {
-        self.run_with(false)
+        self.run_with(None, false)
     }
 
-    /// [`Channel::run`] with `freeze` ν̃ held at the one-dimensional solution's profile.
-    fn run_with(&self, freeze: bool) -> ChannelResult {
+    /// [`Channel::run`] with the wall-layer corrections `layer` set, and with `freeze` ν̃ held at the one-dimensional solution's profile.
+    fn run_with(&self, layer: Option<SaWallLayer>, freeze: bool) -> ChannelResult {
         let (setup, mut flow) = prepare(&self.model(), &[]);
         let grid = *flow.grid();
+        if let Some(layer) = layer {
+            flow.set_sa_wall_layer(layer).unwrap();
+        }
         if freeze {
             // ν̃/ν as a function of y/δ, y the cells from the nearer wall plane.
             let nu = (setup.tau_plus - 0.5) / 3.0;
@@ -527,6 +543,62 @@ fn a_frozen_nu_tilde_is_held_and_bad_fields_are_refused() {
     }
 }
 
+/// The first node's viscosity from the layer's own balance: with the switch, the harmonic mean of the first two nodes' ν + ν_t is the viscosity
+/// the stress balance t̄ Δy / ΔU gives over the interval (LaggedLayer), at every wall node; ν̃ is untouched; the guard counts what it switches off.
+#[test]
+fn the_first_node_viscosity_follows_the_layers_stress_balance() {
+    let ch = Channel {
+        re_tau: 1000.0,
+        cells: 48,
+        bulk_guess: LEE_MOSER_1000_BULK,
+        lattice_bulk: 0.1,
+        collision: Collision::Regularized,
+        turbulence: Some(sa(WallModel::SpalartAllmarasBounce)),
+        on_node: true,
+        max_steps: 100,
+        sample: 100,
+        settling: GATED,
+        sigma: None,
+    };
+    let (setup, mut flow) = prepare(&ch.model(), &[]);
+    let nu = (setup.tau_plus - 0.5) / 3.0;
+    // ν̃ held at 0.95 κ y u_τ with u_τ the channel's expected 0.1 / U_b⁺, so the layer's balance has a viscosity profile to read from the first step.
+    let rows = flow.grid().cells[1];
+    let held: Vec<f64> = (0..flow.grid().len())
+        .map(|c| {
+            let r = flow.grid().coords(c)[1];
+            0.95 * fieldcraft_lbm::sa::KAPPA * (r.min(rows - 1 - r) as f64) * 0.1 / LEE_MOSER_1000_BULK
+        })
+        .collect();
+    flow.freeze_sa_nu_tilde(held).unwrap();
+    flow.set_sa_wall_layer(SaWallLayer { local_balance_node_one: true }).unwrap();
+    for _ in 0..200 {
+        flow.step().unwrap();
+    }
+    let report = flow.sa_wall_layer_report();
+    assert!(report.node_one_evaluated >= 200 && report.node_one_off < report.node_one_evaluated, "{report:?}");
+    let field = flow.spalart_allmaras().unwrap();
+    let a = flow.acceleration();
+    let mut checked = 0;
+    for w in flow.wall_nodes().unwrap().nodes() {
+        let (c, k) = (w.interior as usize, usize::from(w.axis));
+        let mut p = flow.grid().coords(c);
+        p[k] = (p[k] as i64 + i64::from(w.inward)) as usize;
+        let c2 = flow.grid().index(p);
+        let tau = w.stress.iter().map(|x| x * x).sum::<f64>().sqrt();
+        let rho = flow.moments(c).map_or(1.0, |m| m.0);
+        let u_tau2 = tau / rho;
+        let g = -(0..3).map(|d| a[d] * w.stress[d] / tau).sum::<f64>();
+        let layer = fieldcraft_lbm::sa_law::LaggedLayer::new(u_tau2, g, nu).unwrap();
+        let eff = (u_tau2 + 1.5 * g) / layer.increment(u_tau2, 1.0, 2.0);
+        let harmonic = 2.0 / (1.0 / (nu + field.nu_t(c, nu)) + 1.0 / (nu + field.nu_t_plain(c2, nu)));
+        assert!((harmonic / eff - 1.0).abs() < 1e-9, "harmonic {harmonic} vs balance {eff}");
+        assert_ne!(field.nu_t(c, nu), field.nu_t_plain(c, nu), "the override is in force at the first node");
+        checked += 1;
+    }
+    assert!(checked > 0);
+}
+
 /// With SA under a wall model the harness reads the wall function's request, ρ u_τ² at each first
 /// fluid node: positive, finite and of the carried stress's order after a few hundred steps on
 /// Han's on-node wall and on Musker's halfway one (a smoke test of the reading, not the gate).
@@ -722,7 +794,7 @@ fn sa_law_channel_at_re_tau_550_meets_lee_and_moser() {
 ///
 /// ```text
 /// FIELDCRAFT_FIRST_ROWS=1 [FIELDCRAFT_CHANNEL_CELLS=24,32,48] [FIELDCRAFT_CHANNEL_COLLISION=regularized|hrr]
-///   [FIELDCRAFT_SA_FREEZE=newton]
+///   [FIELDCRAFT_SA_LAYER=local] [FIELDCRAFT_SA_FREEZE=newton]
 ///   cargo test --release -p fieldcraft-lbm --test sa_wall_law -- --ignored --nocapture first_rows
 /// ```
 ///
@@ -743,6 +815,7 @@ fn the_first_rows_of_the_sa_law_channel_beside_the_one_dimensional_solution() {
     let wall = WallModel::SpalartAllmarasBounce;
     let collision =
         if std::env::var("FIELDCRAFT_CHANNEL_COLLISION").is_ok_and(|v| v == "regularized") { Collision::Regularized } else { Collision::Hrr };
+    let layer = std::env::var("FIELDCRAFT_SA_LAYER").ok().map(|names| layer_from(&names));
     let freeze = std::env::var("FIELDCRAFT_SA_FREEZE").is_ok_and(|v| v == "newton");
     let grid = sa_1d::grid(1200, 0.05 * sa_1d::NU, 1.0);
     let (nt, y, _, _) = sa_1d::solve_newton(sa_1d::NU, &grid);
@@ -764,7 +837,7 @@ fn the_first_rows_of_the_sa_law_channel_beside_the_one_dimensional_solution() {
         );
     }
     for cells in cells {
-        let r = channel_at_re_tau_1000(wall, cells, collision, 2_000_000).run_with(freeze);
+        let r = channel_at_re_tau_1000(wall, cells, collision, 2_000_000).run_with(layer, freeze);
         println!(
             "{wall:?}, {cells} cells per δ: settled {}, C_f {:.5e}, {:+.2} % from the 1-D solution's {cf_1d:.5e}",
             r.settled,

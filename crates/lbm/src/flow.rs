@@ -640,6 +640,28 @@ impl ThermalState {
     }
 }
 
+/// Corrections of the near-wall layer of the Spalart–Allmaras wall law on Han's on-node wall, each a switch, all off by default
+/// ([`Flow::set_sa_wall_layer`]). They are validated for attached, body-force-driven channel flow between plane walls, and each has its own guard
+/// (below) that switches it off cell by cell where that does not hold; none reads a pressure gradient.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SaWallLayer {
+    /// The first fluid node's viscosity in the momentum equations is set so that the harmonic mean with the second node's gives the velocity
+    /// increment the layer's own stress balance gives over the interval (τ_w + G y, G the body acceleration's negative along the wall stress,
+    /// with the wall function's ν + ν_t): [`crate::sa_law::LaggedLayer`]. ν̃ and the traction are untouched. Guard: off at a node where the
+    /// velocity along the wall stress does not have one sign at the first two fluid nodes, or the balance gives no usable viscosity (a
+    /// non-finite or non-positive value, or one that would be negative), counted in [`Flow::sa_wall_layer_report`].
+    pub local_balance_node_one: bool,
+}
+
+/// How often the wall-layer corrections ran and how often their guards switched them off ([`Flow::sa_wall_layer_report`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SaWallLayerReport {
+    /// Node-one viscosity evaluations (one per wall node and step).
+    pub node_one_evaluated: u64,
+    /// Of those, the ones a guard switched off.
+    pub node_one_off: u64,
+}
+
 /// The flow state.
 #[derive(Debug, Clone)]
 pub struct Flow {
@@ -716,6 +738,8 @@ pub struct Flow {
     /// The hybrid collision's σ, and with it or with Vreman's model every cell's velocity before
     /// the collision (for the finite-difference gradient; empty otherwise).
     sigma: f64,
+    /// The wall-layer switches ([`SaWallLayer`]).
+    wall_layer: SaWallLayer,
     gradient_u: Vec<[f64; 3]>,
     /// Whether σ is dynamic (set per cell from the subgrid model, [`crate::hrr`]), and then its
     /// smallest and mean value over the fluid cells in the last collision.
@@ -770,6 +794,8 @@ struct SaState {
     wall: Vec<(usize, f64, f64)>,
     /// A test mode ([`Flow::freeze_sa_nu_tilde`]): ν̃ held at this field after every transport, the wall function's values included.
     frozen: Option<Vec<f64>>,
+    /// The wall-layer corrections' counts ([`Flow::sa_wall_layer_report`]).
+    layer_report: SaWallLayerReport,
 }
 
 /// Cells per parallel block of the collision and the streaming: about a 256th of the grid, so a
@@ -1485,6 +1511,7 @@ impl Flow {
                     law,
                     wall: Vec::new(),
                     frozen: None,
+                    layer_report: SaWallLayerReport::default(),
                 })
             }
         };
@@ -1529,6 +1556,7 @@ impl Flow {
             cell_force,
             cell_u,
             sigma: setup.sigma,
+            wall_layer: SaWallLayer::default(),
             dynamic: setup.dynamic_sigma,
             sigma_stats: None,
             gradient_u: if setup.collision == Collision::Hrr || setup.vreman > 0.0 || setup.spalart_allmaras.is_some() {
@@ -1859,6 +1887,45 @@ impl Flow {
     #[doc(hidden)]
     pub fn sa_nu_tilde_frozen(&self) -> bool {
         self.sa.as_ref().is_some_and(|s| s.frozen.is_some())
+    }
+
+    /// The wall-layer switches in force ([`SaWallLayer`]).
+    pub fn sa_wall_layer(&self) -> SaWallLayer {
+        self.wall_layer
+    }
+
+    /// How often the wall-layer corrections ran and were switched off by their guards since the flow was built.
+    pub fn sa_wall_layer_report(&self) -> SaWallLayerReport {
+        self.sa.as_ref().map(|s| s.layer_report).unwrap_or_default()
+    }
+
+    /// Sets the wall-layer switches ([`SaWallLayer`]); not part of a checkpoint, so a restarted run sets them again. Refused unless
+    /// the flow has Han's on-node wall with the Spalart–Allmaras model's own wall law, the layer they correct.
+    pub fn set_sa_wall_layer(&mut self, layer: SaWallLayer) -> Result<()> {
+        let on = layer != SaWallLayer::default();
+        if on && !(self.nodes.is_some() && self.sa.as_ref().is_some_and(|s| s.law == Some(crate::sa::WallLaw::SpalartAllmaras))) {
+            return Err(Error::Invalid(
+                "the wall-layer corrections need Han's on-node wall with `spalart_allmaras_bounce` (the Spalart–Allmaras wall law)".into(),
+            ));
+        }
+        if on && let Some(nodes) = &self.nodes {
+            // Plane walls only: a cell that two walls share (an edge or a corner of the box) has no single wall direction.
+            let mut interior: Vec<u32> = nodes.nodes().iter().map(|w| w.interior).collect();
+            interior.sort_unstable();
+            if interior.windows(2).any(|w| w[0] == w[1]) {
+                return Err(Error::Invalid(
+                    "not supported yet: the wall-layer corrections beside edges and corners (two walls on one first fluid node)".into(),
+                ));
+            }
+        }
+        self.wall_layer = layer;
+        if !layer.local_balance_node_one
+            && let Some(sa) = &mut self.sa
+        {
+            // Turning the first-node viscosity off takes effect at once, not after one more collision on the old values.
+            sa.field.set_nu_t_override(Vec::new());
+        }
+        Ok(())
     }
 
     /// The boundary nodes of the on-node wall-function bounce (`spalding_bounce`).
@@ -2657,6 +2724,14 @@ impl Flow {
         self.walls.as_ref().and_then(|d| d.distance(cell))
     }
 
+    /// The friction velocity u_τ = √(|τ| / ρ) (lattice units) of an on-node wall from the stress it applied and the density at its first
+    /// fluid node; 0 where either is not usable. The one place it comes from for the wall function and the wall-layer corrections.
+    fn wall_u_tau(&self, w: &WallNode) -> f64 {
+        let tau = w.stress.iter().map(|s| s * s).sum::<f64>().sqrt();
+        let ut = self.moments(w.interior as usize).map_or(0.0, |(rho, _)| (tau / rho).sqrt());
+        if ut.is_finite() { ut } else { 0.0 }
+    }
+
     /// With the hybrid collision or Vreman's model, before the collision: every fluid cell's velocity (with the half force),
     /// computed exactly as the collision computes it (the wall model's reconstruction included),
     /// into `gradient_u`, by fixed blocks in parallel (each cell writes only its own slot), for the
@@ -2742,6 +2817,45 @@ impl Flow {
         if let Some(values) = &sa.frozen {
             sa.field.set_nu_tilde(values)?;
         }
+        // The first node's momentum viscosity from the layer's own balance (SaWallLayer::local_balance_node_one).
+        if self.wall_layer.local_balance_node_one
+            && let Some(nodes) = &self.nodes
+        {
+            let mut over = Vec::new();
+            for w in nodes.nodes() {
+                let (c, k) = (w.interior as usize, usize::from(w.axis));
+                let mut p = self.grid.coords(c);
+                p[k] = (p[k] as i64 + i64::from(w.inward)).clamp(0, self.grid.cells[k] as i64 - 1) as usize;
+                let c2 = self.grid.index(p);
+                // `wall` is in cell order, one entry per first fluid node.
+                let ut = wall.binary_search_by_key(&c, |x| x.0).map_or(0.0, |i| wall[i].2);
+                let tau = w.stress.iter().map(|x| x * x).sum::<f64>().sqrt();
+                sa.layer_report.node_one_evaluated += 1;
+                let value = (tau > 0.0 && ut > 0.0)
+                    .then(|| {
+                        let dir = w.stress.map(|x| x / tau);
+                        let along = |u: [f64; 3]| u[0] * dir[0] + u[1] * dir[1] + u[2] * dir[2];
+                        let (u1, u2) = (self.gradient_u.get(c).copied().unwrap_or([0.0; 3]), self.gradient_u.get(c2).copied().unwrap_or([0.0; 3]));
+                        // The stress along the wall: the body acceleration along it, G = −f·dir (the pressure gradient is not read).
+                        let g = -along(self.acceleration);
+                        (along(u1) * along(u2) > 0.0).then_some(())?;
+                        let layer = crate::sa_law::LaggedLayer::new(ut * ut, g, nu)?;
+                        let (t_bar, du) = (ut * ut + 1.5 * g, layer.increment(ut * ut, 1.0, 2.0));
+                        let eff = t_bar / du;
+                        let second = nu + sa.field.nu_t_plain(c2, nu);
+                        let inv = 2.0 / eff - 1.0 / second;
+                        (t_bar * du > 0.0 && eff.is_finite() && inv > 0.0 && inv.is_finite()).then(|| 1.0 / inv - nu).filter(|v| *v >= 0.0)
+                    })
+                    .flatten();
+                match value {
+                    Some(nu_t) => over.push((c, nu_t)),
+                    None => sa.layer_report.node_one_off += 1,
+                }
+            }
+            sa.field.set_nu_t_override(over);
+        } else if sa.field.has_nu_t_override() {
+            sa.field.set_nu_t_override(Vec::new());
+        }
         sa.wall = wall;
         Ok(())
     }
@@ -2754,16 +2868,7 @@ impl Flow {
     /// - Musker's wall model: the u_τ of its wall law at each modelled wall cell, y its distance.
     fn wall_friction(&self) -> Vec<(usize, f64, f64)> {
         let mut out: Vec<(usize, f64, f64)> = if let Some(nodes) = &self.nodes {
-            nodes
-                .nodes()
-                .iter()
-                .map(|w| {
-                    let cell = w.interior as usize;
-                    let tau = w.stress.iter().map(|s| s * s).sum::<f64>().sqrt();
-                    let ut = self.moments(cell).map_or(0.0, |(rho, _)| (tau / rho).sqrt());
-                    (cell, 1.0, if ut.is_finite() { ut } else { 0.0 })
-                })
-                .collect()
+            nodes.nodes().iter().map(|w| (w.interior as usize, 1.0, self.wall_u_tau(w))).collect()
         } else if let Some(walls) = self.walls.as_ref().filter(|_| self.wall_model) {
             walls.friction_velocities(|cell| self.moments(cell).map_or([0.0; 3], |m| m.1)).collect()
         } else {
@@ -3436,8 +3541,8 @@ impl crate::backend::Backend for Flow {
         if !self.characteristic.is_empty() {
             return Err(Error::Invalid("not supported yet: a checkpoint of a characteristic outlet".into()));
         }
-        if self.sa_nu_tilde_frozen() {
-            return Err(Error::Invalid("not supported yet: a checkpoint with ν̃ held at a given field".into()));
+        if self.wall_layer != SaWallLayer::default() || self.sa_nu_tilde_frozen() {
+            return Err(Error::Invalid("not supported yet: a checkpoint with a wall-layer correction or a frozen ν̃ in force".into()));
         }
         // Streaming targets are allocated once, not cloned into a separate snapshot.
         self.targets()?;
@@ -3488,6 +3593,8 @@ impl crate::backend::Backend for Flow {
             sigma,
             // Each cell's velocity before the collision, rebuilt from `f` at the start of a step.
             gradient_u: _,
+            // Refused above while a switch is on.
+            wall_layer: _,
             dynamic,
             sigma_stats,
             periodic,

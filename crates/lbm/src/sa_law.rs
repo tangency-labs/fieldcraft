@@ -157,6 +157,111 @@ pub fn friction_velocity(speed: f64, y: f64, nu: f64) -> f64 {
     if ut.is_finite() { ut } else { 0.0 }
 }
 
+// ---------------------------------------------------------------------------------------------
+// A layer with a streamwise stress gradient
+// ---------------------------------------------------------------------------------------------
+//
+// With a body force G along the flow (the acceleration's negative, per unit density) the total stress in the near-wall layer is
+// τ_w + G y, not constant, and the model's ν̃ follows it. With the stress u_τ²(1 + β y) the steady one-dimensional equation at large χ
+// (ν_t = ν̃, S̃ = stress / ν̃) is solved by ν̃ = κ y u_τ w(y), w = 1 + a β y + O(y²): order y⁰ is the constant-stress identity (the
+// definition of c_w1) and order y¹ gives
+//
+//   c_b1 β − c_w1 κ² [f_w'(1) (2a − β) + 2a] + (κ²/σ) [4 a (1 + c_b2) + 2a] = 0,
+//
+// linear in a, from the model's constants alone ([`taper_coefficient`], a = 0.9058). So ν̃ = κ y u_* with
+// u_* = √|s| (1 + q), q = (a − ½) y s' / |s| (s the stress, s' its slope along y, limited to |q| ≤ 1, where the expansion is a correction).
+
+/// The coefficient `a` of the first-order taper of ν̃, from the model's constants only. See the section's comment for the equation.
+pub fn taper_coefficient() -> f64 {
+    static A: OnceLock<f64> = OnceLock::new();
+    *A.get_or_init(|| {
+        use crate::sa::{C_B1, C_B2, C_W2, C_W3, SIGMA, c_w1};
+        let k2 = KAPPA * KAPPA;
+        let c6 = C_W3.powi(6);
+        // d f_w / d r at r = 1: g = r + c_w2 (r⁶ − r) has g'(1) = 1 + 5 c_w2 and f_w = g ((1 + c⁶) / (g⁶ + c⁶))^(1/6) has
+        // d f_w / d g = c⁶ / (1 + c⁶) at g = 1.
+        let fp = (1.0 + 5.0 * C_W2) * c6 / (1.0 + c6);
+        let cw1k2 = c_w1() * k2;
+        // c_b1 β − cw1k2 [fp (2a − β) + 2a] + (k2/σ) [4 a (1 + c_b2) + 2a] = 0, linear in a.
+        let a_coeff = -cw1k2 * (2.0 * fp + 2.0) + k2 / SIGMA * (4.0 * (1.0 + C_B2) + 2.0);
+        let beta_coeff = C_B1 + cw1k2 * fp;
+        -beta_coeff / a_coeff
+    })
+}
+
+/// The closure's eddy viscosity ν_t = ν̃ f_v1(ν̃ / ν), ν̃ = κ y u_*, at height `y` where the total stress per unit density is `s` and its slope
+/// along y is `ds`. 0 for a stress of zero or numbers that are not usable.
+fn closure_eddy_viscosity(s: f64, ds: f64, y: f64, nu: f64) -> f64 {
+    if !(s.is_finite() && ds.is_finite() && y > 0.0 && y.is_finite() && nu > 0.0 && nu.is_finite()) {
+        return 0.0;
+    }
+    // The closure sees the slope of the stress's magnitude.
+    let ds = if s >= 0.0 { ds } else { -ds };
+    let a = s.abs();
+    if !(a > 0.0) {
+        return 0.0;
+    }
+    let q = ((taper_coefficient() - 0.5) * y * ds / a).clamp(-1.0, 1.0);
+    let nt = KAPPA * y * a.sqrt() * (1.0 + q);
+    let nu_t = nt * f_v1(nt / nu);
+    if nu_t.is_finite() { nu_t } else { 0.0 }
+}
+
+/// The nodes of the quadrature: y = y₀ + (y₁ − y₀) t², t uniform (the integrand is smooth in t and the nodes cluster at the lower end, where
+/// ν_t changes fastest). Even, for Simpson's rule.
+const QUADRATURE_NODES: usize = 96;
+
+/// The layer of a wall node with the viscosity profile ν + ν_t(y) **lagged**: the closure evaluated at the stress profile `t_prev + g y` of
+/// the last update (`t_prev` the wall stress per unit density, `g` the stress gradient along the flow). With that profile fixed the velocity
+/// increment over an interval is affine in the wall stress, `U(y₁) − U(y₀) = ∫ (t_w + g y) / (ν + ν_t) dy`, finite where the stress changes
+/// sign (nothing is divided by u_τ or by t_w). `new` is `None` for a number that is not usable.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LaggedLayer {
+    t_prev: f64,
+    g: f64,
+    nu: f64,
+}
+
+impl LaggedLayer {
+    pub fn new(t_prev: f64, g: f64, nu: f64) -> Option<Self> {
+        (t_prev.is_finite() && g.is_finite() && nu > 0.0 && nu.is_finite()).then_some(Self { t_prev, g, nu })
+    }
+
+    /// `(I₀, J)` over `[y0, y1]` (0 ≤ y0 < y1): I₀ = ∫ dy / (ν + ν_t) and J = ∫ g y / (ν + ν_t) dy, by Simpson's rule in t.
+    fn moments(&self, y0: f64, y1: f64) -> (f64, f64) {
+        if !(y0.is_finite() && y1.is_finite() && y0 >= 0.0 && y1 > y0) {
+            return (0.0, 0.0);
+        }
+        let n = QUADRATURE_NODES;
+        let dt = 1.0 / n as f64;
+        let (mut i0, mut j) = (0.0, 0.0);
+        for k in 0..=n {
+            let t = k as f64 * dt;
+            let y = y0 + (y1 - y0) * t * t;
+            let w = if k == 0 || k == n {
+                1.0
+            } else if k % 2 == 1 {
+                4.0
+            } else {
+                2.0
+            };
+            let nu_t = if y > 0.0 { closure_eddy_viscosity(self.t_prev + self.g * y, self.g, y, self.nu) } else { 0.0 };
+            let f = 2.0 * (y1 - y0) * t / (self.nu + nu_t);
+            i0 += w * f;
+            j += w * f * self.g * y;
+        }
+        let c = dt / 3.0;
+        (i0 * c, j * c)
+    }
+
+    /// The velocity increment `U(y₁) − U(y₀)` for the wall stress `t_w`. 0 if not finite.
+    pub fn increment(&self, t_w: f64, y0: f64, y1: f64) -> f64 {
+        let (i0, j) = self.moments(y0, y1);
+        let du = t_w * i0 + j;
+        if du.is_finite() { du } else { 0.0 }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,5 +444,59 @@ mod tests {
         let last = table().y.last().copied().unwrap_or(Y_PLUS_MAX);
         assert_eq!(u_plus(1e9), u_plus(last));
         assert!(table().y.len() <= MAX_NODES && table().y.last().is_some_and(|y| *y >= Y_PLUS_MAX));
+    }
+
+    /// The taper coefficient from the model's constants, and the constant-stress law reproduced by the layer at zero gradient.
+    #[test]
+    fn the_taper_coefficient_and_the_zero_gradient_limit() {
+        assert!((taper_coefficient() - 0.9058).abs() < 2e-4, "{}", taper_coefficient());
+        let nu = 1e-3;
+        for h in [0.005, 0.02, 0.1, 0.5] {
+            for tau in [1e-6f64, 1e-4, 1e-2, 1.0] {
+                let ut = tau.sqrt();
+                let law = ut * u_plus(h * ut / nu);
+                let layer = LaggedLayer::new(tau, 0.0, nu).expect("usable");
+                let quad = layer.increment(tau, 0.0, h);
+                assert!((quad - law).abs() <= 2e-6 * law.abs() + 1e-15, "h {h} tau {tau}: {quad} vs {law}");
+            }
+        }
+    }
+
+    /// `a` recomputed from the constants by a route that shares no code with [`taper_coefficient`]: the order-y¹ balance
+    /// with f_w'(1) by a central difference of [`f_w`] and the equation solved for `a` by bisection.
+    #[test]
+    fn the_taper_coefficient_is_recomputed_from_the_constants() {
+        let (k2, s) = (KAPPA * KAPPA, SIGMA);
+        let h = 1e-6;
+        let fp = (f_w(1.0 + h) - f_w(1.0 - h)) / (2.0 * h);
+        let beta = 1.0;
+        let residual = |a: f64| C_B1 * beta - c_w1() * k2 * (fp * (2.0 * a - beta) + 2.0 * a) + k2 / s * (4.0 * a * (1.0 + C_B2) + 2.0 * a);
+        let (mut lo, mut hi) = (-10.0, 10.0);
+        for _ in 0..200 {
+            let mid = 0.5 * (lo + hi);
+            if residual(lo) * residual(mid) <= 0.0 { hi = mid } else { lo = mid }
+        }
+        assert!((0.5 * (lo + hi) - taper_coefficient()).abs() < 1e-7, "{} vs {}", 0.5 * (lo + hi), taper_coefficient());
+    }
+
+    /// The layer is one consistent profile: increments add over adjacent intervals, the increment is affine in the wall stress, and numbers
+    /// that are not usable give no layer or a zero increment.
+    #[test]
+    fn the_lagged_layer_is_one_consistent_profile() {
+        let (nu, h) = (1e-3, 0.05);
+        let layer = LaggedLayer::new(0.03, 0.4, nu).expect("usable");
+        let t_w = 0.021;
+        let u = layer.increment(t_w, 0.0, h);
+        let sum = layer.increment(t_w, 0.0, 0.3 * h) + layer.increment(t_w, 0.3 * h, h);
+        assert!((sum / u - 1.0).abs() < 1e-6, "{sum} vs {u}");
+        let at = |t: f64| layer.increment(t, 0.2 * h, h);
+        assert!(((at(0.03) - at(0.02)) - (at(0.04) - at(0.03))).abs() < 1e-12);
+        assert!(LaggedLayer::new(f64::NAN, 0.0, nu).is_none());
+        assert!(LaggedLayer::new(0.0, f64::INFINITY, nu).is_none());
+        assert!(LaggedLayer::new(0.0, 0.0, 0.0).is_none());
+        assert_eq!(layer.increment(t_w, h, 0.5 * h), 0.0);
+        // A stress that changes sign inside the interval stays finite.
+        let crossing = LaggedLayer::new(-0.1, 4.0, nu).expect("usable");
+        assert!(crossing.increment(-0.1, 0.0, h).is_finite());
     }
 }
