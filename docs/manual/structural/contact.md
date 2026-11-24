@@ -467,8 +467,10 @@ Self contact, in `crates/explicit/tests/self_contact.rs`:
 The fix that came with these tests (the depth limit also halving the current thickness at its
 thinnest, and a face never meeting a face of its own element) accepts no point that was refused before, and
 refuses a point that was accepted only where it lies deeper than half the current thickness of
-a squeezed element. Everywhere else nothing changes: the contact tests that were there before
-the fix (`crates/explicit/tests/contact.rs`) give the same results bit for bit.
+a squeezed element. Everywhere else nothing changes: the 14 solves of the contact tests that
+were there before the fix and are not marked heavy (`crates/explicit/tests/contact.rs`) give the
+same results bit for bit (compared by a digest of everything each run reports); the heavy
+`spheres_collide_as_hertz_says` was not compared that way and passes its own assertions.
 
 Nonlinear static, oracle cases:
 
@@ -526,8 +528,13 @@ folds onto itself (heavy suite).
 - The depth limit follows the current element, at its thinnest: where the pressure is high
   enough that the penalty's penetration p/ε passes half of the thinnest part of an element
   crushed under the face (for a tapered element, its thinnest corner), those points let go. The
-  thickness is measured from the face's centre along its normal, so over a strongly warped face
-  it is off by about the warp. The penetration is reported (`max_penetration`); a smaller `penalty_scale` makes it worse.
+  thickness is how far behind the face each of the element's other nodes lies, taken at the
+  closest point of the face's own surface, so a warped face is measured as it is; that the far
+  side of the layer is at least that far away is exact for flat layers and not proven for
+  extreme warp. `max_penetration` reports only the points the depth limit accepts: a point that
+  has let go is not counted, so it can stay small, or zero, while surfaces pass through each
+  other, and it never shows a penetration deeper than the limit. A smaller `penalty_scale`
+  makes the penetration larger.
 - Rigid walls are fixed planes in explicit dynamic steps only.
 - `interaction.contact.find` looks at solid elements only.
 - Caps: 1000 contacts per model; 10⁷ contact faces in explicit (`max_contact_faces`), 2 · 10⁶ in
