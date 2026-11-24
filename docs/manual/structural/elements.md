@@ -17,12 +17,12 @@ from the published literature, and the deck writers map each element to each sol
 | **Step procedure** | every structural procedure; which elements each accepts is in [Availability by procedure](#availability-by-procedure) |
 | **Solver** | `crates/fem` kernels, assembled by `crates/solver` (implicit, CPU, f64) and `crates/explicit` |
 | **Method** | isoparametric displacement elements (Zienkiewicz, Taylor & Zhu 2013; Hughes 2000), incompatible modes (Wilson et al. 1973; Taylor, Beresford & Wilson 1976), mixed u–p (Hughes 2000 §4.3–4.5), MITC shells (Dvorkin & Bathe 1984; Lee & Bathe 2004), interdependent Timoshenko beam (Friedman & Kosmatka 1993) |
-| **Verified by** | patch tests of every element and formulation, `patch-*`, `mh-solid-patch`, `cantilever-*`, `lame-cylinder*`, `kirsch-plate*`, `mh-thick-cylinder`, NAFEMS LE1–LE7, `scordelis-lo-roof-*`, `pinched-cylinder`, `pinched-hemisphere`; `crates/solver/tests/{verification,plane,structural,hybrid,one_d}.rs`, `crates/fem/src/basis.rs` tests |
+| **Verified by** | patch tests of every element and formulation, `patch-*`, `mh-solid-patch`, `cantilever-*`, `lame-cylinder*`, `kirsch-plate*`, `mh-thick-cylinder`, NAFEMS LE1–LE7, `scordelis-lo-roof-*`, `pinched-cylinder`, `pinched-hemisphere`; `crates/solver/tests/{verification,plane,structural,hybrid,one_d}.rs` (including `euler_bernoulli_cantilever_deflection_is_exact`, `euler_bernoulli_portal_frame_matches_the_slope_deflection_solution`, `euler_bernoulli_cantilever_frequencies`), `crates/fem/src/basis.rs` tests |
 
 ## Synopsis
 
-A solid section with incompatible-mode hexahedra, a hybrid section for rubber, a shell and a
-beam:
+A solid section with incompatible-mode hexahedra, a hybrid section for rubber, a shell, a
+Timoshenko beam and an Euler–Bernoulli beam:
 
 ```json
 {"command": "model.section.create", "params": {"name": "body", "set": "all", "material": "Steel",
@@ -34,6 +34,10 @@ beam:
 {"command": "model.section.create", "params": {"name": "frame", "set": "members", "material": "Steel",
   "kind": {"type": "beam", "profile": {"type": "i", "height": 100, "width": 50, "web": 5, "flange": 8},
            "orientation": [0, 0, 1]}}}
+{"command": "model.section.create", "params": {"name": "post", "set": "posts", "material": "Steel",
+  "kind": {"type": "beam", "profile": {"type": "rectangle", "width": 20, "height": 20},
+           "orientation": [0, 1, 0]},
+  "formulation": {"beam_theory": "euler_bernoulli"}}}
 ```
 
 ## Parameters
@@ -50,7 +54,7 @@ beam:
 | `thickness` | > 0 | — | shell or plane stress/strain thickness |
 | `offset` | −0.5 to 0.5 | 0 | shell reference surface offset from the mid-surface, as a fraction of the thickness (0.5: on the side the normal points to) |
 | `points` | 1 to 15 | 5 | shell integration points through the thickness |
-| `type` | `beam` | — | two-node Timoshenko beam (beam2) |
+| `type` | `beam` | — | two-node beam (beam2): Timoshenko, or Euler–Bernoulli by the formulation |
 | `profile` | `rectangle {width, height}`, `circle {radius}`, `pipe {radius, thickness}`, `i {height, width, web, flange}`, `box {width, height, thickness}` | — | the cross-section; `width` along local y, `height` along local z |
 | `orientation` | `[x, y, z]`, nonzero, not along the beam | — | the profile's local y direction, projected normal to each beam's axis |
 | `type` | `rod` | — | truss (rod2, rod3) |
@@ -66,6 +70,7 @@ mixed in one model (trusses may join either).
 | `integration` | `full`, `reduced` | `full` | `reduced` exists for hex20 (2 × 2 × 2) and quad8 (2 × 2), and for hex8 in explicit dynamics (one point with hourglass control); elsewhere it is refused |
 | `incompatible_modes` | `true`, `false` | `false` | enhanced bending modes: hex8 (solid sections) and quad4 (2D sections) only; needs full integration |
 | `hybrid` | `true`, `false` | `false` | mixed displacement–pressure: solid, plane strain and axisymmetric sections only; isotropic materials only |
+| `beam_theory` | `timoshenko`, `euler_bernoulli` | `timoshenko` | beam sections only; Euler–Bernoulli is the shear-rigid Hermite cubic element without rotary inertia in bending |
 
 ### Discrete elements
 
@@ -315,6 +320,13 @@ z = x × y (its `height` direction).
   K = ∫ (EI θ′ᵀ θ′ + G A_s (w′ − θ)ᵀ (w′ − θ)) dx and consistent mass
   M = ∫ (ρA N_wᵀ N_w + ρI N_θᵀ N_θ) dx are integrated exactly with four Gauss points; Φ → 0 is
   the Euler–Bernoulli (Hermite) element. The rotation about y is −dw/dx in the x–z plane.
+- Euler–Bernoulli (`beam_theory: euler_bernoulli`): the shear-rigid limit Φ = 0 is evaluated exactly,
+  with no penalty on the shear term, giving K = EI/L³ [[12, 6L, −12, 6L], [6L, 4L², −6L, 2L²],
+  [−12, −6L, 12, −6L], [6L, 2L², −6L, 4L²]] per bending plane (Przemieniecki 1968, §5.6; Cook,
+  Malkus, Plesha & Witt 2002, §2.3). The consistent mass is ρAL/420 times [[156, 22L, 54, −13L],
+  [22L, 4L², 13L, −3L²], [54, 13L, 156, −22L], [−13L, −3L², −22L, 4L²]] (Przemieniecki 1968, §11;
+  Cook et al. 2002, §11.3), with no bending rotary inertia ρI. The lumped mass keeps its rule, so the
+  bending rotary diagonal at each node is ρAL³/78.
 - Lumped mass: half the mass on each node's translations, half the polar inertia on the twist,
   the consistent bending rotary diagonal scaled like the translations.
 - End forces are K u minus the consistent loads of the element's body force: N, V_y, V_z, T,
@@ -401,7 +413,11 @@ Belytschko–Schwer resultant beam (ELEMENT_BEAM_ORIENTATION) given the profile'
 moments, torsion constant and shear area, the numbers this element uses (isotropic elastic
 materials only; I and box profiles whose shear areas differ by direction have no LS-DYNA
 counterpart, its resultant beams taking one shear area);
-pyramid5 to C3D5, CPYRAM and an LS-DYNA degenerate solid.
+pyramid5 to C3D5, CPYRAM and an LS-DYNA degenerate solid. The Euler–Bernoulli beam (`beam_theory`
+euler_bernoulli) has no shear flexibility: B33 with the same BEAM SECTION as B31; CBAR with a PBAR
+of A, I1, I2 and J and blank shear factors K1 and K2 (Nastran; PBEAML and PBARL compute shear factors
+from the shape, so neither can express it); no LS-DYNA counterpart is written, its resultant beam
+always taking a shear area, so that deck is refused by name.
 
 ## Algorithm
 
@@ -543,6 +559,9 @@ four: equilibrium does not depend on the formulation.
 | Scordelis–Lo roof, pinched cylinder, pinched hemisphere with an 18° hole (MITC4) | benchmark | 1.12 %, 1.15 %, 1.86 % | 2 % | `scordelis-lo-roof-shell`, `pinched-cylinder`, `pinched-hemisphere` |
 | Timoshenko cantilever beam, deflection and end forces | theory | < 10⁻⁹ | exact | `cantilever_beam_deflection_is_exact` |
 | Portal frame (slope-deflection with Timoshenko members) | theory | sway and base moment < 5·10⁻⁴, joint rotation < 3·10⁻³ | as stated | `portal_frame_matches_the_slope_deflection_solution` |
+| Euler–Bernoulli cantilever, deflection in both bending planes, 1 and 4 elements | theory | < 6·10⁻¹⁴ (measured); the omitted shear term would be 14 % | 10⁻⁹ | `euler_bernoulli_cantilever_deflection_is_exact` |
+| Euler–Bernoulli portal frame, sway, rotation, lift and base moment, 1 and 3 elements per member (columns' axial flexibility in closed form) | theory | < 7·10⁻¹² (measured) | 10⁻⁹ | `euler_bernoulli_portal_frame_matches_the_slope_deflection_solution` |
+| Euler–Bernoulli cantilever frequencies, consistent mass (4th order) and lumped mass (2nd order) | theory | consistent: 0 < error < 1.1 × (β_k L/n)⁴/1440 and order 3.9–4.1 (n = 10 → 20); lumped: order 1.9–2.1 (20 → 40), |error| < 5·10⁻³ | as stated | `euler_bernoulli_cantilever_frequencies` |
 | Trusses by the method of joints (Pratt, tripod), three-bar truss, rod3 patch, hanging bar | theory | < 10⁻¹⁰ | exact | `crates/solver/tests/one_d.rs` |
 | Kirsch plate, Lamé cylinder, rotating disc and cylinder in 2D | theory | see [Linear static](linear-static.md#verification) | | `crates/solver/tests/plane.rs` |
 | Shape functions, every family | theory | Kronecker delta, partition of unity, monomial reproduction to `degree()` with gradients and Hessians, derivatives against central differences, physical Hessians on affine and curved maps | round-off | `basis::tests`, `dof::tests`, `jet::tests` |
@@ -557,7 +576,7 @@ explicit, engine and io test suites hashed identically before and after.
   see Shells); isotropic,
   homogeneous sections; no initial-stress stiffness (refused in buckling), no large rotations
   (refused in nonlinear steps), no heat conduction, no thermal strain.
-- Beams: two-node Timoshenko only; isotropic material; no warping of open sections; refused in
+- Beams: two-node only (Timoshenko or Euler–Bernoulli); isotropic material; no warping of open sections; refused in
   buckling, nonlinear and heat transfer steps; no thermal strain.
 - Trusses: isotropic Young's modulus only; refused in buckling and nonlinear steps.
 - Reduced integration exists for hex20 and quad8 only in implicit analyses; reduced hex8 and quad4
@@ -568,7 +587,7 @@ explicit, engine and io test suites hashed identically before and after.
 - Material axes are the global axes: there are no material orientations.
 - A 2D model takes no couplings, no shells or beams; an axisymmetric model takes no trusses,
   point masses, springs or dashpots.
-- Not implemented: Euler–Bernoulli (cubic), three-node and planar 2D beams; pipe and elbow
+- Not implemented: three-node and planar 2D beams; pipe and elbow
   elements; open-section beams with warping; rebar and stringers; generalized plane strain,
   axisymmetric elements with twist and axisymmetric shells; quad8 and tri6 shells, continuum
   shells and composite ply layups; membranes and surface elements; a modified quadratic tet;
