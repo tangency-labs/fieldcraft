@@ -1,13 +1,16 @@
 //! The Spalart–Allmaras model on the GPU against the CPU. Each bar is derived from f32 arithmetic (Higham's γ_k and
 //! the constants below: the errors of N sub-steps add, to first order, since the perturbation obeys the same stencil,
 //! whose coefficients sum to at most 1, so a sub-step does not amplify it) or is a stated tolerance of this suite,
-//! named at its use; none is set from a measurement. The wall distance on the device is the CPU's rounded to f32, bit
+//! named at its use; none is set from a measurement. The wall law's bars also take WGSL's stated accuracy of `atan2` and `log` (W3C WGSL §15.7.4.1), which IEEE
+//! arithmetic does not cover. The wall distance on the device is the CPU's rounded to f32, bit
 //! for bit; two runs agree bit for bit. The parity tests run the same fixed sub-step count
 //! (`Flow::set_sa_substeps`, `GpuFlow::fix_sa_substeps`), so the sub-step splitting is not part of the difference;
 //! `the_device_sub_steps_within_the_bound_as_the_cpu_does` runs the device's own sub-stepping against the CPU's.
 //! Each test prints what it measured.
 
 use super::*;
+use fieldcraft_lbm::sa::KAPPA;
+use fieldcraft_lbm::sa_law::{factors, u_plus};
 use fieldcraft_model::{FaceCondition, WallModel};
 
 /// The unit round-off of f32, 2⁻²⁴ (Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., SIAM 2002, §2.1).
@@ -355,8 +358,7 @@ fn the_sub_steps_follow_the_field_or_are_refused() {
 }
 
 /// What the device does not run yet is refused before a device is opened, naming the model
-/// and the CPU: heat, and the model's own wall law (`spalart_allmaras_bounce`; the setup refuses
-/// the other wall models with the model on both backends).
+/// and the CPU: heat. (The setup refuses every wall model but the model's own law on both backends.)
 #[test]
 fn what_the_gpu_does_not_run_with_spalart_allmaras_is_refused_clearly() {
     let refused = |flow: &Flow| {
@@ -370,15 +372,263 @@ fn what_the_gpu_does_not_run_with_spalart_allmaras_is_refused_clearly() {
     let e = refused(&flow);
     println!("heat: {e:?}");
     assert!(e.as_deref().is_some_and(|e| e.contains("Spalart–Allmaras") && e.contains("heat") && e.contains("cpu")), "{e:?}");
+}
+
+// ---- The model's own wall law (`wall_model: "spalart_allmaras_bounce"`) ----
+
+/// WGSL's accuracy of `atan2` in f32, in units in the last place (W3C, *WebGPU Shading Language*, §15.7.4.1,
+/// "Accuracy of concrete floating point built-in functions": `atan2(y, x)`: "4096 ULP"). An ULP is at most 2 u of
+/// the value. The law's two arctangents are at most the whole of F = κ u⁺ (its logarithms' part is positive).
+const ATAN2_ULPS: f64 = 4096.0;
+/// The law's builtin logarithms (κ y⁺ ≥ 1), in u of max(1, |log|) each: WGSL's `log` is within 3 ULP (6 u) outside
+/// [0.5, 2] and within 2⁻²¹ (8 u) inside (the same table): 8; the argument 1 + (p + q/x)/x of the second is within
+/// 8 u of itself: 8; their two additions: 2.
+const LOG_UNITS: f64 = 18.0;
+/// The rounded operations on the longest of the law's four terms (lbm.wgsl, `sa_law_factor`), the arctangent's
+/// c θ. d = √(4q − p²) is within 4.4 u (q and p rounded once, p², the difference with the amplification
+/// (4q + 3p²)/(4q − p²) ≤ 5.8, a rounding, halved by the root, a rounding). c = (2B − A p)/d is within 14 u (the
+/// numerator within 8.2 u, its amplification (2|B| + 3|A p|)/|2B − A p| ≤ 7.2 and a rounding; d; the quotient). The
+/// angle θ = atan2(Y, X), Y = 2x/d within 5.4 u and X = 1 + p(2x + p)/d² within (15 + 14.8|X|) u, moves by at most
+/// u|Y|(20.2|X| + 15)/(X² + Y²), which is at most 36 u of θ (θ ≥ XY/(X² + Y²) where Y < X, and there X ≥ 0.965;
+/// θ ≥ π/4 elsewhere, and there Y ≥ 0.965). Their product: 1.
+const OPS_LAW_TERM: f64 = 51.0;
+/// The operations common to the four terms: x = κ y⁺ (κ's rounding and the product), the terms' sums (2), F / κ (2).
+const OPS_LAW_COMMON: f64 = 6.0;
+/// From u⁺ to u_τ: the residual y⁺u⁺ − Re's product and the stop within an ulp of y⁺ (3); Re = U y / ν (ν's
+/// rounding, a product, a quotient: 3); u_τ = ν y⁺ / y (3).
+const OPS_INVERSION: f64 = 9.0;
+/// The interior node's speed is evaluated twice on the device, in `bounce_sample` and in the readback the gap is
+/// taken from. Each sums 19 populations (18), adds the half force (2) and divides (1) on terms whose sizes sum to
+/// at most twice the momentum (the populations are deviations from the weights), 42, and takes the tangential
+/// length (3): 2 · 45.
+const OPS_SAMPLE: f64 = 90.0;
+
+/// The relative error bound of the device's u⁺ (lbm.wgsl, `sa_law_u_plus`), and so of the root y⁺ of y⁺u⁺ = Re
+/// (the product's log-derivative is at least 1) and of u_τ: the arctangents' allowance on a share of at most 1;
+/// the logarithms' on Σ ½|A| (2 m(ln x) + m(ln(1 + (p + q/x)/x)) + m(ln q)) / F, m = max(1, |·|), which is largest
+/// at x = κ y⁺ = 1; and the rounded operations of a term, the terms' sizes summing to at most (|A₁| + |A₂|) F.
+fn law_bar() -> f64 {
+    let f = factors();
+    let size = |v: f64| v.abs().max(1.0);
+    // At x = 1: ln x = 0, the second logarithm's argument is 1 + p + q, and F = κ u⁺(1/κ).
+    let logs =
+        f.p.iter().zip(&f.q).zip(&f.a).map(|((p, q), a)| 0.5 * a.abs() * (2.0 * size(0.0) + size((1.0 + p + q).ln()) + size(q.ln()))).sum::<f64>()
+            / (KAPPA * u_plus(1.0 / KAPPA));
+    let terms = f.a.iter().map(|a| a.abs()).sum::<f64>();
+    2.0 * ATAN2_ULPS * UNIT_ROUND_OFF + LOG_UNITS * UNIT_ROUND_OFF * logs + gamma(OPS_LAW_TERM * terms + OPS_LAW_COMMON)
+}
+
+/// The CPU's wall-law column (`crates/lbm/tests/wall_bounce.rs`, `sa_law_channel`): 1 × 21 × 1 cells, 10 per δ at
+/// Re_τ 1000 (the first interior node at y⁺ 100, τ⁺ 0.50015), on-node walls on y, periodic in x and z, a body
+/// force, started from the law's own profile, `steps` steps.
+fn wall_law_column(collision: Collision, sigma: Option<HrrSigma>, steps: f64) -> (Setup, Flow) {
+    let (re_tau, n, ub) = (1000.0, 10usize, 20.0);
+    let dx = 1.0 / n as f64;
+    let mut d = domain([0.0; 3], [dx, 2.0 + dx, dx], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.acceleration = [1.0, 0.0, 0.0];
+    let dt = 0.1 * dx / ub;
+    let p = les(sigma, Some(sa(3.0, Some(WallModel::SpalartAllmarasBounce))))(collide(steps * dt, dt, None, collision));
+    let (setup, mut flow) = prepare(&model(1.0, 1.0 / re_tau, d, p), &[]);
+    let grid = *flow.grid();
+    assert_eq!(grid.cells, [1, 2 * n + 1, 1]);
+    let to_lattice = 1.0 / setup.velocity_scale();
+    flow.set_equilibrium(|cell| {
+        // Wall units: u_τ = δ = 1, the walls through the outermost centres.
+        let y = grid.centre(cell)[1] - 0.5 * dx;
+        (1.0, [u_plus(re_tau * y.min(2.0 - y).max(0.0)) * to_lattice, 0.0, 0.0])
+    });
+    (setup, flow)
+}
+
+/// A slot 1 × 3 × 1 cells: the two walls' nodes share the one interior node (the max face's node sets its ν̃, as
+/// the CPU's list in cell order does). ν 0.02 and speed 0.05 in lattice units: y⁺ about 1.6, κ y⁺ below 1, the
+/// law's series branch. 10 steps, the two-relaxation-time collision (τ⁺ 0.56).
+fn wall_law_slot() -> (Setup, Flow) {
+    let mut d = domain([0.0; 3], [1.0, 3.0, 1.0], 1.0);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.acceleration = [1e-5, 0.0, 0.0];
+    d.initial_velocity = [0.05, 0.0, 0.0];
+    let t = sa(3.0, Some(WallModel::SpalartAllmarasBounce));
+    prepare(&model(1.0, 0.02, d, with(collide(10.0, 1.0, None, Collision::Trt), t)), &[])
+}
+
+/// `flow` through `setup`'s steps on both backends, 2 sub-steps of ν̃ per step on each, and the wall law's bars.
+/// After all but the last step the two velocity fields are read: they are what the last step's sample reads. Then,
+/// per boundary node, with gap the two backends' difference of the interior node's tangential velocity over the
+/// CPU's and bar = [`law_bar`] + γ(OPS_INVERSION + OPS_SAMPLE) + gap (d ln u_τ / d ln U is between ½ and 1):
+/// - u_τ within bar of the CPU's;
+/// - the stress ρ u_τ² along that velocity within 2 bar + gap + the density's difference + γ₄;
+/// - ν̃ at the interior node within γ₄ of κ times the device's own u_τ times the wall distance (κ's rounding, two
+///   products, the distance's rounding), which no builtin enters, and within bar + γ₄ of the CPU's;
+/// - ν̃ at the node itself exactly 0.
+///
+/// The fields and the largest ν_t/ν at the suite's stated tolerances (`check_les`), ν̃ everywhere at the eddy
+/// viscosity's (1e-3, as `the_sa_channel_follows_the_cpu`), the device's wall force within 1e-3 of its own sampled
+/// stress (`check_on_node`'s stated tolerance), and so the walls' drag within 1e-3 plus the largest stress bar of the
+/// CPU's. `None` without a GPU.
+fn check_wall_law(what: &str, setup: &Setup, flow: Flow, streaming: Streaming) -> Option<()> {
+    let mut cpu = flow;
+    assert!(cpu.on_node_bounce() && cpu.spalart_allmaras().is_some() && setup.steps > 1, "{what}");
+    cpu.set_sa_substeps(Some(2));
+    let mut gpu = gpu(&cpu, streaming)?;
+    gpu.fix_sa_substeps(Some(2)).unwrap();
+    cpu.advance(setup.steps - 1).unwrap();
+    gpu.advance(setup.steps - 1).unwrap();
+    let (before_c, before_g) = (cpu.fields().unwrap(), gpu.fields().unwrap());
+    cpu.advance(1).unwrap();
+    gpu.advance(1).unwrap();
+    let nodes = cpu.wall_nodes().unwrap().nodes().to_vec();
+    let rows = gpu.wall_targets().unwrap();
+    assert_eq!(rows.len(), nodes.len(), "{what}");
+    let distance = cpu.sa_wall_distance().unwrap().to_vec();
+    let (vc, vg) = (cpu.nu_tilde().unwrap().unwrap(), gpu.nu_tilde().unwrap().unwrap());
+    let norm = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let less = |a: [f64; 3], b: [f64; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let law = law_bar();
+    // The largest of each measure, with its bar where the bar is the node's own.
+    let (mut friction, mut stress, mut own, mut imposed, mut stress_bar) = ((0.0f64, 0.0f64), (0.0f64, 0.0f64), 0.0f64, 0.0f64, 0.0f64);
+    for (w, row) in nodes.iter().zip(&rows) {
+        let (i, axis) = (w.interior as usize, usize::from(w.axis));
+        let tangent = |mut v: [f64; 3]| {
+            v[axis] = 0.0;
+            v
+        };
+        let (tc, tg) = (tangent(before_c.velocity[i]), tangent(before_g.velocity[i]));
+        assert!(w.friction > 0.0 && norm(tc) > 0.0, "{what}: node {} at rest", w.cell);
+        let gap = norm(less(tg, tc)) / norm(tc);
+        let density = (before_g.density[i] - before_c.density[i]).abs() / before_c.density[i];
+        let bar = law + gamma(OPS_INVERSION + OPS_SAMPLE) + gap;
+        let bar_s = 2.0 * bar + gap + density + gamma(4.0);
+        let (ut, du) = (row.1, (row.1 - w.friction).abs() / w.friction);
+        let ds = norm(less(row.0, w.stress)) / norm(w.stress);
+        assert!(du <= bar, "{what}: node {} u_τ {ut} vs {} ({du:.2e}, bar {bar:.2e})", w.cell, w.friction);
+        assert!(ds <= bar_s, "{what}: node {} stress {:?} vs {:?} ({ds:.2e}, bar {bar_s:.2e})", w.cell, row.0, w.stress);
+        let value = KAPPA * ut * distance[i];
+        let (d_own, d_cpu) = ((vg[i] - value).abs() / value, (vg[i] - vc[i]).abs() / vc[i]);
+        assert!(d_own <= gamma(4.0), "{what}: node {} ν̃ {} vs κ u_τ d {value} ({d_own:.2e})", w.cell, vg[i]);
+        assert!(d_cpu <= bar + gamma(4.0), "{what}: node {} ν̃ {} vs {} ({d_cpu:.2e}, bar {bar:.2e})", w.cell, vg[i], vc[i]);
+        assert_eq!((vc[w.cell as usize], vg[w.cell as usize]), (0.0, 0.0), "{what}: a boundary node has no ν̃");
+        if du > friction.0 {
+            friction = (du, bar);
+        }
+        if ds > stress.0 {
+            stress = (ds, bar_s);
+        }
+        (own, imposed, stress_bar) = (own.max(d_own), imposed.max(d_cpu), stress_bar.max(bar_s));
+    }
+    let (du, drho) = field_difference(&mut cpu, &mut gpu);
+    let (dv, scale) = nu_tilde_difference(&mut cpu, &mut gpu);
+    let (rc, rg) = (Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio());
+    let (fc, fg) = (Backend::forces(&mut cpu).unwrap(), gpu.forces().unwrap());
+    let walls = |f: &[[f64; 3]]| f[BoxFace::YMin.index()][0] + f[BoxFace::YMax.index()][0];
+    let sampled = rows.iter().map(|r| r.0[0]).sum::<f64>();
+    let carried = (walls(&fg) - sampled).abs() / sampled.abs();
+    let drag = (walls(&fc) - walls(&fg)).abs() / walls(&fc).abs();
+    println!(
+        "{what}, {} steps, {} nodes: u_τ {:.2e} (bar {:.2e}, the law's {law:.2e}), stress {:.2e} (bar {:.2e}), ν̃ at the interior nodes {own:.2e} of κ u_τ d (bar {:.2e}) and {imposed:.2e} of the CPU's; ν̃ {dv:.2e} of {scale:.3e}; wall force {carried:.2e} of the sampled stress, drag {drag:.2e} of the CPU's",
+        setup.steps,
+        nodes.len(),
+        friction.0,
+        friction.1,
+        stress.0,
+        stress.1,
+        gamma(4.0)
+    );
+    check_les(what, (du, drho, rc, rg));
+    assert!(rc > 0.0 && dv < 1e-3, "{what}: ν_t/ν {rc}, ν̃ {dv}");
+    assert!(carried < 1e-3 && drag <= 1e-3 + stress_bar, "{what}: carried {carried}, drag {drag} (bar {})", 1e-3 + stress_bar);
+    Some(())
+}
+
+/// The model's own wall law in the CPU's column at Re_τ 1000 (the first node at y⁺ 100, the law's logarithmic
+/// branch), 40 steps from the law's profile, on the regularised and hybrid (σ 0.99) collisions, both layouts, at
+/// [`check_wall_law`]'s bars.
+#[test]
+fn the_wall_law_follows_the_cpu_in_its_column() {
+    for (collision, sigma) in [(Collision::Regularized, None), (Collision::Hrr, Some(HrrSigma::Value(0.99)))] {
+        for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+            let (setup, flow) = wall_law_column(collision, sigma, 40.0);
+            let what = format!("SA wall law, column at Re_τ 1000, {}, {streaming:?}", collision.name());
+            if check_wall_law(&what, &setup, flow, streaming).is_none() {
+                return;
+            }
+        }
+    }
+}
+
+/// The same in three dimensions: the on-node bounce's perturbed coarse channel (38 × 13 × 19 cells, Re_τ 180, the
+/// first node at y⁺ 30, periodic in x and z), 150 steps from the start, the regularised collision, both layouts.
+#[test]
+fn the_wall_law_follows_the_cpu_in_a_box() {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let (setup, flow) = on_node_channel(sa(3.0, Some(WallModel::SpalartAllmarasBounce)), Collision::Regularized, None, 150.0);
+        if check_wall_law(&format!("SA wall law, coarse channel at Re_τ 180, regularized, {streaming:?}"), &setup, flow, streaming).is_none() {
+            return;
+        }
+    }
+}
+
+/// The same in a slot 3 cells across, where the two walls share the one interior node and the law is in its
+/// sublayer branch, the two-relaxation-time collision, both layouts.
+#[test]
+fn the_wall_law_follows_the_cpu_where_two_nodes_share_an_interior_node() {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        let (setup, flow) = wall_law_slot();
+        if check_wall_law(&format!("SA wall law, slot 3 cells across, trt, {streaming:?}"), &setup, flow, streaming).is_none() {
+            return;
+        }
+    }
+}
+
+/// The wall law runs on the device, and at rest it gives exactly nothing on both backends: no friction velocity,
+/// no stress, ν̃ = 0 at the interior nodes (a column 9 cells high, no force, 10 steps, the two-relaxation-time
+/// collision); ν̃ elsewhere at the eddy viscosity's stated tolerance.
+#[test]
+fn the_wall_law_at_rest_gives_no_stress_on_the_gpu() {
     let mut d = domain([0.0; 3], [1.0, 9.0, 1.0], 1.0);
     for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
-        *f = FaceCondition::Periodic {};
+        *f = PERIODIC;
     }
     let m = model(1.0, 0.1, d, with(collide(10.0, 1.0, None, Collision::Trt), sa(3.0, Some(WallModel::SpalartAllmarasBounce))));
-    let (_, flow) = prepare(&m, &[]);
-    let e = refused(&flow);
-    println!("wall law: {e:?}");
-    assert!(e.as_deref().is_some_and(|e| e.contains("Spalart–Allmaras") && e.contains("spalart_allmaras_bounce") && e.contains("cpu")), "{e:?}");
+    let (setup, mut cpu) = prepare(&m, &[]);
+    let Some(mut gpu) = gpu(&cpu, Streaming::InPlace) else { return };
+    cpu.advance(setup.steps).unwrap();
+    gpu.advance(setup.steps).unwrap();
+    let nodes = cpu.wall_nodes().unwrap().nodes().to_vec();
+    let rows = gpu.wall_targets().unwrap();
+    assert_eq!((nodes.len(), rows.len()), (2, 2));
+    let (vc, vg) = (cpu.nu_tilde().unwrap().unwrap(), gpu.nu_tilde().unwrap().unwrap());
+    for (w, row) in nodes.iter().zip(&rows) {
+        assert_eq!((w.friction, w.stress), (0.0, [0.0; 3]), "{w:?}");
+        assert_eq!((row.1, row.0), (0.0, [0.0; 3]), "{row:?}");
+        assert_eq!((vc[w.interior as usize], vg[w.interior as usize]), (0.0, 0.0), "{w:?}");
+    }
+    let (dv, scale) = nu_tilde_difference(&mut cpu, &mut gpu);
+    println!("SA wall law at rest, {} steps: u_τ, stress and the interior nodes' ν̃ are 0 on both; ν̃ {dv:.2e} of {scale:.3e}", setup.steps);
+    assert!(dv < 1e-3, "{dv}");
+}
+
+/// The wall law twice on one device gives the same ν̃, velocities, stresses and friction velocities bit for bit
+/// (the column, the regularised collision, in place).
+#[test]
+fn the_wall_law_repeats_bit_for_bit_on_its_device() {
+    let (setup, flow) = wall_law_column(Collision::Regularized, None, 40.0);
+    let run = || {
+        let mut g = gpu(&flow, Streaming::InPlace)?;
+        g.advance(setup.steps).unwrap();
+        let mut bits: Vec<u64> =
+            g.nu_tilde().unwrap().unwrap().iter().chain(g.fields().unwrap().velocity.iter().flatten()).map(|v| v.to_bits()).collect();
+        bits.extend(g.wall_targets().unwrap().iter().flat_map(|r| r.0.into_iter().chain([r.1])).map(|v| v.to_bits()));
+        Some(bits)
+    };
+    let (Some(a), Some(b)) = (run(), run()) else { return };
+    println!("SA wall law, column: two runs bit for bit: {}", a == b);
+    assert!(a == b);
 }
 
 /// A field smaller than 16 bytes reads back: a column of 3 cells has 3 ν̃ (12 bytes), and the readback used to pad

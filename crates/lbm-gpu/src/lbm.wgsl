@@ -84,7 +84,8 @@
 // outermost cell layer at each wall face is boundary nodes, the wall through their centres. They
 // stream like fluid cells but do not collide and are left out of the gradients, moments, mass
 // and mean velocity (`is_fluid`). Before the collision `bounce_sample` takes each node's stress
-// from Spalding's law at its interior node (one cell into the fluid, distance 1); after it
+// from Spalding's law, or with SA_LAW the Spalart–Allmaras model's own, at its interior node (one
+// cell into the fluid, distance 1); after it
 // `node_bounce` runs eq. 14 on each node in place of a collision, with the AA addressing of a
 // collision (each node reads and writes only its own populations), and records the momentum the
 // node took, which `wall_forces` gives the node's box face.
@@ -131,6 +132,29 @@ override ZONES: bool = false;
 override SA: bool = false;
 // The most ν̃ sub-steps one lattice step may take (fieldcraft_lbm::sa::MAX_SUBSTEPS).
 override SA_MAX_SUBSTEPS: u32 = 64u;
+// The model's von Karman constant κ and c_v1³ (fieldcraft_lbm::sa::{KAPPA, C_V1}, set by native.rs for every
+// pipeline: no default, so no value is written twice).
+override SA_KAPPA: f32;
+override SA_CV1_3: f32;
+// The Spalart–Allmaras model's own wall law on the on-node wall (`spalart_allmaras_bounce`,
+// fieldcraft_lbm::sa_law, with ON_NODE and SA): `bounce_sample` takes u_τ from it and `sa_impose`
+// sets ν̃ at the interior nodes; likewise.
+override SA_LAW: bool = false;
+// The law's two quadratic factors x² + p x + q and their partial fractions (A x + B)
+// (fieldcraft_lbm::sa_law::factors, set by native.rs for every pipeline: no value of the law is
+// written here, so none has a default).
+override SA_LAW_P1: f32;
+override SA_LAW_Q1: f32;
+override SA_LAW_A1: f32;
+override SA_LAW_B1: f32;
+override SA_LAW_P2: f32;
+override SA_LAW_Q2: f32;
+override SA_LAW_A2: f32;
+override SA_LAW_B2: f32;
+// The most steps of the law's inversion (native.rs, SA_LAW_STEPS) and the largest Reynolds number
+// U y / ν it takes (native.rs, `sa_law_re_max`: (κ y⁺)³ stays finite below it).
+override SA_LAW_STEPS: u32;
+override SA_LAW_RE_MAX: f32;
 // The largest lattice speed (fieldcraft_lbm::setup::MAX_LATTICE_SPEED): the cap of a convective
 // outlet's convection speed.
 override MAX_SPEED: f32 = 0.5;
@@ -145,13 +169,18 @@ const KIND_OPEN: u32 = 3u;
 // Set in a link's first word when its cell is an inlet or outlet cell, whose scalar populations
 // the open boundary sets after streaming: the heat the link gives never stays in the fluid, and
 // the wall heat leaves it out (fieldcraft_lbm::flow::ThermalState::resets).
-const RESET: u32 = 0x1000000u;
+// native.rs, RESET, sets it for every pipeline.
+override RESET: u32;
 // Set in a bounce link's first word when it interpolates where the surface crosses it (with
 // INTERPOLATED; its second word is the next fluid cell away from the wall).
-const INTERP: u32 = 0x2000000u;
+// native.rs, INTERP, sets it for every pipeline.
+override INTERP: u32;
 // Set with INTERP when the link takes the quadratic form (with QUADRATIC; fieldcraft_lbm::flow::
 // bouzidi_quadratic): `link_u[L + l / 4][l % 4]` is the cell two links further from the wall.
-const QUAD: u32 = 0x4000000u;
+// native.rs, QUAD, sets it for every pipeline.
+override QUAD: u32;
+// The flag word of a boundary node of the on-node bounce (native.rs, NODE, which sets it for every pipeline).
+override NODE: u32;
 
 struct Params {
     n: u32,
@@ -263,7 +292,9 @@ struct Params {
 // distance to the wall (w); the wall's velocity (xyz) and the second cell's index (w, as bits);
 // the modelled velocity (xyz) and relaxation rate (w), written by `wall_sample`; the momentum the
 // last collision's reconstruction took from the cell (xyz, written by `collide`) and the index of
-// the cell's nearest wall link (w, as bits), whose group takes it in `wall_forces`.
+// the cell's nearest wall link (w, as bits), whose group takes it in `wall_forces`. The
+// wall-function bounces' rows hold instead, in the third row, the sampled stress (xyz) and its
+// friction velocity u_τ (w), from `bounce_sample`.
 @group(0) @binding(23) var<storage, read_write> walls: array<vec4<f32>>;
 // Van Driest's damping, d its wall cells: per wall cell its friction velocity, written by
 // `damping_refresh`, from 0 (first, so the host reads them back alone); per wall cell its unit
@@ -617,6 +648,86 @@ fn spalding_root(speed: f32, y: f32, nu: f32, kappa: f32, b: f32) -> f32 {
     return 0.0;
 }
 
+// ---- The Spalart–Allmaras model's own wall law (fieldcraft_lbm::sa_law, in f32) ----
+//
+// u⁺(y⁺) = F(κ y⁺) / κ, F the integral from 0 of (x³ + a) / (x⁴ + x³ + a), a = c_v1³, in closed
+// form: per quadratic factor x² + p x + q of the quartic, with its partial fraction (A x + B) and
+// d = √(4q − p²), ½ A ln((x² + p x + q) / q) + ((2B − A p) / d) (atan((2x + p) / d) − atan(p / d)).
+
+// ln(1 + s) as 2 atanh(t), t = s / (2 + s), by its series t + t³/3 + t⁵/5 + t⁷/7: WGSL has no
+// log1p and log(1 + s) loses s's digits. For the law's two factors and x < 1, s = x (x + p) / q
+// lies in (−0.27, 0.38), so |t| < 0.16 and the terms left out, from t⁹/9, are below 2⁻²⁴ of the sum.
+fn sa_law_log1p(s: f32) -> f32 {
+    let t = s / (2.0 + s);
+    let t2 = t * t;
+    return 2.0 * t * (1.0 + t2 * (1.0 / 3.0 + t2 * (1.0 / 5.0 + t2 * (1.0 / 7.0))));
+}
+
+// One factor's integral from 0 to x (sa_law::factor_integral). The two arctangents' difference is
+// atan2(2x / d, 1 + p (2x + p) / d²), the same angle without their cancellation at small x. The
+// logarithm below x = 1 is `sa_law_log1p`'s; from 1 it is 2 ln x + ln(1 + (p + q/x) / x) − ln q,
+// which never forms x².
+fn sa_law_factor(x: f32, p: f32, q: f32, a: f32, b: f32) -> f32 {
+    let d = sqrt(4.0 * q - p * p);
+    var l = 0.0;
+    if x < 1.0 {
+        l = sa_law_log1p(x * (x + p) / q);
+    } else {
+        l = 2.0 * log(x) + log(1.0 + (p + q / x) / x) - log(q);
+    }
+    return 0.5 * a * l + (2.0 * b - a * p) / d * atan2(2.0 * x / d, 1.0 + p * (2.0 * x + p) / (d * d));
+}
+
+// u⁺(y⁺) of the model's constant-stress layer (sa_law::u_plus); 0 at y⁺ ≤ 0 or for a number that
+// is not usable.
+fn sa_law_u_plus(yp: f32) -> f32 {
+    let x = SA_KAPPA * yp;
+    if !(x > 0.0) { return 0.0; }
+    return (sa_law_factor(x, SA_LAW_P1, SA_LAW_Q1, SA_LAW_A1, SA_LAW_B1) + sa_law_factor(x, SA_LAW_P2, SA_LAW_Q2, SA_LAW_A2, SA_LAW_B2)) / SA_KAPPA;
+}
+
+// The y⁺ with y⁺ u⁺(y⁺) = re (sa_law::y_plus_for_reynolds); 0 for a `re` that is not usable. The
+// root is between √re (u⁺ ≤ y⁺) and re / u⁺(√re) (u⁺ rises). g(y) = y u⁺(y) − re is convex, so
+// Newton's steps from the upper end come down on the root from above; each is taken when it lands
+// strictly inside the bracket, which then shrinks, and a bisection is taken when one does not. It
+// stops on a zero residual, on a Newton step that does not move y, or when the bracket holds no
+// number strictly inside. SA_LAW_STEPS bounds it and is not reached: a step cuts the distance to
+// the root by more than half.
+fn sa_law_y_plus(re: f32) -> f32 {
+    if !(re > 0.0 && re <= SA_LAW_RE_MAX) { return 0.0; }
+    var lo = sqrt(re);
+    let u_lo = sa_law_u_plus(lo);
+    if !(u_lo > 0.0) { return 0.0; }
+    var hi = re / u_lo;
+    var y = hi;
+    for (var i = 0u; i < SA_LAW_STEPS; i = i + 1u) {
+        let u = sa_law_u_plus(y);
+        let value = y * u - re;
+        if value > 0.0 { hi = y; } else if value < 0.0 { lo = y; } else { break; }
+        // d/dy (y u⁺) = u⁺ + y / (1 + ν_t⁺), ν_t⁺ = κ y⁺ f_v1(κ y⁺).
+        let x = SA_KAPPA * y;
+        let newton = y - value / (u + y / (1.0 + x * sa_fv1(x)));
+        if newton > lo && newton < hi {
+            y = newton;
+            continue;
+        }
+        if newton == y { break; }
+        let mid = 0.5 * (lo + hi);
+        if !(mid > lo && mid < hi) { break; }
+        y = mid;
+    }
+    if y > 0.0 { return y; }
+    return 0.0;
+}
+
+// The friction velocity of a flow of speed `speed` at distance `y` from the wall, from the model's
+// own law (sa_law::friction_velocity): u_τ with u_τ u⁺(y u_τ / ν) = U; 0 at rest or with a number
+// that is not usable.
+fn sa_law_friction(speed: f32, y: f32, nu: f32) -> f32 {
+    if !(speed > 0.0 && y > 0.0 && nu > 0.0) { return 0.0; }
+    return nu * sa_law_y_plus(speed * y / nu) / y;
+}
+
 // The wall-function bounce's shift of a population streamed in from the wall (fieldcraft_lbm::
 // flow::Flow::apply_stress): direction q into wall cell `cell` (flagged with its row) along its
 // normal plus one tangential axis a takes ½ τ_a c_a off, so the two such populations per axis take
@@ -631,8 +742,8 @@ fn bounce_shift(q: u32, cell: u32) -> f32 {
 
 // The wall-function bounce's sample before the collision (fieldcraft_lbm::wall::Walls::
 // sample_stress): wall cell k's stress ρ u_τ² along its own velocity parallel to its wall, u_τ
-// from Spalding's law with Han, Ooka and Kikumoto's constants (κ 0.41, B 5.5) at its distance;
-// into rows 2 and 3 (row 3 is what `wall_forces` gives the wall). Its rows: the unit normal into
+// from Spalding's law with Han, Ooka and Kikumoto's constants (κ 0.41, B 5.5), or with SA_LAW from
+// the Spalart–Allmaras model's own law, at its distance; into rows 2 (with u_τ in w) and 3 (row 3 is what `wall_forces` gives the wall). Its rows: the unit normal into
 // the fluid and the distance; the wall's velocity and the cell (as bits).
 @compute @workgroup_size(256)
 fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
@@ -652,17 +763,26 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
     }
     let rho = 1.0 + drho;
     var stress = vec3<f32>(0.0);
+    var friction = 0.0;
     if rho > 0.0 && rho < 1e30 {
         var u = (j + 0.5 * rho * acc_of(cell)) / rho;
         if ZONES { u = zone_motion(cell, rho, j).u; }
         let rel = u - b.xyz;
         let t = rel - dot(rel, a.xyz) * a.xyz;
         let speed = length(t);
-        let ut = spalding_root(speed, a.w, params.smag.w, 0.41, 5.5);
+        var ut = 0.0;
+        if SA_LAW {
+            ut = sa_law_friction(speed, a.w, params.smag.w);
+        } else {
+            ut = spalding_root(speed, a.w, params.smag.w, 0.41, 5.5);
+        }
         let scale = rho * ut * ut / speed;
-        if speed > 0.0 && scale < 1e30 { stress = scale * t; }
+        if speed > 0.0 && scale < 1e30 {
+            stress = scale * t;
+            friction = ut;
+        }
     }
-    walls[4u * k + 2u] = vec4<f32>(stress, 0.0);
+    walls[4u * k + 2u] = vec4<f32>(stress, friction);
     walls[4u * k + 3u] = vec4<f32>(stress, walls[4u * k + 3u].w);
 }
 
@@ -1132,10 +1252,8 @@ fn eddy_nu(cell: u32, g: Gradient) -> f32 {
 const SA_CB1: f32 = 0.1355;
 const SA_SIGMA: f32 = 0.6666667;
 const SA_CB2: f32 = 0.622;
-const SA_KAPPA: f32 = 0.41;
 const SA_CW2: f32 = 0.3;
 const SA_CW3_6: f32 = 64.0;
-const SA_CV1_3: f32 = 357.911;
 const SA_CT3: f32 = 1.2;
 const SA_CT4: f32 = 0.5;
 const SA_CV2: f32 = 0.7;
@@ -1146,6 +1264,8 @@ const SA_CELL: u32 = 0u;
 const SA_WALL: u32 = 1u;
 const SA_INFLOW: u32 = 2u;
 const SA_OPEN: u32 = 3u;
+// Not a box face's kind: a boundary node of the on-node wall across a face (sa::Side::Node).
+const SA_NODE: u32 = 4u;
 // stats words (see `stats`) and sa_gate offsets of ν̃'s sub-stepping.
 const SA_MOST: u32 = 4u;
 const SA_STOPPED: u32 = 6u;
@@ -1335,14 +1455,18 @@ fn sa_plan() {
 }
 
 // What lies across the face of the cell at `p` one step `d` along an axis (`face` its index,
-// 2 axis + up): (SA_CELL, the cell), (SA_WALL, 0) for a solid cell, or the box face's kind.
+// 2 axis + up): (SA_CELL, the cell), (SA_WALL, 0) for a solid cell, (SA_NODE, 0) for a boundary node
+// of the on-node wall, or the box face's kind.
 fn sa_side(p: vec3<i32>, d: vec3<i32>, face: u32) -> vec2<u32> {
     let size = vec3<i32>(i32(params.nx), i32(params.ny), i32(params.nz));
     let periodic = params.periodic.xyz != vec3<u32>(0u);
     let w = p + d;
     if any(((w < vec3<i32>(0)) | (w >= size)) & !periodic) { return vec2<u32>((params.sa.x >> (2u * face)) & 3u, 0u); }
     let cell = wrapped(w);
-    if !is_fluid(cell) { return vec2<u32>(SA_WALL, 0u); }
+    if !is_fluid(cell) {
+        if ON_NODE && fluid[cell] == NODE { return vec2<u32>(SA_NODE, 0u); }
+        return vec2<u32>(SA_WALL, 0u);
+    }
     return vec2<u32>(SA_CELL, cell);
 }
 
@@ -1372,6 +1496,11 @@ fn sa_face(side: vec2<u32>, v: f32, uc: f32, axis: u32, sign: f32, nu: f32, eta_
             face = inflow;
             un = uc * sign;
             d = 2.0 * sa_diffusivity(inflow, nu) / SA_SIGMA;
+        }
+        case 4u: {
+            // SA_NODE: the on-node wall, ν̃ = 0 on the node one cell away, no flow through it.
+            slope = -v;
+            d = 0.5 * (eta_c + nu) / SA_SIGMA;
         }
         default: {
             un = uc * sign;
@@ -1452,6 +1581,30 @@ fn sa_update(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) w
             v = v / (1.0 + dt * max(s.y - s.x, 0.0));
         }
     }
+    if !(abs(v) < 1e30) { atomicStore(&stats[5], 1u); }
+    nu_tilde[cell] = v;
+    moments[cell] = vec4<f32>(moments[cell].xyz, sa_nu_t(v, params.smag.w));
+}
+
+// The model's own wall law (fieldcraft_lbm::flow::Flow::advance_sa; Spalart & Allmaras 1994, §3),
+// after ν̃'s sub-steps and before the collision: ν̃ = κ u_τ d at the interior node of boundary node
+// k, with this step's u_τ (`bounce_sample`, row 2's w) and the interior node's wall distance d;
+// its ν_t into `moments`' w, where `sa_update` leaves every cell's for the collision. Not with the
+// sources off (the transport alone). A value that is not finite to stats[5]. Where two nodes share
+// an interior node (a box 3 cells across its walls) the max face's node sets it, as the CPU's
+// list in cell order does, and the min face's leaves it: one write per cell.
+@compute @workgroup_size(256)
+fn sa_impose(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    let k = cell_of(lid, wg);
+    if !SA_LAW || k >= params.wall.x || params.sa.w == 0u { return; }
+    let n = vec3<i32>(round(walls[4u * k].xyz));
+    let cell = bitcast<u32>(walls[4u * k + 1u].w);
+    if n.x + n.y + n.z > 0 {
+        // The cell beyond the interior node, inside the box (it is at least 3 cells across).
+        let p = coords(cell) + n;
+        if fluid[u32((p.z * i32(params.ny) + p.y) * i32(params.nx) + p.x)] == NODE { return; }
+    }
+    let v = SA_KAPPA * walls[4u * k + 2u].w * sa_cell[cell].y;
     if !(abs(v) < 1e30) { atomicStore(&stats[5], 1u); }
     nu_tilde[cell] = v;
     moments[cell] = vec4<f32>(moments[cell].xyz, sa_nu_t(v, params.smag.w));
