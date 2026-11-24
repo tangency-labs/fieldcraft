@@ -370,3 +370,25 @@ fn what_the_gpu_does_not_run_with_spalart_allmaras_is_refused_clearly() {
     println!("heat: {e:?}");
     assert!(e.as_deref().is_some_and(|e| e.contains("Spalart–Allmaras") && e.contains("heat") && e.contains("cpu")), "{e:?}");
 }
+
+/// A field smaller than 16 bytes reads back: a column of 3 cells has 3 ν̃ (12 bytes), and the readback used to pad
+/// every copy to 16 bytes, past the buffer's end, where wgpu's validation panicked. Before any step the device's ν̃
+/// is the CPU's rounded to f32, exactly.
+#[test]
+fn a_field_of_three_cells_reads_back() {
+    let dx = 1.0 / 3.0;
+    let mut d = domain([0.0; 3], [dx, 1.0, dx], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    let m = model(1.0, 0.05 * dx, d, with(collide(10.0 * dx, dx, None, Collision::Trt), sa(3.0, None)));
+    let (_, mut cpu) = prepare(&m, &[]);
+    assert_eq!(cpu.grid().len(), 3);
+    let Some(mut gpu) = gpu(&cpu, Streaming::InPlace) else { return };
+    let (a, b) = (cpu.nu_tilde().unwrap().unwrap(), gpu.nu_tilde().unwrap().unwrap());
+    println!("3-cell column: CPU ν̃ {a:?}, GPU ν̃ {b:?}");
+    assert_eq!(b.len(), 3);
+    for (x, y) in a.iter().zip(&b) {
+        assert_eq!(*y, f64::from(*x as f32), "the device holds the CPU's ν̃ rounded to f32");
+    }
+}
