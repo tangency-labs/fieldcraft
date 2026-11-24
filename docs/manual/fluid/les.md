@@ -398,15 +398,15 @@ rows, about 3 × 10⁻⁵ per step, until the run broke. A numerical linear anal
 a body force holding the laminar base steady, and a checkerboard of 10⁻⁶ in u_x added to the
 first fluid row at each wall. The growth rate per step is the least-squares slope of ½ ln E of the
 mode's energy over the second half of 20 000 steps, shown as the range over the regularised,
-hybrid (σ 0.99), MRT and TRT collisions and both aimed u⁺ (the first node's u⁺ in brackets). The MRT entries at τ̄ 0.50015 and 0.5015 were below its stability bound; the heavy test no longer runs MRT there, and the ranges of those two rows as recorded here still include them until the sweep is rerun.
+hybrid (σ 0.99), MRT and TRT collisions and both aimed u⁺ (the first node's u⁺ in brackets). The heavy test runs MRT only from τ̄ 0.505 (below its stability bound it is not run); the rows below are its sweep as rerun for #1101, the on-node ones with the half cells' body force.
 
 | τ̄ | eq. 14, on-node | halfway variant |
 |---|---|---|
-| 0.50015 | −5.2e-5 to −1.9e-5 (5, 11) | +5.6e-5 to +1.4e-4 (5, 10.8) |
-| 0.5015 | −2.9e-4 to −8.8e-5 (5, 8.1) | +5.5e-4 to +7.1e-4 (4.8; MRT broke at step 18 368) |
-| 0.505 | −7.1e-4 to −3.3e-4 (5) | +1.8e-3 to +2.3e-3 (2.7; broke by step 7 500) |
-| 0.55 | −4.4e-3 to −2.6e-3 (1.6) | +2.1e-2 to +2.4e-2 (0.85; broke by step 640) |
-| 0.8 | −1.6e-2 to −1.5e-2 (0.65) | +0.13 (0.35; broke by step 107) |
+| 0.50015 | −5.1e-5 to −1.9e-5 (5, 11) | +5.6e-5 to +1.3e-4 (5, 10.8) |
+| 0.5015 | −2.9e-4 to −9.5e-5 (5, 8.5) | +5.5e-4 to +6.4e-4 (4.8) |
+| 0.505 | −6.9e-4 to −3.2e-4 (5, 5.1) | +1.8e-3 to +2.3e-3 (2.7; broke by step 7 500) |
+| 0.55 | −4.3e-3 to −2.6e-3 (1.65) | +2.1e-2 to +2.4e-2 (0.85; broke by step 640) |
+| 0.8 | −1.6e-2 to −1.5e-2 (0.68) | +0.13 (0.35; broke by step 107) |
 
 **Eq. 14 damps the mode** with every collision and τ̄; the halfway variant amplifies it, faster
 as τ̄ rises. The trunk keeps one case (on-node, regularised, τ̄ 0.5015, u⁺ 5, rate ≤ 0); the sweep
@@ -426,6 +426,8 @@ a labelled change of collision: it is not unstable at rest at this viscosity, as
 | `hrr-vreman` | hrr, σ 0.99 | Vreman C_s 0.18 (Jacob et al.'s explicit LES, case 3) |
 | `hrr-dynamic` | hrr, dynamic σ | Vreman C_s 0.18, which only sets σ (their case 4) |
 | `hrr-smagorinsky` | hrr, σ 0.99 | Smagorinsky C_s 0.1, Van Driest A⁺ 26 |
+
+These GB10 runs predate #1101 (the walls carried a(δ − Δx/2), 2.5 % low at 20 cells per δ) and have not been rerun; the table is left as recorded.
 
 A20, GPU f32, NVIDIA GB10, Re_τ 640, averaged 20–150 δ/u_τ; WFB is eq. 14 on-node:
 

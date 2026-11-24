@@ -70,7 +70,7 @@
 //!   interfacial dynamics in lattice Boltzmann simulations*, JCP 266:161–170, 2014), `f'` the
 //!   interpolated population; at rest it is the same as the others'. Under the wall model a wall also
 //!   takes the momentum each reconstruction of its wall cells removes ([`crate::wall`]); under
-//!   the on-node bounce, the momentum its boundary nodes take from the fluid ([`crate::bounce`]).
+//!   the on-node bounce, the momentum its boundary nodes take from the fluid and the body force of their half cells ([`crate::bounce`]).
 //! - **Fans and porous zones:** a porous zone (a vent, grille, filter or perforated plate) adds
 //!   the Darcy–Forchheimer force per volume `−ρ (α u + β |u| u)` (α = ν/K, β = C₂/2) to its
 //!   cells through Guo's term; because it depends on the velocity it defines, the velocity comes
@@ -1178,6 +1178,7 @@ impl Flow {
                             stress: [0.0; 3],
                             taken: [0.0; 3],
                             friction: 0.0,
+                            body: [0.0; 3],
                         });
                     }
                 }
@@ -2780,7 +2781,7 @@ impl Flow {
     /// before the collision.
     fn sample_nodes(&mut self) {
         let Some(mut nodes) = self.nodes.take() else { return };
-        nodes.sample(|cell| self.moments(cell));
+        nodes.sample(|cell| self.moments(cell), |cell| self.force_at(cell));
         self.nodes = Some(nodes);
     }
 
@@ -2797,7 +2798,11 @@ impl Flow {
             for (q, x) in fq.iter_mut().enumerate() {
                 *x = self.f.get(q * s + cell).copied().unwrap_or(0.0);
             }
-            w.taken = crate::bounce::on_node(&mut fq, usize::from(w.axis), i32::from(w.inward), w.stress);
+            // The node hands the fluid the law's stress less its half cell's body force; the wall
+            // receives that force with what the node takes from the fluid ([`crate::bounce`]).
+            let handed = [0, 1, 2].map(|k| w.stress[k] - w.body[k]);
+            let flux = crate::bounce::on_node(&mut fq, usize::from(w.axis), i32::from(w.inward), handed);
+            w.taken = [0, 1, 2].map(|k| flux[k] + w.body[k]);
             for (q, v) in fq.iter().enumerate() {
                 if let Some(x) = self.f.get_mut(q * s + cell) {
                     *x = *v;

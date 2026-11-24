@@ -85,10 +85,10 @@
 // stream like fluid cells but do not collide and are left out of the gradients, moments, mass
 // and mean velocity (`is_fluid`). Before the collision `bounce_sample` takes each node's stress
 // from Spalding's law, or with SA_LAW the Spalart–Allmaras model's own, at its interior node (one
-// cell into the fluid, distance 1); after it
-// `node_bounce` runs eq. 14 on each node in place of a collision, with the AA addressing of a
-// collision (each node reads and writes only its own populations), and records the momentum the
-// node took, which `wall_forces` gives the node's box face.
+// cell into the fluid, distance 1); after it `node_bounce` runs eq. 14 on each node in place of a
+// collision, with the AA addressing of a collision (each node reads and writes only its own
+// populations), handing the fluid the stress less ½ρa and recording what the node took plus ½ρa
+// (ρ the interior node's density, from its populations), which `wall_forces` gives the node's box face.
 //
 // Spalart–Allmaras (`SA`) f32 guards: r = ν̃/(S̃ κ² d²) only where the denominator is positive,
 // r⁶ and g⁶ by multiplication, pow only for the ^(1/6) of a positive argument.
@@ -742,8 +742,8 @@ fn bounce_shift(q: u32, cell: u32) -> f32 {
 
 // The wall-function bounce's sample before the collision (fieldcraft_lbm::wall::Walls::
 // sample_stress): wall cell k's stress ρ u_τ² along its own velocity parallel to its wall, u_τ
-// from Spalding's law with Han, Ooka and Kikumoto's constants (κ 0.41, B 5.5), or with SA_LAW from
-// the Spalart–Allmaras model's own law, at its distance; into rows 2 (with u_τ in w) and 3 (row 3 is what `wall_forces` gives the wall). Its rows: the unit normal into
+// from Spalding's law, or with SA_LAW from the Spalart–Allmaras model's own, at its distance; into row
+// 2 (with u_τ in w) and row 3 (row 3 is what `wall_forces` gives the wall). Its rows: the unit normal into
 // the fluid and the distance; the wall's velocity and the cell (as bits).
 @compute @workgroup_size(256)
 fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wg: vec3<u32>) {
@@ -791,7 +791,7 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
 // the fluid cells, in place of its own collision. Its rows in `walls`: the unit normal into the
 // fluid and the distance 1; zero and its interior node (as bits), one cell into the fluid; the
 // stress `bounce_sample` took at the interior node (xyz); and the momentum the node took from the
-// fluid this step (xyz, written here) with the index of one of the node's links (w, as bits),
+// fluid this step plus its half-cell body force (xyz, written here), with the index of one of the node's links (w, as bits),
 // whose group (the node's box face) takes it in `wall_forces`. With n the inward normal and e1,
 // e2 the two axes along the wall, every population of the node is assigned explicitly (no loop
 // over the lattice directions that tests c_q: the NVIDIA GB10 driver, 580.159, miscompiles such
@@ -815,6 +815,15 @@ fn node_bounce(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
     for (var q = 0u; q < Q; q = q + 1u) {
         fq[q] = population(q, cell, xyz);
     }
+    // The node's half cell's body force, ½ ρ a (fieldcraft_lbm::bounce::WallNode::body): ρ the
+    // interior node's density, 1 plus its deviations. The collision conserves mass, so these are
+    // the populations `bounce_sample` took the density from, and no row carries it.
+    let ixyz = coords(interior);
+    var rho_i = 1.0;
+    for (var q = 0u; q < Q; q = q + 1u) {
+        rho_i = rho_i + population(q, interior, ixyz);
+    }
+    let body = 0.5 * rho_i * acc_of(cell);
     // For the inward normal along +axis: the axis directions into (a_in) and out of (a_out) the
     // fluid; the diagonals into the fluid along +e (dp) and −e (dm), and their images into the
     // wall (mp = −n + e, mm = −n − e), for e1 (…1) and e2 (…2); the four wall-parallel pairs
@@ -890,8 +899,8 @@ fn node_bounce(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
         dm2 = mm2;
         mm2 = t4;
     }
-    let s1 = dot(stress, e1);
-    let s2 = dot(stress, e2);
+    let s1 = dot(stress - body, e1);
+    let s2 = dot(stress - body, e2);
     // Eq. 14: into the fluid.
     let o_in = fq[a_out];
     let o_p1 = fq[mp1] - 0.5 * s1;
@@ -923,7 +932,7 @@ fn node_bounce(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
     f[post_index(pc + 1u, cell, xyz)] = fq[pc];
     f[post_index(pd, cell, xyz)] = fq[pd + 1u];
     f[post_index(pd + 1u, cell, xyz)] = fq[pd];
-    walls[4u * k + 3u] = vec4<f32>(taken, walls[4u * k + 3u].w);
+    walls[4u * k + 3u] = vec4<f32>(taken + body, walls[4u * k + 3u].w);
 }
 
 // Van Driest's refresh (fieldcraft_lbm::wall::Walls::refresh): wall cell k's friction velocity

@@ -193,11 +193,12 @@ node's face to its node is a wall one cell away (ν̃ = 0 on the node), and the 
 measured from the node plane. The boundary nodes do not collide and the first cells that do carry
 the law's ν_t, so with the regularised and hybrid collisions the fluid's own τ⁺ may go down to
 0.5001, as with a subgrid model; the TRT collision keeps 0.505 (it is unstable in an oblique stream
-near the lower floor, #1063). The walls carry the body force of the fluid between them less the
-half cell the nodes stand on, a(δ − Δx/2) per wall, as with `spalding_bounce` (#1101): the law is
-fed 1 − Δx/(2δ) of the stress. In the 1-D model of the lattice channel at Re_τ 1000 this takes C_f
-against the wall-resolved model from the law's own +1.2 % and +2.2 % to +3.9 % and +7.3 % with the
-first node at y⁺ 62 and 100. **Limitation:** the law assumes the first node lies in a log layer of
+near the lower floor, #1063). The split is the same as with `spalding_bounce`
+(#1101): each node hands the fluid the law's stress less its half cell's body force, ½ ρ a, and
+takes that force back with its momentum, so the walls carry the whole body force of the box, a δ
+per wall, for either law (the split is applied after the law's dispatch). In the 1-D model of the
+lattice channel at Re_τ 1000 the law's own error at y⁺ 62 and 100 is +1.2 % and +2.2 % of C_f
+against the wall-resolved model, the figures the sa-wall notes give. **Limitation:** the law assumes the first node lies in a log layer of
 constant stress, y₁ ≪ δ. At Re_τ 182 the first node at y⁺ 30 or 61 is a sixth or a third of the way
 to the centre line, and C_f is +19 % or +41 % above the wall-resolved model's; use it where the first
 node is a small fraction of δ. The channel against the wall-resolved model and Lee and Moser is in
@@ -235,9 +236,19 @@ Each time step, before the collision:
    its opposite's value; the rest population kept). The streaming is unchanged; populations
    that would arrive from outside the box are replaced by the images of those from the fluid
    (they reach only the populations that leave the box), so each node keeps its mass. The
-   wall's force is the momentum the nodes take from the fluid: τ along the wall per node and
-   step, to round-off, and the bounce-back's 2 Σ f of the incoming populations along the
-   normal. The boundary nodes are no fluid cells: no eddy viscosity, no part in their
+   node hands the fluid the stress less its half cell's body force, ½ ρ a (a the body
+   acceleration of its cell, ρ the interior node's density): the node's cell spans half a cell
+   into the fluid, and the balance of mean forces in a fully developed channel (S. B. Pope,
+   *Turbulent Flows*, Cambridge University Press 2000, doi:10.1017/CBO9780511840531) gives the
+   stress at the half cell's inner face as τ_w − ½ ρ a Δx. The wall's force is the momentum the
+   nodes take from the fluid plus that ½ ρ a: τ along the wall per node and step, to round-off,
+   and 2 Σ f + ½ ρ a_n along the normal, so the walls carry the whole body force of the box
+   (issue #1101). In a laminar channel the profile is the Poiseuille parabola shifted by the slip
+   `a Δx²/(2ν)` (the law's `u_1 = a δ Δx / ν` against the parabola's `a (δ − ½Δx) Δx / ν`); the
+   slip alone raises the bulk speed by `6/(M(M+1))`, `M = 2N` the wall-to-wall cells: 8.3 %, 2.2 %
+   and 0.57 % at N = 4, 8, 16. The test `the_laminar_on_node_profile_is_the_parabola_shifted_by_the_slip`
+   pins it, to the weakly compressible bound `9 u_max³`. The recorded wall force is the two-step mean of
+   the per-step total (`flux + ½ ρ a`). The boundary nodes are no fluid cells: no eddy viscosity, no part in their
    neighbours' finite-difference gradients (one-sided there), left out of the cell count, the
    mass, the mean velocity and the fields. With damping, the interior nodes are the wall cells,
    one cell from the wall. The GPU runs the same scheme (`node_bounce`; [GPU backend](gpu.md),
@@ -370,10 +381,11 @@ is in [Large-eddy simulation](les.md).
 | Pipe of radius 1, 8 cells per radius (wall distance) | R − r | within 0.75 cell (staircase) | 0.75 cell | `wall_distances_in_a_pipe_follow_its_radius` |
 | Couette, 4 cells, first cell at y⁺ ≈ 12, damped | the unresolved-wall warning | warned; undamped and resolved grids not | — | `damping_on_a_wall_the_grid_does_not_resolve_is_warned_about` |
 | Han et al.'s eq. 14 (`spalding_bounce`) on one node, the paper's numbering mapped by vector | every assignment of eq. 14a–c; the node's 19 populations, the incoming and outgoing ones; the momentum taken | exact; mass and momentum to round-off on every face | 1e-15 | `eq_14_assigns_every_population_of_a_node_on_the_floor`, `eq_14_conserves_mass_and_carries_the_stress_on_every_face` |
-| On-node bounce, perturbed coarse channel (13 cells across, walls through the outermost centres), 40 steps, TRT, regularised, HRR | the walls carry the sampled stresses along them; momentum budget with the populations in flight at the nodes; Spalding's law at one cell; the stress along the interior node's velocity; mass | to round-off | budget 2e-13, carried 7e-15, law 5e-14, direction 2e-17, mass 9e-14 | `the_on_node_bounce_gives_the_walls_exactly_the_law_s_stress` |
+| On-node bounce, perturbed coarse channel (13 cells across, walls through the outermost centres), 40 steps, TRT, regularised, HRR | the walls carry the sampled stresses along them; momentum budget P(t + 1) − P(t) = a M + Σ ½ρa − F with the populations in flight at the nodes; Spalding's law at one cell; the stress along the interior node's velocity; mass | to round-off | budget 2e-13, carried 2e-14, law 5e-14, direction 2e-17, mass 8e-14 | `the_on_node_bounce_gives_the_walls_exactly_the_law_s_stress` |
+| On-node bounce, steady force-driven channel (4 cells per δ, 4 × 9 × 4 cells, periodic, TRT, 6000 steps, laminar, a = (10⁻⁵, −5·10⁻⁶, 0)) | the law's stress sums to the body force on the fluid and the half cells, a (M + ½ Σ ρ); the walls along and along the normal carry it; the half cells' share | to round-off | law −5e-13, walls along −5e-13, walls normal −2e-12, share −6e-16 | `the_law_s_stress_balances_the_whole_body_force_in_a_steady_channel` |
 | On-node bounce: grid relation, readback, damping distances, refusals (moving wall, edge with a non-periodic face, obstacle, box under 3 cells), 1, 3 and 7 threads | as stated | as stated | exact | `the_boundary_nodes_are_the_outermost_layers_and_not_fluid`, `damping_measures_the_distance_from_the_wall_through_the_nodes`, `the_on_node_bounce_refuses_what_it_does_not_support`, `on_node_results_are_bit_for_bit_the_same_on_one_and_many_threads` |
 | Stationary toy: the k_x = π mode of the wall rows, 1e-6 seeded on a steady laminar base, on-node, regularised, τ̄ 0.5015, u⁺ 5 | the mode does not grow | −1.2e-4 per step | ≤ 0 | `the_on_node_bounce_damps_the_odd_even_mode_of_its_wall_rows` |
-| The same, both forms × regularised, HRR, MRT (from τ̄ 0.505), TRT × τ̄ 0.50015–0.8 × u⁺ ≈ 5, 11 (heavy) | the growth rate per step, printed (docs/verification.md, "the odd–even mode of the wall rows") | on-node −5e-5 to −1.6e-2, every case; halfway +6e-5 to +0.13, every case | printed | `the_odd_even_mode_of_the_wall_rows_across_forms_collisions_and_tau` |
+| The same, both forms × regularised, HRR, MRT (from τ̄ 0.505), TRT × τ̄ 0.50015–0.8 × u⁺ ≈ 5, 11 (heavy) | the growth rate per step, printed (docs/verification.md, "the odd–even mode of the wall rows") | on-node −2e-5 to −1.6e-2, every case; halfway +6e-5 to +0.13, every case | printed | `the_odd_even_mode_of_the_wall_rows_across_forms_collisions_and_tau` |
 | Disabled-model diagnostic only: wall-function bounce (`spalding_bounce_halfway`), perturbed coarse channel, 40 steps, every collision | the walls carry the sampled stress; momentum budget P(t + 1) − P(t) = a M − F; Spalding's law; mass | to round-off | 3e-15, 3e-14, 3e-14, 4e-14 | `the_wall_function_bounce_gives_the_walls_exactly_the_law_s_stress` |
 | Wall-function bounce on a moving wall | refused, naming the face | refused | — | `the_wall_function_bounce_refuses_a_moving_wall` |
 | Damped and wall-modelled cavity, 1, 3 and 7 threads | bit-for-bit equality | equal | exact | `damped_results_are_bit_for_bit_the_same_on_one_and_many_threads`, `wall_modelled_results_are_bit_for_bit_the_same_on_one_and_many_threads` |

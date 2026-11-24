@@ -318,7 +318,9 @@ step, before the collision, `bounce_sample` takes each node's stress ρ u_τ² f
 (κ 0.41, B 5.5) at its interior node one cell into the fluid (distance 1, the velocity with the
 half force); after the collision `node_bounce` runs eq. 14 on each node in place of a collision,
 reading and writing only the node's own populations (with the in-place layout's addressing of a
-collision), and records the momentum the node took from the fluid. `wall_forces` adds that to one
+collision), hands the fluid the stress less its half cell's body force, ½ ρ a, with ρ the interior node's
+density (`bounce_sample` samples it into row 2's w), and records the momentum the node took from the
+fluid plus ½ ρ a. `wall_forces` adds that to one
 of the node's links from outside the box (an open placeholder that exchanges nothing itself), so
 the node's box face receives it; the weights' share, −n/3 per node, is added on the host. Each of
 the six face orientations has its assignments written out (no loop over the lattice directions that

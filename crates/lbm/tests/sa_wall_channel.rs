@@ -14,8 +14,8 @@
 //! **The lattice run.** A column 1 × (2N + 1) × 1 cells, δ = N cells, periodic in x and z, on-node walls at rows 0
 //! and 2N, the body force u_τ²/δ, the regularized collision (TRT keeps the laminar floor 0.505 with this law and
 //! cannot run these grids, #1063; HRR has a different steady identity and is not tested here), lattice bulk speed
-//! 0.1. The walls take the law's stress share `1 − 1/(2N)` of the body force: the boundary nodes take no force
-//! (#1101). Each run is marched to steady state; then the identities of `check` are asserted, and `report` prints
+//! 0.1. The walls take the whole body force of the column, the boundary nodes' half cells included (#1101), so the
+//! law's share of the stress is 1. Each run is marched to steady state; then the identities of `check` are asserted, and `report` prints
 //! the table of `docs/verification.md`.
 //!
 //! **The steady column's link identity (regularized collision).** Per row j (wall node at 0) let
@@ -29,7 +29,7 @@
 //! it. Writing the face flux with `Q*` then gives, on every link j = 1 … 2N − 2,
 //! `u_{j+1} − u_j = ½ (g_j + g_{j+1})`, `g_j = a (N − j) / (ν + ν_t,j)`: the trapezoid rule on the local shear, with no
 //! further term. At row 1 eq. 14 gives `a_1 = b*_1 − τ_w` and the same form; the symmetric row N closes it with
-//! `τ_w = F (N − ½)`. The hybrid collision rebuilds from `σ P + (1 − σ) P_FD` and gets a five-row stencil that differs
+//! `τ_w = F N` (the half cells' share included, #1101). The hybrid collision rebuilds from `σ P + (1 − σ) P_FD` and gets a five-row stencil that differs
 //! by O(1 − σ), so it is not tested here.
 //!
 //! **Not in the trunk gate.** A settled lattice run is heavy (the five cases take about two minutes to reach 1e-6
@@ -365,11 +365,11 @@ fn one_d_order(label: &str, re_tau: f64, m: usize, y0: f64, chi0: f64, u0: f64) 
 // The lattice run.
 // ---------------------------------------------------------------------------------------------
 
-/// The wall share of the body force: the boundary nodes take no force, so a column with 2N − 1 forced rows
-/// carries the stress ρ a (N − ½) at each wall (#1101), and u_τw² = a (N − ½) (per δ = 1).
-fn wall_share(n: usize) -> f64 {
-    1.0 - 0.5 / n as f64
-}
+/// The walls' share of the body force, as a fraction of the law's stress (`s` in `wall_modelled`). The column's
+/// body force is a·(M + ½Σρ) with M = 2N − 1 fluid cells and ½Σρ = 1 from the two nodes' half cells (#1101), so
+/// a·2N, and the two walls carry half each: τ_w = a N = u_τ² (δ = 1, a = u_τ²/δ). The law's stress is the wall's
+/// stress, so s = 1 at every N, and u_τw² = a N.
+const WALL_SHARE: f64 = 1.0;
 
 /// The lattice time step for `n` cells per δ.
 fn time_step(case: &Case, n: usize) -> f64 {
@@ -420,9 +420,11 @@ struct Settled {
     ut: f64,
     nu: f64,
     a: f64,
-    /// The force the walls take in a step (lattice, x) and the fluid mass.
+    /// The force the walls take in a step (lattice, x), the fluid mass and the two boundary nodes' half-cell mass
+    /// (½ρ each, the interior density).
     wall: f64,
     mass: f64,
+    half: f64,
     /// The friction velocity the walls carry, by row (lattice; 0 at the fluid rows).
     friction: Vec<f64>,
     /// The modelled share of the stress, rows 1 to 3 below the centre line: (1 − ω_j/2)(−Π_xy)/(ρ a (N − j)) from the
@@ -502,6 +504,7 @@ fn settle(case: &Case, n: usize, tolerance: f64) -> Settled {
         a,
         wall: flow.forces().iter().map(|f| f[0]).sum(),
         mass: flow.mass(),
+        half: flow.wall_nodes().unwrap().nodes().iter().map(|w| 0.5 * flow.moments(w.interior as usize).map_or(0.0, |m| m.0)).sum(),
         friction,
         share,
         eddy_ratio: flow.eddy_viscosity_ratio(),
@@ -537,14 +540,17 @@ fn check(case: &Case, n: usize, run: &Settled) {
     let asymmetry = (0..=n).map(|j| (run.u[j] - run.u[2 * n - j]).abs()).fold(0.0, f64::max);
     assert!(asymmetry <= delta, "N {n}: the profile is asymmetric by {asymmetry:.3e} against Δ {delta:.3e}");
 
-    // 2. Momentum: the body force a·M balances the walls' force up to the change of the momentum, which over the
-    // last δ/u_τ moves at most M Δ u_τ, against a·M = M u_τ²/δ per time N/u_τ: a relative error of Δ.
-    let balance = run.wall / (a * run.mass) - 1.0;
+    // 2. Momentum: the walls carry the body force on the fluid and on the boundary nodes' half cells, a (M + ½Σρ)
+    // (#1101: the node's share, per step, is the wall's own; the fluid's budget is a M + Σ½ρa − F). The change of the
+    // momentum over the last δ/u_τ moves at most M Δ u_τ, against a (M + ½Σρ) = (M + ½Σρ) u_τ²/δ per time N/u_τ:
+    // a relative error of Δ. (Without the half cells the walls would carry a M, 1/(2N−1) short.)
+    let balance = run.wall / (a * (run.mass + run.half)) - 1.0;
     println!("N {n}: momentum balance {balance:+.3e} (bar Δ {delta:.3e})");
     assert!(balance.abs() <= delta, "N {n}: momentum balance {balance:e}");
 
-    // 3. The walls' friction velocity is √(a (N − ½)) (the square root of 2's bar): ut's own scale.
-    let share = wall_share(n).sqrt();
+    // 3. The walls' friction velocity: τ_w = a N per wall (item 2), so u_τ = √(a N) = ut (δ = 1, a = u_τ²/δ): the
+    // law's share of the stress is WALL_SHARE = 1 (the half cells' share is the walls' own, #1101).
+    let share = WALL_SHARE.sqrt();
     for w in [0, 2 * n] {
         let kept = run.friction[w] / ut / share - 1.0;
         assert!(kept.abs() <= delta, "N {n}: row {w} friction off by {kept:e}");
@@ -586,7 +592,7 @@ fn check(case: &Case, n: usize, run: &Settled) {
 fn report(case: &Case, n: usize, run: &Settled, wr: &Exact, law: &Exact, as_run: &Exact) {
     let re = case.re_tau;
     let y1 = re / n as f64;
-    let s = wall_share(n).sqrt();
+    let s = WALL_SHARE.sqrt();
     let bulk = lattice_bulk(run, n, y1, re, s);
     let centre = run.u[n];
     let pct = |a: f64, b: f64| 100.0 * (a / b - 1.0);
@@ -639,7 +645,7 @@ fn report(case: &Case, n: usize, run: &Settled, wr: &Exact, law: &Exact, as_run:
 /// the stress share the lattice carries.
 fn solutions(case: &Case, n: usize) -> (Exact, Exact, Exact) {
     assert_eq!(case.reference_cells % n, 0, "N {n} shares no faces with the reference grid of {}", case.reference_cells);
-    (wall_resolved(case), wall_modelled(case, n, 1.0), wall_modelled(case, n, wall_share(n).sqrt()))
+    (wall_resolved(case), wall_modelled(case, n, 1.0), wall_modelled(case, n, WALL_SHARE.sqrt()))
 }
 
 // ---------------------------------------------------------------------------------------------
