@@ -778,6 +778,76 @@ fn orthotropic_solids_beams_and_rods_are_written() {
     assert!(!deck.contains("B31"), "{deck}");
 }
 
+/// Two pipes in line and a solid rod, clamped at node 1: element 1 a pipe of radii 45 and 50,
+/// element 2 one of 40 and 50, element 3 a circle; `steam` (10 inside) on elements 1 and 2,
+/// `sea` (2 inside, 3 around) on element 2, both active in the static step `Press`.
+fn pipes() -> Model {
+    let mut m = Model::default();
+    for (i, x) in [0.0, 1000.0, 2000.0, 3000.0].into_iter().enumerate() {
+        m.set_node(i as u32 + 1, [x, 0.0, 0.0]).unwrap();
+    }
+    m.add_material("Steel", steel()).unwrap();
+    let profiles = [
+        ("thin", BeamProfile::Pipe { radius: 50.0, thickness: 5.0 }),
+        ("thick", BeamProfile::Pipe { radius: 50.0, thickness: 10.0 }),
+        ("rod", BeamProfile::Circle { radius: 50.0 }),
+    ];
+    for (e, (name, profile)) in (1..).zip(profiles) {
+        m.set_element(e, ElementKind::Beam2, vec![e, e + 1]).unwrap();
+        m.add_set(name, elements([e])).unwrap();
+        let kind = SectionKind::Beam { profile, orientation: [0.0, 0.0, 1.0] };
+        m.add_section(name, Section { set: name.into(), material: "Steel".into(), kind, formulation: Formulation::default() }).unwrap();
+    }
+    m.add_set("line", elements([1, 2])).unwrap();
+    m.add_set("base", Set { nodes: vec![1], ..Set::default() }).unwrap();
+    m.add_boundary_condition("clamp", BoundaryCondition::Fixed { target: Target::Set("base".into()) }).unwrap();
+    m.add_load("steam", Load::PipePressure { set: "line".into(), internal: 10.0, external: 0.0 }).unwrap();
+    m.add_load("sea", Load::PipePressure { set: "thick".into(), internal: 2.0, external: 3.0 }).unwrap();
+    m.add_step(step("Press", Procedure::Static {}, &["clamp"], &["steam", "sea"]), None).unwrap();
+    m
+}
+
+#[test]
+fn pipes_under_pressure_are_pipe_elements_with_closed_end_pressures() {
+    let deck = abaqus::write(&pipes()).unwrap();
+    for expected in [
+        // The loaded pipes are PIPE31 with thick sections; the rod stays a beam.
+        "*ELEMENT, TYPE=PIPE31\n1, 1, 2\n2, 2, 3\n",
+        "*ELEMENT, TYPE=B31\n3, 3, 4\n",
+        "*BEAM SECTION, SECTION=THICK PIPE, ELSET=thin, MATERIAL=Steel\n50.0, 5.0\n0.0, 0.0, 1.0\n",
+        "*BEAM SECTION, SECTION=THICK PIPE, ELSET=thick, MATERIAL=Steel\n50.0, 10.0\n0.0, 0.0, 1.0\n",
+        "*BEAM SECTION, SECTION=CIRC, ELSET=rod, MATERIAL=Steel\n50.0\n",
+        // Per element: PI with the summed internal pressure and the bore's diameter, PE with
+        // the external one and the outer diameter.
+        "*DLOAD, OP=NEW\n1, PI, 10.0, 90.0\n2, PI, 12.0, 80.0\n2, PE, 3.0, 100.0\n",
+    ] {
+        assert!(deck.contains(expected), "{expected}\n{deck}");
+    }
+    assert_lines_fit(&deck);
+    // A pipe no pressure loads stays a beam with a thin pipe section.
+    let mut m = pipes();
+    m.set_load_active("Press", "steam", false).unwrap();
+    m.remove_load("steam").unwrap();
+    let deck = abaqus::write(&m).unwrap();
+    for expected in [
+        "*ELEMENT, TYPE=B31\n1, 1, 2\n3, 3, 4\n",
+        "*ELEMENT, TYPE=PIPE31\n2, 2, 3\n",
+        "*BEAM SECTION, SECTION=PIPE, ELSET=thin, MATERIAL=Steel\n50.0, 5.0\n",
+        "*DLOAD, OP=NEW\n2, PI, 2.0, 80.0\n2, PE, 3.0, 100.0\n",
+    ] {
+        assert!(deck.contains(expected), "{expected}\n{deck}");
+    }
+    // Nastran's and LS-DYNA's beams take no such pressure: refused by name.
+    for (format, what) in [("Nastran", nastran::write(&pipes())), ("LS-DYNA", lsdyna::write(&pipes()).map(|w| w.text))] {
+        match what {
+            Err(Error::Unsupported { what, .. }) => {
+                assert!(what.contains("load `steam`: a pipe pressure") && what.contains("load `sea`: a pipe pressure"), "{format}: {what}")
+            }
+            other => panic!("{format}: expected unsupported, got {other:?}"),
+        }
+    }
+}
+
 #[test]
 fn a_model_that_is_not_ready_is_refused() {
     let mut m = cantilever();
