@@ -356,6 +356,64 @@ u′ ≈ v′ ≈ w′ ≈ 5 u_τ is that instability's saturated state, which a
 channels", is withdrawn. The paper states neither its MRT rates nor its damping constant, so its result is not
 reproducible from what is published. A40 was not run.
 
+### Bluff-body LES (#785)
+
+> Probe runs of 2026-11-23/24 on develop 655d92fe (NVIDIA GB10, f32; hybrid collision σ 0.99, Smagorinsky C 0.1, no
+> wall model; box 24 D long, body 6 D from a uniform inlet, convective outlet, slip sides, periodic span; averaged
+> over 100–240 D/U in 8 blocks). They are not acceptance runs: no grid is converged and the intervals are block
+> intervals of one realisation. References: circular cylinder at Re 3900, C_d 0.99 ± 0.05 (experiment) and 1.04
+> (LES), A. G. Kravchenko, P. Moin, Phys. Fluids 12:403–417, 2000, doi:10.1063/1.870318; square cylinder, C_d 2.1 at
+> Re 21 400, D. A. Lyn, S. Einav, W. Rodi, J.-H. Park, J. Fluid Mech. 304:285–319, 1995,
+> doi:10.1017/S0022112095004435, and 2.18 (DNS at Re 22 000), F. X. Trias, A. Gorobets, A. Oliva, Comput. Fluids
+> 123:87–98, 2015, doi:10.1016/j.compfluid.2015.09.013.
+
+| case | start | obstacle walls | C_d | against the reference |
+|---|---|---|---|---|
+| cylinder Re 3900, 16 cells per D, blockage 8.3 % | free stream everywhere | halfway | 1.310 ± 0.043 | +32 % |
+| same | at rest on the body | halfway | 1.260 ± 0.012 | +27 % |
+| same | at rest on the body | interpolated | 1.113 ± 0.012 | +12 % |
+| same, blockage 4.2 % | at rest on the body | interpolated | 1.098 ± 0.018 | +11 % |
+| same, 24 cells per D, blockage 8.3 % | at rest on the body | interpolated | 1.067 ± 0.019 | +8 % |
+| square Re 22 000, 16 cells per D, blockage 7.1 % | at rest on the body | halfway (faces on cell faces) | 1.81 ± 0.07 | −14 % (Lyn), −17 % (Trias) |
+| same, blockage 3.6 % | at rest on the body | halfway | 1.73 ± 0.03 | −18 %, −21 % |
+
+> What the earlier records of these cases (#787: 1.32–1.35; #789: 4.11) contained besides resolution:
+> - **A single-step force.** Near τ⁺ = ½ a halfway wall's force alternates step by step. On the square cylinder the
+>   odd steps alone read 4.09 and the even steps alone −0.48; their mean, 1.81, is the pressure integrated over the
+>   body's faces (1.79). #789's 4.11 was one of the two.
+> - **The start.** With the free stream filling the box, body included, the body appears impulsively and the
+>   pressure wave it sends stays between the reflecting inlet and outlet: on the cylinder the force's rms is 3.7
+>   against 0.41 with a start at rest on the body, and the mean is 4 % higher; the square case went unstable at
+>   161 D/U.
+> - **The staircase**, 13 % on the cylinder (rows 2 and 3).
+>
+> The remaining error is resolution: 16–24 cells per diameter leave the separating shear layers on one or two cells.
+> Density stays within 0.84–1.18 (square) and 0.93–1.08 (cylinder) of the reference, local Mach numbers up to 0.28.
+
+### Wall-modelled channel at Re_τ 1000 on the regularised collision (#785)
+
+> Probe runs of 2026-11-23/24 on develop 655d92fe: 2πδ × 2δ × πδ, constant force u_τ²/δ, Smagorinsky C 0.1, the
+> regularised collision unless stated; 15–20 δ/u_τ discarded and 15–20 averaged, shorter than the studies'
+> protocol, so every row is inconclusive by the statistical acceptance. Reference: M. Lee, R. D. Moser, J. Fluid
+> Mech. 774:395–415, 2015 (U_b⁺ 19.99 at Re_τ 1000.5).
+
+| wall treatment | cells per δ | U_b⁺ | C_f against Lee & Moser |
+|---|---|---|---|
+| none (halfway bounce-back) | 16 | 10.5–12.1 | +173 to +261 % |
+| Malaspinas & Sagaut (`musker`) | 16 | 28.6–33.1, still rising | −51 to −63 % |
+| same | 32 | 35.5, still rising | −68 % |
+| same, hybrid collision σ 0.99 | 32 | 38.9, still rising | −74 % |
+| Han, Ooka & Kikumoto (`spalding_bounce`), Van Driest 26 | 16 / 32 | 27.3 / 28.1 | −46 / −49 % |
+| Han's wall, the law sampled at the 2nd row (probe) | 16 | 21.5 | −13.9 % |
+| sampled at the 3rd row, h/δ 0.19 (probe) | 16 | 19.4 | +5.8 % |
+| sampled at the 4th row, h/δ 0.17 (probe) | 24 | 19.5 | +5.4 % |
+| sampled at the 6th row, h/δ 0.19 (probe) | 32 | 19.5 | +5.1 % |
+
+> Both published forms read the law of the wall in the first cells, where the grid resolves none of the stress
+> (resolved stress 0 to 0.5 of the total in rows 1–2), so the wall takes too little and the flow speeds up. Reading
+> it three or more cells up (S. Kawai, J. Larsson, Phys. Fluids 24:015105, 2012) brings the carried friction to
+> about +5 %; the probe changed only where the law is sampled.
+
 ### Wall-modelled LES: Malaspinas & Sagaut against Lee & Moser and Dean (#664, #749)
 
 **Void (#1057).** Every run of this section used the MRT collision below its stability bound (lattice viscosity
