@@ -432,6 +432,10 @@ docs/verification.md and summarised in [Large-eddy simulation](les.md).
   stated.
 - A turbulent case stopping on its running mean has not been run; the stop rule is shown on
   laminar vortex shedding.
+- **Curved bodies need interpolated walls.** With halfway walls a curved or inclined obstacle is a staircase: on a
+  circular cylinder at Re 3900 with 16 cells per diameter it carried 13 % more drag than with `walls: "interpolated"`.
+  The solve warns where a connected oblique region of the surface rises at least one cell along its axis: a curved
+  body about 7 cells across or more (a faceted one a little earlier). A smaller curved body is not flagged.
 
 ## Implementation
 

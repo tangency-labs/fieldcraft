@@ -425,6 +425,94 @@ fn extent(o: &Obstacle, axis: usize) -> (f64, f64) {
     along.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(x), hi.max(x)))
 }
 
+/// Whether the obstacle's surface staircases: some region of it crosses lattice planes obliquely, which halfway
+/// bounce-back turns into a staircase of cell faces. A region is measured along the axis of its normal: the spread
+/// of its vertices' coordinate along that axis. It staircases when the spread is at least one lattice cell
+/// (`spacing`), since then it crosses a lattice plane obliquely. No tolerance enters: a face parallel to a lattice
+/// plane has the same coordinate at all its vertices up to rounding, far below `spacing`, and a sliver's shape does
+/// not matter, only its vertices' spread. Each triangle takes the axis of its own largest normal component, and the
+/// triangles that share a vertex and an axis form one region. The regions are taken per axis rather than from the
+/// summed normal of a region, because a closed body's whole surface sums to no normal at all. A region of a curved
+/// body covers about ±45° about its axis, so a sphere of radius R rises 0.29 R along it: the warning fires from
+/// R ≥ Δx / (1 − cos 45°) ≈ 3.4 Δx, about 7 cells across; a faceted surface flags slightly earlier, because its
+/// regions reach past 45°.
+fn has_staircase(o: &Obstacle, spacing: f64) -> bool {
+    let points = o.surface.points();
+    let triangles = o.surface.triangles();
+    // The corners of a triangle, when all its vertex indices are in range.
+    let corners = |t: &[u32; 3]| {
+        let [i, j, k] = *t;
+        let p = |v: u32| points.get(v as usize).copied();
+        Some([p(i)?, p(j)?, p(k)?])
+    };
+    // Each triangle's axis: its largest normal component (None for a degenerate or out-of-range triangle).
+    let axis: Vec<Option<usize>> = triangles
+        .iter()
+        .map(|t| {
+            let [a, b, c] = corners(t)?;
+            let (u, v) = ([b[0] - a[0], b[1] - a[1], b[2] - a[2]], [c[0] - a[0], c[1] - a[1], c[2] - a[2]]);
+            let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+            if n.iter().map(|x| x * x).sum::<f64>() <= 0.0 {
+                return None;
+            }
+            Some((1..3).fold(0, |best, k| if n[k].abs() > n[best].abs() { k } else { best }))
+        })
+        .collect();
+    // Triangles that share a vertex and an axis are joined into one region.
+    let mut parent: Vec<usize> = (0..triangles.len()).collect();
+    let mut first: Vec<[Option<usize>; 3]> = vec![[None; 3]; points.len()];
+    for (t, tri) in triangles.iter().enumerate() {
+        let Some(k) = axis.get(t).copied().flatten() else { continue };
+        for v in *tri {
+            let Some(seen) = first.get_mut(v as usize) else { continue };
+            match seen[k] {
+                Some(other) => join_regions(&mut parent, t, other),
+                None => seen[k] = Some(t),
+            }
+        }
+    }
+    // Each region's spread along its axis; a region's triangles all share that axis.
+    let mut lo = vec![f64::INFINITY; triangles.len()];
+    let mut hi = vec![f64::NEG_INFINITY; triangles.len()];
+    for (t, tri) in triangles.iter().enumerate() {
+        let Some(k) = axis.get(t).copied().flatten() else { continue };
+        let root = region_root(&mut parent, t);
+        for v in *tri {
+            let Some(p) = points.get(v as usize) else { continue };
+            if let (Some(l), Some(h)) = (lo.get_mut(root), hi.get_mut(root)) {
+                *l = (*l).min(p[k]);
+                *h = (*h).max(p[k]);
+            }
+        }
+    }
+    lo.iter().zip(&hi).any(|(l, h)| h - l >= spacing)
+}
+
+/// The root of triangle `i`'s region in the union-find forest `parent`, halving the path as it goes.
+fn region_root(parent: &mut [usize], mut i: usize) -> usize {
+    loop {
+        let Some(&p) = parent.get(i) else { return i };
+        if p == i {
+            return i;
+        }
+        let Some(&g) = parent.get(p) else { return p };
+        if let Some(slot) = parent.get_mut(i) {
+            *slot = g;
+        }
+        i = g;
+    }
+}
+
+/// Joins the regions of triangles `a` and `b`, under the smaller root, so the forest does not depend on the order.
+fn join_regions(parent: &mut [usize], a: usize, b: usize) {
+    let (ra, rb) = (region_root(parent, a), region_root(parent, b));
+    if ra != rb
+        && let Some(slot) = parent.get_mut(ra.max(rb))
+    {
+        *slot = ra.min(rb);
+    }
+}
+
 /// The share of a part of the model in the box whose geometry spans `min..max`: a part that
 /// reaches a symmetry plane is half of one part of the whole model, continued across the plane
 /// as its mirror image, so ½ per plane it reaches; 1 for one clear of every plane (its mirror
@@ -1287,6 +1375,17 @@ impl Setup {
         }
         if collision != Collision::Trt && magic_given {
             warnings.push(format!("the two-relaxation-time parameter Λ (`magic`) has no effect with the {} collision", collision.name()));
+        }
+        // A subgrid model on halfway walls: an oblique face of an obstacle is a staircase of cell faces, which the
+        // interpolated walls avoid (their refusals with a wall model or a free surface leave nothing to suggest).
+        let subgrid = turbulence.as_ref().is_some_and(|t| matches!(t, Turbulence::Smagorinsky { .. } | Turbulence::Vreman { .. }));
+        if subgrid && walls.is_halfway() && turbulence.as_ref().and_then(|t| t.wall_model()).is_none() && domain.free_surface.is_none() {
+            let staircase = domain.obstacles.iter().find(|body| obstacles.iter().any(|o| &o.body == *body && has_staircase(o, domain.spacing)));
+            if let Some(body) = staircase {
+                warnings.push(format!(
+                    "a subgrid model with halfway obstacle walls: obstacle `{body}` has faces that are not parallel to the grid, which halfway bounce-back turns into a staircase (measured: 13 % more drag on a circular cylinder at Re 3900 on 16 cells per diameter); `walls: \"interpolated\"` places the wall where the surface is"
+                ));
+            }
         }
 
         Ok(Setup {
