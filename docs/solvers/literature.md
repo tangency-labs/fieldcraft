@@ -545,6 +545,7 @@ checked against the DOI handle API and Crossref, as above.
 - **Used as.** `crates/lbm/tests/trt_stability.rs` applies this analysis to D3Q19 TRT about #820's uniform stream
   (U = 0.05, 16³ modes): with Λ = 3/16 growing modes for τ⁺ ≤ 0.502, none from 0.5025; at τ⁺ = 0.5005 stable only to
   U = 0.01, or with Λ ≤ 1e-5. No published TRT boundary covers this case; the analysis and its numbers are ours.
+  `crates/lbm/tests/mrt_stability.rs` applies it to the MRT collision (C2.1) at rest and about streams at lattice Mach 0.1 and 0.2: the source of `mrt::MIN_VISCOSITY`.
 
 **C1.6 Guo, Zheng, Shi 2002, forcing.** **Verdict: build on.** PRE 65:046308, 2002. DOI [10.1103/PhysRevE.65.046308](https://doi.org/10.1103/PhysRevE.65.046308). The second-order body-force scheme every IB-LBM coupling (D2) needs.
 
@@ -554,12 +555,7 @@ checked against the DOI handle API and Crossref, as above.
 - **Citation.** D. d'Humières, I. Ginzburg, M. Krafczyk, P. Lallemand, L.-S. Luo. *Multiple-relaxation-time lattice Boltzmann models in three dimensions.* Phil. Trans. R. Soc. A 360(1792):437–451, 2002. DOI [10.1098/rsta.2001.0955](https://doi.org/10.1098/rsta.2001.0955).
 - **Method.** Collide in moment space with a separate relaxation rate per moment group (D3Q15/D3Q19 matrices given);
   free rates damp non-hydrodynamic modes, raising stability and fixing the wall location.
-- **Limits.** Still loses stability at very high Re; parameters need care. In under-resolved turbulent channels it
-  reaches an unphysical state of spurious high-wavenumber oscillations without mesh convergence: P. Nathen,
-  D. Gaudlitz, M. J. Krause, N. A. Adams, *On the stability and accuracy of the BGK, MRT and RLB Boltzmann schemes for
-  the simulation of turbulent flows*, Commun. Comput. Phys. 23:846–876, 2018, DOI
-  [10.4208/cicp.OA-2016-0229](https://doi.org/10.4208/cicp.OA-2016-0229) (Re_τ 395 and 590, the same rates as ours). Our
-  Han et al. channel at C_s 0.1 shows the same signature (docs/manual/fluid/les.md, Han, Ooka & Kikumoto).
+- **Limits.** Still loses stability at very high Re; parameters need care. The paper's own linear analysis bounds the viscosity from below: "ν > 2.54 × 10⁻³" at speeds up to 0.19 with its optimised equilibria (appendix A). With the single-relaxation-time-equivalent equilibria FieldCraft uses, our analysis (`crates/lbm/tests/mrt_stability.rs`) finds the state of rest unstable below a lattice viscosity of 1.1801 × 10⁻³ (τ 0.50354), 1.2295 × 10⁻³ at lattice Mach 0.1; a step below it is refused. P. Nathen, D. Gaudlitz, M. J. Krause, N. A. Adams, *On the stability and accuracy of the BGK, MRT and RLB Boltzmann schemes for the simulation of turbulent flows*, Commun. Comput. Phys. 23:846–876, 2018, DOI [10.4208/cicp.OA-2016-0229](https://doi.org/10.4208/cicp.OA-2016-0229), report an unphysical state of this MRT in channels at Re_τ 395 and 590; our Han et al. channel showed grid-scale noise for the reason above (docs/manual/fluid/les.md), which we had first put down to under-resolution.
 - **Complexity.** Low–moderate (a constant 19×19 transform).
 - **As implemented** (`crates/lbm/src/mrt.rs`, `collision: "mrt"`, #664): D3Q19, the 19 orthogonal moments built
   from their integer polynomials in c (so independent of the direction order), the inverse as the transpose over the

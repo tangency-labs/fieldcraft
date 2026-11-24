@@ -29,7 +29,7 @@ lattice of a flow with heat always collides with two relaxation times.
 |---|---|---|---|
 | `collision` | `"trt"` | default | Two relaxation times. Most flows: bounce-back walls sit exactly halfway between cells, so it is the most accurate of the three on a given grid. |
 | | `"regularized"` | | Recursive regularised. Flows the two-relaxation-time scheme cannot hold on the grid you can afford: τ⁺ below about 0.52, fast inlets and fans, sharp corners. It costs 15–35 % more per step and its staircase walls are less accurate. Uniform pressure outlets extrapolate interior stress; their previous equilibrium closure caused 3–8 % error near the outlet (Theory). |
-| | `"mrt"` | | Multiple relaxation times. The collision the wall model is validated with ([Large-eddy simulation](les.md)). |
+| | `"mrt"` | | Multiple relaxation times. Refused below τ⁺ = 0.50354, where it is linearly unstable at rest ([its stability bound](#the-stability-bound)); not a collision for large-eddy simulation close to τ⁺ = ½. |
 | | `"hrr"` | | Hybrid recursive regularised. The regularised collision with its stress blended with the one the finite-difference strain rate gives (`sigma`), which damps the shortest waves: for large-eddy simulation. |
 | `magic` | above 0, at most 1 | 3/16 | The two-relaxation-time parameter Λ. With `regularized`, `mrt` or `hrr` it has no effect, and the solve warns. |
 | `sigma` | above 0, at most 1 | 0.99 | The hybrid collision's σ: its share of the populations' own stress. 1 is `regularized` exactly; lower adds more hyperviscosity. `"dynamic"`: σ per cell and step from the turbulence model's eddy viscosity, which then stays out of τ (needs `turbulence`; Theory). With another collision it has no effect, and the solve warns. |
@@ -182,6 +182,44 @@ equilibrium is printed as (11/2) ρ (3 − u²); FieldCraft uses d'Humières et 
 single-relaxation-time-equivalent 3 ρ − 11/2 ρ u² (w_ε = 3, w_εj = −11/2), the choice the paper's
 other equilibria (the quartic modes at −½) correspond to. The equilibria use j·j/ρ (the paper's
 ρ u u); d'Humières et al. use j·j/ρ₀.
+
+#### The stability bound
+
+With these rates and equilibria the collision is **linearly unstable in fluid at rest below a lattice viscosity
+ν Δt/Δx² of 1.1801 × 10⁻³ (τ⁺ = 0.50354)**, and `solve.fluid` refuses a step below it, naming the bound. The
+analysis is Lallemand & Luo's (2000), the one d'Humières et al. chose the rates with: about a uniform state a
+plane wave of wavevector k advances by G(k) = diag(e^(−ik·c_q)) J, J the collision's Jacobian at the
+equilibrium, and grows where the spectral radius of G(k) exceeds one. `crates/lbm/tests/mrt_stability.rs` runs it
+on `mrt::collide` itself.
+
+| Lattice viscosity (τ⁺) | Largest growth per step, at rest |
+|---|---|
+| 5 × 10⁻⁵ (0.50015) | 7.9 × 10⁻³, at k = π (0.20, 0.59, 0.59) |
+| 2 × 10⁻⁴ (0.5006) | 6.7 × 10⁻³ |
+| 1 × 10⁻³ (0.503) | 1.0 × 10⁻³ |
+| 1.1801 × 10⁻³ (0.50354) and above | none; the last wave to settle is k = π (0.25, 0.42, 0.42) |
+
+- **A subgrid model does not lift the bound.** Smagorinsky's and Vreman's eddy viscosities are zero where the
+  strain rate is, so the growth starts wherever the flow is uniform. A periodic box at rest with Smagorinsky's
+  model (C 0.1) and a disturbance of 10⁻⁹ fills with isotropic grid-scale noise within 4000 steps and stays at a
+  lattice speed of about 7 × 10⁻³ rms per component, with ⟨ν_t⟩/ν ≈ 8; at ν = 1.3 × 10⁻³ the same box decays.
+- **The bound rises with the flow's speed.** About a uniform stream it is 1.2295 × 10⁻³ (τ⁺ 0.50369) at lattice
+  Mach 0.1, 1.40 × 10⁻³ (0.50421) at 0.2 and 1.90 × 10⁻³ (0.50569) at 0.3, highest for a stream along (1, ½, ½).
+  A step between the bound at rest and the one at Mach 0.1 is warned about. At Mach 0.1 nothing grows one per cent above
+  the bound, over 45 sampled directions of the stream; past it slower waves grow at larger viscosities too: 2 × 10⁻⁶ per step at Mach 0.15 (up to
+  ν ≈ 1.7 × 10⁻³), 3 × 10⁻⁵ at 0.2 (≈ 3 × 10⁻³), 2 × 10⁻⁴ at 0.3 (≈ 6 × 10⁻³). A single relaxation time has none
+  of these at the same points.
+- **Where it comes from.** The stresses relax at a rate close to 2 while the quartic modes relax at 1.4; with the
+  quartic modes at the stresses' rate the state of rest is stable at ν = 5 × 10⁻⁵. The equilibria of the energy
+  square do not matter at rest. This is a diagnosis: the rates are the published ones and are not changed.
+- **The published bound.** d'Humières et al. (appendix A) state "a maximum speed of 0.19 … and a viscosity
+  ν > 2.54 × 10⁻³" for these rates with their optimised equilibria (w_ε = 0, w_εj = −475/63, w_xx = 0), and note
+  that boundaries may lower the stability further. FieldCraft's bound is the one of its own equilibria; it is
+  not the paper's number.
+- **The other collisions close to τ⁺ = ½.** None is linearly stable in a stream there. At ν = 5 × 10⁻⁵ and a
+  lattice speed of 0.05 the regularised collision grows by at most 5 × 10⁻⁵ per step (stable at rest, and
+  stable in the stream from ν = 10⁻³), the two-relaxation-time one with Λ = 3/16 by 1.7 × 10⁻² along (1, 1, 0)
+  (stable at rest).
 
 With halfway bounce-back the MRT wall lies half a cell out up to an error of order Δx² that depends
 on τ: the rates are fixed, and there is no Λ to put it exactly halfway. Its uniform pressure faces use
@@ -358,6 +396,8 @@ The two-relaxation-time results did not change when the regularised collision wa
 | Plane Poiseuille, 16 cells, τ = 1 | Parabola | 3.0e-3 of the peak | 4 × 10⁻³ (GPU suite) | `plane_poiseuille_matches_the_analytic_profile_and_the_cpu` (`fieldcraft-lbm-gpu`) |
 | Couette, 16 cells, lattice speed 0.1 | Linear profile | Compressibility error | 2 × 10⁻³ of the wall speed | `couette_flow_is_linear` |
 | Taylor–Green, 16/32/64 cells | exp(−2νt) | 2.2e-2, 5.5e-3, 1.4e-3 (orders 2.015, 2.004) | finest < 2 × 10⁻³, order > 1.8 | `taylor_green_decays_at_the_viscous_rate_to_second_order` |
+| Linear stability about rest and a stream | Von Neumann analysis of `mrt::collide` | grows 6.1e-5 per step at 0.99 of the bound, decays 6.1e-5 at 1.01; no wave of a 32³ box grows above it | ±1 % of `MIN_VISCOSITY` | `the_state_of_rest_is_unstable_below_the_bound_and_stable_above_it`, `no_wave_grows_above_the_bound_and_the_bound_rises_with_the_stream` (`mrt_stability.rs`) |
+| A step below the bound | refused, naming the bound | refused at ν 5e-5 and at 0.99 of the bound; warned up to the Mach 0.1 bound | exact | `below_its_stability_bound_the_collision_is_refused` |
 | Couette with Smagorinsky's model | ν_t = (C Δx)² U/h, wall shear ρ (ν + ν_t) U/h | | shear 2 × 10⁻³, ν_t/ν 2 × 10⁻² | `smagorinsky_couette_flow_takes_the_closed_form_eddy_viscosity` |
 | Determinism | One thread against several | Bit for bit | exact | `results_are_bit_for_bit_the_same_on_one_and_many_threads` |
 
@@ -524,6 +564,8 @@ exact 1.547615e-2 (−4.2e-7; tolerance 1e-3: `a_shear_wave_decays_at_the_exact_
 - Below τ⁺ ≈ 0.508 even the regularised collision went unstable on a coarse bluff-body grid: the
   inlet and outlet reflect pressure waves. There are no absorbing layers.
 - MRT's rates are fixed (no Λ): its wall is second-order accurate with a τ-dependent constant.
+- MRT is linearly unstable at rest below τ⁺ = 0.50354 and is refused there
+  ([the stability bound](#the-stability-bound)); a subgrid model does not change that.
 - MRT went unstable with a velocity inlet and a pressure outlet at τ⁺ ≈ 0.54 (the flow-past sample
   and a channel, [Worked example](#worked-example)), where the other two collisions ran.
 - The thermal lattice's linear equilibrium diffuses along the flow by 4 u² of the diffusivity.
@@ -546,6 +588,7 @@ exact 1.547615e-2 (−4.2e-7; tolerance 1e-3: `a_shear_wave_decays_at_the_exact_
 - C. Coreixas, G. Wissocq, G. Puigt, J.-F. Boussuge, P. Sagaut. *Recursive regularization step for high-order lattice Boltzmann methods.* Phys. Rev. E 96:033306, 2017. doi:[10.1103/PhysRevE.96.033306](https://doi.org/10.1103/PhysRevE.96.033306)
 - C. Coreixas, B. Chopard, J. Latt. *Comprehensive comparison of collision models in the lattice Boltzmann framework: Theoretical investigations.* Phys. Rev. E 100:033305, 2019. doi:[10.1103/PhysRevE.100.033305](https://doi.org/10.1103/PhysRevE.100.033305)
 - D. d'Humières, I. Ginzburg, M. Krafczyk, P. Lallemand, L.-S. Luo. *Multiple-relaxation-time lattice Boltzmann models in three dimensions.* Phil. Trans. R. Soc. Lond. A 360:437–451, 2002. doi:[10.1098/rsta.2001.0955](https://doi.org/10.1098/rsta.2001.0955)
+- P. Lallemand, L.-S. Luo. *Theory of the lattice Boltzmann method: dispersion, dissipation, isotropy, Galilean invariance, and stability.* Phys. Rev. E 61:6546–6562, 2000. doi:[10.1103/PhysRevE.61.6546](https://doi.org/10.1103/PhysRevE.61.6546)
 - O. Malaspinas, P. Sagaut. *Wall model for large-eddy simulation based on the lattice Boltzmann method.* J. Comput. Phys. 275:25–40, 2014. doi:[10.1016/j.jcp.2014.06.020](https://doi.org/10.1016/j.jcp.2014.06.020)
 - Z. Guo, C. Zheng, B. Shi. *Discrete lattice effects on the forcing term in the lattice Boltzmann method.* Phys. Rev. E 65:046308, 2002. doi:[10.1103/PhysRevE.65.046308](https://doi.org/10.1103/PhysRevE.65.046308)
 - M. Geier, M. Schönherr, A. Pasquali, M. Krafczyk. *The cumulant lattice Boltzmann equation in three dimensions: Theory and validation.* Comput. Math. Appl. 70:507–547, 2015. doi:[10.1016/j.camwa.2015.05.001](https://doi.org/10.1016/j.camwa.2015.05.001)
