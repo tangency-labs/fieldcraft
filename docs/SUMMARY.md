@@ -44,6 +44,7 @@
   - [Steady state and averaging](manual/fluid/steady-state-and-averaging.md)
   - [GPU backend](manual/fluid/gpu.md)
   - [Fluid results](manual/fluid/fluid-results.md)
+  - [OpenFOAM cases](manual/fluid/openfoam.md)
 
 # Verification
 
