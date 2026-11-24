@@ -246,7 +246,17 @@ pub enum SectionKind {
     /// plane of a body of revolution about the Y axis (x = radius, y = axial position; the hoop
     /// direction is the third). Forces, reactions and masses are totals over the full
     /// circumference (2π radians).
-    Axisymmetric {},
+    /// With `twist` every node also carries the hoop displacement u_θ (degree of freedom 3), so
+    /// the body can be twisted about its axis: the shears γ_rθ = ∂u_θ/∂r − u_θ/r and
+    /// γ_zθ = ∂u_θ/∂z are stress and strain components xz and yz.
+    Axisymmetric {
+        #[serde(default, skip_serializing_if = "is_false")]
+        twist: bool,
+    },
+}
+
+fn is_false(flag: &bool) -> bool {
+    !*flag
 }
 
 fn default_shell_points() -> u32 {
@@ -287,7 +297,7 @@ impl SectionKind {
     pub fn dimension(&self) -> u8 {
         match self {
             SectionKind::Solid {} => 3,
-            SectionKind::Shell { .. } | SectionKind::PlaneStress { .. } | SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric {} => 2,
+            SectionKind::Shell { .. } | SectionKind::PlaneStress { .. } | SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric { .. } => 2,
             SectionKind::Beam { .. } | SectionKind::Rod { .. } => 1,
         }
     }
@@ -303,11 +313,17 @@ impl SectionKind {
         self.extent().is_some()
     }
 
+    /// Whether this is an axisymmetric section with twist (a third unknown, the hoop
+    /// displacement, at every node).
+    pub fn twist(&self) -> bool {
+        matches!(self, SectionKind::Axisymmetric { twist: true })
+    }
+
     /// How a 2D continuum section extends out of its plane (`None` for other kinds).
     pub fn extent(&self) -> Option<Extent> {
         match *self {
             SectionKind::PlaneStress { thickness } | SectionKind::PlaneStrain { thickness } => Some(Extent::Thickness(thickness)),
-            SectionKind::Axisymmetric {} => Some(Extent::Revolved),
+            SectionKind::Axisymmetric { .. } => Some(Extent::Revolved),
             _ => None,
         }
     }
@@ -321,7 +337,7 @@ impl SectionKind {
             SectionKind::Rod { .. } => "rod",
             SectionKind::PlaneStress { .. } => "plane_stress",
             SectionKind::PlaneStrain { .. } => "plane_strain",
-            SectionKind::Axisymmetric {} => "axisymmetric",
+            SectionKind::Axisymmetric { .. } => "axisymmetric",
         }
     }
 
@@ -354,7 +370,7 @@ impl SectionKind {
             SectionKind::PlaneStress { thickness } | SectionKind::PlaneStrain { thickness } => {
                 positive("thickness", *thickness)?;
             }
-            SectionKind::Axisymmetric {} => {}
+            SectionKind::Axisymmetric { .. } => {}
         }
         Ok(())
     }
@@ -424,7 +440,7 @@ impl Formulation {
         if !kind.is_continuum() && self.incompatible_modes {
             return Err(Error::Invalid(format!("incompatible modes are for solid and 2D sections, not {}", kind.name())));
         }
-        let volume_constrained = kind.dimension() == 3 || matches!(kind, SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric {});
+        let volume_constrained = kind.dimension() == 3 || matches!(kind, SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric { .. });
         if self.hybrid && !volume_constrained {
             return Err(Error::Invalid(format!("hybrid formulations are for solid, plane strain and axisymmetric sections, not {}", kind.name())));
         }

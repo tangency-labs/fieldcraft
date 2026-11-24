@@ -375,7 +375,7 @@ impl<'m> Deck<'m> {
             let u = uses.entry(s.material.as_str()).or_default();
             match s.kind {
                 SectionKind::Solid {} => u.solid = true,
-                SectionKind::Shell { .. } | SectionKind::PlaneStress { .. } | SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric {} => {
+                SectionKind::Shell { .. } | SectionKind::PlaneStress { .. } | SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric { .. } => {
                     u.shell = true
                 }
                 SectionKind::Beam { .. } | SectionKind::Rod { .. } => u.line = true,
@@ -518,7 +518,7 @@ impl<'m> Deck<'m> {
                     };
                     self.add_property(sname, Property::Membrane { mid, thickness, mcid }, elements.iter().copied())?;
                 }
-                SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric {} => {
+                SectionKind::PlaneStrain { .. } | SectionKind::Axisymmetric { .. } => {
                     self.problems.insert(format!(
                         "section `{sname}`: {} elements (Nastran's plane strain and axisymmetric cards differ between dialects; not written)",
                         sec.kind.name()

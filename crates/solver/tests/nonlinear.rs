@@ -239,8 +239,8 @@ fn plane_strain_and_axisymmetric_stretch() {
     for (section, kind) in [
         (SectionKind::PlaneStrain { thickness: 1.0 }, ElementKind::Quad8),
         (SectionKind::PlaneStrain { thickness: 1.0 }, ElementKind::Tri3),
-        (SectionKind::Axisymmetric {}, ElementKind::Quad8),
-        (SectionKind::Axisymmetric {}, ElementKind::Quad4),
+        (SectionKind::Axisymmetric { twist: false }, ElementKind::Quad8),
+        (SectionKind::Axisymmetric { twist: false }, ElementKind::Quad4),
     ] {
         let mut m = Model::default();
         let n = 3usize;
@@ -278,7 +278,7 @@ fn plane_strain_and_axisymmetric_stretch() {
         let mat = Material { elastic: Some(iso(e, nu)), hyperelastic: Some(Hyperelastic::NeoHookean {}), ..Material::default() };
         m.add_material("Mat", mat).unwrap();
         m.add_section("s", Section { set: "all".into(), material: "Mat".into(), kind: section, formulation: Formulation::default() }).unwrap();
-        let axisymmetric = matches!(section, SectionKind::Axisymmetric {});
+        let axisymmetric = matches!(section, SectionKind::Axisymmetric { .. });
         // Stretch along x (plane strain) or along the axis y (axisymmetric).
         let (pulled, axis) = if axisymmetric { (1, 1) } else { (0, 0) };
         let on = |k: usize, v: f64| -> Vec<u32> { m.nodes().iter().filter(|(_, n)| near(n.xyz[k], v)).map(|(l, _)| *l).collect() };

@@ -230,7 +230,7 @@ pub fn element_type(kind: ElementKind, section: &Section) -> std::result::Result
     if let Some(prefix) = match section.kind {
         S::PlaneStress { .. } => Some("CPS"),
         S::PlaneStrain { .. } => Some("CPE"),
-        S::Axisymmetric {} => Some("CAX"),
+        S::Axisymmetric { .. } => Some("CAX"),
         _ => None,
     } {
         let suffix = match (kind, reduced, f.incompatible_modes) {
@@ -1044,7 +1044,7 @@ impl Deck {
             self.comment(&format!("section {name}"));
             let (set, material) = (&s.set, &s.material);
             match s.kind {
-                SectionKind::Solid {} | SectionKind::Axisymmetric {} => {
+                SectionKind::Solid {} | SectionKind::Axisymmetric { .. } => {
                     self.line(&format!("*SOLID SECTION, ELSET={set}, MATERIAL={material}"));
                     self.line(",");
                 }

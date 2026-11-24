@@ -81,7 +81,7 @@ impl Theory {
         match *kind {
             SectionKind::PlaneStress { thickness } => Some(Theory::PlaneStress { thickness }),
             SectionKind::PlaneStrain { thickness } => Some(Theory::PlaneStrain { thickness }),
-            SectionKind::Axisymmetric {} => Some(Theory::Axisymmetric),
+            SectionKind::Axisymmetric { .. } => Some(Theory::Axisymmetric),
             _ => None,
         }
     }

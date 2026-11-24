@@ -512,12 +512,12 @@ fn two_dimensional_models_resolve_edges_and_check_their_rules() {
     assert!((pull - 10.0 * 1.0 * 2.0).abs() < 1e-12, "{pull}");
     assert_eq!(r.nodal_loads["total"], vec![(3, [0.0, 3.0, 0.0]), (6, [0.0, 3.0, 0.0])]);
     // Axisymmetric: the right edge at r = 2 is a cylinder of area 2π·2·1.
-    let r = plate(SectionKind::Axisymmetric {}, 0.0).resolve().unwrap();
+    let r = plate(SectionKind::Axisymmetric { twist: false }, 0.0).resolve().unwrap();
     let pull: f64 = r.nodal_loads["pull"].iter().map(|(_, v)| v[0]).sum();
     assert!((pull - 10.0 * 4.0 * std::f64::consts::PI).abs() < 1e-9, "{pull}");
 
     let errors = |m: &Model| -> Vec<String> { m.check().into_iter().filter(|d| d.severity == Severity::Error).map(|d| d.to_string()).collect() };
-    assert!(errors(&plate(SectionKind::Axisymmetric {}, -1.0)).iter().any(|e| e.contains("negative x")));
+    assert!(errors(&plate(SectionKind::Axisymmetric { twist: false }, -1.0)).iter().any(|e| e.contains("negative x")));
     let mut m = plate(SectionKind::PlaneStrain { thickness: 1.0 }, 0.0);
     m.set_node(6, [2.0, 1.0, 0.5]).unwrap();
     m.set_element(1, ElementKind::Quad4, vec![1, 4, 5, 2]).unwrap();
@@ -585,4 +585,74 @@ fn display_resolves_what_is_on_the_mesh() {
     assert!(m.resolve_set("half").is_err());
     assert_eq!(m.resolve_set_partial("half").map(|r| r.nodes), Some(vec![1]));
     assert_eq!(m.resolve_set_partial("nope"), None);
+}
+
+#[test]
+fn axisymmetric_sections_with_twist_take_hoop_loads_and_torques() {
+    let twist = SectionKind::Axisymmetric { twist: true };
+    let plain = SectionKind::Axisymmetric { twist: false };
+    // Saved models without the flag read and write as before.
+    assert_eq!(serde_json::to_value(plain).unwrap(), serde_json::json!({"type": "axisymmetric"}));
+    assert_eq!(serde_json::from_value::<SectionKind>(serde_json::json!({"type": "axisymmetric"})).unwrap(), plain);
+    assert_eq!(serde_json::from_value::<SectionKind>(serde_json::json!({"type": "axisymmetric", "twist": true})).unwrap(), twist);
+    assert!(twist.twist() && !plain.twist() && twist.is_planar() && twist.name() == "axisymmetric");
+
+    let errors = |m: &Model| -> Vec<String> { m.check().into_iter().filter(|d| d.severity == Severity::Error).map(|d| d.to_string()).collect() };
+    let pi = std::f64::consts::PI;
+    let mut m = plate(twist, 0.0);
+    // The end y = 1: element edges from the axis (node 4) to r = 2 (node 6).
+    m.add_set("top", Set { edges: vec![ElementEdge { element: 1, edge: 3 }, ElementEdge { element: 2, edge: 3 }], ..Set::default() }).unwrap();
+    m.add_load("hoop", Load::Traction { set: "right".into(), vector: [0.0, 0.0, 5.0] }).unwrap();
+    m.add_load("ring", Load::Force { target: Target::Set("right".into()), vector: [0.0, 0.0, 8.0], distribution: Distribution::Total }).unwrap();
+    m.add_load("rim", Load::Moment { target: Target::Set("right".into()), vector: [0.0, 12.0, 0.0], distribution: Distribution::Total }).unwrap();
+    m.add_load("end", Load::Moment { target: Target::Set("top".into()), vector: [0.0, 24.0, 0.0], distribution: Distribution::Total }).unwrap();
+    assert!(errors(&m).is_empty(), "{:#?}", errors(&m));
+    let r = m.resolve().unwrap();
+    assert!(r.twist);
+    // A hoop traction on the cylinder r = 2 of height 1: 5 · 2π · 2 · 1.
+    let hoop: f64 = r.nodal_loads["hoop"].iter().map(|(_, v)| v[2]).sum();
+    assert!((hoop - 20.0 * pi).abs() < 1e-9, "{hoop}");
+    // A ring force shared by the edge's weights: half on each node of an edge at one radius.
+    let ring = &r.nodal_loads["ring"];
+    assert_eq!(ring.iter().map(|(n, _)| *n).collect::<Vec<_>>(), vec![3, 6]);
+    assert!(ring.iter().all(|(_, v)| v[0] == 0.0 && v[1] == 0.0 && (v[2] - 4.0).abs() < 1e-12), "{ring:?}");
+    // A torque on a surface at one radius: equal ring torques.
+    let rim = &r.nodal_loads["rim"];
+    assert_eq!(rim.iter().map(|(n, _)| *n).collect::<Vec<_>>(), vec![3, 6]);
+    assert!(rim.iter().all(|(_, v)| v[0] == 0.0 && (v[1] - 6.0).abs() < 1e-12 && v[2] == 0.0), "{rim:?}");
+    // On the end, shear ∝ r (Saint-Venant): ring torques 24 · rᵢ qᵢ / Σ rⱼ qⱼ with qᵢ = ∫ Nᵢ r 2πr dr, that is 0, 7, 17.
+    let end = &r.nodal_loads["end"];
+    assert_eq!(end.iter().map(|(n, _)| *n).collect::<Vec<_>>(), vec![4, 5, 6]);
+    for ((_, v), want) in end.iter().zip([0.0, 7.0, 17.0]) {
+        assert!(v[0] == 0.0 && (v[1] - want).abs() < 1e-12 && v[2] == 0.0, "{end:?}");
+    }
+
+    // What a twist model refuses.
+    let mut m = plate(twist, 0.0);
+    m.add_set("axis", Set { nodes: vec![4, 5], ..Set::default() }).unwrap();
+    m.add_load("bent", Load::Moment { target: Target::Set("right".into()), vector: [1.0, 2.0, 0.0], distribution: Distribution::Total }).unwrap();
+    m.add_load("centre", Load::Moment { target: Target::Set("axis".into()), vector: [0.0, 2.0, 0.0], distribution: Distribution::Total }).unwrap();
+    m.add_load("each", Load::Moment { target: Target::Set("axis".into()), vector: [0.0, 2.0, 0.0], distribution: Distribution::PerNode }).unwrap();
+    m.add_load("body", Load::BodyForce { set: "all".into(), vector: [0.0, 0.0, 1.0] }).unwrap();
+    let e = errors(&m);
+    assert!(e.iter().any(|e| e.contains("load `bent`") && e.contains("torque about the Y axis")), "{e:#?}");
+    assert!(e.iter().any(|e| e.contains("load `centre`") && e.contains("on the axis")), "{e:#?}");
+    assert!(e.iter().any(|e| e.contains("load `each`") && e.contains("on the axis")), "{e:#?}");
+    assert!(e.iter().any(|e| e.contains("load `body`") && e.contains("Z component")), "{e:#?}");
+    assert!(!e.iter().any(|e| e.contains("no nodes with rotations")), "{e:#?}");
+
+    // Without twist nothing changes: no hoop loads, no torque on a set.
+    let mut m = plate(plain, 0.0);
+    m.add_load("ring", Load::Force { target: Target::Set("right".into()), vector: [0.0, 0.0, 8.0], distribution: Distribution::Total }).unwrap();
+    m.add_load("rim", Load::Moment { target: Target::Set("right".into()), vector: [0.0, 12.0, 0.0], distribution: Distribution::Total }).unwrap();
+    let e = errors(&m);
+    assert!(!m.resolve().is_ok_and(|r| r.twist));
+    assert!(e.iter().any(|e| e.contains("load `ring`") && e.contains("Z component")), "{e:#?}");
+    assert!(e.iter().any(|e| e.contains("load `rim`") && e.contains("no nodes with rotations")), "{e:#?}");
+
+    // Twist and no twist in one model.
+    let mut m = plate(twist, 0.0);
+    m.add_set("one", Set { elements: vec![1], ..Set::default() }).unwrap();
+    m.add_section("other", Section { set: "one".into(), material: "Steel".into(), kind: plain, formulation: Formulation::default() }).unwrap();
+    assert!(errors(&m).iter().any(|e| e.contains("with and without twist")), "{:#?}", errors(&m));
 }

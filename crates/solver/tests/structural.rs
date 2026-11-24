@@ -1022,7 +1022,7 @@ fn planar_beam_models_that_cannot_be_solved_are_errors() {
     for (b, want) in [
         (build([0.0, 1.0, 0.0], 0.0, stress), "along Z"),
         (build([0.0, 0.0, 1.0], 0.5, stress), "off the XY plane"),
-        (build([0.0, 0.0, 1.0], 0.0, SectionKind::Axisymmetric {}), "cannot be mixed"),
+        (build([0.0, 0.0, 1.0], 0.0, SectionKind::Axisymmetric { twist: false }), "cannot be mixed"),
     ] {
         let e = error(&b);
         assert!(e.contains(want), "{want}: {e}");
