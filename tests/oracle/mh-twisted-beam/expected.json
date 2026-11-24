@@ -2,18 +2,54 @@
  "title": "MacNeal–Harder twisted beam",
  "kind": "benchmark",
  "source": "MacNeal and Harder, 'A proposed standard set of problems to test finite element accuracy', Finite Elements in Analysis and Design 1 (1985) 3–20, Fig. 6 (p. 8), Table 3 (p. 10)",
- "status": "pending",
- "requires": "a helical shell mesh: mesh.block's 2D form is planar and takes z = 0, so the twisted strip must be written node by node (as scordelis-lo-roof-shell and pinched-cylinder are), or mapped blocks must gain helical edges",
  "quantities": [
   {
    "id": "in_plane",
-   "quantity": "tip displacement along the in-plane load",
-   "value": 0.005424
+   "quantity": "tip displacement along the in-plane load (width direction, u_z at the tip centre)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "In_plane",
+     "at": [
+      [
+       12.0,
+       0,
+       0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/displacement/2"
+   },
+   "value": 0.005424,
+   "tolerance": {
+    "relative": 0.02
+   },
+   "reason": "MacNeal and Harder grade an element A within 2% of the theoretical value on the prescribed coarse mesh (p. 14); the 12 × 2 mesh gives 1.022 and 0.960 of the theory, recorded as a known failure with its two causes (README)",
+   "known_failure": "1.022 of the theory at 12 × 2 (1.028, 1.031 and 1.032 at 24 × 4, 48 × 8 and 96 × 16): the drilling penalty γ = G/100 lets the rotation about the normal lag the membrane's on the twisted surface, which adds (t τ)² / (6 (1 − ν) γ/G) = 3.75% to the plate-bending compliance at any mesh (issue #1077)"
   },
   {
    "id": "out_of_plane",
-   "quantity": "tip displacement along the out-of-plane load",
-   "value": 0.001754
+   "quantity": "tip displacement along the out-of-plane load (normal direction, u_y at the tip centre)",
+   "measure": {
+    "command": "solve.probe",
+    "params": {
+     "step": "Out_of_plane",
+     "at": [
+      [
+       12.0,
+       0,
+       0
+      ]
+     ]
+    },
+    "pointer": "/nodes/0/displacement/1"
+   },
+   "value": 0.001754,
+   "tolerance": {
+    "relative": 0.02
+   },
+   "reason": "MacNeal and Harder grade an element A within 2% of the theoretical value on the prescribed coarse mesh (p. 14); the 12 × 2 mesh gives 1.022 and 0.960 of the theory, recorded as a known failure with its two causes (README)",
+   "known_failure": "0.960 of the theory at 12 × 2 (1.005, 1.020 and 1.024 at 24 × 4, 48 × 8 and 96 × 16): the bilinear membrane's parasitic shear in in-plane bending (estimated at about −6.5% at this element length, gone with refinement along the span) against the same drilling softness as in_plane (issue #1077)"
   }
  ]
 }
