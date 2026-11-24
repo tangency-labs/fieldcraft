@@ -431,8 +431,9 @@ impl Quantities for Step {
                 turbulence: _,
                 steady,
                 walls: _,
+                inlet_ramp,
             } => {
-                for v in [end_time, time_step].into_iter().flatten() {
+                for v in [end_time, time_step, inlet_ramp].into_iter().flatten() {
                     f(Q::Time, v);
                 }
                 if let Some(Steady { monitors: _, tolerance: _, window, min_time, divergence: _, averaging }) = steady {

@@ -271,6 +271,8 @@ pub struct Setup {
     pub viscosity: f64,
     pub time_step: f64,
     pub steps: u64,
+    /// The steps over which the velocity faces rise from the initial field (0: no ramp).
+    pub inlet_ramp_steps: u64,
     pub frames: u32,
     /// τ⁺ and τ⁻ (Λ = (τ⁺ − ½)(τ⁻ − ½)).
     pub tau_plus: f64,
@@ -738,7 +740,9 @@ impl Setup {
     pub fn new(model: &Model, step: Option<&str>, obstacles: &[Obstacle], limits: &Limits) -> Result<Setup> {
         // The model checked the domain and its material when they were defined.
         let (s, domain) = fluid_step(model, step)?;
-        let Procedure::Fluid { end_time, steps, time_step, frames, magic, sigma, collision, turbulence, steady, walls, .. } = &s.procedure else {
+        let Procedure::Fluid { end_time, steps, time_step, frames, magic, sigma, collision, turbulence, steady, walls, inlet_ramp, .. } =
+            &s.procedure
+        else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
         if turbulence.as_ref().is_some_and(|t| t.wall_model() == Some(WallModel::SpaldingBounceHalfway)) {
@@ -1040,6 +1044,25 @@ impl Setup {
         if !(dt > 0.0 && dt.is_finite()) {
             return Err(Error::Invalid(format!("the time step {dt} is not a positive number")));
         }
+        let inlet_ramp_steps = match *inlet_ramp {
+            None => 0,
+            // The model checked the time is positive and finite (`Procedure::validate`).
+            Some(t) => {
+                if !BoxFace::ALL.iter().any(|f| matches!(domain.faces.get(*f), FaceCondition::Velocity { .. })) {
+                    return Err(Error::Invalid("`inlet_ramp` needs a velocity face: this domain has none".into()));
+                }
+                if domain.free_surface.is_some() {
+                    return Err(Error::Invalid("not supported yet: `inlet_ramp` with a free surface".into()));
+                }
+                let ramp_steps = (t / dt).ceil();
+                if !(ramp_steps <= n) {
+                    return Err(Error::Invalid(format!(
+                        "the inlet ramp ({t} s, {ramp_steps} steps) is longer than the step ({n} steps): the faces would never reach their velocities"
+                    )));
+                }
+                ramp_steps as u64
+            }
+        };
         if !(n <= limits.max_steps as f64) {
             return Err(Error::Limit(format!(
                 "the step needs {n} time steps of {dt}, above the cap of {}; shorten it or raise `max_steps`",
@@ -1415,6 +1438,7 @@ impl Setup {
             viscosity,
             time_step: dt,
             steps: n,
+            inlet_ramp_steps,
             frames: *frames,
             tau_plus,
             tau_minus,

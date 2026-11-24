@@ -33,6 +33,7 @@ fn throat(gap: f64, slabs: bool) -> (fieldcraft_model::Model, [fieldcraft_lbm::O
         turbulence: None,
         steady: None,
         walls: Default::default(),
+        inlet_ramp: None,
     };
     (model(1.0, 0.01, d, run), obstacles)
 }

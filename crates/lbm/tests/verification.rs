@@ -233,6 +233,7 @@ fn sphere_drag(r: f64, l: usize, steps: u64) -> (f64, f64) {
             turbulence: None,
             steady: None,
             walls: Default::default(),
+            inlet_ramp: None,
         },
     );
     let (setup, mut flow) = prepare(&m, std::slice::from_ref(&ball));
@@ -293,6 +294,7 @@ fn channel_with_a_parabolic_inlet_and_a_pressure_outlet_develops_poiseuille_flow
         turbulence: None,
         steady: None,
         walls: Default::default(),
+        inlet_ramp: None,
     };
     let m = model(1.0, nu, d, procedure);
     let r = solve_fluid(&m, Some("Run"), &[], &Limits::default()).unwrap();
@@ -347,6 +349,7 @@ fn pressure_driven_poiseuille_holds_its_end_pressures() {
         sigma: None,
         steady: None,
         walls: Default::default(),
+        inlet_ramp: None,
         collision: None,
         turbulence: None,
     };
@@ -393,6 +396,7 @@ fn a_short_channel_at_re_100_survives_backflow_at_the_outlet() {
         sigma: None,
         steady: None,
         walls: Default::default(),
+        inlet_ramp: None,
         collision: None,
         turbulence: None,
     };
@@ -431,6 +435,7 @@ fn a_wake_at_a_pressure_outlet_distorts_only_the_last_layer() {
         sigma: None,
         steady: None,
         walls: Default::default(),
+        inlet_ramp: None,
         collision: None,
         turbulence: None,
     };
@@ -545,6 +550,7 @@ fn the_memory_estimate_matches_what_a_run_allocates() {
             turbulence: None,
             steady: None,
             walls: Default::default(),
+            inlet_ramp: None,
         };
         if let (fieldcraft_model::Procedure::Fluid { turbulence: t, .. }, true) = (&mut p, vreman) {
             *t = Some(fieldcraft_model::Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: None });
@@ -678,6 +684,7 @@ fn results_are_bit_for_bit_reproducible() {
             turbulence: None,
             steady: None,
             walls: Default::default(),
+            inlet_ramp: None,
         },
     );
     let a = solve_fluid(&m, None, std::slice::from_ref(&ball), &Limits::default()).unwrap();

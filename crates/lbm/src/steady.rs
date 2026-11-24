@@ -646,6 +646,7 @@ mod tests {
             turbulence: None,
             steady: Some(rule),
             walls: Default::default(),
+            inlet_ramp: None,
         };
         m.add_step(Step::new("Run", p), None).unwrap();
         Setup::new(&m, None, &[], &Limits::default()).unwrap()

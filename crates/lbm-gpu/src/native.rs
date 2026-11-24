@@ -1229,6 +1229,9 @@ impl GpuFlow {
         // Pressure cells each have a slot in the outlet buffer: convective history and
         // transient gathered populations for uniform-pressure extrapolation; with TRT inlet
         // reconstruction, velocity cells have one for their staged residuals (see lbm.wgsl).
+        if flow.inlet_ramp_steps() > 0 {
+            return Err(Error::Invalid("not supported yet: `inlet_ramp` on the GPU; run the flow on the CPU".into()));
+        }
         let open = flow.open_cells();
         let stencils = flow.inlet_stencils();
         let inlets = !stencils.is_empty();
