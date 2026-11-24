@@ -60,6 +60,7 @@ Both papers run the MRT collision. At the relaxation times a wall-modelled grid 
 | `turbulence.constant` | 0.08–0.1 | Smagorinsky's C. Malaspinas & Sagaut use 0.08, Han, Ooka & Kikumoto 0.1. |
 | `turbulence.wall_model` | `"musker"` | Malaspinas & Sagaut: rebuild the cells next to no-slip walls from Musker's profile. |
 | | `"spalding_bounce"` | Han, Ooka & Kikumoto's eq. 14, on-node: the outermost cell layer at each plane no-slip box face is the wall. The box is periodic along the walls; no obstacles, moving walls or heat. |
+| | `"spalart_allmaras_bounce"` | The same on-node wall with the Spalart–Allmaras model's own constant-stress law instead of Spalding's; `"spalart_allmaras"` turbulence only (see [Turbulence](turbulence.md)). |
 | | `"spalding_bounce_halfway"` | Disabled because its wall-row checkerboard grows. Files preserve this selection when loaded, but solves refuse it at setup. Select a supported treatment explicitly; the on-node variant changes the wall location. |
 | | omitted | The bounce-back alone. |
 | `turbulence.van_driest` | 26 or omit | Van Driest's damping. Han, Ooka & Kikumoto use it with their wall model; Malaspinas & Sagaut's model replaces it, so don't combine the two. |

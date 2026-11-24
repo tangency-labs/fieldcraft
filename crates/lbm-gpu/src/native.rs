@@ -896,6 +896,21 @@ impl GpuFlow {
                         "not supported yet: the Spalart–Allmaras model on the GPU with {what}; solve on the CPU (`backend: \"cpu\"`)"
                     )))
                 };
+                if flow.sa_nu_tilde_frozen() {
+                    return refuse("ν̃ held at a given field (a test mode)");
+                }
+                if flow.sa_wall_layer() != fieldcraft_lbm::SaWallLayer::default() {
+                    return refuse("the wall-layer corrections (`SaWallLayer`)");
+                }
+                if flow.wall_model() {
+                    return refuse("Malaspinas and Sagaut's wall model with Musker's profile (`musker`)");
+                }
+                if flow.wall_bounce() {
+                    return refuse("the halfway wall-function bounce (`spalding_bounce_halfway`)");
+                }
+                if flow.wall_nodes().is_some() {
+                    return refuse("Han's on-node wall (`spalding_bounce`, `spalart_allmaras_bounce`)");
+                }
                 if flow.thermal().is_some() {
                     return refuse("heat");
                 }
@@ -1049,6 +1064,11 @@ impl GpuFlow {
         let mut node_links: Vec<(u32, u32)> = Vec::new();
         if let Some(nodes) = flow.wall_nodes() {
             let links = flow.links();
+            if nodes.law() != fieldcraft_lbm::sa::WallLaw::Spalding {
+                return Err(Error::Invalid(
+                    "not supported yet on the GPU: the Spalart–Allmaras wall law (`wall_model: \"spalart_allmaras_bounce\"`); solve on the CPU (`backend: \"cpu\"`) or use `spalding_bounce`".into(),
+                ));
+            }
             for w in nodes.nodes() {
                 let (cell, axis) = (w.cell as usize, usize::from(w.axis).min(2));
                 let mut normal = [0i32; 3];

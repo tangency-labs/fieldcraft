@@ -82,6 +82,7 @@ pub mod reflection;
 pub mod regularized;
 pub mod rheology;
 pub mod sa;
+pub mod sa_law;
 pub mod setup;
 pub mod solve;
 pub mod statistics;
@@ -94,7 +95,7 @@ pub mod vreman;
 pub mod wall;
 
 pub use backend::{Backend, Choice, Fields, device_available, register_backend};
-pub use flow::{Flow, Group, Interpolation, Link, OpenCell, Rule, Target, ThermalState, WallLinks, ZoneSample};
+pub use flow::{Flow, Group, Interpolation, Link, OpenCell, Rule, SaWallLayer, SaWallLayerReport, Target, ThermalState, WallLinks, ZoneSample};
 pub use memory::{DeviceBuffer, Memory};
 pub use ports::{FaceMean, Port, PortProperties, Stream};
 pub use setup::{ContactSetup, PhaseSetup, SolidSetup, SurfaceSetup, ThermalSetup};

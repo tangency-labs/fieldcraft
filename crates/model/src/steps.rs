@@ -383,6 +383,15 @@ pub enum WallModel {
     /// algorithm and validation using turbulent channel flow*, Fluid Dyn. Res. 53:045506, 2021,
     /// doi:10.1088/1873-7005/ac1782).
     SpaldingBounce,
+    /// Han, Ooka and Kikumoto's on-node wall-function bounce ([`WallModel::SpaldingBounce`]) with
+    /// the wall law of the Spalart–Allmaras model itself in place of Spalding's: the stress is the
+    /// one of the mean velocity SA produces in a layer of constant total stress, u⁺(y⁺) = ∫ dy⁺ /
+    /// (1 + κ y⁺ f_v1(κ y⁺)) (κ 0.41, the model's own), and the first node's ν̃ is κ u_τ y, the
+    /// model's exact solution there (P. R. Spalart, S. R. Allmaras, *A one-equation turbulence
+    /// model for aerodynamic flows*, La Recherche Aérospatiale 1994(1):5–21; the matching of ν̃ at
+    /// the first node is R. H. Nichols, C. C. Nelson, AIAA J. 42(6):1107–1114, 2004). Only with
+    /// `spalart_allmaras` turbulence; the walls, edges and corners are `spalding_bounce`'s.
+    SpalartAllmarasBounce,
     /// Our halfway variant of a wall-function bounce, not Han, Ooka and Kikumoto's scheme: a
     /// plane no-slip box face at rest lies halfway along the links and reflects its populations
     /// specularly (no drag of its own), and after streaming each wall cell gives the face the
