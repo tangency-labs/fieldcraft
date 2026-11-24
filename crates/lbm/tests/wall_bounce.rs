@@ -234,9 +234,10 @@ fn spalding_y_plus(up: f64) -> f64 {
 /// In the perturbed coarse channel, step by step from the start, on every collision: the walls
 /// take exactly the stresses the nodes sampled along them (x and z, to round-off: the stress is
 /// the whole of the tangential momentum the nodes take), the fluid's momentum budget
-/// P(t + 1) − P(t) = a M − F closes and its mass is conserved (P and M with the populations in
-/// flight at the nodes), and each stress is ρ u_τ² along the interior node's velocity parallel to
-/// the wall, u_τ the root of Spalding's law (κ 0.41, B 5.5) at one cell from the wall.
+/// P(t + 1) − P(t) = a M + Σ ½ρa − F closes (the half cells' body force is the walls' share of it)
+/// and its mass is conserved (P and M with the populations in flight at the nodes), and each stress
+/// is ρ u_τ² along the interior node's velocity parallel to the wall, u_τ the root of Spalding's law
+/// (κ 0.41, B 5.5) at one cell from the wall.
 #[test]
 fn the_on_node_bounce_gives_the_walls_exactly_the_law_s_stress() {
     for collision in [Collision::Trt, Collision::Regularized, Collision::Hrr] {
@@ -254,8 +255,10 @@ fn the_on_node_bounce_gives_the_walls_exactly_the_law_s_stress() {
             let nodes = flow.wall_nodes().unwrap().nodes();
             let wall: [f64; 3] = [0, 1, 2].map(|k| flow.forces().iter().map(|f| f[k]).sum());
             let stress: [f64; 3] = [0, 1, 2].map(|k| nodes.iter().map(|w| w.stress[k]).sum());
+            // Each boundary node's half-cell body force, ½ ρ a, as the step applied it.
+            let share: [f64; 3] = [0, 1, 2].map(|k| nodes.iter().map(|w| w.body[k]).sum());
             for k in 0..3 {
-                budget = budget.max((next[k] - p[k] - (a[k] * bulk - wall[k])).abs() / next[0].abs());
+                budget = budget.max((next[k] - p[k] - (a[k] * bulk + share[k] - wall[k])).abs() / next[0].abs());
             }
             for k in [0, 2] {
                 carried = carried.max((wall[k] - stress[k]).abs() / stress[0].abs());
@@ -453,7 +456,15 @@ fn sa_law_channel(collision: Collision) -> (Setup, Flow) {
 /// (u_τ u⁺(u_τ / ν) = U; the inversion stops two ulps wide and the product's log-derivative is
 /// between 1 and 2, so 64 ε covers it with the square roots); the node keeps that u_τ; the interior
 /// node's ν̃ is then κ u_τ times its wall distance, 1, exactly (the same product); the boundary
-/// nodes have no ν̃; the walls carry the sampled stress and the momentum budget closes to round-off.
+/// nodes have no ν̃; the walls carry the sampled stress along the wall and the momentum budget
+/// closes to round-off.
+///
+/// Derivation of the expected values (the half-cell balance, as for Spalding's law; the law is the
+/// only thing that differs): each node hands the fluid `stress − ½ρa` along the wall and takes back
+/// `½ρa`, so the wall's tangential force per node is `flux + ½ρa = stress` (the steady test shows it
+/// sums to `a(M + ½Σρ)`). The fluid's budget is `P(t+1) − P(t) = a M + Σ½ρa − F`, with `F` the walls'
+/// force, which already contains the share. So the tangential carried check is `F − stress = 0` and
+/// the budget adds the share.
 #[test]
 fn the_sa_law_gives_the_walls_its_stress_and_the_first_node_its_nu_tilde() {
     use fieldcraft_lbm::sa::KAPPA;
@@ -477,8 +488,10 @@ fn the_sa_law_gives_the_walls_its_stress_and_the_first_node_its_nu_tilde() {
             let field = flow.spalart_allmaras().unwrap().nu_tilde();
             let wall: [f64; 3] = [0, 1, 2].map(|k| flow.forces().iter().map(|f| f[k]).sum());
             let stress: [f64; 3] = [0, 1, 2].map(|k| nodes.iter().map(|w| w.stress[k]).sum());
+            // Each boundary node's half-cell body force, ½ρa, as the step applied it.
+            let share: [f64; 3] = [0, 1, 2].map(|k| nodes.iter().map(|w| w.body[k]).sum());
             for k in 0..3 {
-                budget = budget.max((next[k] - p[k] - (a[k] * bulk - wall[k])).abs() / next[0].abs());
+                budget = budget.max((next[k] - p[k] - (a[k] * bulk + share[k] - wall[k])).abs() / next[0].abs());
             }
             carried = carried.max((wall[0] - stress[0]).abs() / stress[0].abs());
             for w in nodes {
@@ -526,5 +539,103 @@ fn the_sa_law_and_the_model_go_together() {
     for other in [WallModel::Musker, WallModel::SpaldingBounce] {
         let err = refused(Turbulence::SpalartAllmaras { prandtl: 0.9, wall_model: Some(other), inflow_ratio: 3.0 });
         assert!(err.contains("not supported yet") && err.contains("spalart_allmaras_bounce"), "{other:?}: {err}");
+    }
+}
+
+/// A force-driven periodic channel on the on-node bounce, from rest: `n` cells per δ, the box
+/// 2δ + Δx high (2n + 1 rows, the walls through the centres of the outermost rows), periodic in
+/// x and z over 4 cells, lattice viscosity 0.1 (τ⁺ 0.8), the lattice time step equal to the
+/// spacing, the lattice acceleration `lattice` (a Δt²/Δx = a Δx). With `subgrid` the channel
+/// runs Smagorinsky's model with the wall model; without it the wall treatment alone (the
+/// setup's constant set to 0 after it is built, as in `wall_stability`).
+fn steady_on_node_channel(n: usize, lattice: [f64; 3], subgrid: bool) -> Flow {
+    let dx = 1.0 / n as f64;
+    let mut d = domain([0.0; 3], [4.0 * dx, 2.0 + dx, 4.0 * dx], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.acceleration = lattice.map(|a| a / dx);
+    let m = model(1.0, 0.1 * dx, d, bounced(10.0 * dx, dx, Collision::Trt));
+    let mut setup = Setup::new(&m, None, &[], &Limits::default()).unwrap();
+    assert!((setup.tau_plus - 0.8).abs() < 1e-12, "τ⁺ {}", setup.tau_plus);
+    if !subgrid {
+        setup.smagorinsky = 0.0;
+    }
+    let flow = Flow::new(&setup, &[]).unwrap();
+    assert_eq!(flow.grid().cells, [4, 2 * n + 1, 4]);
+    flow
+}
+
+/// In the steady channel the law's stress is the wall's: the stresses the nodes sampled sum to
+/// the body force on all the fluid between the walls, a (M + ½ Σ ρ), M the fluid cells' mass and
+/// ρ each boundary node's interior density (its half cell), to round-off; so do the walls' forces
+/// along the wall, and along the normal the two walls carry the fluid's weight. Without the half
+/// cells' share the stresses sum to a M, 7/8 of it here (issue #1101).
+#[test]
+fn the_law_s_stress_balances_the_whole_body_force_in_a_steady_channel() {
+    let mut flow = steady_on_node_channel(4, [1e-5, -5e-6, 0.0], true);
+    for _ in 0..5999 {
+        flow.step().unwrap();
+    }
+    // The recorded wall force is the mean of two consecutive steps (the run's sample, `solve`).
+    let mut forces: Vec<Vec<[f64; 3]>> = Vec::new();
+    for _ in 0..2 {
+        flow.step().unwrap();
+        forces.push(flow.forces().to_vec());
+    }
+    let a = flow.acceleration();
+    let nodes = flow.wall_nodes().unwrap().nodes();
+    let half: f64 = nodes.iter().map(|w| 0.5 * flow.moments(w.interior as usize).unwrap().0).sum();
+    let mass = flow.mass() + half;
+    let stress: f64 = nodes.iter().map(|w| w.stress[0]).sum();
+    let share: f64 = nodes.iter().map(|w| w.body[0]).sum();
+    let wall: [f64; 3] = [0, 1, 2].map(|k| forces.iter().map(|f| f.iter().map(|c| c[k]).sum::<f64>()).sum::<f64>() / 2.0);
+    let (along, carried, normal, applied) =
+        (stress / (a[0] * mass) - 1.0, wall[0] / (a[0] * mass) - 1.0, wall[1] / (a[1] * mass) - 1.0, share / (a[0] * half) - 1.0);
+    println!(
+        "steady on-node channel: law's stress {along:.1e}, walls along {carried:.1e}, walls normal {normal:.1e}, half cells' share {applied:.1e} of the body force, less one"
+    );
+    assert!(along.abs() < 1e-11 && carried.abs() < 1e-11 && applied.abs() < 1e-11, "{along} {carried} {applied}");
+    assert!(normal.abs() < 1e-10, "{normal}");
+}
+
+/// The laminar channel's profile on the on-node bounce is the Poiseuille parabola
+/// `(a/2ν) y (M − y)`, M = 2N the wall-to-wall cells, shifted by the slip `a Δx²/(2ν)` (Δx = 1
+/// here): the law's stress `ν u_1 / Δx` is the wall's `aδ`, so `u_1 = a δ Δx / ν`, and the
+/// parabola at the first node is `a (δ − ½Δx) Δx / ν`, the difference being the slip. The
+/// steady profile is that parabola plus the constant slip, for every fluid row, to the
+/// weakly compressible error. That error is the equilibrium's cubic term, `u³ / c_s²` against
+/// the momentum, so its bound is `3 Ma² u_max` with `Ma² = 3 u_max²` (c_s² = ⅓): `9 u_max³`.
+/// Without the slip the error would be `a/(2ν)`, many times that bound. The subgrid model is off:
+/// its eddy viscosity grows with the shear, a second-order change of the profile.
+#[test]
+fn the_laminar_on_node_profile_is_the_parabola_shifted_by_the_slip() {
+    let n = 8usize;
+    let m = (2 * n) as f64;
+    let nu = 0.1;
+    for a in [1e-5, 2.5e-6] {
+        let mut flow = steady_on_node_channel(n, [a, 0.0, 0.0], false);
+        for _ in 0..6000 {
+            flow.step().unwrap();
+        }
+        let slip = a / (2.0 * nu);
+        let u_max = a * m * m / (8.0 * nu);
+        let bound = 9.0 * u_max * u_max * u_max;
+        let grid = *flow.grid();
+        let (mut worst, mut rows) = (0.0f64, 0);
+        for cell in 0..grid.len() {
+            let [_, j, _] = grid.coords(cell);
+            let Some((_, u)) = flow.moments(cell) else { continue };
+            let y = j as f64;
+            let exact = slip * (1.0 + y * (m - y));
+            worst = worst.max((u[0] - exact).abs());
+            rows += 1;
+        }
+        println!(
+            "laminar on-node channel, N {n}, a {a:e}: {rows} fluid cells, against the parabola plus the slip {slip:.3e}: worst {worst:.3e}, bound 9 u_max³ {bound:.3e}, ratio {:.2}",
+            worst / bound
+        );
+        assert_eq!(rows, (2 * n - 1) * 16);
+        assert!(worst < bound, "a {a}: {worst} vs {bound}");
     }
 }

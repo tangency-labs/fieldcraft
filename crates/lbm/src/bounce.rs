@@ -55,6 +55,31 @@
 //! sends back into it. Parallel to the wall that is the stress, `τ_w` per node and step (wall
 //! area `Δx²`), to round-off, whatever the normal flow; along the normal it is the bounce-back's
 //! `2 Σ f_q` of the populations arriving from the fluid (their pressure and normal momentum flux).
+//! **Body force.** The wall plane passes through the node's centre, so the node's cell spans half a
+//! cell into the fluid: the fluid between the wall (y = 0) and the first plane the links cross
+//! (y = Δx/2) is that half cell. The steady balance of a fully developed channel (S. B. Pope,
+//! *Turbulent Flows*, Cambridge University Press 2000, doi:10.1017/CBO9780511840531: the total
+//! shear stress falls linearly from `τ_w` at the wall to zero at the centre, `τ(y) = τ_w (1 − y/δ)`,
+//! with `τ_w = ρ a δ`) at `y = Δx/2` gives the stress handed to the fluid as `τ_w − ½ ρ a_t Δx`
+//! (Han et al. 2021, doi:10.1088/1873-7005/ac1782, leave the body force in their momentum
+//! equation's unstated `⋯` term). So the node hands the fluid `stress − body` along the wall, with
+//! `body = ½ ρ a` (`ρ` the interior node's density, the one `τ_w = ρ u_τ²` uses; `a` the body
+//! acceleration of the node's cell), and the wall receives `body` with the momentum the node takes
+//! from the fluid: the stress along the wall, `2 Σ f_q + ½ ρ a_n` along the normal. The node's own
+//! populations are no fluid density (two thirds of their sum are its rest and wall-parallel
+//! populations, which never meet the fluid), hence the interior density. The split is the momentum
+//! balance of the wall's half cell, so it is applied after the wall law's dispatch and holds for any
+//! [`NodeLaw`]: Spalding's and the Spalart–Allmaras constant-stress law alike. Each step's share
+//! enters that step's wall force, and a recorded wall force is the two-step mean of that per-step
+//! total (`flux + ½ρa`), as for every other contribution (`solve`). Summed over the box the
+//! walls carry the whole body force, `a (M + ½ Σ ρ)` with `M` the fluid's mass. This is the steady
+//! balance: a transient's half-cell `∂(ρu)/∂t` is not represented, while per-step momentum is
+//! conserved exactly. Node cells belong to no porous zone or fan, so only the body acceleration
+//! enters; heat (buoyancy) is refused. In the laminar limit the profile is the Poiseuille parabola
+//! shifted by the slip `a Δx²/(2ν)`: the law's stress `ν u_1 / Δx` equals the wall's `a δ`, so
+//! `u_1 = a δ Δx / ν`, where the parabola gives `a (δ − ½Δx) Δx / ν`. The slip alone raises the bulk
+//! speed by `6/(M(M+1))` with `M = 2N` the wall-to-wall cells: 8.3 %, 2.2 % and 0.57 % at 4, 8 and 16
+//! cells per δ (second order; issue #1101; `the_laminar_on_node_profile_is_the_parabola_shifted_by_the_slip`).
 //!
 //! **Where it runs.** On plane box faces at rest with the box periodic along the wall (the
 //! paper's channel); obstacles, moving walls, a wall that meets another non-periodic face at an
@@ -114,9 +139,10 @@ const MIRROR: [[u8; Q]; 3] = {
 
 /// Han et al.'s eq. 14 on one boundary node: its streamed populations `fq` become its
 /// post-collision populations. The wall's inward normal is `inward` (±1) along `axis`; `stress` is
-/// the wall stress `τ_w` along the velocity parallel to the wall (the momentum the wall takes per
-/// step, lattice units: the paper's `τ_{w,b}` is its negative). Returns the momentum the node
-/// takes from the fluid (populations arriving from the fluid less those sent back).
+/// the momentum along the velocity parallel to the wall the node keeps from the fluid per step (the
+/// law's stress less the half cell's body force, see [`WallNode::body`]; lattice units: the paper's
+/// `τ_{w,b}` is its negative). Returns the momentum the node takes from the fluid (populations
+/// arriving from the fluid less those sent back).
 pub fn on_node(fq: &mut [f64; Q], axis: usize, inward: i32, stress: [f64; 3]) -> [f64; 3] {
     let axis = axis.min(2);
     let mirror = MIRROR.get(axis).copied().unwrap_or([0; Q]);
@@ -185,10 +211,15 @@ pub struct WallNode {
     /// The stress from the last sample (lattice units: the momentum the wall takes per step,
     /// along the interior node's velocity parallel to the wall).
     pub stress: [f64; 3],
-    /// The momentum the node took from the fluid in the last step.
+    /// The momentum the wall took at the node in the last step: what the node took from the fluid
+    /// plus `body`. Along the wall it is `stress` to round-off.
     pub taken: [f64; 3],
     /// The friction velocity u_τ of the last sample (lattice units; 0 when the stress is).
     pub friction: f64,
+    /// The body force on the node's half cell from the last sample, `½ ρ a`: ρ the interior node's
+    /// density, a the body acceleration of the node's cell. The node hands the fluid `stress − body`
+    /// along the wall, and the wall receives `body` with what the node takes from the fluid.
+    pub body: [f64; 3],
 }
 
 /// The boundary nodes of the on-node wall-function bounce, in cell order.
@@ -221,7 +252,7 @@ impl WallNodes {
         use crate::checkpoint::fixed;
         fixed(a, self.nodes.len() as u64)?;
         for w in &self.nodes {
-            let WallNode { cell, interior, axis, inward, group, stress: _, taken: _, friction: _ } = *w;
+            let WallNode { cell, interior, axis, inward, group, stress: _, taken: _, friction: _, body: _ } = *w;
             for v in [u64::from(cell), u64::from(interior), u64::from(axis), inward as u64, u64::from(group)] {
                 fixed(a, v)?;
             }
@@ -241,12 +272,16 @@ impl WallNodes {
 
     /// Before the collision: each node's stress from `moments(cell)`, the density and velocity
     /// (with the half force) of its interior node, and the wall law at distance 1, in parallel:
-    /// each node's is its own. Zero at rest or with a number that is not usable.
-    pub fn sample(&mut self, moments: impl Fn(usize) -> Option<(f64, [f64; 3])> + Sync) {
+    /// each node's is its own. Zero at rest or with a number that is not usable. Each node's
+    /// `body` is its half cell's body force, `½ ρ force(node cell)` with the same density, after the
+    /// wall law's dispatch and whatever the law: zero when that number is not finite. `force(cell)`
+    /// is the body acceleration of a cell.
+    pub fn sample(&mut self, moments: impl Fn(usize) -> Option<(f64, [f64; 3])> + Sync, force: impl Fn(usize) -> [f64; 3] + Sync) {
         let (nu, law) = (self.nu, self.law);
         parallel::for_each_mut(&mut self.nodes, |_, w| {
             w.stress = [0.0; 3];
             w.friction = 0.0;
+            w.body = [0.0; 3];
             let Some((rho, u)) = moments(w.interior as usize) else { return };
             let axis = usize::from(w.axis).min(2);
             let mut t = u;
@@ -259,6 +294,10 @@ impl WallNodes {
             if speed > 0.0 && scale.is_finite() {
                 w.stress = t.map(|v| scale * v);
                 w.friction = ut;
+            }
+            let body = force(w.cell as usize).map(|a| 0.5 * rho * a);
+            if body.iter().all(|v| v.is_finite()) {
+                w.body = body;
             }
         });
     }

@@ -7,7 +7,7 @@
 //! rows (about 3e-5 per step) until the run broke. Here a thin periodic box, 16 × (rows) × 2 cells
 //! in lattice units, both walls with the wall model, carries a steady x-uniform flow: the laminar
 //! profile between the walls whose first node reads the friction velocity the body force needs,
-//! `g · (fluid rows) = 2 u_τ²`, and whose first-node speed is Spalding's (κ 0.41, B 5.5) at that
+//! `g · 2N = 2 u_τ²`, and whose first-node speed is Spalding's (κ 0.41, B 5.5) at that
 //! u_τ. The subgrid model is off (the setup's constant set to 0 after it is built: the wall
 //! treatment alone). A checkerboard of 1e-6 in u_x is added to the first fluid row at each wall;
 //! the base is uniform in x, so the k_x = π part of the field evolves on its own, linearly. Its
@@ -60,16 +60,17 @@ struct Toy {
 fn toy(wall: WallModel, collision: Collision, tau: f64, u_plus: f64, steps: u64) -> Toy {
     let on_node = wall == WallModel::SpaldingBounce;
     let nu = (tau - 0.5) / 3.0;
-    // Rows across, fluid rows, the first node's distance from its wall, and each fluid row's
-    // distance from the lower wall.
-    let (ny, rows, d) = if on_node { (2 * N + 1, 2 * N - 1, 1.0) } else { (2 * N, 2 * N, 0.5) };
+    // Rows across, the first node's distance from its wall. The walls are 2N apart in both forms
+    // (the on-node walls through the centres of the outermost rows, the boundary nodes taking their
+    // half cells' body force, #1101).
+    let (ny, d) = if on_node { (2 * N + 1, 1.0) } else { (2 * N, 0.5) };
     let y_of = |j: usize| if on_node { j as f64 } else { j as f64 + 0.5 };
     let h = N as f64;
     // The base for a first-node u⁺: u_τ from y⁺ = u_τ d / ν, the body force from the balance, the
     // laminar profile above the first node.
     let base = |up: f64| {
         let ut = spalding_y_plus(up) * nu / d;
-        let g = 2.0 * ut * ut / rows as f64;
+        let g = ut * ut / h;
         let u1 = ut * up;
         (ut, g, move |y: f64| u1 + g / (2.0 * nu) * ((h - d).powi(2) - (h - y).powi(2)))
     };
