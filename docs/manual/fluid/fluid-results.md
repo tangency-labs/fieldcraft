@@ -39,7 +39,7 @@ streamlines traced through the velocity field.
 | `results.slice` | `step` | step name | | The fluid step. |
 | | `field` | `velocity`, `pressure`, `temperature` | as shown | Velocity magnitude, gauge pressure, or temperature when the frames carry heat. |
 | | `axis` | `x`, `y`, `z`, `none` | as shown | The slice's normal; `none` hides the slice. |
-| | `position` | coordinate or `"auto"` | the domain's middle | Where along `axis`; must lie inside the domain. |
+| | `position` | coordinate or `"auto"` | the symmetry plane, else the middle | Where along `axis`; `"auto"` is the symmetry plane along `axis` when the domain has one there, else the middle; must lie inside the domain. |
 | | `frame` | 0 … last | the one shown (at first the last) | The frame. |
 | `results.surface` | `show` | bool | | Colour the obstacles by the field (`false`: the part in its own colours). |
 | | `field` | `velocity`, `pressure`, `temperature`, `wall_heat_flux` | as shown | Read in the fluid cells beside each obstacle face; `wall_heat_flux` per face (below). |
@@ -56,8 +56,9 @@ streamlines traced through the velocity field.
 | `results.animate` | `on` | bool | | Plays the recorded frames in order. |
 
 What a command leaves out stays as shown. A fluid step is first shown with velocity magnitude on a
-slice through the middle of the domain, normal to the horizontal axis across the flow (the slice
-holds the flow direction and the vertical; Z is up), the obstacles coloured, and 64 streamlines
+slice normal to the horizontal axis across the flow (the slice holds the flow direction and the
+vertical; Z is up), on the symmetry plane of the domain along that axis when it has a symmetry face
+there (else through the middle), the obstacles coloured, and 64 streamlines
 seeded on the inlet face. The flow direction is the axis of the largest mean velocity over the fluid
 cells of the last frame (+x for fluid at rest).
 
@@ -142,7 +143,7 @@ between them, into triangles carrying their corners' values, and bands them with
 legend. The outermost centres move out to the domain's faces, so the slice covers the whole domain.
 A triangle touching cells with no value takes the mean of its other corners there, and one with
 none is left out (the obstacle is drawn there). A layer larger than 2²⁰ quadrilaterals is sampled
-every few cells.
+every few cells. The automatic slice is placed from the model as it is at that moment: when a step's results are first shown, when `position` is `"auto"` and when the axis changes. After the domain's faces are edited, `"auto"` places it on the edited faces' plane; a step the model no longer has is sliced through the middle.
 
 ### Ranges
 
