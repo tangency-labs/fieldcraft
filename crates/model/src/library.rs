@@ -547,7 +547,7 @@ mod tests {
         assert!(close(cr42.value(Property::Tensile).unwrap(), 1100e6));
         let gjl = entry("EN1561-GJL-250").unwrap();
         assert!(close(gjl.value(Property::Young).unwrap(), 103e9));
-        assert_eq!(gjl.properties[&Property::Young].basis, Basis::Typical);
+        assert_eq!(gjl.properties[&Property::Young].basis, Basis::Minimum);
         assert!(close(gjl.value(Property::Poisson).unwrap(), 0.26));
         assert!(close(gjl.value(Property::Density).unwrap(), 7200.0));
         assert!(close(gjl.value(Property::SpecificHeat).unwrap(), 460.0));
