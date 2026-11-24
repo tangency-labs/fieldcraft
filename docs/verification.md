@@ -472,6 +472,36 @@ reproducible from what is published. A40 was not run.
 > it three or more cells up (S. Kawai, J. Larsson, Phys. Fluids 24:015105, 2012) brings the carried friction to
 > about +5 %; the probe changed only where the law is sampled.
 
+### Matched on-node wall at Re_τ 1000 against Lee & Moser (#1105, #785)
+
+`wall_model: "spalding_bounce_matched"`: Han, Ooka & Kikumoto's on-node wall with Spalding's law read four cells from
+the wall and Malaspinas & Sagaut's eq. 57 mixing-length eddy viscosity on the rows below. The channel is 2πδ × (2δ + Δx) ×
+πδ, driven by u_τ²/δ (u_τ = δ = 1), regularised collision, Smagorinsky C 0.1, lattice bulk speed 0.1, started from a perturbed
+blunt profile; 20 δ/u_τ of start-up discarded and at least 50 averaged, stopped when
+[`statistics::Blocks`](#statistical-acceptance-of-study-windows) accepts the bulk speed (one block per δ/u_τ), a cap of 400 δ/u_τ
+being inconclusive. Reference: M. Lee, R. D. Moser, J. Fluid Mech. 774:395–415, 2015 (Re_τ 1000.5, U_b⁺ 19.99; the profile at
+16 points). Bar, fixed before the runs: C_f, (U_b⁺_LM / U_b⁺)² − 1, within 5 %, and U⁺ within 5 % on every row from the sample
+row (the rows at least 4 cells from the nearer wall) to the centreline. U_b⁺ is the trapezoid rule over the full 2δ, the walls'
+zero at y = 0 and 2δ included, as Lee & Moser's U_b covers 2δ.
+
+The sample height is a fixed 4 cells, our choice, not the paper's number for this method. Kawai & Larsson (Phys. Fluids
+24:015105, 2012) state two conditions: sample away from the cells next to the wall, which the LES resolves poorly (§III), and
+h_wm fixed in outer units, about 0.1δ, inside the inner layer (§III.B); their h_wm ≈ 4Δy_w is for their sixth-order compact
+scheme (Δy_w = 0.011δ). Four cells address the first. The second holds only when 4Δx ≤ 0.1δ, about 40 cells per δ or more;
+four cells are 0.25δ, 0.167δ and 0.125δ at 16, 24 and 32 cells per δ, and coarser grids carry the error this study measures.
+The study prints h_wm/δ for its grid and marks it above 0.1. The model carries no channel half-height, so setup does not warn. In the laminar limit the
+law read at 4Δx gives a slip of a(4Δx)²/(2ν) and a bulk high by 96/(M(M+1)) with M = 2N wall-to-wall cells: 35 %, 9.1 % and
+2.3 % at 8, 16 and 32 cells per δ (`the_matched_wall_slips_by_the_law_at_four_cells_in_a_laminar_channel`, 35.3 % measured at 8).
+
+```
+FIELDCRAFT_MATCHED_CHANNEL=16 cargo test --release -p fieldcraft-lbm --test turbulence -- --ignored --nocapture matched_wall_channel
+```
+
+The heavy job runs a bounded regression of it (`a_coarse_matched_wall_channel_at_re_tau_1000_stays_stable_over_a_short_run`,
+about four minutes on the build server): 8 cells per δ, 2 δ/u_τ discarded and 2 averaged, the study's code. It asserts a
+stable run (largest local Mach below 0.3), finite positive row means and U_b⁺ within 30 % of Lee & Moser's; it is not the
+accuracy bar. The study's table (grids 16, 24, 32) is not recorded yet: the runs take hours.
+
 ### Wall-modelled LES: Malaspinas & Sagaut against Lee & Moser and Dean (#664, #749)
 
 **Void (#1057).** Every run of this section used the MRT collision below its stability bound (lattice viscosity
