@@ -1521,6 +1521,7 @@ mod tests {
             steady: None,
             walls: Default::default(),
             inlet_ramp: None,
+            trace_bulk_one: false,
         };
         m.add_step(Step::new("Run", fluid.clone()), None).unwrap();
         assert!(matches!(m.remove_fluid_domain("Flow"), Err(Error::InUse(_))));
@@ -1569,6 +1570,7 @@ mod tests {
                     steady,
                     walls: Default::default(),
                     inlet_ramp: None,
+                    trace_bulk_one: false,
                 },
                 other => other,
             };
@@ -1638,6 +1640,7 @@ mod tests {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1652,6 +1655,7 @@ mod tests {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1666,6 +1670,7 @@ mod tests {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1680,6 +1685,7 @@ mod tests {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1694,6 +1700,7 @@ mod tests {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1708,6 +1715,7 @@ mod tests {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1722,6 +1730,7 @@ mod tests {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1736,6 +1745,7 @@ mod tests {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
             Procedure::Fluid {
                 domain: "Flow".into(),
@@ -1750,6 +1760,7 @@ mod tests {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
         ] {
             assert!(m.add_step(Step::new("Bad", bad.clone()), None).is_err(), "{bad:?}");
@@ -1768,6 +1779,7 @@ mod tests {
             steady: Some(st),
             walls: Default::default(),
             inlet_ramp: None,
+            trace_bulk_one: false,
         };
         let rule = crate::Steady { monitors: vec![], tolerance: 1e-3, window: None, min_time: None, divergence: None, averaging: None };
         let monitored = crate::Steady {
@@ -1925,6 +1937,7 @@ mod tests {
                     steady: None,
                     walls: Default::default(),
                     inlet_ramp: None,
+                    trace_bulk_one: false,
                 },
             ),
             None,

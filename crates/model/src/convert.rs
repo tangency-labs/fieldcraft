@@ -436,6 +436,7 @@ impl Quantities for Step {
                 steady,
                 walls: _,
                 inlet_ramp,
+                trace_bulk_one: _,
             } => {
                 for v in [end_time, time_step, inlet_ramp].into_iter().flatten() {
                     f(Q::Time, v);

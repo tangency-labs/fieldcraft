@@ -38,6 +38,7 @@ fn drag_history(collision: Collision, steps: u64) -> Vec<f64> {
         steady: None,
         walls: Default::default(),
         inlet_ramp: None,
+        trace_bulk_one: false,
     };
     let m = model(1.0, 1.0 / 8000.0, d, p);
     let r = solve_fluid(&m, None, &[body], &Limits::default()).unwrap();

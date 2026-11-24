@@ -76,6 +76,7 @@ pub fn collide(end_time: f64, time_step: f64, magic: Option<f64>, collision: Col
         steady: None,
         walls: Default::default(),
         inlet_ramp: None,
+        trace_bulk_one: false,
     }
 }
 
@@ -107,6 +108,7 @@ pub fn ball_channel(
         steady: None,
         walls: Default::default(),
         inlet_ramp: None,
+        trace_bulk_one: false,
     };
     (model(1.0, 0.01, d, p), ball)
 }

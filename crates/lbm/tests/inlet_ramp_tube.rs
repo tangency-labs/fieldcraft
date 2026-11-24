@@ -91,6 +91,7 @@ fn lbm_density(m: f64) -> Vec<f64> {
         steady: None,
         walls: WallTreatment::Halfway,
         inlet_ramp: Some(ramp as f64 * dt),
+        trace_bulk_one: false,
     };
     let m = model(1.0, 1.0 / RE, d, procedure);
     let (setup, mut flow) = prepare(&m, &[]);

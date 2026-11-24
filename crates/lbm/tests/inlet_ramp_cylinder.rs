@@ -82,6 +82,7 @@ fn far_field(ramp_steps: Option<u64>) -> Vec<f64> {
         steady: None,
         walls: WallTreatment::Halfway,
         inlet_ramp: ramp_steps.map(|s| s as f64 * dt),
+        trace_bulk_one: false,
     };
     let m = model(1.0, 1.0 / RE, d, procedure);
     let obstacles = [body];

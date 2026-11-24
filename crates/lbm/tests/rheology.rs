@@ -366,6 +366,7 @@ fn a_viscosity_table_sizes_the_automatic_step_from_its_thinnest_viscosity() {
         steady: None,
         walls: Default::default(),
         inlet_ramp: None,
+        trace_bulk_one: false,
     };
     let mut m = channel_model(Fluid::Newtonian { viscosity: 0.2 }, Some(400.0), g, cells, auto).unwrap();
     let mut fluid = m.material("Fluid").unwrap().clone();
