@@ -405,3 +405,126 @@ fn on_node_results_are_bit_for_bit_the_same_on_one_and_many_threads() {
         assert_eq!(one, solve(3));
     }
 }
+
+/// The Spalart–Allmaras model with its own wall law on the on-node wall
+/// (`wall_model: "spalart_allmaras_bounce"`): a column 1 × (2N + 1) × 1, N = 10 cells per δ at
+/// Re_τ 1000 (the first interior node at y⁺ 100), started from the law's profile, 40 steps.
+const SA_LAW_RE_TAU: f64 = 1000.0;
+/// Cells per δ: the first interior node at y⁺ = Re_τ / N = 100.
+const SA_LAW_CELLS: usize = 10;
+
+fn sa_law_model(collision: Collision) -> fieldcraft_model::Model {
+    let ub = 20.0;
+    let dx = 1.0 / SA_LAW_CELLS as f64;
+    let mut d = domain([0.0; 3], [dx, 2.0 + dx, dx], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    d.acceleration = [1.0, 0.0, 0.0];
+    let dt = 0.1 * dx / ub;
+    let mut p = collide(40.0 * dt, dt, None, collision);
+    if let Procedure::Fluid { turbulence, sigma, .. } = &mut p {
+        *turbulence = Some(Turbulence::SpalartAllmaras { prandtl: 0.9, wall_model: Some(WallModel::SpalartAllmarasBounce), inflow_ratio: 3.0 });
+        if collision == Collision::Hrr {
+            *sigma = Some(HrrSigma::Value(0.99));
+        }
+    }
+    model(1.0, 1.0 / SA_LAW_RE_TAU, d, p)
+}
+
+fn sa_law_channel(collision: Collision) -> (Setup, Flow) {
+    let (re_tau, dx) = (SA_LAW_RE_TAU, 1.0 / SA_LAW_CELLS as f64);
+    let (setup, mut flow) = prepare(&sa_law_model(collision), &[]);
+    let grid = *flow.grid();
+    let to_lattice = 1.0 / setup.velocity_scale();
+    flow.set_equilibrium(|cell| {
+        // Wall units: u_τ = δ = 1, the walls through the outermost centres (y = Δx/2, 2 + Δx/2).
+        let y = grid.centre(cell)[1] - 0.5 * dx;
+        let y_plus = re_tau * y.min(2.0 - y).max(0.0);
+        (1.0, [fieldcraft_lbm::sa_law::u_plus(y_plus) * to_lattice, 0.0, 0.0])
+    });
+    (setup, flow)
+}
+
+/// Step by step on the regularised and hybrid collisions (the ones the turbulent floor admits with
+/// the model's wall law; TRT keeps the laminar floor and this grid is refused with it): each
+/// boundary node's stress is ρ u_τ² along its interior
+/// node's velocity parallel to the wall, u_τ the root of the model's own law at one cell
+/// (u_τ u⁺(u_τ / ν) = U; the inversion stops two ulps wide and the product's log-derivative is
+/// between 1 and 2, so 64 ε covers it with the square roots); the node keeps that u_τ; the interior
+/// node's ν̃ is then κ u_τ times its wall distance, 1, exactly (the same product); the boundary
+/// nodes have no ν̃; the walls carry the sampled stress and the momentum budget closes to round-off.
+#[test]
+fn the_sa_law_gives_the_walls_its_stress_and_the_first_node_its_nu_tilde() {
+    use fieldcraft_lbm::sa::KAPPA;
+    use fieldcraft_lbm::sa_law::u_plus;
+    let err = Setup::new(&sa_law_model(Collision::Trt), None, &[], &Limits::default()).unwrap_err().to_string();
+    assert!(err.contains("0.505"), "TRT keeps the laminar floor with the model's wall law: {err}");
+    for collision in [Collision::Regularized, Collision::Hrr] {
+        let (setup, mut flow) = sa_law_channel(collision);
+        assert!(flow.on_node_bounce() && flow.spalart_allmaras().is_some());
+        let nu = (setup.tau_plus - 0.5) / 3.0;
+        let a = flow.acceleration();
+        let (mut p, m0) = fluid_momentum_mass(&flow);
+        let distance = flow.sa_wall_distance().unwrap().to_vec();
+        let (mut law, mut kept, mut budget, mut carried, mut mass) = (0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        for _ in 0..setup.steps {
+            let before: Vec<Option<(f64, [f64; 3])>> = (0..flow.grid().len()).map(|c| flow.moments(c)).collect();
+            let bulk = flow.mass();
+            flow.step().unwrap();
+            let (next, m) = fluid_momentum_mass(&flow);
+            let nodes = flow.wall_nodes().unwrap().nodes();
+            let field = flow.spalart_allmaras().unwrap().nu_tilde();
+            let wall: [f64; 3] = [0, 1, 2].map(|k| flow.forces().iter().map(|f| f[k]).sum());
+            let stress: [f64; 3] = [0, 1, 2].map(|k| nodes.iter().map(|w| w.stress[k]).sum());
+            for k in 0..3 {
+                budget = budget.max((next[k] - p[k] - (a[k] * bulk - wall[k])).abs() / next[0].abs());
+            }
+            carried = carried.max((wall[0] - stress[0]).abs() / stress[0].abs());
+            for w in nodes {
+                let (rho, u) = before[w.interior as usize].unwrap();
+                let speed = (u[0] * u[0] + u[2] * u[2]).sqrt();
+                let ut = ((w.stress[0] * w.stress[0] + w.stress[2] * w.stress[2]).sqrt() / rho).sqrt();
+                law = law.max((ut * u_plus(ut / nu) / speed - 1.0).abs());
+                kept = kept.max((w.friction / ut - 1.0).abs());
+                assert_eq!(distance[w.interior as usize], 1.0, "{w:?}");
+                assert_eq!(field[w.interior as usize], KAPPA * w.friction * 1.0, "{w:?}");
+                assert_eq!(field[w.cell as usize], 0.0, "a boundary node has no ν̃");
+            }
+            mass = mass.max((m / m0 - 1.0).abs());
+            p = next;
+        }
+        println!(
+            "{} SA law on the on-node wall, {} steps: the law {law:.1e}, u_τ kept {kept:.1e}, momentum budget {budget:.1e}, carried vs sampled {carried:.1e}, mass {mass:.1e}",
+            collision.name(),
+            setup.steps
+        );
+        let eps = f64::EPSILON;
+        assert!(law <= 64.0 * eps && kept <= 64.0 * eps, "{law} {kept}");
+        assert!(budget < 1e-12 && carried < 1e-12 && mass < 1e-13, "{budget} {carried} {mass}");
+    }
+}
+
+/// The model's own wall law runs only with the model, and the model only with its own law.
+#[test]
+fn the_sa_law_and_the_model_go_together() {
+    let dx = 0.125;
+    let mut d = domain([0.0; 3], [4.0 * dx, 1.0, 2.0 * dx], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    let refused = |t: Turbulence| {
+        let mut p = collide(10.0 * dx, dx, None, Collision::Trt);
+        if let Procedure::Fluid { turbulence, .. } = &mut p {
+            *turbulence = Some(t);
+        }
+        Setup::new(&model(1.0, 0.01, d.clone(), p), None, &[], &Limits::default()).unwrap_err().to_string()
+    };
+    let wall_model = Some(WallModel::SpalartAllmarasBounce);
+    let err = refused(Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model });
+    assert!(err.contains("spalart_allmaras_bounce") && err.contains("spalart_allmaras` turbulence"), "{err}");
+    for other in [WallModel::Musker, WallModel::SpaldingBounce] {
+        let err = refused(Turbulence::SpalartAllmaras { prandtl: 0.9, wall_model: Some(other), inflow_ratio: 3.0 });
+        assert!(err.contains("not supported yet") && err.contains("spalart_allmaras_bounce"), "{other:?}: {err}");
+    }
+}

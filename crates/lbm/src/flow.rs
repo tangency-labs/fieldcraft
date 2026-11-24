@@ -152,7 +152,7 @@ use fieldcraft_model::{BoxFace, Collision, FaceCondition, Outflow, Profile, Ther
 
 use fieldcraft_parallel as parallel;
 
-use crate::bounce::{WallNode, WallNodes};
+use crate::bounce::{NodeLaw, WallNode, WallNodes};
 use crate::conduction::{Interface, Layout, SolidHeat};
 use crate::lattice::{C, Q, W, c, equilibrium, moving_wall, opposite};
 use crate::outlet::{Action, Outlets, Populations};
@@ -910,14 +910,20 @@ impl Flow {
             )));
         }
         // Han et al.'s on-node wall-function bounce: the outermost cell layer at each wall face
-        // is its boundary nodes ([`crate::bounce`]).
-        let on_node = setup.wall_model == Some(WallModel::SpaldingBounce);
+        // is its boundary nodes ([`crate::bounce`]), with Spalding's law or the Spalart–Allmaras
+        // model's own.
+        let on_node = setup.wall_model.is_some_and(WallModel::is_on_node);
+        let (node_law, node_model) = if setup.wall_model == Some(WallModel::SpalartAllmarasBounce) {
+            (NodeLaw::SpalartAllmaras, "spalart_allmaras_bounce")
+        } else {
+            (NodeLaw::Spalding, "spalding_bounce")
+        };
         let mut node_list: Vec<WallNode> = Vec::new();
         let mut bulk = Vec::new();
         if on_node {
             let refuse = |what: String| {
                 Err(Error::Invalid(format!(
-                    "not supported yet: Han et al.'s on-node wall-function bounce (`spalding_bounce`) {what}; choose another supported wall treatment"
+                    "not supported yet: Han et al.'s on-node wall-function bounce (`{node_model}`) {what}; choose another supported wall treatment"
                 )))
             };
             if let Some(face) = BoxFace::ALL.iter().find(|f| matches!(domain.faces.get(**f), FaceCondition::MovingWall { .. })) {
@@ -960,6 +966,7 @@ impl Flow {
                             group: face.index() as u32,
                             stress: [0.0; 3],
                             taken: [0.0; 3],
+                            friction: 0.0,
                         });
                     }
                 }
@@ -1407,11 +1414,12 @@ impl Flow {
             Vec::new()
         };
         let nu = (setup.tau_plus - 0.5) / 3.0;
+        // The interior nodes next to the boundary nodes: (cell, normal axis, inward sign, group).
+        let node_cells: Vec<(u32, usize, i32, u32)> =
+            node_list.iter().map(|w| (w.interior, usize::from(w.axis), i32::from(w.inward), w.group)).collect();
         let walls = if on_node {
-            // Van Driest's damping from the interior nodes next to the boundary nodes.
-            let cells: Vec<(u32, usize, i32, u32)> =
-                node_list.iter().map(|w| (w.interior, usize::from(w.axis), i32::from(w.inward), w.group)).collect();
-            setup.van_driest.map(|a| Walls::on_node(&grid, &bulk, &cells, Some(a), nu)).transpose()?
+            // Van Driest's damping from the interior nodes.
+            setup.van_driest.map(|a| Walls::on_node(&grid, &bulk, &node_cells, Some(a), nu)).transpose()?
         } else if setup.van_driest.is_some() || setup.wall_model.is_some() {
             Some(Walls::new(&grid, &fluid, &links, &group_walls, setup.van_driest, nu)?)
         } else {
@@ -1420,8 +1428,10 @@ impl Flow {
         let sa = match setup.spalart_allmaras {
             None => None,
             Some(sa) => {
-                // Setup::new refuses the model with the on-node wall, so the cells that collide are
-                // the fluid ones and a face to a solid cell is a halfway wall.
+                // The cells that collide: the fluid less the boundary nodes of the on-node wall (the
+                // only wall model Setup::new allows with the model). A face to a boundary node is
+                // the on-node wall, one cell away; a face to a solid cell a halfway wall.
+                let mask: &[bool] = if bulk.is_empty() { &fluid } else { &bulk };
                 let face_side = |face: BoxFace| match domain.faces.get(face) {
                     FaceCondition::Wall {} | FaceCondition::MovingWall { .. } => Side::Wall,
                     FaceCondition::Velocity { .. } => Side::Inflow,
@@ -1429,27 +1439,34 @@ impl Flow {
                 };
                 let mut sides = filled(n, [Side::Open; 6], "Spalart–Allmaras faces")?;
                 for (cell, out) in sides.iter_mut().enumerate() {
-                    if !fluid.get(cell).copied().unwrap_or(false) {
+                    if !mask.get(cell).copied().unwrap_or(false) {
                         continue;
                     }
                     let p = grid.coords(cell);
                     for (k, side) in out.iter_mut().enumerate() {
                         let (axis, up) = (k / 2, k % 2 == 1);
-                        *side = match neighbour(&grid, periodic, &fluid, p, axis, up) {
+                        *side = match neighbour(&grid, periodic, mask, p, axis, up) {
                             Some(nb) => Side::Cell(nb as u32),
-                            // A solid cell across, or the box face.
+                            // A boundary node or a solid cell across, or the box face.
                             None => match across(&grid, periodic, p, axis, up) {
+                                Some(nb) if is_node(nb) => Side::Node,
                                 Some(_) => Side::Wall,
                                 None => face_side(BoxFace::of(axis, up)),
                             },
                         };
                     }
                 }
-                let no_slip: Vec<bool> = group_walls.iter().map(Option::is_some).collect();
-                let surface = crate::distance::WallSurface::from_links(&grid, &links, &no_slip)?;
-                let distance = crate::distance::WallDistance::new(&grid, &fluid, &surface, periodic, &setup.limits)?;
+                // On the on-node wall every no-slip wall is a box face of boundary nodes (Flow::new
+                // refuses obstacles with it), and its plane passes through their centres.
+                let surface = if on_node {
+                    crate::distance::WallSurface::from_nodes(&grid, &node_cells)?
+                } else {
+                    let no_slip: Vec<bool> = group_walls.iter().map(Option::is_some).collect();
+                    crate::distance::WallSurface::from_links(&grid, &links, &no_slip)?
+                };
+                let distance = crate::distance::WallDistance::new(&grid, mask, &surface, periodic, &setup.limits)?;
                 let inflow = sa.inflow_ratio * nu;
-                let field = SaField::new(sides, fluid.clone(), inflow, inflow)?;
+                let field = SaField::new(sides, mask.to_vec(), inflow, inflow)?;
                 Some(SaState { field, distance, vorticity: filled(n, 0.0, "vorticities")?, substeps: None, model: true })
             }
         };
@@ -1475,7 +1492,7 @@ impl Flow {
             walls,
             wall_model: setup.wall_model == Some(WallModel::Musker),
             wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounceHalfway),
-            nodes: on_node.then(|| WallNodes::new(node_list, nu)),
+            nodes: on_node.then(|| WallNodes::new(node_list, nu, node_law)),
             bulk,
             rheology: setup.rheology.clone(),
             clamps: Clamps::default(),
@@ -2655,6 +2672,25 @@ impl Flow {
             Error::Unstable(m) => Error::Unstable(format!("{m} (at time step {})", steps + 1)),
             other => other,
         })?;
+        // The model's own wall law (Spalart & Allmaras, AIAA-92-0439, eqs. 7–9: χ = κ y⁺ to the wall): at each interior node of the
+        // on-node wall, ν̃ = κ u_τ y with this step's u_τ and its wall distance y (one cell), set
+        // after the transport so the collision reads it. Not with the sources off (the transport
+        // alone).
+        if let Some(nodes) = self.nodes.as_ref().filter(|n| sa.model && n.law() == NodeLaw::SpalartAllmaras) {
+            let fixed: Vec<(usize, f64)> = nodes
+                .nodes()
+                .iter()
+                .map(|w| {
+                    let cell = w.interior as usize;
+                    let d = sa
+                        .distance
+                        .get(cell)
+                        .ok_or_else(|| Error::Invalid(format!("Spalart–Allmaras: no wall distance at the wall law's node {cell}")))?;
+                    Ok((cell, crate::sa::KAPPA * w.friction * d))
+                })
+                .collect::<Result<_>>()?;
+            sa.field.impose(&fixed)?;
+        }
         Ok(())
     }
 

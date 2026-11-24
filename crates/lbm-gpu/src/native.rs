@@ -899,6 +899,9 @@ impl GpuFlow {
                 if flow.thermal().is_some() {
                     return refuse("heat");
                 }
+                if flow.wall_nodes().is_some() {
+                    return refuse("its wall law (`wall_model: \"spalart_allmaras_bounce\"`)");
+                }
                 if flow.hybrid_sigma() == Some(fieldcraft_model::HrrSigma::Dynamic) {
                     return refuse("the hybrid collision's dynamic σ");
                 }

@@ -51,7 +51,7 @@ initial field, 3 by default) instead of a constant:
 | `turbulence.inflow_ratio` | at least 0 | 3 | `spalart_allmaras` only: ν̃/ν at the inflows and in the initial field (3 is the value of NASA's Turbulence Modeling Resource). With 0 the model gives no eddy viscosity and the flow equals the model off bit for bit. |
 | `turbulence.prandtl` | 0.1 to 10 | 0.9 | Turbulent Prandtl number Pr_t of the turbulent heat diffusivity ν_t / Pr_t (with heat only). 0.85 to 0.9 is usual for air and water. |
 | `turbulence.van_driest` | 1 to 100 | none | Van Driest's A⁺: damps the length scale near no-slip walls. 26 is Van Driest's value. Smagorinsky's model only: Vreman's needs no damping, and the field is refused with it. |
-| `turbulence.wall_model` | `"musker"`, `"spalding_bounce"`, `"spalding_bounce_halfway"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` is Han, Ooka and Kikumoto's wall-function bounce as their eq. 14 states it (2021), on-node: the outermost cell layer at each plane no-slip box face is the wall (the wall plane through its centres, so a channel 2δ wide is 2δ + Δx high), bounces back and sends into the fluid the specular images of its incoming diagonals less the stress of Spalding's law at the interior node one cell above; CPU and GPU, the box periodic along the walls, no obstacles, moving walls or heat. `"spalding_bounce_halfway"` is disabled because its wall-row checkerboard mode grows. Files preserve this selection when loaded, but solves refuse it at setup. Remove `wall_model` for resolved no-slip walls, or explicitly select and validate a supported treatment; the on-node variant changes the wall location. |
+| `turbulence.wall_model` | `"musker"`, `"spalding_bounce"`, `"spalart_allmaras_bounce"`, `"spalding_bounce_halfway"` | none | `"musker"` rebuilds each fluid cell next to a no-slip wall from Musker's profile, for a first cell above the viscous sublayer (y⁺ 30 to 100). `"spalding_bounce"` is Han, Ooka and Kikumoto's wall-function bounce as their eq. 14 states it (2021), on-node: the outermost cell layer at each plane no-slip box face is the wall (the wall plane through its centres, so a channel 2δ wide is 2δ + Δx high), bounces back and sends into the fluid the specular images of its incoming diagonals less the stress of Spalding's law at the interior node one cell above; CPU and GPU, the box periodic along the walls, no obstacles, moving walls or heat. `"spalart_allmaras_bounce"` is the same wall with the Spalart–Allmaras model's own constant-stress law in place of Spalding's (`spalart_allmaras` turbulence only, and the only wall model it takes; CPU only). `"spalding_bounce_halfway"` is disabled because its wall-row checkerboard mode grows. Files preserve this selection when loaded, but solves refuse it at setup. Remove `wall_model` for resolved no-slip walls, or explicitly select and validate a supported treatment; the on-node variant changes the wall location. |
 | `collision` | `"trt"`, `"regularized"`, `"mrt"`, `"hrr"` | `"trt"` | Either model runs with every collision ([Collision operators](collision.md)); with `hrr` the finite-difference stress uses the cell's τ̄ with its eddy viscosity. |
 
 A value outside its range is refused when the step is set up, naming the range. With a
@@ -168,18 +168,44 @@ enters every collision through the same explicit-rate route as Vreman's model. E
 exact distance to the nearest no-slip wall (a separable distance transform, Felzenszwalb and
 Huttenlocher 2012; it crosses periodic faces). ν̃ is part of a checkpoint.
 
-The model adds no wall law: walls are halfway bounce-back, ν̃ = 0 on them, and the boundary layer
+Without a wall model, walls are halfway bounce-back, ν̃ = 0 on them, and the boundary layer
 must be resolved (the first cell's centre at y⁺ 1 or below). In a wall-resolved channel at Re_τ 180 the lattice
 solution converges at second order to the model's own 1-D solution, which differs from Moser, Kim
 and Mansour's DNS by +1.1 % in bulk velocity, +0.8 % at the centre line and −2.1 % in skin
-friction: the model's error, not the solver's ([verification](../../verification.md)). The fluid keeps the laminar floor on
+friction: the model's error, not the solver's ([verification](../../verification.md)). On resolved walls the fluid keeps the laminar floor on
 τ⁺ (0.505): ν_t goes to 0 at a wall, so it does not hold the wall cells stable as a subgrid model's
 does. It does not add to a subgrid model, it replaces one.
 
-Refused, with a message that names the model: a wall model (`musker`, `spalding_bounce`: the wall
-law's rate would replace ν_t at the wall cell while ν̃ keeps its own wall condition, until a wall
-law is chosen for the model), interpolated walls and the hybrid collision's dynamic σ (both
-backends); on the GPU also heat, fans and porous zones, and a box face with two kinds of cell (an
+**Its own wall law** (`wall_model: "spalart_allmaras_bounce"`, `crates/lbm/src/sa_law.rs`). In a
+layer of constant total stress χ = κ y⁺ solves the model's steady equation exactly at every height
+(S̃ = u_τ/(κ y), r = 1, f_w = 1, the f_t2 terms cancel, and c_w1 = c_b1/κ² + (1 + c_b2)/σ balances
+the rest: Spalart and Allmaras, AIAA-92-0439, 1992, sections "Near-wall region, high Reynolds
+number" and "finite Reynolds number", eqs. 7–9; the same model as their 1994 paper). The velocity that goes with it is
+u⁺(y⁺) = ∫₀^y⁺ dy/(1 + κ y f_v1(κ y)), with nothing fitted: u⁺ = y⁺ in the sublayer, the log law with
+κ 0.41 and the intercept 5.033 above (derived from the integral, not chosen). With x = κ y the
+integrand is (x³ + a)/(x⁴ + x³ + a), a = c_v1³, so the integral is evaluated in closed form (the
+quartic factored into two real quadratics, partial fractions, two logarithms and two arctangents),
+and u_τ is inverted by bisection at the geometric mean of a bracket, at most 62 steps (the starting
+bracket spans less than 2⁹ in ln y⁺, and 52 more halvings reach the last bit). The wall is Han et al.'s on-node wall (below): each boundary node takes ρ u_τ² of
+this law at its interior node one cell away, and after ν̃'s transport the interior node's ν̃ is set
+to κ u_τ y, the model's exact value there. The boundary nodes are outside ν̃'s field; the interior
+node's face to its node is a wall one cell away (ν̃ = 0 on the node), and the wall distance is
+measured from the node plane. The boundary nodes do not collide and the first cells that do carry
+the law's ν_t, so with the regularised and hybrid collisions the fluid's own τ⁺ may go down to
+0.5001, as with a subgrid model; the TRT collision keeps 0.505 (it is unstable in an oblique stream
+near the lower floor, #1063). The walls carry the body force of the fluid between them less the
+half cell the nodes stand on, a(δ − Δx/2) per wall, as with `spalding_bounce` (#1101): the law is
+fed 1 − Δx/(2δ) of the stress. In the 1-D model of the lattice channel at Re_τ 1000 this takes C_f
+against the wall-resolved model from the law's own +1.2 % and +2.2 % to +3.9 % and +7.3 % with the
+first node at y⁺ 62 and 100. **Limitation:** the law assumes the first node lies in a log layer of
+constant stress, y₁ ≪ δ. At Re_τ 182 the first node at y⁺ 30 or 61 is a sixth or a third of the way
+to the centre line, and C_f is +19 % or +41 % above the wall-resolved model's; use it where the first
+node is a small fraction of δ. The channel against the wall-resolved model and Lee and Moser is in
+[verification](../../verification.md).
+
+Refused, with a message that names the model: another wall model (`musker`, `spalding_bounce`:
+another law's stress would disagree with the ν̃ the model keeps at the wall), interpolated walls and
+the hybrid collision's dynamic σ (both backends); on the GPU also its wall law, heat, fans and porous zones, and a box face with two kinds of cell (an
 inlet patch). `backend: "cpu"` runs these.
 
 On the GPU each sub-step's Δt is chosen on the device from that sub-step's largest coefficient sum, by the CPU's
@@ -458,7 +484,7 @@ docs/verification.md and summarised in [Large-eddy simulation](les.md).
 
 ## References
 
-- P. R. Spalart, S. R. Allmaras. *A one-equation turbulence model for aerodynamic flows.* La Recherche Aérospatiale 1994(1):5–21.
+- P. R. Spalart, S. R. Allmaras. *A one-equation turbulence model for aerodynamic flows.* La Recherche Aérospatiale 1994(1):5–21; first as AIAA-92-0439, 1992, doi:10.2514/6.1992-439 (the wall law: its eqs. 7–9).
 - S. R. Allmaras, F. T. Johnson, P. R. Spalart. *Modifications and clarifications for the implementation of the Spalart–Allmaras turbulence model.* ICCFD7-1902, 2012.
 - P. F. Felzenszwalb, D. P. Huttenlocher. *Distance transforms of sampled functions.* Theory of Computing 8:415–428, 2012.
 - A. W. Vreman. *An eddy-viscosity subgrid-scale model for turbulent shear flow: Algebraic theory and applications.* Phys. Fluids 16(10):3670–3681, 2004. doi:[10.1063/1.1785131](https://doi.org/10.1063/1.1785131)

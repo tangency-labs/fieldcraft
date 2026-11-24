@@ -117,6 +117,7 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Fans and porous zones (curves, Darcy–Forchheimer, loss coefficients), with every collision and wall treatment | yes |
 | The halfway wall-function bounce (`wall_model: "spalding_bounce_halfway"`) | yes |
 | Han et al.'s on-node wall-function bounce (`wall_model: "spalding_bounce"`, their eq. 14) | yes |
+| The Spalart–Allmaras model's own wall law on the on-node wall (`wall_model: "spalart_allmaras_bounce"`) | not yet: refused, naming the CPU |
 
 ## Algorithm
 

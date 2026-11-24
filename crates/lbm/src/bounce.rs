@@ -19,6 +19,11 @@
 //! from Spalding's law (their eqs. 16–17, κ 0.41, B 5.5) at that node's velocity and distance, ρ
 //! its density. That velocity is the one the collision uses (with the half body force).
 //!
+//! **The law.** With the Spalart–Allmaras model (`wall_model: "spalart_allmaras_bounce"`) `u_τ`
+//! comes from the model's own constant-stress law instead ([`crate::sa_law`]), and the flow sets
+//! ν̃ = κ u_τ Δy at the interior node, the model's exact solution there; the scheme is otherwise
+//! the same.
+//!
 //! **Index mapping.** Their Table A-1 numbers D3Q19 differently from [`crate::lattice`]; their
 //! populations are mapped by velocity vector (the wall at `y = 0`, the fluid above): 7 (1,1,0) →
 //! 7, 8 (−1,−1,0) → 8, 13 (1,−1,0) → 9, 14 (−1,1,0) → 10, 9 (1,0,1) → 11, 10 (−1,0,−1) → 12,
@@ -62,6 +67,26 @@ use fieldcraft_parallel as parallel;
 
 use crate::lattice::{C, Q, opposite};
 use crate::wall::{BOUNCE_B, BOUNCE_KAPPA, spalding_friction};
+
+/// The wall law the on-node wall takes its stress from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeLaw {
+    /// Spalding's (κ 0.41, B 5.5), as Han et al.
+    Spalding,
+    /// The Spalart–Allmaras model's own constant-stress law ([`crate::sa_law`]).
+    SpalartAllmaras,
+}
+
+impl NodeLaw {
+    /// The friction velocity of a flow of speed `speed` parallel to the wall at distance `y`,
+    /// kinematic viscosity `nu` (lattice units); 0 for input that is not usable.
+    pub fn friction_velocity(self, speed: f64, y: f64, nu: f64) -> f64 {
+        match self {
+            NodeLaw::Spalding => spalding_friction(speed, y, nu, BOUNCE_KAPPA, BOUNCE_B),
+            NodeLaw::SpalartAllmaras => crate::sa_law::friction_velocity(speed, y, nu),
+        }
+    }
+}
 
 /// The direction whose velocity is `c_q` with its component along `axis` reversed (the specular
 /// image across a plane normal to `axis`), per axis.
@@ -162,6 +187,8 @@ pub struct WallNode {
     pub stress: [f64; 3],
     /// The momentum the node took from the fluid in the last step.
     pub taken: [f64; 3],
+    /// The friction velocity u_τ of the last sample (lattice units; 0 when the stress is).
+    pub friction: f64,
 }
 
 /// The boundary nodes of the on-node wall-function bounce, in cell order.
@@ -170,22 +197,31 @@ pub struct WallNodes {
     nodes: Vec<WallNode>,
     /// The fluid's kinematic viscosity (lattice units).
     nu: f64,
+    /// The wall law the stress comes from.
+    law: NodeLaw,
 }
 
 impl WallNodes {
-    /// `nodes` (sorted here by cell) for a fluid of kinematic viscosity `nu` (lattice units).
-    pub fn new(mut nodes: Vec<WallNode>, nu: f64) -> WallNodes {
+    /// `nodes` (sorted here by cell) for a fluid of kinematic viscosity `nu` (lattice units),
+    /// their stress from `law`.
+    pub fn new(mut nodes: Vec<WallNode>, nu: f64, law: NodeLaw) -> WallNodes {
         nodes.sort_by_key(|n| n.cell);
-        WallNodes { nodes, nu }
+        WallNodes { nodes, nu, law }
     }
 
-    /// The restart state: none beyond the setup's. Each node's stress is sampled before its
-    /// collision and the momentum it takes is added to the saved forces within the step.
+    /// The wall law the stress comes from.
+    pub fn law(&self) -> NodeLaw {
+        self.law
+    }
+
+    /// The restart state: none beyond the setup's (the law with it: the Spalart–Allmaras law runs
+    /// only with the model, whose ν̃ the checkpoint holds). Each node's stress is sampled before
+    /// its collision and the momentum it takes is added to the saved forces within the step.
     pub(crate) fn checkpoint(&mut self, a: &mut dyn crate::checkpoint::Archive) -> crate::Result<()> {
         use crate::checkpoint::fixed;
         fixed(a, self.nodes.len() as u64)?;
         for w in &self.nodes {
-            let WallNode { cell, interior, axis, inward, group, stress: _, taken: _ } = *w;
+            let WallNode { cell, interior, axis, inward, group, stress: _, taken: _, friction: _ } = *w;
             for v in [u64::from(cell), u64::from(interior), u64::from(axis), inward as u64, u64::from(group)] {
                 fixed(a, v)?;
             }
@@ -204,12 +240,13 @@ impl WallNodes {
     }
 
     /// Before the collision: each node's stress from `moments(cell)`, the density and velocity
-    /// (with the half force) of its interior node, Spalding's law (κ 0.41, B 5.5) at distance 1,
-    /// in parallel: each node's is its own. Zero at rest or with a number that is not usable.
+    /// (with the half force) of its interior node, and the wall law at distance 1, in parallel:
+    /// each node's is its own. Zero at rest or with a number that is not usable.
     pub fn sample(&mut self, moments: impl Fn(usize) -> Option<(f64, [f64; 3])> + Sync) {
-        let nu = self.nu;
+        let (nu, law) = (self.nu, self.law);
         parallel::for_each_mut(&mut self.nodes, |_, w| {
             w.stress = [0.0; 3];
+            w.friction = 0.0;
             let Some((rho, u)) = moments(w.interior as usize) else { return };
             let axis = usize::from(w.axis).min(2);
             let mut t = u;
@@ -217,10 +254,11 @@ impl WallNodes {
                 *v = 0.0;
             }
             let speed = (t[0] * t[0] + t[1] * t[1] + t[2] * t[2]).sqrt();
-            let ut = spalding_friction(speed, 1.0, nu, BOUNCE_KAPPA, BOUNCE_B);
+            let ut = law.friction_velocity(speed, 1.0, nu);
             let scale = rho * ut * ut / speed;
             if speed > 0.0 && scale.is_finite() {
                 w.stress = t.map(|v| scale * v);
+                w.friction = ut;
             }
         });
     }
