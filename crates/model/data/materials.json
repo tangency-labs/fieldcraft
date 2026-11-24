@@ -2925,7 +2925,7 @@
           "page": "1",
           "url": "https://www.hydro.com/globalassets/01-products--services/rolled-products/ge_h111_njordal_200514.pdf"
         },
-        "applicability": "Typical room-temperature specific heat capacity for rolled AA 5083 / EN AW-5083; converted from 1.03 J/(g*K)."
+        "applicability": "Typical specific heat capacity for rolled AA 5083 / EN AW-5083, converted from 1.03 J/(g*K); the Hydro datasheet does not state a temperature or temperature range for this value (unlike its thermal conductivity columns)."
       },
       "yield": {
         "value": 125000000.0,
