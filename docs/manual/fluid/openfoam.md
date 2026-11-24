@@ -53,6 +53,34 @@ lattice's exact inside test decides that it is in the fluid:
 
 Lengths are given in the input units; the case is SI, as the model stores it.
 
+## Reading the results back
+
+`results.openfoam {"path": "channel_case"}` reads the results of a case `deck.openfoam` wrote and
+OpenFOAM ran as the fluid results of its step, for viewing them with FieldCraft's slices, probes,
+lines and measurements. OpenFOAM's results are shown as OpenFOAM computed them; they are never
+used to judge FieldCraft's own.
+
+- Each written time is a frame, sampled at the centres of a lattice over the domain box (the
+  domain's spacing, or `spacing`). Each fluid lattice cell takes the values of the OpenFOAM cell
+  whose centre is nearest; the obstacles' cells are solid.
+- Velocity, and the gauge pressure: OpenFOAM's incompressible pressure is kinematic, so it is
+  multiplied by the density the case was written with (recorded in `fieldcraft.json` beside the case).
+- The cell centres come from `0/C`, which `Allrun` writes. The fields must be ASCII, as the case is
+  written.
+- A case that was not reconstructed (only `processor0` … `processorN`) is read from its processor
+  directories, each rank's centres and fields joined in rank order.
+- Fewer frames: `from` and `to` (the written times in this range, input units, inclusive) and
+  `every` (every n-th of them, always with the last).
+
+What is refused, rather than read as something else:
+- a directory without `fieldcraft.json`, or one whose record lacks a value;
+- a case none of whose cell centres lies in the step's domain (another model's case);
+- a fluid lattice cell with no OpenFOAM cell near it, which would otherwise show as zero flow. "Near"
+  is bounded by the case's largest cell: the background cell's diagonal, plus the distance
+  snappyHexMesh may move points onto a surface;
+- a field whose count differs from its mesh's cells, binary files, and counts beyond the memory the
+  fluid results may take.
+
 ## Not written yet
 
 The command fails and names what it cannot write yet:
