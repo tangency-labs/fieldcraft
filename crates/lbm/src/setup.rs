@@ -286,6 +286,8 @@ pub struct Setup {
     /// Whether the hybrid collision's σ is dynamic: set per cell and step from the subgrid
     /// model's eddy viscosity, which then does not enter the relaxation time ([`crate::hrr`]).
     pub dynamic_sigma: bool,
+    /// The hybrid collision's trace relaxation ([`crate::Flow::trace_bulk_one`]; only with that collision).
+    pub trace_bulk_one: bool,
     /// Smagorinsky's constant C of the subgrid eddy viscosity (C Δx)² |S| (0: none), and the
     /// turbulent Prandtl number Pr_t of its heat diffusivity ν_t / Pr_t.
     pub smagorinsky: f64,
@@ -740,8 +742,21 @@ impl Setup {
     pub fn new(model: &Model, step: Option<&str>, obstacles: &[Obstacle], limits: &Limits) -> Result<Setup> {
         // The model checked the domain and its material when they were defined.
         let (s, domain) = fluid_step(model, step)?;
-        let Procedure::Fluid { end_time, steps, time_step, frames, magic, sigma, collision, turbulence, steady, walls, inlet_ramp, .. } =
-            &s.procedure
+        let Procedure::Fluid {
+            end_time,
+            steps,
+            time_step,
+            frames,
+            magic,
+            sigma,
+            collision,
+            turbulence,
+            steady,
+            walls,
+            inlet_ramp,
+            trace_bulk_one,
+            ..
+        } = &s.procedure
         else {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
@@ -1360,6 +1375,12 @@ impl Setup {
             ));
         }
         let hybrid_sigma = HrrSigma::fixed(*sigma);
+        if *trace_bulk_one && collision != Collision::Hrr {
+            return Err(Error::Invalid(format!(
+                "`trace_bulk_one` is the hybrid collision's trace relaxation: it needs `collision: \"hrr\"`, not {}",
+                collision.name()
+            )));
+        }
         if collision != Collision::Hrr && sigma.is_some() {
             warnings.push(format!("the hybrid collision's σ (`sigma`) has no effect with the {} collision", collision.name()));
         }
@@ -1446,6 +1467,7 @@ impl Setup {
             collision,
             sigma: hybrid_sigma,
             dynamic_sigma,
+            trace_bulk_one: *trace_bulk_one,
             smagorinsky,
             vreman,
             spalart_allmaras,

@@ -28,6 +28,7 @@ fn fluid(end_time: f64, time_step: f64, steady: Option<Steady>) -> Procedure {
         steady,
         walls: Default::default(),
         inlet_ramp: None,
+        trace_bulk_one: false,
     }
 }
 
@@ -182,6 +183,7 @@ fn an_unstable_flow_stops_as_diverged() {
                 steady,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
         )
     };

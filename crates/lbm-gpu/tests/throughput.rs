@@ -152,6 +152,7 @@ fn cell_updates_per_second() {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
         );
         let (_, flow) = prepare(&m, &obstacles);
@@ -227,6 +228,7 @@ fn conjugate_cell_updates_per_second() {
         steady: None,
         walls: Default::default(),
         inlet_ramp: None,
+        trace_bulk_one: false,
     };
     let m = cht_model([1.0, 0.02, 0.03], (2.0, [2.0; 3], 1.0), d, procedure);
     let (_, mut cpu) = prepare(&m, &obstacles);
@@ -284,6 +286,7 @@ fn fixed_cost_per_solve() {
         steady: None,
         walls: Default::default(),
         inlet_ramp: None,
+        trace_bulk_one: false,
     };
     let m = cht_model([1.0, 0.02, 0.03], (2.0, [2.0; 3], 1.0), d, procedure);
     let (_, flow) = prepare(&m, &obstacles);
@@ -334,6 +337,7 @@ fn smagorinsky_cost() {
                     steady: None,
                     walls: Default::default(),
                     inlet_ramp: None,
+                    trace_bulk_one: false,
                 };
                 let m = if heat {
                     d.thermal = Some(fieldcraft_model::FluidThermal { initial_temperature: kelvin(20.0), ..Default::default() });
@@ -413,6 +417,7 @@ fn les_cost() {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             };
             let (_, mut flow) = prepare(&model(1.0, 0.002, d, p), &obstacles);
             let grid = *flow.grid();

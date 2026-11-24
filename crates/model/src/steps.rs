@@ -78,7 +78,8 @@ pub enum Procedure {
     /// length is then the most it may run. `turbulence` adds a subgrid eddy viscosity
     /// ([`Turbulence`]; none by default). `walls` is how the links into obstacles bounce back
     /// ([`WallTreatment`], halfway by default). `inlet_ramp` raises the velocity faces from the initial field over that time
-    /// (none by default).
+    /// (none by default). `trace_bulk_one` relaxes the hybrid collision's density mode at the bulk rate 1
+    /// (off by default; `collision: "hrr"` only).
     Fluid {
         domain: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,6 +106,10 @@ pub enum Procedure {
         /// ½ (1 − cos(π t / T)); none: the faces hold their velocities from the first step.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         inlet_ramp: Option<f64>,
+        /// The hybrid collision's trace relaxation (`collision: "hrr"` only; off by default): the non-equilibrium density mode relaxed
+        /// at the bulk rate ω_b = 1 in every cell. See docs/manual/fluid/collision.md, "Trace relaxation".
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        trace_bulk_one: bool,
     },
     /// Heat conduction: the steady temperature field, or its history over time when `transient`
     /// is given. Temperature boundary conditions and heat loads (flux, convection, sources)
@@ -1574,6 +1579,7 @@ mod tests {
             steady: None,
             walls: WallTreatment::Halfway,
             inlet_ramp,
+            trace_bulk_one: false,
         };
         assert!(fluid(None).validate().is_ok());
         assert!(fluid(Some(2.0)).validate().is_ok());

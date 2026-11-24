@@ -40,6 +40,7 @@ fn cell_updates_per_second() {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
         );
         let (setup, mut flow) = prepare(&m, &obstacles);
@@ -83,6 +84,7 @@ fn scaling_over_threads() {
             steady: None,
             walls: Default::default(),
             inlet_ramp: None,
+            trace_bulk_one: false,
             turbulence: None,
         },
     );

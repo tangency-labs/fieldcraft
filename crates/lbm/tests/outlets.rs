@@ -32,6 +32,7 @@ fn fluid_with(end_time: f64, time_step: f64, frames: u32, collision: Option<Coll
         steady: None,
         walls: Default::default(),
         inlet_ramp: None,
+        trace_bulk_one: false,
         collision,
         turbulence: None,
     }

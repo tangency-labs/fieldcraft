@@ -226,6 +226,7 @@ fn probe_series(sigma: Option<f64>) -> Result<Vec<f64>> {
         steady: None,
         walls: Default::default(),
         inlet_ramp: None,
+        trace_bulk_one: false,
     };
     model.add_step(Step::new("Run", procedure), None)?;
     let setup = Setup::new(&model, None, &[], &Limits::default())?;

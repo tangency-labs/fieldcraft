@@ -233,6 +233,7 @@ fn sphere_flow(collision: Collision, walls: WallTreatment, moving: Option<[f64; 
             steady: None,
             walls,
             inlet_ramp: None,
+            trace_bulk_one: false,
         },
     );
     prepare(&m, std::slice::from_ref(&ball))
@@ -747,6 +748,7 @@ fn runs_to_steady_state_stop_where_the_cpu_does() {
         steady,
         walls: Default::default(),
         inlet_ramp: None,
+        trace_bulk_one: false,
     };
     let (h, nu, n) = (1.0, 1.0 / 6.0, 16usize);
     let dx = h / n as f64;
@@ -857,6 +859,7 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_with_heat_open_and_slip_faces() {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
         );
         let (_, flow) = prepare(&m, &[]);
@@ -892,6 +895,7 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_around_an_obstacle() {
                 steady: None,
                 walls: Default::default(),
                 inlet_ramp: None,
+                trace_bulk_one: false,
             },
         );
         let (_, flow) = prepare(&m, &[ball]);

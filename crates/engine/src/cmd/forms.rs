@@ -1234,6 +1234,9 @@ const PROCEDURE: Field = variants(
                 range("sigma", "HRR σ", D::None, 0.0, 1.0)
                     .help("The hybrid collision's share of the populations' own stress, above 0 and at most 1 (1 is Regularized); the rest comes from finite differences of the velocity.")
                     .hint("0.99"),
+                flag("trace_bulk_one", "Trace relaxation")
+                    .help("Hybrid collision only: relaxes the non-equilibrium density (trace) mode at the bulk rate 1 in every cell, which sets the bulk viscosity to 1/9 lattice units and damps density waves. For steady and low-Mach flows; keep it off for aeroacoustics and compressible transients (see the manual, Collision).")
+                    .def("false"),
                 positive("inlet_ramp", "Inlet ramp", D::Time)
                     .help("The time over which every velocity face rises from the initial field to its velocity. Without it a start from rest sends a pressure wave of 2/Mach dynamic pressures through the box; a ramp of m × 4 L / c_s, L the inlet-to-outlet length, leaves a residual pressure coefficient of about (4/π)(2/Mach) |cos πm| / |4m² − 1| (see the manual).")
                     .hint("none"),

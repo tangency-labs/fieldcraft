@@ -948,6 +948,11 @@ impl GpuFlow {
                 "radiation from conducting solids is not on the GPU backend yet: solve on the CPU (`backend: \"cpu\"`)".into(),
             ));
         }
+        if flow.trace_bulk_one() {
+            return Err(Error::Invalid(
+                "not supported yet: the hybrid collision's trace relaxation (`trace_bulk_one`) on the GPU: solve on the CPU (`backend: \"cpu\"`)".into(),
+            ));
+        }
         let sa_faces = match flow.spalart_allmaras() {
             None => None,
             Some(field) => {
