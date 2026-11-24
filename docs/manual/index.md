@@ -23,6 +23,7 @@ A step's procedure decides which solver runs it. `solve.run` solves every step i
 | `explicit_dynamic` | `solve.explicit` | Central differences, `crates/explicit` | f64, CPU | [Explicit dynamics](structural/explicit-dynamics.md) |
 | `fluid` | `solve.fluid` | Lattice Boltzmann, `crates/lbm`, `crates/lbm-gpu` | f64 on the CPU, f32 on the GPU | [Lattice Boltzmann flow](fluid/lattice-boltzmann.md) |
 
+The fatigue of a linear static step is post-processing of its stress: [Fatigue (stress-life)](structural/fatigue.md).
 The structural pages that apply to several procedures: [elements](structural/elements.md),
 [materials](structural/materials.md), [contact](structural/contact.md),
 [constraints and connectors](structural/constraints-and-connectors.md) and

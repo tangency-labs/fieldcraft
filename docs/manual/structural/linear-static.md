@@ -172,6 +172,8 @@ The reply (in the display units):
 | `max_temperature` | coupled steps: `{node, value}` |
 | `warnings` | what was ignored or left out (dashpots, plasticity, shells under temperature, balance) |
 
+A linear static step's stress can be cycled for its fatigue life: [Fatigue (stress-life)](fatigue.md).
+
 The stored result has per node (label order) the displacement, rotation (zero at solid and truss
 nodes), reaction, reaction moment, averaged stress (xx, yy, zz, xy, xz, yz) and von Mises stress;
 per element the integration-point and nodal stresses; per shell section forces and surface
