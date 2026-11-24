@@ -6,7 +6,7 @@ use crate::schema::ProblemKind;
 use serde_json::{Value, json};
 
 use super::{opt, xyz};
-use crate::flow::{Axis, FlowView, MAX_STREAMLINE_STEPS, MAX_STREAMLINES, SliceView};
+use crate::flow::{Axis, FlowView, MAX_STREAMLINE_STEPS, MAX_STREAMLINES, SliceView, symmetry_position};
 use crate::requirement::Requirement;
 use crate::results::{Field, Kind, MAX_BANDS, MIN_BANDS, ResultsView};
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
@@ -94,7 +94,7 @@ pub const EXPORT_CSV: CommandSpec = CommandSpec {
 pub const SLICE: CommandSpec = CommandSpec {
     id: "results.slice",
     label: "Flow Slice",
-    params: r#"{"step": "Flow", "field": "velocity" | "pressure" | "temperature", "axis": "x" | "y" | "z" | "none", "position": 20 | "auto", "frame": 10} — shows a fluid step's field (velocity magnitude, gauge pressure or temperature when its frames carry heat, banded with the legend as results.contour sets it) on a slice through the domain normal to `axis`, at `position` along it (inside the domain; "auto" or left out with a new axis: the domain's middle); "none" hides the slice; `frame` from 0 (left out: the one shown, at first the last); what is left out stays as shown. A fluid step is first shown with velocity on a slice through the middle, normal to the horizontal axis across the flow. The reply's `contour.range` (and the legend's Max/Min) is the max over interior fluid cells; the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer"#,
+    params: r#"{"step": "Flow", "field": "velocity" | "pressure" | "temperature", "axis": "x" | "y" | "z" | "none", "position": 20 | "auto", "frame": 10} — shows a fluid step's field (velocity magnitude, gauge pressure or temperature when its frames carry heat, banded with the legend as results.contour sets it) on a slice through the domain normal to `axis`, at `position` along it (inside the domain; "auto" or left out with a new axis: the symmetry plane along `axis` (its first cell layer, the low one when both faces are symmetry), else the domain's middle); "none" hides the slice; `frame` from 0 (left out: the one shown, at first the last); what is left out stays as shown. A fluid step is first shown with velocity on a slice normal to the horizontal axis across the flow, on its symmetry plane when the domain has one along that axis, else through the middle. The reply's `contour.range` (and the legend's Max/Min) is the max over interior fluid cells; the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer"#,
     form: Some(super::forms::SLICE),
     kind: CommandKind::Session,
     requires: &[Requirement::Result],
@@ -200,7 +200,7 @@ pub(super) fn step_for(s: &Session, p: &Value, want: Want) -> Result<String> {
 /// when another step (or none) is shown.
 fn view_of<'a>(s: &'a mut Session, step: &str) -> Result<&'a mut ResultsView> {
     if s.results_view.as_ref().is_none_or(|v| v.step != step) {
-        let fresh = s.latest_result(step).map(|(r, _)| ResultsView::for_result(r)).ok_or_else(|| EngineError::Params(solved_list(s)))?;
+        let fresh = s.latest_result(step).map(|(r, _)| ResultsView::for_result(r, &s.model)).ok_or_else(|| EngineError::Params(solved_list(s)))?;
         s.results_view = Some(fresh);
     }
     s.results_view.as_mut().ok_or_else(|| EngineError::Params("no results are shown".into()))
@@ -444,25 +444,32 @@ fn slice(s: &mut Session, p: &Value) -> Result<Value> {
         Some("none") => Some(None),
         Some(a) => Some(Some(Axis::parse(a).ok_or_else(|| EngineError::invalid("axis", "must be x, y, z or none"))?)),
     };
-    // Some(None): the domain's middle.
+    // Some(None): the symmetry plane along the axis, else the domain's middle.
     let position = match p.get("position").filter(|v| !v.is_null()) {
         None => None,
         Some(Value::String(a)) if a == "auto" => Some(None),
         Some(v) => Some(Some(v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| EngineError::param("position", ProblemKind::NotANumber))?)),
     };
     let frame = fluid_frame(f, p)?;
-    let first = FlowView::for_result(f);
+    let symmetry = crate::flow::symmetry_faces(&s.model, f);
+    let first = FlowView::for_result(f, symmetry);
     let shown = s.results_view.as_ref().filter(|v| v.step == step).and_then(|v| v.flow.clone()).unwrap_or_else(|| first.clone());
+    // Not given: the shown position; "auto": the symmetry plane along the axis, else the middle.
+    let at = |axis: Axis, kept: Option<f64>| match position {
+        None => kept,
+        Some(None) => symmetry_position(f, axis, symmetry),
+        Some(Some(x)) => Some(x),
+    };
     let slice = match axis {
         Some(None) => None,
         Some(Some(a)) => {
-            // A new axis starts at the middle; the same one keeps its position.
-            let kept = shown.slice.as_ref().filter(|s| s.axis == a).and_then(|s| s.position);
-            Some(SliceView { axis: a, position: position.unwrap_or(kept) })
+            // A new axis starts on its symmetry plane; the same one keeps its position.
+            let kept = shown.slice.as_ref().filter(|s| s.axis == a).map(|s| s.position);
+            Some(SliceView { axis: a, position: at(a, kept.unwrap_or_else(|| symmetry_position(f, a, symmetry))) })
         }
         None => {
             let current = shown.slice.clone().or(first.slice);
-            current.map(|s| SliceView { position: position.unwrap_or(s.position), ..s })
+            current.map(|s| SliceView { position: at(s.axis, s.position), ..s })
         }
     };
     if let Some(sv) = &slice

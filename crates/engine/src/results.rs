@@ -450,10 +450,10 @@ impl ResultsView {
     /// nonlinear static step at its last increment, deformed to true scale ([`true_scale`];
     /// with von Mises contours when they kept stresses); a heat step undeformed; a fluid step's
     /// velocity magnitude on a slice, the obstacles and streamlines ([`crate::flow::FlowView`]).
-    pub fn for_result(r: &StepResult) -> ResultsView {
+    pub fn for_result(r: &StepResult, model: &fieldcraft_model::Model) -> ResultsView {
         let heat = matches!(r.kind(), Kind::Heat(_));
         let flow = match r.kind() {
-            Kind::Fluid(f) => Some(crate::flow::FlowView::for_result(f)),
+            Kind::Fluid(f) => Some(crate::flow::FlowView::for_result(f, crate::flow::symmetry_faces(model, f))),
             _ => None,
         };
         let contour = if heat {

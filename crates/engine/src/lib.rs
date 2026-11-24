@@ -797,7 +797,7 @@ impl Session {
     /// a view of the same step stays as it is (on mode 1 and the last frame if its own are gone).
     pub(crate) fn store_result(&mut self, result: StepResult) {
         match &mut self.results_view {
-            None => self.results_view = Some(results::ResultsView::for_result(&result)),
+            None => self.results_view = Some(results::ResultsView::for_result(&result, &self.model)),
             Some(v) if v.step == result.step() && results::displacements(&result, v.pick()).is_err() => {
                 v.mode = 1;
                 v.frame = None;
