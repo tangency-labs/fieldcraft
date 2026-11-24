@@ -1904,6 +1904,7 @@ name = "fieldcraft-decks"
 version = "0.8.1"
 dependencies = [
  "fieldcraft-model",
+ "libm",
  "serde_json",
  "thiserror 2.0.21",
 ]
