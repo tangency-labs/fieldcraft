@@ -101,14 +101,14 @@ library. Standards are cited by number, edition, clause or table and, where chec
 not link to third-party copies. Steel/stainless calculation constants come from the explicitly
 cited EN 1993 editions, with S275JR and S460N minimum strengths taken from published
 thyssenkrupp Steel Europe EN 10025-1 Declarations of Performance;
-C45+QT and 42CrMo4+QT pair Ovako typical physical constants with Saarstahl DIN EN 10083
-quenched-and-tempered strength minimums for small sections (diameter below 16 mm);
+C45+QT (EN 10083-2:2006) and 42CrMo4+QT (EN 10083-3:2006) pair Ovako typical physical constants with Saarstahl
+quenched-and-tempered strength minimums for small sections (diameter at most 16 mm);
 grey (EN-GJL-250) and ductile (EN-GJS-400-15) cast irons cite Ductile Castings' published
 BS EN 1561-2023 and BS EN 1563 (2018) technical data sheets;
 5083, 6063 and 6082 elastic constants use EN 1999-1-1, paired with product-specific
 Alumeco (5083-H111 strength) and Hydro sheets (5083 thermal properties; 6063 and 6082
 thermal and strength values);
-Cu-ETP (CW004A) and CuZn37 (CW508L) cite Wieland rolled-strip datasheets (K32 and M37) as
+Cu-ETP (EN 1652, CW004A) and CuZn37 (EN 1652, CW508L) cite Wieland rolled-strip datasheets (K32 and M37) as
 isotropic approximations.
 Stainless physical values
 are from Outokumpu's public Core/Supra Table 7. NASA's public 1972 alloy handbooks identify the
@@ -124,8 +124,8 @@ handbook constants do not establish current procurement requirements or design a
 
 Missing properties stay absent. For example, 2024 has elasticity and density here, 6061/7075
 have no conductivity or specific heat, C45+QT/42CrMo4+QT also omit conductivity and specific
-heat (Ovako lists them only as ranges, whereas EN-GJL-250 keeps the lower end of its 103-118 GPa
-modulus range because solid entries require Young's modulus), 6082 has conductivity but no
+heat (Ovako lists them only as ranges, whereas EN-GJL-250 stores the lower end of its 103-118 GPa
+modulus range as a `minimum` value because solid entries require Young's modulus), 6082 has conductivity but no
 specific heat, EN-GJL-250 omits `yield` (the sheet lists Rp0.1 rather than Rp0.2), and
 EN-GJS-400-15 has no conductivity (the source lists only a single value at 300 C). Supply
 independently justified missing properties with `model.material.edit` before an analysis that

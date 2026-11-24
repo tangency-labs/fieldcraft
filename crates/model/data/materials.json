@@ -2624,9 +2624,9 @@
     "name": "Engineering steel C45+QT",
     "family": "steel",
     "designation": {
-      "standard": "DIN EN 10083 (C45 / 1.0503)",
+      "standard": "EN 10083-2:2006 (C45 / 1.0503)",
       "grade": "C45+QT / 1.0503",
-      "condition": "Quenched and tempered (+QT); combines Ovako C45 typical physical constants (Ovako notes its datasheet applies only to Ovako material) with Saarstahl DIN EN 10083 strength minimums limited to diameter < 16 mm (flat thickness < 8 mm)."
+      "condition": "Quenched and tempered (+QT); combines Ovako C45 typical physical constants (Ovako notes its datasheet applies only to Ovako material) with Saarstahl DIN EN 10083 strength minimums limited to diameter <= 16 mm (flat thickness <= 8 mm)."
     },
     "properties": {
       "young": {
@@ -2688,11 +2688,11 @@
         "source": {
           "document": "Saarstahl Material specification sheet: Saarstahl - C45 (1.0503, DIN EN 10083)",
           "edition": "Undated material specification sheet (no issue date printed)",
-          "location": "Mechanical Properties, Quenched and tempered (+QT), d < 16 mm / t < 8 mm",
+          "location": "Mechanical Properties, Quenched and tempered (+QT), d <= 16 mm / t <= 8 mm (printed '< 16' / '< 8' in sheet)",
           "page": "1",
           "url": "https://en.saarstahl.com/app/uploads/2024/03/20160401102929-0503_C45.pdf"
         },
-        "applicability": "Published minimum 0.2% proof stress for C45+QT below 16 mm diameter (8 mm flat thickness); drops to 430 MPa for > 16-40 mm and 370 MPa for > 40-100 mm. Informational only, not a plasticity law or failure criterion."
+        "applicability": "Published minimum 0.2% proof stress for C45+QT at most 16 mm diameter (8 mm flat thickness); drops to 430 MPa for > 16-40 mm and 370 MPa for > 40-100 mm. Informational only, not a plasticity law or failure criterion."
       },
       "tensile": {
         "value": 700000000.0,
@@ -2701,11 +2701,11 @@
         "source": {
           "document": "Saarstahl Material specification sheet: Saarstahl - C45 (1.0503, DIN EN 10083)",
           "edition": "Undated material specification sheet (no issue date printed)",
-          "location": "Mechanical Properties, Quenched and tempered (+QT), d < 16 mm / t < 8 mm (700-850 N/mm^2)",
+          "location": "Mechanical Properties, Quenched and tempered (+QT), d <= 16 mm / t <= 8 mm (printed '< 16' / '< 8' in sheet; 700-850 N/mm^2)",
           "page": "1",
           "url": "https://en.saarstahl.com/app/uploads/2024/03/20160401102929-0503_C45.pdf"
         },
-        "applicability": "Published minimum tensile strength (lower bound of 700-850 MPa) for C45+QT below 16 mm diameter (8 mm flat thickness); informational only, not a plasticity law or failure criterion."
+        "applicability": "Published minimum tensile strength (lower bound of 700-850 MPa) for C45+QT at most 16 mm diameter (8 mm flat thickness); informational only, not a plasticity law or failure criterion."
       }
     }
   },
@@ -2714,9 +2714,9 @@
     "name": "Engineering steel 42CrMo4+QT",
     "family": "steel",
     "designation": {
-      "standard": "DIN EN 10083 (42CrMo4 / 1.7225)",
+      "standard": "EN 10083-3:2006 (42CrMo4 / 1.7225)",
       "grade": "42CrMo4+QT / 1.7225",
-      "condition": "Quenched and tempered (+QT); combines Ovako 42CrMo4 typical physical constants (Ovako notes its datasheet applies only to Ovako material) with Saarstahl DIN EN 10083 strength minimums limited to diameter < 16 mm (flat thickness < 8 mm)."
+      "condition": "Quenched and tempered (+QT); combines Ovako 42CrMo4 typical physical constants (Ovako notes its datasheet applies only to Ovako material) with Saarstahl DIN EN 10083 strength minimums limited to diameter <= 16 mm (flat thickness <= 8 mm)."
     },
     "properties": {
       "young": {
@@ -2778,11 +2778,11 @@
         "source": {
           "document": "Saarstahl Material specification sheet: Saarstahl - 42CrMo4 - 42CrMoS4 (1.7225, DIN EN 10083)",
           "edition": "Undated material specification sheet (no issue date printed)",
-          "location": "Mechanical Properties, Quenched and tempered (+QT), d < 16 mm / t < 8 mm",
+          "location": "Mechanical Properties, Quenched and tempered (+QT), d <= 16 mm / t <= 8 mm (printed '< 16' / '< 8' in sheet)",
           "page": "1",
           "url": "https://en.saarstahl.com/app/uploads/2024/03/20160323013851-42CrMo4-42CrMoS4.pdf"
         },
-        "applicability": "Published minimum 0.2% proof stress for 42CrMo4+QT below 16 mm diameter (8 mm flat thickness); drops to 750 MPa for > 16-40 mm and 650 MPa for > 40-100 mm. Informational only, not a plasticity law or failure criterion."
+        "applicability": "Published minimum 0.2% proof stress for 42CrMo4+QT at most 16 mm diameter (8 mm flat thickness); drops to 750 MPa for > 16-40 mm and 650 MPa for > 40-100 mm. Informational only, not a plasticity law or failure criterion."
       },
       "tensile": {
         "value": 1100000000.0,
@@ -2791,11 +2791,11 @@
         "source": {
           "document": "Saarstahl Material specification sheet: Saarstahl - 42CrMo4 - 42CrMoS4 (1.7225, DIN EN 10083)",
           "edition": "Undated material specification sheet (no issue date printed)",
-          "location": "Mechanical Properties, Quenched and tempered (+QT), d < 16 mm / t < 8 mm (1100-1300 N/mm^2)",
+          "location": "Mechanical Properties, Quenched and tempered (+QT), d <= 16 mm / t <= 8 mm (printed '< 16' / '< 8' in sheet; 1100-1300 N/mm^2)",
           "page": "1",
           "url": "https://en.saarstahl.com/app/uploads/2024/03/20160323013851-42CrMo4-42CrMoS4.pdf"
         },
-        "applicability": "Published minimum tensile strength (lower bound of 1100-1300 MPa) for 42CrMo4+QT below 16 mm diameter (8 mm flat thickness); informational only, not a plasticity law or failure criterion."
+        "applicability": "Published minimum tensile strength (lower bound of 1100-1300 MPa) for 42CrMo4+QT at most 16 mm diameter (8 mm flat thickness); informational only, not a plasticity law or failure criterion."
       }
     }
   },
@@ -3036,7 +3036,7 @@
       "young": {
         "value": 103000000000.0,
         "unit": "Pa",
-        "basis": "typical",
+        "basis": "minimum",
         "source": {
           "document": "Ductile Castings, Grey Cast Irons Technical Data (BS EN 1561-2023)",
           "edition": "Undated technical data sheet (citing BS EN 1561-2023)",
@@ -3044,7 +3044,7 @@
           "page": "1",
           "url": "https://ductilecastings.co.uk/wp-content/uploads/2025/01/Grey-Cast-Irons-DC.pdf"
         },
-        "applicability": "Lower end of the published 103-118 GPa range for EN-GJL-250 (stored with typical basis because solid entries require Young's modulus; conservative for deflection, not for natural frequencies or thermal stresses). The datasheet does not state a specific test temperature for this row."
+        "applicability": "Lower end of the published 103-118 GPa range for EN-GJL-250 (conservative for deflection, not for natural frequencies or thermal stresses). The datasheet does not state a specific test temperature for this row."
       },
       "poisson": {
         "value": 0.26,
@@ -3759,7 +3759,7 @@
     "name": "Copper Cu-ETP (CW004A) R240",
     "family": "copper",
     "designation": {
-      "standard": "EN CW004A / UNS C11000 designation (Cu-ETP; Wieland-K32 strip datasheet)",
+      "standard": "EN 1652 (CW004A / UNS C11000; Wieland-K32 strip datasheet)",
       "grade": "Cu-ETP R240",
       "condition": "Rolled electrolytic tough-pitch copper strip in R240 temper, approximated as isotropic (rolled-strip directional stiffness/yield anisotropy not modelled); room-temperature physical reference values (CTE averaged over 0-300 deg C)."
     },
@@ -3875,7 +3875,7 @@
     "name": "Brass CuZn37 (CW508L) R350",
     "family": "copper",
     "designation": {
-      "standard": "EN CW508L / UNS C27200 designation (CuZn37; Wieland-M37 strip datasheet)",
+      "standard": "EN 1652 (CW508L / UNS C27200; Wieland-M37 strip datasheet)",
       "grade": "CuZn37 R350",
       "condition": "Rolled CuZn37 (63% Cu) brass strip in R350 temper, approximated as isotropic (rolled-strip directional stiffness/yield anisotropy not modelled); room-temperature physical reference values (CTE averaged over 0-300 deg C)."
     },
