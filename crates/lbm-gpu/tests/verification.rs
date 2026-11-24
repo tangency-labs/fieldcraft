@@ -1137,6 +1137,24 @@ fn thin_walls_are_refused_clearly() {
     assert!(e.as_deref().is_some_and(|e| e.contains("baffles") && e.contains("CPU")), "{e:?}");
 }
 
+/// The matched on-node wall (`spalding_bounce_matched`) is CPU only for now: refused before a device is opened.
+#[test]
+fn the_matched_wall_is_refused_clearly() {
+    let mut d = domain([0.0; 3], [2.0, 9.0, 2.0], 1.0);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = PERIODIC;
+    }
+    let t = Turbulence::Smagorinsky {
+        constant: 0.1,
+        prandtl: 0.9,
+        van_driest: None,
+        wall_model: Some(fieldcraft_model::WallModel::SpaldingBounceMatched),
+    };
+    let (_, flow) = prepare(&model(1.0, 0.1, d, les(None, Some(t))(collide(10.0, 1.0, None, Collision::Regularized))), &[]);
+    let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
+    assert!(e.as_deref().is_some_and(|e| e.contains("spalding_bounce_matched") && e.contains("GPU")), "{e:?}");
+}
+
 /// A body force changed while the flow runs (`Backend::set_acceleration`, for a flow held at a
 /// constant flow rate): plane Poiseuille flow driven by a for half its steps and 2a for the rest
 /// on both backends, which agree, as do their mean velocities (`Backend::mean_velocity`).

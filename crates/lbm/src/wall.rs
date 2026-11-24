@@ -111,8 +111,8 @@ const NEIGHBOURS: [[i64; 3]; 26] = {
 
 /// The von Kármán constant and Van Driest's A⁺ of the wall cell's mixing-length eddy viscosity
 /// in the wall model (the values Malaspinas and Sagaut use).
-const MIXING_KAPPA: f64 = 0.384;
-const MIXING_A_PLUS: f64 = 26.0;
+pub(crate) const MIXING_KAPPA: f64 = 0.384;
+pub(crate) const MIXING_A_PLUS: f64 = 26.0;
 
 /// A fluid cell next to a no-slip wall.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -624,10 +624,35 @@ pub fn unresolved_wall(y_plus: f64) -> Option<String> {
 }
 
 /// Spalding's `y⁺(u⁺)` and its slope `dy⁺/du⁺`, with `e = exp(−κB)`.
-fn spalding(u_plus: f64, e: f64, kappa: f64) -> (f64, f64) {
+pub(crate) fn spalding(u_plus: f64, e: f64, kappa: f64) -> (f64, f64) {
     let k = kappa * u_plus;
     let rest = libm::exp(k) - 1.0 - k - k * k / 2.0;
     (u_plus + e * (rest - k * k * k / 6.0), 1.0 + kappa * e * rest)
+}
+
+/// u⁺ at the wall distance `y_plus` (y⁺) on Spalding's law with Kármán's `kappa` and intercept `b`,
+/// and du⁺/dy⁺ there: by bisection on [`spalding`]'s y⁺(u⁺), which rises with u⁺ from 0, at most
+/// [`SPALDING_ITERATIONS`] halvings, stopping at a bracket below 1e-14 of its upper end. `(0, 1)` for
+/// a `y_plus` that is not positive and finite.
+pub(crate) fn spalding_u_plus(y_plus: f64, kappa: f64, b: f64) -> (f64, f64) {
+    if !(y_plus.is_finite() && y_plus > 0.0) {
+        return (0.0, 1.0);
+    }
+    let e = libm::exp(-kappa * b);
+    let (mut lo, mut hi) = (0.0, y_plus);
+    for _ in 0..SPALDING_ITERATIONS {
+        if hi - lo <= 1e-14 * hi {
+            break;
+        }
+        let mid = 0.5 * (lo + hi);
+        if spalding(mid, e, kappa).0 < y_plus {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let u = 0.5 * (lo + hi);
+    (u, 1.0 / spalding(u, e, kappa).1)
 }
 
 /// The friction velocity of a flow of speed `speed` parallel to a wall at distance `y` with

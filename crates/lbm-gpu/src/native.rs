@@ -914,6 +914,9 @@ impl GpuFlow {
         if flow.characteristic_outlet_cells() > 0 {
             return Err(Error::Invalid("the characteristic outlet is not supported on the GPU yet: solve on the CPU".into()));
         }
+        if flow.wall_nodes().is_some_and(|w| w.rows() > 1) {
+            return Err(Error::Invalid("not supported yet: `spalding_bounce_matched` on the GPU; solve on the CPU (`backend: \"cpu\"`)".into()));
+        }
         if flow.rheology().is_some_and(|r| r.table.is_some()) {
             return Err(Error::Invalid(
                 "the GPU backend does not follow a temperature-dependent viscosity (a viscosity table) yet: solve on the CPU (`backend: \"cpu\"`)"
