@@ -82,6 +82,7 @@ pub mod reflection;
 pub mod regularized;
 pub mod rheology;
 pub mod sa;
+pub mod sa_law;
 pub mod setup;
 pub mod solve;
 pub mod statistics;

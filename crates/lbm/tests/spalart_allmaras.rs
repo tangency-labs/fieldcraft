@@ -10,6 +10,7 @@
 mod common;
 
 use common::*;
+use fieldcraft_lbm::sa::{WallLaw, law_eddy_viscosity};
 use fieldcraft_lbm::{Choice, Flow, Limits, Memory, Setup};
 use fieldcraft_model::{Collision, FaceCondition, HrrSigma, Procedure, Turbulence, WallModel};
 
@@ -102,6 +103,67 @@ fn a_forced_channel_takes_a_positive_finite_eddy_viscosity() {
     }
 }
 
+/// A channel at Re_τ 1000 (half-height 1, u_τ 1 from the body force, ν 10⁻³), 24 cells per
+/// half-height so the first fluid node sits near y⁺ 40, started at its bulk speed.
+fn re_tau_1000(collision: Collision, wall: WallModel, on_node: bool) -> fieldcraft_model::Model {
+    let dx = 1.0 / 24.0;
+    let height = if on_node { 2.0 + dx } else { 2.0 };
+    let mut d = domain([0.0; 3], [4.0 * dx, height, 4.0 * dx], dx);
+    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
+        *f = FaceCondition::Periodic {};
+    }
+    d.acceleration = [1.0, 0.0, 0.0];
+    d.initial_velocity = [20.0, 0.0, 0.0];
+    let dt = 0.1 * dx / 20.0;
+    model(1.0, 1e-3, d, with(collide(100.0 * dt, dt, None, collision), Some(sa(3.0, Some(wall)))))
+}
+
+/// The wall function (Nichols & Nelson 2004): at Re_τ 1000 on Han, Ooka & Kikumoto's on-node
+/// wall (Spalding's law) and under Musker's wall model (the control), every first fluid node's
+/// ν_t is the law's at its y⁺ with the u_τ the wall applied this step (bar 1e-12; the
+/// inverse of ν̃ f_v1 gives it to round-off), u_τ is positive and y⁺ past the buffer
+/// layer. Without a wall model there are no samples.
+#[test]
+fn the_wall_function_sets_the_first_node_eddy_viscosity() {
+    for (collision, wall, on_node) in [(Collision::Hrr, WallModel::SpaldingBounce, true), (Collision::Hrr, WallModel::Musker, false)] {
+        let (setup, mut flow) = prepare(&re_tau_1000(collision, wall, on_node), &[]);
+        run_all(&setup, &mut flow);
+        let nu = (setup.tau_plus - 0.5) / 3.0;
+        let (law, samples) = flow.sa_wall_function();
+        let (law, samples) = (law.unwrap(), samples.to_vec());
+        assert_eq!(law, if on_node { WallLaw::Spalding } else { WallLaw::Musker });
+        let field = flow.spalart_allmaras().unwrap();
+        assert!(!samples.is_empty());
+        let grid = *flow.grid();
+        let (mut worst, mut y_plus) = (0.0f64, (f64::INFINITY, 0.0f64));
+        for &(cell, y, ut) in &samples {
+            assert!(ut > 0.0 && ut.is_finite(), "u_τ {ut} at {cell}");
+            let want = nu * law_eddy_viscosity(law, y * ut / nu).unwrap();
+            if law == WallLaw::Musker {
+                // The wall model's own eddy viscosity: wall_law at the speed whose u_τ this is.
+                let speed = ut * fieldcraft_lbm::wall::musker(3.0 * y * ut / nu).0;
+                let own = fieldcraft_lbm::wall::wall_law(speed, y, 3.0 * y, nu).1;
+                assert!((want / own - 1.0).abs() < 1e-9, "wall_law's {own} vs {want}");
+            }
+            worst = worst.max((field.nu_t(cell, nu) / want - 1.0).abs());
+            y_plus = (y_plus.0.min(y * ut / nu), y_plus.1.max(y * ut / nu));
+            let j = grid.coords(cell)[1];
+            assert!(j == usize::from(on_node) || j == grid.cells[1] - 1 - usize::from(on_node), "a first fluid node: row {j}");
+        }
+        println!(
+            "SA wall function, {wall:?}: {} first nodes, y⁺ {:.1}–{:.1}, worst |ν_t/ν_t,law − 1| {worst:.2e}",
+            samples.len(),
+            y_plus.0,
+            y_plus.1
+        );
+        assert!(worst < 1e-12, "{worst}");
+        assert!(y_plus.0 > 20.0 && y_plus.1 < 100.0, "{y_plus:?}");
+    }
+    let (setup, mut flow) = prepare(&resolved_channel(Collision::Trt, sa(3.0, None)), &[]);
+    flow.step().unwrap();
+    assert!(flow.sa_wall_function().0.is_none() && flow.sa_wall_function().1.is_empty() && setup.steps > 0);
+}
+
 /// The same result bit for bit on one and on several threads, in a channel with a ball, an inlet
 /// (ν̃ fixed), an outlet and a slip face, over several parallel blocks.
 #[test]
@@ -139,10 +201,6 @@ fn what_is_not_supported_is_refused_and_the_memory_counts_the_field() {
     }
     let e = Setup::new(&model(1.0, 0.1, couette(4), p), None, &[], &Limits::default()).unwrap_err().to_string();
     assert!(e.contains("not supported yet") && e.contains("spalart_allmaras"), "{e}");
-    for wall_model in [WallModel::Musker, WallModel::SpaldingBounce] {
-        let e = refused(sa(3.0, Some(wall_model)), Collision::Trt, None);
-        assert!(e.contains("not supported yet") && e.contains("wall_model") && e.contains("spalart_allmaras"), "{wall_model:?}: {e}");
-    }
     for bad in [-1.0, 101.0, f64::NAN, f64::INFINITY] {
         let e = refused(sa(bad, None), Collision::Trt, None);
         assert!(e.contains("inflow ratio"), "{bad}: {e}");
@@ -160,6 +218,21 @@ fn what_is_not_supported_is_refused_and_the_memory_counts_the_field() {
         let e = low(ratio).unwrap_err().to_string();
         assert!(e.contains("below 0.505") && !e.contains("add a turbulence model"), "{ratio}: {e}");
     }
+    // The model's own wall law takes only Spalart–Allmaras turbulence; with a subgrid model it is refused.
+    let e = refused(
+        Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model: Some(WallModel::SpalartAllmarasBounce) },
+        Collision::Trt,
+        None,
+    );
+    assert!(e.contains("spalart_allmaras") && e.contains("spalding_bounce"), "{e}");
+    // `musker` beside an obstacle: the first-node wall function is built for the planar box faces.
+    let mut d = slab_column(8, [300.0, 300.0], 0.0);
+    d.thermal = None;
+    let m = model(1.0, 0.1, d, with(collide(0.1, 0.01, None, Collision::Hrr), Some(sa(3.0, Some(WallModel::Musker)))));
+    let obstacles = [slab_obstacle([0.25, 0.5])];
+    let setup = Setup::new(&m, None, &obstacles, &Limits::default()).unwrap();
+    let e = Flow::new(&setup, &obstacles).err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(e.contains("not supported yet") && e.contains("musker") && e.contains("obstacles"), "{e}");
     let m = model(1.0, 0.1, couette(4), with(collide(0.1, 0.01, None, Collision::Trt), Some(sa(3.0, None))));
     let (setup, _) = prepare(&m, &[]);
     let plain = model(1.0, 0.1, couette(4), collide(0.1, 0.01, None, Collision::Trt));
