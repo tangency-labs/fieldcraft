@@ -8,14 +8,14 @@ run, and the wall is **modelled** instead: the first cell lies in the log layer,
 wall supplies what the grid cannot resolve.
 
 FieldCraft has two wall models. Each is named by the authors of the paper it is written from, and
-each is documented here with its measurements against that paper's own case. There is no
-valid wall-modelled run yet: the MRT runs below are void (below the collision's stability bound), and the
-hybrid collision does not reproduce Han, Ooka & Kikumoto.
+each is documented here with its measurements against that paper's own case. Neither passes on a collision that
+is stable at these viscosities: the MRT runs below are void, and on the regularised and hybrid collisions both
+carry about half the drag or less.
 
 | Wall model | `wall_model` | What it imposes | Status |
 |---|---|---|---|
-| [Malaspinas & Sagaut (2014)](#malaspinas--sagaut-2014) | `"musker"` | a velocity on the first fluid cell | **No valid run.** Its Re_τ 950 reproduction ran the MRT collision below its stability bound and is void. |
-| [Han, Ooka & Kikumoto (2021)](#han-ooka--kikumoto-2021) | `"spalding_bounce"` | a stress on the wall | **Not reproduced** at A20 on the hybrid collision; the run on the paper's MRT collision is void. |
+| [Malaspinas & Sagaut (2014)](#malaspinas--sagaut-2014) | `"musker"` | a velocity on the first fluid cell | **Fails.** On the regularised and hybrid collisions at Re_τ 1000 it carries 51–74 % too little drag, still falling when the runs end ([probe runs](../../verification.md#wall-modelled-channel-at-re_τ-1000-on-the-regularised-collision-785)). Its MRT runs are void. |
+| [Han, Ooka & Kikumoto (2021)](#han-ooka--kikumoto-2021) | `"spalding_bounce"` | a stress on the wall | **Fails as published** (first-node sampling): 46–49 % too little drag at Re_τ 1000, about −53 % at A20. With the law read three or more cells up, about +5 % (probe). |
 
 Neither has passed the drag gate (the carried skin friction within 5 % of the DNS), so neither is
 recommended for engineering skin friction or pressure drop. [Compared](#the-two-wall-models-compared)
@@ -477,9 +477,10 @@ and `FIELDCRAFT_HAN_END` (δ/u_τ, default 20 and 150) shorten a smoke test, whi
 
 ## Limitations
 
-- **No wall model has a valid passing run.** Every Malaspinas & Sagaut channel recorded here ran the MRT
-  collision below its stability bound and is void; the model has not been run on a collision that is stable
-  there. Han, Ooka & Kikumoto is not reproduced on the hybrid collision (C_f about −53 %); its MRT run is void.
+- **No wall model passes.** On the regularised and hybrid collisions at Re_τ 1000 Malaspinas & Sagaut's model
+  carries 51–74 % too little drag and Han, Ooka & Kikumoto's 46–49 % too little; their MRT runs are void (below
+  that collision's stability bound). Both read the law of the wall in the first cells
+  ([Verification](../../verification.md#wall-modelled-channel-at-re_τ-1000-on-the-regularised-collision-785)).
 - **Equilibrium boundary layers.** Both laws of the wall assume an attached, equilibrium boundary
   layer. Separation, reattachment and strong pressure gradients are not validated.
 - **Smooth walls only.** No roughness.
