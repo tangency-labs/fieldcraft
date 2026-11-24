@@ -53,17 +53,61 @@ impl Bands {
         if self.over && v > self.max {
             return Some(self.count);
         }
-        let span = self.max - self.min;
-        if !(span > 0.0) {
+        if self.max <= self.min {
             return Some(self.count / 2);
         }
-        let k = ((v - self.min) / span * f64::from(self.count)).floor();
-        Some(k.clamp(0.0, f64::from(self.count - 1)) as u32)
+        if v <= self.min {
+            return Some(0);
+        }
+        Some(self.crossed_cuts(v, true).min(self.count.saturating_sub(1)))
+    }
+
+    /// The first and last bands occupied by the interpolated interior of a line or triangle.
+    /// A cut at the highest sample touches the boundary only. A constant field keeps its
+    /// point color, including at a clamped maximum.
+    pub fn interior_bands(&self, values: &[f64]) -> Option<(u32, u32)> {
+        let &first = values.first()?;
+        if values.iter().any(|v| v.is_nan()) {
+            return None;
+        }
+        let (low, high) = values.iter().fold((first, first), |(low, high), &v| (low.min(v), high.max(v)));
+        if low == high || self.min == self.max {
+            let band = self.band(low)?;
+            return Some((band, band));
+        }
+        Some((self.crossed_cuts(low, true), self.crossed_cuts(high, false)))
+    }
+
+    fn crossed_cuts(&self, value: f64, inclusive: bool) -> u32 {
+        let mut low = 0;
+        let mut high = if self.over { self.count } else { self.count.saturating_sub(1) };
+        while low < high {
+            let k = low + (high - low).div_ceil(2);
+            let cut = self.level(k);
+            if cut < value || (inclusive && cut == value) {
+                low = k;
+            } else {
+                high = k - 1;
+            }
+        }
+        low
     }
 
     /// The value between band `k − 1` and band `k` (`level(0)` is `min`, `level(count)` `max`).
     pub fn level(&self, k: u32) -> f64 {
-        self.min + (self.max - self.min) * f64::from(k) / f64::from(self.count)
+        if k == 0 {
+            return self.min;
+        }
+        if k == self.count {
+            return self.max;
+        }
+        let scaled = (self.max - self.min) * f64::from(k);
+        if scaled.is_finite() {
+            self.min + scaled / f64::from(self.count)
+        } else {
+            let fraction = f64::from(k) / f64::from(self.count);
+            self.min * (1.0 - fraction) + self.max * fraction
+        }
     }
 }
 
@@ -71,11 +115,10 @@ impl Bands {
 /// each piece (a convex polygon of 3 to 5 corners) to `out` with its band. A triangle with a
 /// value that is not a number is handed whole, with no band.
 pub fn split_triangle(p: [Vec3; 3], v: [f64; 3], bands: &Bands, out: &mut impl FnMut(&[Vec3], Option<u32>)) {
-    let [Some(a), Some(b), Some(c)] = v.map(|x| bands.band(x)) else {
+    let Some((lo, hi)) = bands.interior_bands(&v) else {
         out(&p, None);
         return;
     };
-    let (lo, hi) = (a.min(b).min(c), a.max(b).max(c));
     if lo == hi {
         out(&p, Some(lo));
         return;
@@ -86,6 +129,9 @@ pub fn split_triangle(p: [Vec3; 3], v: [f64; 3], bands: &Bands, out: &mut impl F
         // clamped maximum.
         let below = if k == 0 { f64::NEG_INFINITY } else { bands.level(k.min(bands.count)) };
         let above = if k >= bands.count || (k + 1 == bands.count && !bands.over) { f64::INFINITY } else { bands.level(k + 1) };
+        if below >= above {
+            continue;
+        }
         let piece = clip(&clip(&poly, below, true), above, false);
         if piece.len() >= 3 {
             let pts: Vec<Vec3> = piece.iter().map(|(q, _)| *q).collect();
@@ -120,8 +166,9 @@ fn clip(poly: &[(Vec3, f64)], level: f64, keep_above: bool) -> Vec<(Vec3, f64)> 
         if inside(va) {
             out.push((a, va));
         }
-        if inside(va) != inside(vb) {
-            let t = (level - va) / (vb - va);
+        if va != level && vb != level && inside(va) != inside(vb) {
+            let span = vb - va;
+            let t = if span.is_finite() { (level - va) / span } else { (level * 0.5 - va * 0.5) / (vb * 0.5 - va * 0.5) };
             out.push((a + (b - a) * t, level));
         }
     }
@@ -175,6 +222,12 @@ mod tests {
         assert_eq!(Bands::new(3.0, 3.0, 6).band(3.0), Some(3));
         assert_eq!(Bands::new(5.0, 1.0, 4), Bands::new(1.0, 5.0, 4));
         assert_eq!(Bands::new(f64::NAN, 1.0, 0).count, 1);
+        // Rounded cuts can coincide with the legend endpoints; constant samples keep their endpoint colors.
+        let adjacent = Bands::new(1., 1.0_f64.next_up(), 12);
+        assert_eq!(adjacent.level(6), adjacent.min);
+        assert_eq!(adjacent.interior_bands(&[adjacent.min; 3]), Some((0, 0)));
+        assert_eq!(adjacent.interior_bands(&[adjacent.max; 3]), Some((11, 11)));
+        assert_eq!(adjacent.interior_bands(&[adjacent.min, adjacent.max]), Some((6, 6)));
     }
 
     #[test]
@@ -208,6 +261,25 @@ mod tests {
         assert!((tris.iter().map(|t| area(&t.p)).sum::<f64>() - 50.0).abs() < 1e-9);
         assert_eq!(tris.iter().map(|t| t.color.0).max(), Some(4));
         assert!(tris.iter().all(|t| t.normal == Vec3::Z));
+    }
+
+    #[test]
+    fn adjacent_samples_at_a_cut_color_only_the_area_in_each_band() {
+        let bands = Bands::new(0., 1., 12);
+        let cut = bands.level(5);
+        let low = cut.next_down();
+        let high = cut.next_up();
+        assert_eq!(bands.band(low), Some(4));
+        for (values, expected) in [([low, cut, cut], [0.5, 0.]), ([high, cut, cut], [0., 0.5]), ([low, high, high], [0.125, 0.375])] {
+            let mut triangles = Vec::new();
+            banded([Vec3::ZERO, Vec3::X, Vec3::Y], values, Vec3::Z, &bands, &|k| Rgb(k.unwrap() as u8, 0, 0), &mut triangles);
+            let mut areas = [0.; 2];
+            for tri in triangles {
+                assert!((4..=5).contains(&tri.color.0));
+                areas[usize::from(tri.color.0 - 4)] += area(&tri.p);
+            }
+            assert_eq!(areas, expected);
+        }
     }
 
     /// A clamped range puts the values above it in the "over" band, split exactly at the
