@@ -4,7 +4,8 @@
 //! load vector of a step.
 //!
 //! Degrees of freedom ([`DofLayout`]): the kinds each mesh node's elements declare (three
-//! translations for solids, Ux and Uy for 2D elements), nodes by label, then six per coupled reference point (points by
+//! translations for solids, six for shells and beams, Ux and Uy for 2D elements, Ux, Uy and Rz
+//! for the beams of a 2D model), nodes by label, then six per coupled reference point (points by
 //! name): translations along X, Y, Z and rotations about them.
 
 use fieldcraft_fem::beam::{Beam, BeamSection};
@@ -324,9 +325,6 @@ pub enum StructuralKernel {
 }
 
 impl Structural {
-    /// The unknowns every node of a shell or beam carries.
-    pub const KINDS: DofSet = DofSet::STRUCTURAL;
-
     pub fn kernel(&self) -> Result<StructuralKernel> {
         let k = match self.section {
             Section::Shell(s) => Shell::new(self.kind, &self.xyz, s).map(StructuralKernel::Shell),
@@ -376,15 +374,53 @@ pub fn translation_kinds(planar: bool) -> DofSet {
     if planar { DofSet::PLANE } else { DofSet::TRANSLATIONS }
 }
 
+/// The rotations a discrete element can act on: all three, or the one about Z in a 2D model.
+pub fn rotation_kinds(planar: bool) -> DofSet {
+    if planar { DofSet::of(&[DofKind::Rz]) } else { DofSet::ROTATIONS }
+}
+
+/// The unknowns a shell or beam node carries: three translations and three rotations, or Ux, Uy
+/// and Rz in a 2D model (a beam in the XY plane whose profile has Z as a principal axis: its
+/// in-plane block is the plane frame element, and nothing couples it to Uz, Rx and Ry).
+pub fn structural_kinds(planar: bool) -> DofSet {
+    if planar { DofSet::PLANE_FRAME } else { DofSet::STRUCTURAL }
+}
+
 /// Keep the rows and columns of a matrix over three translations per node (node by node) that
 /// `kinds` has: the in-plane block of a truss in a 2D model, or the matrix itself.
 pub fn translation_block(data: &[f64], nodes: usize, kinds: DofSet) -> Vec<f64> {
-    if kinds == DofSet::TRANSLATIONS {
+    kind_block(data, nodes, DofSet::TRANSLATIONS, kinds)
+}
+
+/// Whether each kind of `of`, in order, is in `keep`.
+fn kept(of: DofSet, keep: DofSet) -> Vec<bool> {
+    of.iter().map(|k| keep.contains(k)).collect()
+}
+
+/// Keep the rows and columns of an element matrix over the kinds `of` per node (node by node)
+/// that `keep` has: the in-plane block of a truss or beam in a 2D model, or the matrix itself.
+pub fn kind_block(data: &[f64], nodes: usize, of: DofSet, keep: DofSet) -> Vec<f64> {
+    if keep == of {
         return data.to_vec();
     }
-    let keep: Vec<usize> = (0..3 * nodes).filter(|i| DofKind::translation(i % 3).is_some_and(|k| kinds.contains(k))).collect();
-    let width = 3 * nodes;
-    keep.iter().flat_map(|i| keep.iter().map(move |j| data.get(i * width + j).copied().unwrap_or(0.0))).collect()
+    let mask = kept(of, keep);
+    let width = mask.len() * nodes;
+    let rows: Vec<usize> = mask.iter().cycle().take(width).enumerate().filter(|(_, k)| **k).map(|(i, _)| i).collect();
+    rows.iter().flat_map(|i| rows.iter().map(move |j| data.get(i * width + j).copied().unwrap_or(0.0))).collect()
+}
+
+/// The entries of an element vector over the kinds `of` per node that `keep` has.
+pub fn kind_entries(data: &[f64], of: DofSet, keep: DofSet) -> Vec<f64> {
+    let mask = kept(of, keep);
+    data.iter().zip(mask.iter().cycle()).filter(|(_, k)| **k).map(|(v, _)| *v).collect()
+}
+
+/// An element vector over the kinds `keep` per node spread over the kinds `of` per node, zero at
+/// the kinds `keep` lacks (the out-of-plane motion of a beam in a 2D model).
+pub fn kind_spread(data: &[f64], nodes: usize, of: DofSet, keep: DofSet) -> Vec<f64> {
+    let mask = kept(of, keep);
+    let mut values = data.iter();
+    mask.iter().cycle().take(mask.len() * nodes).map(|k| if *k { values.next().copied().unwrap_or(0.0) } else { 0.0 }).collect()
 }
 
 /// A reference point some coupling ties to the mesh.
@@ -434,6 +470,16 @@ impl Mesh {
     /// The kinds trusses and translational discrete elements carry at their nodes.
     pub fn translation_kinds(&self) -> DofSet {
         translation_kinds(self.theory.is_some())
+    }
+
+    /// The rotations discrete elements act on (see [`rotation_kinds`]).
+    pub fn rotation_kinds(&self) -> DofSet {
+        rotation_kinds(self.theory.is_some())
+    }
+
+    /// The kinds shell and beam nodes carry ([`structural_kinds`]).
+    pub fn structural_kinds(&self) -> DofSet {
+        structural_kinds(self.theory.is_some())
     }
 
     pub fn element(&self, label: u32) -> Option<&Elem> {
@@ -488,8 +534,11 @@ impl Mesh {
             && let Some(what) = model
                 .sections()
                 .values()
-                .any(|s| matches!(s.kind, SectionKind::Rod { .. }))
-                .then_some("trusses")
+                .find_map(|s| match s.kind {
+                    SectionKind::Rod { .. } => Some("trusses"),
+                    SectionKind::Beam { .. } => Some("beams"),
+                    _ => None,
+                })
                 .or_else(|| (!model.masses().is_empty() || !model.springs().is_empty()).then_some("point masses, springs and dashpots"))
         {
             return Err(Error::NotSupported(format!("{what} in axisymmetric models")));
@@ -500,17 +549,19 @@ impl Mesh {
                 SectionKind::Rod { area } => Some(area),
                 _ => None,
             };
-            let shell_or_beam = matches!(section.kind, SectionKind::Shell { .. } | SectionKind::Beam { .. });
-            if shell_or_beam && planar.is_some() {
+            let shell = matches!(section.kind, SectionKind::Shell { .. });
+            // A beam joins a 2D model like a truss, with the rotation about Z at its nodes.
+            let beam = matches!(section.kind, SectionKind::Beam { .. });
+            if shell && planar.is_some() {
                 return Err(Error::NotSupported(format!("{} sections in 2D models (section `{name}`)", section.kind.name())));
             }
-            if !matches!(section.kind, SectionKind::Solid {}) && theory.is_none() && rod.is_none() && !shell_or_beam {
+            if !matches!(section.kind, SectionKind::Solid {}) && theory.is_none() && rod.is_none() && !shell && !beam {
                 return Err(Error::NotSupported(format!(
                     "{} sections (section `{name}`); the solver has solid, 2D (plane stress, plane strain, axisymmetric) and truss elements so far",
                     section.kind.name()
                 )));
             }
-            if theory.is_some() != planar.is_some() && rod.is_none() {
+            if theory.is_some() != planar.is_some() && rod.is_none() && !beam {
                 return Err(Error::NotSupported("2D and solid sections in one model".into()));
             }
             let material = model
@@ -538,10 +589,17 @@ impl Mesh {
                     }
                     Some(Section::Shell(ShellSection::new(*thickness, *offset, elastic).map_err(bad)?))
                 }
-                SectionKind::Beam { profile, orientation } => Some(Section::Beam {
-                    section: BeamSection::new(profile, elastic, section.formulation.beam_theory).map_err(bad)?,
-                    orientation: *orientation,
-                }),
+                SectionKind::Beam { profile, orientation } => {
+                    if planar.is_some() && (orientation[0] != 0.0 || orientation[1] != 0.0) {
+                        return Err(Error::Invalid(format!(
+                            "section `{name}`: in a 2D model a beam's orientation vector is along Z (the profile's width out of the plane, its height in it)"
+                        )));
+                    }
+                    Some(Section::Beam {
+                        section: BeamSection::new(profile, elastic, section.formulation.beam_theory).map_err(bad)?,
+                        orientation: *orientation,
+                    })
+                }
                 _ => None,
             };
             if let Some(body) = shared {
@@ -601,7 +659,7 @@ impl Mesh {
         let translations = translation_kinds(planar.is_some());
         // What discrete elements need: at mesh nodes (some only they use), and at reference
         // points, which then get their six degrees of freedom like coupled ones.
-        let needs: Vec<(u32, DofSet)> = crate::discrete::needs(resolved, translations).collect();
+        let needs: Vec<(u32, DofSet)> = crate::discrete::needs(resolved, planar.is_some()).collect();
         let mut labels: Vec<u32> = elements.iter().flat_map(|e| e.nodes.iter().copied()).collect();
         labels.extend(trusses.iter().flat_map(|e| e.2.iter().copied()));
         labels.extend(structural.iter().flat_map(|e| e.2.iter().copied()));
@@ -626,7 +684,7 @@ impl Mesh {
             layout.element(&e.2, fieldcraft_fem::ElementDofs::new(translations));
         }
         for e in &structural {
-            layout.element(&e.2, ElementDofs::new(Structural::KINDS));
+            layout.element(&e.2, ElementDofs::new(structural_kinds(planar.is_some())));
         }
         for (label, kinds) in needs.iter().filter(|n| model.node(n.0).is_some()) {
             layout.node(*label, *kinds);
@@ -809,21 +867,24 @@ fn add(f: &mut [f64], dofs: &[usize], v: [f64; 3]) {
     }
 }
 
-/// The translations (or rotations) of layout slot `slot`, if it has them: X, Y, Z, or X and Y
-/// for a node of a 2D model.
-fn vector_dofs(mesh: &Mesh, slot: usize, rotation: bool) -> Option<Vec<usize>> {
+/// The degrees of freedom of the X, Y and Z components of a force (or, with `rotation`, of a
+/// moment) at layout slot `slot`, if it has translations (rotations). A node of a 2D model has
+/// no Z translation, and of its rotations only the one about Z (at a beam's nodes).
+fn component_dofs(mesh: &Mesh, slot: usize, rotation: bool) -> Option<[Option<usize>; 3]> {
     let kind = |c| if rotation { DofKind::rotation(c) } else { DofKind::translation(c) };
-    let dofs: Vec<Option<usize>> = [0, 1, 2].map(|c| kind(c).and_then(|k| mesh.layout.dof(slot, k))).into();
-    match dofs.as_slice() {
-        [Some(a), Some(b), Some(c)] => Some(vec![*a, *b, *c]),
-        [Some(a), Some(b), None] if !rotation && mesh.theory.is_some() => Some(vec![*a, *b]),
+    let dofs = [0, 1, 2].map(|c| kind(c).and_then(|k| mesh.layout.dof(slot, k)));
+    match dofs {
+        [Some(_), Some(_), Some(_)] => Some(dofs),
+        [Some(_), Some(_), None] if !rotation && mesh.theory.is_some() => Some(dofs),
+        [None, None, Some(_)] if rotation && mesh.theory.is_some() => Some(dofs),
         _ => None,
     }
 }
 
-/// The translations of mesh node `node`.
+/// The translations of mesh node `node`: X, Y, Z, or X and Y for a node of a 2D model.
 pub(crate) fn translations(mesh: &Mesh, node: usize) -> Result<Vec<usize>> {
-    vector_dofs(mesh, node, false).ok_or_else(|| Error::Internal(format!("mesh node {node} has no translations")))
+    let dofs = component_dofs(mesh, node, false).ok_or_else(|| Error::Internal(format!("mesh node {node} has no translations")))?;
+    Ok(dofs.into_iter().flatten().collect())
 }
 
 /// The load vector of a static step: nodal forces and tractions as the model distributes them,
@@ -848,20 +909,32 @@ pub fn loads(model: &Model, resolved: &Resolved, mesh: &Mesh, step: &Step, activ
                 for (label, v) in resolved.nodal_loads.get(name).map(Vec::as_slice).unwrap_or_default() {
                     let slot =
                         mesh.layout.slot(*label).ok_or_else(|| Error::Invalid(format!("load `{name}`: node {label} belongs to no solid element")))?;
-                    let dofs = vector_dofs(mesh, slot, rotation).ok_or_else(|| {
+                    let dofs = component_dofs(mesh, slot, rotation).ok_or_else(|| {
                         Error::Invalid(format!(
                             "moment `{name}`: node {label} has no rotations (only shell and beam nodes do); apply it to a coupled reference point"
                         ))
                     })?;
-                    for (&dof, x) in dofs.iter().zip(v) {
-                        if *x != 0.0 && !active.get(dof).copied().unwrap_or(false) {
-                            return Err(Error::Invalid(format!(
-                                "load `{name}`: {} is not coupled to the mesh (its coupling leaves that direction free)",
-                                mesh.describe_dof(dof)
-                            )));
+                    for (dof, x) in dofs.into_iter().zip(v) {
+                        match dof {
+                            Some(dof) => {
+                                if *x != 0.0 && !active.get(dof).copied().unwrap_or(false) {
+                                    return Err(Error::Invalid(format!(
+                                        "load `{name}`: {} is not coupled to the mesh (its coupling leaves that direction free)",
+                                        mesh.describe_dof(dof)
+                                    )));
+                                }
+                                if let Some(entry) = f.get_mut(dof) {
+                                    *entry += x;
+                                }
+                            }
+                            None if *x != 0.0 => {
+                                return Err(Error::Invalid(format!(
+                                    "load `{name}`: node {label} of a 2D model takes forces in the XY plane and moments about Z"
+                                )));
+                            }
+                            None => {}
                         }
                     }
-                    add(&mut f, &dofs, *v);
                 }
             }
             Load::Pressure { set, magnitude } if mesh.theory.is_some() => {
@@ -948,6 +1021,9 @@ pub fn loads(model: &Model, resolved: &Resolved, mesh: &Mesh, step: &Step, activ
                 }
             }
             Load::PipePressure { set, internal, external } => {
+                if mesh.theory.is_some() {
+                    return Err(Error::NotSupported(format!("pipe pressure in a 2D model (load `{name}`): planar beams carry no pipe wall")));
+                }
                 let pressure = PipePressure { internal: *internal, external: *external };
                 for label in resolved.sets.get(set).map(|r| r.elements.as_slice()).unwrap_or_default() {
                     let not_a_pipe = || Error::Invalid(format!("load `{name}`: element {label} is not a pipe"));
@@ -1002,11 +1078,12 @@ fn structural_body(f: &mut [f64], mesh: &Mesh, e: &Structural, b: [f64; 3]) -> R
     add_structural(f, mesh, e, &forces)
 }
 
-/// Add a shell or beam element's nodal forces and moments (six per node).
+/// Add a shell or beam element's nodal forces and moments (six per node, or the planar kinds in a 2D model).
 fn add_structural(f: &mut [f64], mesh: &Mesh, e: &Structural, forces: &[f64]) -> Result<()> {
-    let dofs =
-        mesh.layout.element_dofs(&e.nodes, Structural::KINDS).ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", e.label)))?;
-    for (d, v) in dofs.iter().zip(forces) {
+    let kinds = mesh.structural_kinds();
+    let forces = kind_entries(forces, DofSet::STRUCTURAL, kinds);
+    let dofs = mesh.layout.element_dofs(&e.nodes, kinds).ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", e.label)))?;
+    for (d, v) in dofs.iter().zip(&forces) {
         if let Some(x) = f.get_mut(*d) {
             *x += v;
         }

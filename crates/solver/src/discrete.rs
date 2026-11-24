@@ -28,8 +28,9 @@ pub struct MassAt {
     pub name: String,
     /// Translations along X, Y, Z: (degree of freedom, mass).
     pub translations: Vec<(usize, f64)>,
-    /// The rotations' degrees of freedom and the inertia tensor on them (empty without inertia).
-    pub rotations: Vec<usize>,
+    /// The rotations (axis 0–2, degree of freedom) and the inertia tensor on their axes (empty
+    /// without inertia; the rotation about Z alone in a 2D model).
+    pub rotations: Vec<(usize, usize)>,
     pub inertia: [[f64; 3]; 3],
 }
 
@@ -53,18 +54,19 @@ pub struct Discrete {
 }
 
 /// The kinds each discrete copy needs at the labels it acts on: translations for a mass,
-/// rotations for an inertia, translations or rotations for a spring or dashpot.
-/// `translations` are the model's (X and Y in a 2D model).
-pub fn needs(resolved: &Resolved, translations: DofSet) -> impl Iterator<Item = (u32, DofSet)> + '_ {
+/// rotations for an inertia, translations or rotations for a spring or dashpot. A 2D model's
+/// are X and Y, and the rotation about Z alone.
+pub fn needs(resolved: &Resolved, planar: bool) -> impl Iterator<Item = (u32, DofSet)> + '_ {
+    let (translations, rotations) = (crate::system::translation_kinds(planar), crate::system::rotation_kinds(planar));
     let masses = resolved.masses.iter().flat_map(move |m| {
         let mass = m.mass.iter().any(|c| *c != 0.0).then_some((m.node, translations));
-        let inertia = m.inertia.iter().any(|c| *c != 0.0).then_some((m.node, DofSet::ROTATIONS));
+        let inertia = m.inertia.iter().any(|c| *c != 0.0).then_some((m.node, rotations));
         mass.into_iter().chain(inertia)
     });
     // A node of a 3D model moves in all three directions (a spring along X does not take Y and
     // Z away), so a spring asks for every translation, or every rotation.
     let springs = resolved.springs.iter().flat_map(move |s| {
-        let kinds = if s.direction.is_rotational() { DofSet::ROTATIONS } else { translations };
+        let kinds = if s.direction.is_rotational() { rotations } else { translations };
         std::iter::once((s.first, kinds)).chain(s.second.map(|b| (b, kinds)))
     });
     masses.chain(springs)
@@ -105,7 +107,10 @@ impl Discrete {
                 .collect::<Result<_>>()?;
             let inertia = fieldcraft_model::discrete::inertia_matrix(m.inertia);
             let rotations = if m.inertia.iter().any(|c| *c != 0.0) {
-                (3..6).map(|d| dof_of(mesh, m.node, d).ok_or_else(|| missing("point mass", &m.name, m.node, d))).collect::<Result<_>>()?
+                (3..6)
+                    .filter(|d| DofKind::from_direction(*d).is_some_and(|k| mesh.rotation_kinds().contains(k)))
+                    .map(|d| dof_of(mesh, m.node, d).map(|dof| (d - 3, dof)).ok_or_else(|| missing("point mass", &m.name, m.node, d)))
+                    .collect::<Result<_>>()?
             } else {
                 Vec::new()
             };
@@ -123,7 +128,7 @@ impl Discrete {
 
     /// The groups of degrees of freedom each element couples, for the matrix pattern.
     pub fn couplings(&self) -> impl Iterator<Item = Vec<usize>> + '_ {
-        let masses = self.masses.iter().map(|m| m.translations.iter().map(|t| t.0).chain(m.rotations.iter().copied()).collect());
+        let masses = self.masses.iter().map(|m| m.translations.iter().map(|t| t.0).chain(m.rotations.iter().map(|r| r.1)).collect());
         masses.chain(self.springs.iter().map(|s| s.terms.iter().map(|t| t.0).collect()))
     }
 
@@ -157,9 +162,9 @@ impl Discrete {
             for (d, v) in &p.translations {
                 add_entry(m, *d, *d, *v)?;
             }
-            for (a, da) in p.rotations.iter().enumerate() {
-                for (b, db) in p.rotations.iter().enumerate() {
-                    let v = p.inertia[a][b];
+            for (a, da) in &p.rotations {
+                for (b, db) in &p.rotations {
+                    let v = p.inertia.get(*a).and_then(|row| row.get(*b)).copied().unwrap_or(0.0);
                     if v != 0.0 {
                         add_entry(m, *da, *db, v)?;
                     }

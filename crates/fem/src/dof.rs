@@ -2,7 +2,8 @@
 //!
 //! Every unknown of a discrete system is a ([`DofKind`], node) pair. An element declares the
 //! kinds each of its nodes uses ([`ElementDofs`]): three translations for solids, six
-//! (translations and rotations) for shells and beams, two for plane elements, a temperature for
+//! (translations and rotations) for shells and beams, two for plane elements, three (Ux, Uy, Rz)
+//! for the beams of a 2D model, a temperature for
 //! heat transfer, a pressure for mixed u–p elements, and the internal unknowns it condenses out
 //! itself (incompatible modes, a discontinuous pressure), which never reach the global system.
 //! A node carries the union of what its elements, constraints and boundary conditions need.
@@ -113,6 +114,8 @@ impl DofSet {
     pub const TRANSLATIONS: DofSet = DofSet(0b0000_0111);
     /// Ux, Uy: plane elements.
     pub const PLANE: DofSet = DofSet(0b0000_0011);
+    /// Ux, Uy, Rz: beams in a 2D model (the nodes of a plane frame).
+    pub const PLANE_FRAME: DofSet = DofSet(0b0010_0011);
     /// Rx, Ry, Rz.
     pub const ROTATIONS: DofSet = DofSet(0b0011_1000);
     /// Translations and rotations: shells, beams, reference points.
@@ -405,6 +408,7 @@ mod tests {
         assert!(DofSet::STRUCTURAL.includes(DofSet::TRANSLATIONS));
         assert!(!DofSet::TRANSLATIONS.includes(DofSet::STRUCTURAL));
         assert_eq!(DofSet::TRANSLATIONS.union(DofSet::ROTATIONS), DofSet::STRUCTURAL);
+        assert_eq!(DofSet::PLANE_FRAME.iter().collect::<Vec<_>>(), vec![DofKind::Ux, DofKind::Uy, DofKind::Rz]);
         assert_eq!(ElementDofs::SOLID.total(8), 24);
         let hybrid = ElementDofs { node: DofSet::TRANSLATIONS, internal: Internal { incompatible_modes: 0, pressure: 1 } };
         assert_eq!(hybrid.total(8), 25);

@@ -243,7 +243,8 @@ const ON_PLANE: f64 = 1e-9; // unit-factors: relative to the equation's terms
 
 /// The equations of the inclined symmetry conditions `names` (others are skipped), node by node
 /// in label order: n · u = 0 and, at a node in `rotating`, t₁ · θ = 0 and t₂ · θ = 0 for the
-/// plane's in-plane axes ([`fieldcraft_model::Symmetry`]). The rows of one node (several planes
+/// plane's in-plane axes ([`fieldcraft_model::Symmetry`]); in a 2D model only the Z component
+/// of those axes (a node there turns about Z alone). The rows of one node (several planes
 /// meet at an edge) are reduced against each other, so each has a dependent degree of freedom
 /// of its own: the largest coefficient among those `held` says are free. A row of held degrees
 /// of freedom only is left out when their values satisfy it; otherwise it is a problem, as is a
@@ -256,6 +257,7 @@ pub(crate) fn symmetry_equations<'a>(
     held: impl Fn(u32, u8) -> Held,
     problems: &mut BTreeSet<String>,
 ) -> Vec<Equation> {
+    let planar = r.is_planar();
     let mut rows: BTreeMap<u32, Vec<(&str, [f64; 6])>> = BTreeMap::new();
     let mut seen = BTreeSet::new();
     for name in names {
@@ -268,8 +270,14 @@ pub(crate) fn symmetry_equations<'a>(
             let at = rows.entry(node).or_default();
             at.push((name, [n[0], n[1], n[2], 0.0, 0.0, 0.0]));
             if rotating.contains(&node) || target.reference_point().is_some() {
-                at.push((name, [0.0, 0.0, 0.0, t1[0], t1[1], t1[2]]));
-                at.push((name, [0.0, 0.0, 0.0, t2[0], t2[1], t2[2]]));
+                // A 2D model's node has no rotation about X or Y (a planar beam's is about Z),
+                // so only the Z component of an in-plane axis holds anything.
+                let keep = |t: [f64; 3]| [0.0, 0.0, 0.0, if planar { 0.0 } else { t[0] }, if planar { 0.0 } else { t[1] }, t[2]];
+                for t in [t1, t2] {
+                    if keep(t).iter().any(|c| *c != 0.0) {
+                        at.push((name, keep(t)));
+                    }
+                }
             }
         }
     }

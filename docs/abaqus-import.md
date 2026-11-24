@@ -75,7 +75,7 @@ the current document; save existing work before running it in a session you are 
 
 The reader inverts the writer's supported solid, shell, planar, beam and truss element types:
 tet4/tet10/wedge6/pyramid5/hex8/hex20; tri3/quad4/quad8 shells; plane stress, plane strain and
-axisymmetric triangles/quadrilaterals; B31 and B33 beams and two-/three-node trusses. Encoded reduced,
+axisymmetric triangles/quadrilaterals; B31 and B33 beams, the planar B21 (Timoshenko) and two-/three-node trusses. Encoded reduced,
 incompatible-mode and hybrid formulations are assigned to sections. A section mixing full and
 reduced hex elements is refused by name instead of being guessed or split.
 
@@ -175,7 +175,8 @@ Element family/formulation is stored on sections, not on mesh elements. Sectionl
 therefore produce an explicit warning: the mesh can be inspected, but those physical semantics
 are not retained until compatible sections are assigned. T2D-only trusses without a planar
 continuum cannot retain the model's required planar context and are refused. Mixing T3D trusses
-with a planar continuum is refused rather than silently imposing different constraints.
+with a planar continuum is refused rather than silently imposing different constraints. The same
+holds for beams: B21 without a planar continuum and B31 with one are refused.
 
 Supported records must remain finite and consistent: missing referenced labels/sets/materials,
 overlapping section assignments, invalid connectivity/faces and unrepresentable section shapes

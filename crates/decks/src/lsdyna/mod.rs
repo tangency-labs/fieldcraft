@@ -75,7 +75,8 @@
 //! 2D models (plane stress and plane strain in the XY plane) are `*SECTION_SHELL` parts with
 //! ELFORM 12 and 13 ([`elements`]); plane strain is per unit thickness in LS-DYNA, so only a
 //! thickness of 1 is written; pressures on 2D element edges are the consistent nodal forces
-//! (`*LOAD_NODE_POINT`).
+//! (`*LOAD_NODE_POINT`). Trusses and beams in a 2D model are refused by name: LS-DYNA's 2D
+//! analyses take its 2D element forms only.
 //!
 //! What LS-DYNA cannot take is an [`Error::Unsupported`] naming the item: beam profiles whose
 //! shear areas differ by direction, beams of plastic or orthotropic materials and Euler–Bernoulli
@@ -408,8 +409,13 @@ fn plan<'a>(model: &'a Model, r: &Resolved) -> Result<Plan<'a>> {
         }
     };
     if r.is_planar() {
-        for name in model.sections().iter().filter(|(_, s)| matches!(s.kind, SectionKind::Rod { .. })).map(|(n, _)| n) {
-            refused.insert(format!("section `{name}`: trusses in a 2D model (LS-DYNA's 2D elements take no truss)"));
+        for (name, s) in model.sections() {
+            let (many, one) = match s.kind {
+                SectionKind::Rod { .. } => ("trusses", "truss"),
+                SectionKind::Beam { .. } => ("beams", "beam"),
+                _ => continue,
+            };
+            refused.insert(format!("section `{name}`: {many} in a 2D model (LS-DYNA's 2D elements take no {one})"));
         }
     }
     for m in &r.masses {

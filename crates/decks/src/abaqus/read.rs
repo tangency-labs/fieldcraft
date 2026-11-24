@@ -775,6 +775,12 @@ fn parse(text: &str, preset: Preset, limits: Limits) -> Result<Read> {
         if has_planar && typ.family == Family::Rod {
             return Err(error(*line, "T3D trusses with a planar continuum would gain a different global constraint; import refused"));
         }
+        if !has_planar && typ.family == Family::PlanarBeam {
+            return Err(error(*line, "B21 beams without a planar continuum section cannot retain their 2D constraint in this model; import refused"));
+        }
+        if has_planar && typ.family == Family::Beam {
+            return Err(error(*line, "B31 and B33 beams with a planar continuum would gain a different global constraint; import refused"));
+        }
         unassigned += usize::from(!assigned.contains_key(label));
     }
     progress::check()?;
@@ -791,8 +797,8 @@ fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result
     let line = raw.line;
     let len = |value: f64| quantity(units, Quantity::Length, value, line);
     if raw.keyword == "BEAMSECTION" {
-        if typ.family != Family::Beam {
-            return Err(error(line, "*BEAM SECTION needs B31 or B33 elements"));
+        if !matches!(typ.family, Family::Beam | Family::PlanarBeam) {
+            return Err(error(line, "*BEAM SECTION needs B31, B33 or B21 elements"));
         }
         let shape = canonical(raw.params.get("SECTION").and_then(|v| v.as_deref()).ok_or_else(|| error(line, "*BEAM SECTION needs SECTION="))?);
         let count = match shape.as_str() {
@@ -845,7 +851,7 @@ fn section_kind(raw: &SectionRecord, typ: Type, units: &DisplaySystem) -> Result
         let offset = raw.params.get("OFFSET").and_then(|x| x.as_deref()).map(|x| number(x, line)).transpose()?.unwrap_or_default();
         return Ok(SectionKind::Shell { thickness: len(v.first().copied().unwrap_or_default())?, offset, points: points as u32 });
     }
-    if matches!(typ.family, Family::Beam | Family::Shell) {
+    if matches!(typ.family, Family::Beam | Family::PlanarBeam | Family::Shell) {
         return Err(error(line, "*SOLID SECTION does not match these elements"));
     }
     if v.len() > 1 {

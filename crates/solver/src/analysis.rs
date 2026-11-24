@@ -6,7 +6,7 @@ use fieldcraft_fem::element::{Extrapolation, extrapolation};
 use fieldcraft_fem::pipe::PipeStress;
 use fieldcraft_fem::quadrature::Rule;
 use fieldcraft_fem::shell::ShellStress;
-use fieldcraft_fem::{DofKind, DofLayout, PointStress, von_mises};
+use fieldcraft_fem::{DofKind, DofLayout, DofSet, PointStress, von_mises};
 use fieldcraft_model::{ElementKind, Model, Procedure, Resolved, Step};
 use serde::Serialize;
 
@@ -19,7 +19,7 @@ use crate::ldlt::{Kind, Symmetric};
 use crate::ordering::fill_reducing_order;
 use crate::sparse::{Csr, NodeGraph, add_block, add_diagonal, add_scalar};
 use crate::system::{
-    InitialState, Mesh, Structural, StructuralKernel, add_thermal_loads, inelastic_warnings, loads, pipe_pressures, prescribed,
+    InitialState, Mesh, StructuralKernel, add_thermal_loads, inelastic_warnings, kind_block, kind_spread, loads, pipe_pressures, prescribed,
     structural_body_forces, temperature_loads, translation_block,
 };
 use crate::{Error, Limits, Result};
@@ -245,18 +245,20 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
         }
     }
     // Beams and shells as the solids: their matrices in parallel, a round at a time, added in
-    // order, so the sums and the first error are those of a sequential loop.
+    // order, so the sums and the first error are those of a sequential loop. In a 2D model a
+    // beam keeps its in-plane block (Ux, Uy, Rz).
+    let structural = mesh.structural_kinds();
     for round in parallel::blocks(mesh.structural.len(), ROUND) {
         let elements = mesh.structural.get(round).unwrap_or_default();
         let matrices = parallel::map_grained(elements.len(), GRAIN, |i| -> Result<_> {
             let Some(s) = elements.get(i) else { return Err(Error::Internal("element index".into())) };
             let kernel = s.kernel()?;
             let at = |err| Error::element(s.label, err);
-            let stiffness = kernel.stiffness().map_err(at)?.data;
+            let stiffness = kind_block(&kernel.stiffness().map_err(at)?.data, s.nodes.len(), DofSet::STRUCTURAL, structural);
             let element_mass = match (m.is_some(), mass) {
                 (true, Some(kind)) => {
                     let rho = s.density.ok_or_else(|| Error::Invalid(format!("element {} has no density", s.label)))?;
-                    Some(kernel.mass(rho, kind).map_err(at)?.data)
+                    Some(kind_block(&kernel.mass(rho, kind).map_err(at)?.data, s.nodes.len(), DofSet::STRUCTURAL, structural))
                 }
                 _ => None,
             };
@@ -264,9 +266,9 @@ pub(crate) fn assemble(mesh: &Mesh, graph: &NodeGraph, mass: Option<MassKind>) -
         });
         for (s, computed) in elements.iter().zip(matrices) {
             let (stiffness, element_mass) = computed?;
-            add_block(&mut k, layout, &s.nodes, Structural::KINDS, &stiffness)?;
+            add_block(&mut k, layout, &s.nodes, structural, &stiffness)?;
             if let (Some(mm), Some(data)) = (m.as_mut(), element_mass) {
-                add_block(mm, layout, &s.nodes, Structural::KINDS, &data)?;
+                add_block(mm, layout, &s.nodes, structural, &data)?;
             }
         }
     }
@@ -528,13 +530,13 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
     let (mut shells, mut beams) = (Vec::new(), Vec::new());
     let per_volume = structural_body_forces(model, resolved, mesh, step)?;
     let pressures = pipe_pressures(model, resolved, mesh, step)?;
+    let structural = mesh.structural_kinds();
     for ((s, body), pressure) in mesh.structural.iter().zip(&per_volume).zip(&pressures) {
         let at = |err| Error::element(s.label, err);
-        let dofs = mesh
-            .layout
-            .element_dofs(&s.nodes, Structural::KINDS)
-            .ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", s.label)))?;
-        let ue: Vec<f64> = dofs.iter().map(|d| u.get(*d).copied().unwrap_or(0.0)).collect();
+        let dofs =
+            mesh.layout.element_dofs(&s.nodes, structural).ok_or_else(|| Error::Internal(format!("element {} degrees of freedom", s.label)))?;
+        let own: Vec<f64> = dofs.iter().map(|d| u.get(*d).copied().unwrap_or(0.0)).collect();
+        let ue = kind_spread(&own, s.nodes.len(), DofSet::STRUCTURAL, structural);
         match s.kernel()? {
             StructuralKernel::Shell(shell) => {
                 let stress = shell.stresses(&ue).map_err(at)?;

@@ -10,6 +10,7 @@ pub(super) enum Family {
     Strain,
     Axis,
     Beam,
+    PlanarBeam,
     Rod,
     PlanarRod,
 }
@@ -38,6 +39,8 @@ impl Type {
             (Family::PlanarRod, t)
         } else if normalized == "B31" || normalized == "B33" {
             (Family::Beam, "2")
+        } else if normalized == "B21" {
+            (Family::PlanarBeam, "2")
         } else if let Some(t) = normalized.strip_prefix('S') {
             (Family::Shell, t)
         } else {
@@ -65,7 +68,7 @@ impl Type {
             (Family::Shell | Family::Stress | Family::Strain | Family::Axis, "8") => K::Quad8,
             (Family::Rod | Family::PlanarRod, "2") => K::Rod2,
             (Family::Rod | Family::PlanarRod, "3") => K::Rod3,
-            (Family::Beam, "2") => K::Beam2,
+            (Family::Beam | Family::PlanarBeam, "2") => K::Beam2,
             _ => return Err(error(line, format!("unsupported element type `{name}`"))),
         };
         let out = Self {
@@ -81,7 +84,7 @@ impl Type {
         let section =
             fieldcraft_model::Section { set: "Set".into(), material: "Material".into(), kind: out.section(1.0), formulation: out.formulation };
         let written = super::super::element_type(kind, &section).map_err(|_| error(line, format!("unsupported element type `{name}`")))?;
-        let written = if family == Family::PlanarRod { written.replacen("T3D", "T2D", 1) } else { written };
+        let written = if matches!(family, Family::PlanarRod | Family::PlanarBeam) { super::super::planar_line_type(written) } else { written };
         if written != normalized {
             return Err(error(line, format!("unsupported element type `{name}`")));
         }
@@ -95,7 +98,9 @@ impl Type {
             Family::Strain => SectionKind::PlaneStrain { thickness },
             Family::Axis => SectionKind::Axisymmetric {},
             Family::Rod | Family::PlanarRod => SectionKind::Rod { area: thickness },
-            Family::Beam => SectionKind::Beam { profile: fieldcraft_model::BeamProfile::Circle { radius: thickness }, orientation: [0., 0., -1.] },
+            Family::Beam | Family::PlanarBeam => {
+                SectionKind::Beam { profile: fieldcraft_model::BeamProfile::Circle { radius: thickness }, orientation: [0., 0., -1.] }
+            }
         }
     }
 }

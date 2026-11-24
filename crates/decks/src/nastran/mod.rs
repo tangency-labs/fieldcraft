@@ -36,7 +36,9 @@
 //! - frequency steps: `EIGRL` (Lanczos) with the step's mode count and range;
 //! - 2D models: plane stress as membranes, `CTRIA3`, `CQUAD4`, `CTRIA6`, `CQUAD8` with a
 //!   `PSHELL` that has only a membrane material, every grid holding its out-of-plane degrees of
-//!   freedom 3–6 (`GRID` field PS); edge pressures as the consistent `FORCE`s the model's edge
+//!   freedom 3–6 (`GRID` field PS), or 3–5 at the grids of beams, which are the 3D `CBEAM` held
+//!   in the plane and keep their rotation about Z; edge pressures as the consistent `FORCE`s the
+//!   model's edge
 //!   integration gives. Plane strain and axisymmetric elements are not written: their cards
 //!   (`PPLANE`/`PLPLANE` with `CPLSTN*`/`CQUADX`, `CTRIAX6`, `PAXI`) differ between Nastran
 //!   dialects, so a deck could not be read the same everywhere;
@@ -802,10 +804,13 @@ impl<'m> Deck<'m> {
     /// Grids, materials, properties, elements and couplings.
     fn emit_mesh(&self, out: &mut String) -> Result<()> {
         comment(out, "nodes");
+        // A 2D model's grids hold their out-of-plane translation and rotations; the grids of its
+        // beams keep the rotation about Z.
+        let turning = if self.r.is_planar() { self.model.rotating_nodes() } else { BTreeSet::new() };
         for (label, node) in self.model.nodes() {
             let grid = Card::new("GRID").int(*label).blank().reals(node.xyz);
-            // A 2D model's grids hold their out-of-plane translation and rotations.
-            let grid = if self.r.is_planar() { grid.blank().int(3456) } else { grid };
+            let held = if turning.contains(label) { 345 } else { 3456 };
+            let grid = if self.r.is_planar() { grid.blank().int(held) } else { grid };
             grid.write(out)?;
         }
         if !self.model.reference_points().is_empty() {

@@ -56,7 +56,7 @@ of threads.
 | `fixed` | `target` | every degree of freedom of the target held at zero |
 | `displacement` | `target`, `values` [u1, u2, u3, ur1, ur2, ur3] (`null` free) | prescribed values; rotations of solid nodes do not exist and are ignored |
 | `symmetry` | `target`, `plane` `x`, `y`, `z` or `{"normal"}` | an axis plane holds global degrees of freedom; an inclined plane is the linear constraint n · u = 0 (and the rotations about its in-plane axes at nodes with rotations) |
-| `force`, `moment` | `target`, `vector`, `distribution` `total` (default) or `per_node` | `total`: split by the faces' consistent nodal weights (area-weighted) over a set with faces, equally over a set of nodes; a reference point takes it whole. A moment needs rotations: shell or beam nodes, or a coupled reference point |
+| `force`, `moment` | `target`, `vector`, `distribution` `total` (default) or `per_node` | `total`: split by the faces' consistent nodal weights (area-weighted) over a set with faces, equally over a set of nodes; a reference point takes it whole. A moment needs rotations: shell or beam nodes, or a coupled reference point; in a 2D model a moment is `[0, 0, M]` on beam nodes |
 | `traction` | `set`, `vector` | force per area on the set's faces, consistent nodal forces |
 | `pressure` | `set`, `magnitude` | uniform, positive pushing in, consistent nodal forces on the faces (2D models: on element edges) |
 | `gravity` | `acceleration`, `set` (optional) | ρ a on the set's elements (or the whole model, point masses included) |
@@ -278,7 +278,7 @@ probe at the foot's end lies within 0.13 % of the fine tet10 solution.
   shells, beams and point masses are refused.
 - Dashpots are ignored with a warning.
 - A rotation boundary condition on a solid node has no effect (solid nodes have no rotations).
-- Couplings are refused in 2D models.
+- Couplings and shells are refused in 2D models.
 - Initial fields: mapped from static, heat transfer and coupled steps only, onto and from solid
   elements only (an initial stress in 2D or hybrid elements is refused, shells, beams and
   trusses leave it out with a warning); they are keyed by node label, so a remeshed part needs
