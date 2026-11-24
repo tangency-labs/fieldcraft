@@ -469,9 +469,12 @@ pub const SECTION: &[Field] = &[
                 .help("Extra bending modes for linear hexahedra, so a coarse hex8 mesh bends without locking.")
                 .def("false"),
             flag("hybrid", "Hybrid").help("Pressure as an extra unknown, for nearly incompressible materials such as rubber.").def("false"),
+            choice("beam_theory", "Beam theory", &[("timoshenko", "Timoshenko"), ("euler_bernoulli", "Euler–Bernoulli")])
+                .help("Beam sections only. Timoshenko: with shear deformation and rotary inertia. Euler–Bernoulli: shear-rigid, for slender members.")
+                .def("\"timoshenko\""),
         ],
     )
-    .help("How the solid elements are integrated; the defaults suit most models."),
+    .help("How the elements are formulated; the defaults suit most models."),
 ];
 
 pub const REFERENCE_POINT: &[Field] = &[

@@ -230,7 +230,7 @@ definition_commands!(
     Section,
     "section",
     "Section",
-    r#"{"name": "web", "set": "all", "material": "Steel", "kind": {"type": "solid"} | {"type": "shell", "thickness": 2, "offset": 0 (-0.5..=0.5 of the thickness), "points": 5} | {"type": "beam", "profile": {"type": "rectangle", "width", "height"} | {"type": "circle", "radius"} | {"type": "pipe", "radius", "thickness"} | {"type": "i", "height", "width", "web", "flange"} | {"type": "box", "width", "height", "thickness"}, "orientation": [x, y, z]} | {"type": "rod", "area": 10} | {"type": "plane_stress", "thickness": 1} | {"type": "plane_strain", "thickness": 1 (default)} | {"type": "axisymmetric"} (2D: elements in the XY plane; axisymmetric about Y with x the radius, forces totals over the circumference), "formulation": {"integration": "full|reduced", "incompatible_modes": false, "hybrid": false}}"#,
+    r#"{"name": "web", "set": "all", "material": "Steel", "kind": {"type": "solid"} | {"type": "shell", "thickness": 2, "offset": 0 (-0.5..=0.5 of the thickness), "points": 5} | {"type": "beam", "profile": {"type": "rectangle", "width", "height"} | {"type": "circle", "radius"} | {"type": "pipe", "radius", "thickness"} | {"type": "i", "height", "width", "web", "flange"} | {"type": "box", "width", "height", "thickness"}, "orientation": [x, y, z]} | {"type": "rod", "area": 10} | {"type": "plane_stress", "thickness": 1} | {"type": "plane_strain", "thickness": 1 (default)} | {"type": "axisymmetric"} (2D: elements in the XY plane; axisymmetric about Y with x the radius, forces totals over the circumference), "formulation": {"integration": "full|reduced", "incompatible_modes": false, "hybrid": false, "beam_theory": "timoshenko|euler_bernoulli" (beam sections)}}"#,
     super::forms::SECTION,
     super::forms::SECTION_DELETE,
     add_section,
@@ -617,6 +617,31 @@ pub(crate) mod tests {
         s.execute("mesh.tag", &json!({"geometry": {"body": "Bar"}, "elements": [1, 2]})).unwrap();
         s.execute("mesh.tag", &json!({"geometry": {"body": "Bar", "face": "left"}, "faces": [{"element": 1, "face": 6}]})).unwrap();
         s.execute("mesh.tag", &json!({"geometry": {"body": "Bar", "face": "right"}, "faces": [{"element": 2, "face": 4}]})).unwrap();
+    }
+
+    #[test]
+    fn a_beam_section_takes_a_beam_theory() {
+        let mut s = Session::default();
+        let script = json!([
+            {"command": "mesh.node.add", "params": {"label": 1, "xyz": [0, 0, 0]}},
+            {"command": "mesh.node.add", "params": {"label": 2, "xyz": [100, 0, 0]}},
+            {"command": "mesh.element.add", "params": {"label": 1, "kind": "beam2", "nodes": [1, 2]}},
+            {"command": "model.set.create", "params": {"name": "members", "elements": [1]}},
+            {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}}},
+            {"command": "model.section.create", "params": {"name": "frame", "set": "members", "material": "Steel",
+                "kind": {"type": "beam", "profile": {"type": "circle", "radius": 5}, "orientation": [0, 0, 1]},
+                "formulation": {"beam_theory": "euler_bernoulli"}}},
+        ]);
+        s.run_script(&script).unwrap();
+        assert_eq!(s.model.section("frame").unwrap().formulation.beam_theory, fieldcraft_model::BeamTheory::EulerBernoulli);
+        let solid = json!({"name": "frame", "set": "members", "material": "Steel", "kind": {"type": "solid"}, "formulation": {"beam_theory": "euler_bernoulli"}});
+        let e = s.execute("model.section.edit", &solid).unwrap_err().to_string();
+        assert!(e.contains("euler_bernoulli beam theory is for beam sections"), "{e}");
+        assert_eq!(
+            s.model.section("frame").unwrap().formulation.beam_theory,
+            fieldcraft_model::BeamTheory::EulerBernoulli,
+            "the refused edit changed nothing"
+        );
     }
 
     pub(crate) fn defined_bar(s: &mut Session) {
