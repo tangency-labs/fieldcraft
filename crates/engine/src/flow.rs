@@ -4,14 +4,15 @@
 //! ([`crate::view`]) and the desktop viewport draw the same [`FlowPlot`]; the part stays drawn
 //! (a fluid step does not deform it).
 //!
-//! A fluid step is first shown with velocity magnitude on a slice through the middle of the
-//! domain, normal to the horizontal axis across the flow (the slice holds the flow and the
-//! vertical: Z is up), on the obstacles, and with streamlines seeded on the inlet face upstream
-//! of the obstacles.
+//! A fluid step is first shown with velocity magnitude on a slice normal to the horizontal axis
+//! across the flow (the slice holds the flow and the vertical: Z is up), on the symmetry plane
+//! of the domain along that axis when the model's domain has one (else through its middle), on
+//! the obstacles, and with streamlines seeded on the inlet face upstream of the obstacles.
 
 use std::sync::{Arc, Mutex, Weak};
 
 use fieldcraft_lbm::{FluidResult, Frame};
+use fieldcraft_model::{BoxFace, FaceCondition, Model};
 use fieldcraft_render::contour::{Bands, banded, bands_color};
 use fieldcraft_render::flow::{self, CellGrid, Slice, Streamline};
 use fieldcraft_render::{Aabb3, Rgb, Scene, SceneLine, Vec3};
@@ -104,20 +105,22 @@ pub struct FlowView {
 }
 
 impl FlowView {
-    /// A fluid result's first look: a slice through the middle across the flow, the surfaces
-    /// coloured, streamlines from the inlet.
-    pub fn for_result(r: &FluidResult) -> FlowView {
+    /// A fluid result's first look: a slice across the flow on its symmetry plane (`symmetry`, from
+    /// [`symmetry_faces`]; else through the middle), the surfaces coloured, streamlines from the inlet.
+    pub fn for_result(r: &FluidResult, symmetry: [bool; 6]) -> FlowView {
         let along = r.frames.last().map_or(Axis::X, |f| direction(r, f).0);
         // The slice holds the flow and the vertical (Z is up); for a flow along y, it is normal to x.
         let axis = if along == Axis::Y { Axis::X } else { Axis::Y };
-        FlowView { slice: Some(SliceView { axis, position: None }), surface: true, streamlines: Some(StreamlineView::default()) }
+        let position = symmetry_position(r, axis, symmetry);
+        FlowView { slice: Some(SliceView { axis, position }), surface: true, streamlines: Some(StreamlineView::default()) }
     }
 
-    /// What `view` shows of fluid result `r`: its own settings, or the result's first look.
+    /// What `view` shows of fluid result `r`: its own settings, or the result's first look. A view
+    /// without its own `flow` has no model at hand here, so its first look has no symmetry planes.
     pub fn of<'a>(view: &'a ResultsView, r: &FluidResult) -> std::borrow::Cow<'a, FlowView> {
         match &view.flow {
             Some(f) => std::borrow::Cow::Borrowed(f),
-            None => std::borrow::Cow::Owned(FlowView::for_result(r)),
+            None => std::borrow::Cow::Owned(FlowView::for_result(r, [false; 6])),
         }
     }
 }
@@ -210,6 +213,34 @@ pub fn cell_centre(r: &FluidResult, k: usize) -> [f64; 3] {
     let g = grid(r);
     let c = g.centre(g.coords(k));
     [c.x, c.y, c.z]
+}
+
+/// Which box faces of the fluid result's domain are symmetry planes, in `BoxFace::ALL` order, read
+/// from the model as it is now (the result does not record them). A step or domain the model no
+/// longer has gives none: the slice then goes through the middle.
+pub fn symmetry_faces(model: &Model, r: &FluidResult) -> [bool; 6] {
+    let domain = model.step(&r.step).and_then(|s| s.procedure.fluid_domain()).and_then(|name| model.fluid_domain(name));
+    match domain {
+        Some(d) => BoxFace::ALL.map(|f| matches!(d.faces.get(f), FaceCondition::Symmetry {})),
+        None => [false; 6],
+    }
+}
+
+/// The automatic position along `axis`: the first cell layer on the axis's symmetry face (the low one
+/// when both are), the plane itself being the domain's face, where a slice would show only its outer
+/// layer; `None` (the middle) when the axis has no symmetry face.
+pub fn symmetry_position(r: &FluidResult, axis: Axis, symmetry: [bool; 6]) -> Option<f64> {
+    let g = grid(r);
+    let a = axis.index();
+    let half = 0.5 * r.grid.spacing;
+    let on_face = |max: bool| BoxFace::ALL.iter().zip(symmetry).any(|(f, s)| s && f.axis() == a && f.is_max() == max);
+    if on_face(false) {
+        Some(g.start(a) + half)
+    } else if on_face(true) {
+        Some(g.end(a) - half)
+    } else {
+        None
+    }
 }
 
 /// Where a slice lies: its position, or the middle of the domain, held inside it.
@@ -659,6 +690,30 @@ pub(crate) mod tests {
         s
     }
 
+    /// The plate's tank with its y_min face a symmetry plane, through commands: the first slice (along
+    /// y, the flow being along x) lies on that face's first cell layer, and "auto" puts it back there.
+    #[test]
+    fn the_plate_slice_lies_on_the_symmetry_plane_through_commands() {
+        use fieldcraft_geometry::sample::Plate;
+        let (_dir, path) = crate::tests::sample_design_file(&Plate::default());
+        let mut s = crate::Session::default();
+        s.execute("geometry.open", &json!({"path": path})).unwrap();
+        let script = json!([
+            {"command": "model.material.create", "params": {"name": "Water", "density": 1e-9, "fluid": {"type": "newtonian", "viscosity": 1e-7}}},
+            {"command": "model.fluid_domain.create", "params": {"name": "Tank", "material": "Water", "min": [-20, -20, -20], "max": [60, 50, 30], "spacing": 5, "obstacles": ["Body1"],
+                "faces": {"x_min": {"type": "velocity", "velocity": [10, 0, 0]}, "x_max": {"type": "pressure", "pressure": 0}, "y_min": {"type": "symmetry"}}}},
+            {"command": "model.step.create", "params": {"name": "Flow", "procedure": {"type": "fluid", "domain": "Tank", "steps": 60, "frames": 2}}},
+        ]);
+        s.run_script(&script).unwrap();
+        s.execute("solve.fluid", &json!({})).unwrap();
+        // The first cell layer's centre: −20 mm + half a 5 mm cell (the reply is in display mm).
+        for p in [json!({"axis": "y"}), json!({"axis": "y", "position": "auto"})] {
+            let r = s.execute("results.slice", &p).unwrap();
+            let at = r["slice"]["position"].as_f64().unwrap();
+            assert!((at + 17.5).abs() < 1e-9, "{r}");
+        }
+    }
+
     /// Water in a box freezes on a face held at −10 °C, through commands: the phase change is
     /// typed in the display system (mm-t-s: mJ/t and °C) and stored in SI, the solve reports the
     /// share that froze, and a material without a specific heat, a liquidus below the solidus or a
@@ -975,7 +1030,7 @@ pub(crate) mod tests {
     fn a_fluid_result_is_first_shown_across_the_flow() {
         let r = channel();
         assert_eq!(direction(&r, &r.frames[1]), (Axis::X, true));
-        let v = FlowView::for_result(&r);
+        let v = FlowView::for_result(&r, [false; 6]);
         assert_eq!(v.slice, Some(SliceView { axis: Axis::Y, position: None }));
         assert!(v.surface && v.streamlines.is_some());
         assert_eq!(slice_position(&r, v.slice.as_ref().unwrap()), 2.0);
@@ -987,9 +1042,51 @@ pub(crate) mod tests {
             *v = [0.0, -v[0], 0.0];
         }
         assert_eq!(direction(&r, &r.frames[1]), (Axis::Y, false));
-        assert_eq!(FlowView::for_result(&r).slice.unwrap().axis, Axis::X);
+        assert_eq!(FlowView::for_result(&r, [false; 6]).slice.unwrap().axis, Axis::X);
         let s = seeds(&r, &r.frames[1], &StreamlineView { count: 4, ..StreamlineView::default() });
         assert!(s.iter().all(|p| p.y == 3.5), "{s:?}");
+    }
+
+    /// The six flags with the given faces symmetric, in `BoxFace::ALL` order.
+    fn symmetric(on: &[BoxFace]) -> [bool; 6] {
+        BoxFace::ALL.map(|f| on.contains(&f))
+    }
+
+    /// A model with a fluid domain `Tank` whose faces are `faces` and a step `Flow` solving in it.
+    fn model_with_faces(faces: Value) -> fieldcraft_model::Model {
+        let domain = json!({"material": "Water", "min": [0, 0, 0], "max": [10, 4, 4], "spacing": 1, "faces": faces});
+        let step = json!({"name": "Flow", "procedure": {"type": "fluid", "domain": "Tank", "steps": 10, "frames": 2}, "output": []});
+        let water = json!({"density": 1e-9, "fluid": {"type": "newtonian", "viscosity": 1e-7}});
+        serde_json::from_value(json!({"materials": {"Water": water}, "fluid_domains": {"Tank": domain}, "steps": [step]})).unwrap()
+    }
+
+    #[test]
+    fn the_first_slice_lies_on_a_symmetry_plane() {
+        let r = channel();
+        let first = |sym: [bool; 6]| slice_position(&r, FlowView::for_result(&r, sym).slice.as_ref().unwrap());
+        // y_min is the first cell layer's centre, y_max the last one's.
+        assert_eq!(first(symmetric(&[BoxFace::YMin])), grid(&r).start(1) + 0.5 * r.grid.spacing);
+        assert_eq!(first(symmetric(&[BoxFace::YMax])), grid(&r).end(1) - 0.5 * r.grid.spacing);
+        // Both: the low one. A symmetry face across the flow (x) does not move the slice.
+        assert_eq!(first(symmetric(&[BoxFace::YMin, BoxFace::YMax])), grid(&r).start(1) + 0.5 * r.grid.spacing);
+        assert_eq!(first(symmetric(&[BoxFace::XMin])), 2.0);
+    }
+
+    #[test]
+    fn the_symmetry_faces_come_from_the_model_step_and_domain() {
+        let r = channel();
+        let symmetry = json!({"y_min": {"type": "symmetry"}});
+        assert_eq!(symmetry_faces(&model_with_faces(symmetry), &r), symmetric(&[BoxFace::YMin]));
+        // A step or domain the model no longer has gives no symmetry: the slice goes through the middle.
+        assert_eq!(symmetry_faces(&fieldcraft_model::Model::default(), &r), [false; 6]);
+        let other_step = model_with_faces(json!({"y_min": {"type": "symmetry"}}));
+        assert_eq!(symmetry_faces(&other_step, &channel_named("Other")), [false; 6]);
+        assert_eq!(slice_position(&r, FlowView::for_result(&r, [false; 6]).slice.as_ref().unwrap()), 2.0);
+    }
+
+    /// A fluid result of the channel named `step`.
+    fn channel_named(step: &str) -> FluidResult {
+        FluidResult { step: step.to_string(), ..channel() }
     }
 
     #[test]
@@ -1002,7 +1099,7 @@ pub(crate) mod tests {
         assert_eq!(values.iter().filter(|v| v.is_nan()).count(), 8);
         assert_eq!(cell_range(&values).map(|(a, b)| (a.1, b.1)), Some((20.0, 38.0)));
         let result = Arc::new(crate::StepResult::Fluid(Box::new(r)));
-        let mut view = ResultsView::for_result(&result);
+        let mut view = ResultsView::for_result(&result, &Model::default());
         view.contour = Some(Field::Temperature);
         let p = plot(&view, &result, &TraceCache::default()).unwrap();
         let mut scene = Scene::default();
@@ -1038,7 +1135,7 @@ pub(crate) mod tests {
     #[test]
     fn a_trace_is_shared_until_its_result_frame_or_settings_change() {
         let result = Arc::new(crate::StepResult::Fluid(Box::new(channel())));
-        let view = ResultsView::for_result(&result);
+        let view = ResultsView::for_result(&result, &Model::default());
         let traced = TraceCache::default();
         let s = StreamlineView::default();
         let (seeds, a) = traced.trace(&result, 1, &s).unwrap();
@@ -1068,7 +1165,7 @@ pub(crate) mod tests {
     fn the_plot_draws_the_slice_surface_and_streamlines() {
         let r = channel();
         let result = Arc::new(crate::StepResult::Fluid(Box::new(r.clone())));
-        let mut view = ResultsView::for_result(&result);
+        let mut view = ResultsView::for_result(&result, &Model::default());
         assert_eq!(view.contour, Some(Field::Velocity));
         let traced = TraceCache::default();
         let p = plot(&view, &result, &traced).unwrap();

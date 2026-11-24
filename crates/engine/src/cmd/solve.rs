@@ -3836,7 +3836,7 @@ pub(crate) mod tests {
         assert!(s.execute("solve.heat", &json!({"step": "Bend"})).is_err(), "not a heat step");
         assert!(s.execute("solve.heat", &json!({"step": "Heat", "max_dofs": 0})).is_err());
         // The results display shows temperatures, undeformed.
-        let view = crate::results::ResultsView::for_result(&s.latest_result("Heat").unwrap().0.clone());
+        let view = crate::results::ResultsView::for_result(&s.latest_result("Heat").unwrap().0.clone(), &s.model);
         assert_eq!((view.contour, view.deformed), (Some(crate::results::Field::Temperature), false));
         let (heat, _) = s.latest_result("Heat").unwrap();
         let fields: Vec<_> = crate::results::Field::available(heat).collect();
