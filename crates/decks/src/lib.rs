@@ -34,6 +34,9 @@ pub enum Error {
     Model(#[from] fieldcraft_model::Error),
     #[error("limit reached: {0}")]
     Limit(String),
+    /// A file of another program's format that does not read as that format (named).
+    #[error("reading {format}: {message}")]
+    Read { format: &'static str, message: String },
     /// Invalid or unsupported input data, at its original one-based physical line.
     #[error("Abaqus input line {line}: {message}")]
     Parse { line: usize, message: String },

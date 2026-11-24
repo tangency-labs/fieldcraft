@@ -28,6 +28,8 @@
 //! material property the case needs and the model lacks is an error, never a stand-in value.
 
 mod dicts;
+pub mod fields;
+pub use dicts::sample_reach;
 #[cfg(test)]
 mod grammar;
 #[cfg(test)]
@@ -144,6 +146,12 @@ pub struct Case {
     pub solver: &'static str,
     /// What the case leaves out or does differently from the lattice Boltzmann step.
     pub notes: Vec<String>,
+    /// The fluid's density (kg/m³): OpenFOAM's incompressible pressure is kinematic, p/ρ.
+    pub density: f64,
+    /// The background cell (metres).
+    pub background: f64,
+    /// Significant digits of the time directories' names.
+    pub time_precision: u32,
 }
 
 fn unsupported(what: impl Into<String>) -> Error {
@@ -369,7 +377,16 @@ pub fn write_case(model: &Model, step: Option<&str>, obstacles: &[ObstacleSurfac
     files.insert("Allrun".into(), allrun(&step.name, dicts::SOLVER, options.processes));
     files.insert("case.foam".into(), String::new());
 
-    Ok(Case { files, patches, background_cells: cells, solver: dicts::SOLVER, notes })
+    Ok(Case {
+        files,
+        patches,
+        background_cells: cells,
+        solver: dicts::SOLVER,
+        notes,
+        density,
+        background,
+        time_precision: dicts::time_precision(frames),
+    })
 }
 
 /// The fluid's density and dynamic viscosity: both required, constant and Newtonian.
