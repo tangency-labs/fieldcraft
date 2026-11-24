@@ -543,7 +543,7 @@ pub(crate) fn static_on(setup: &Setup<'_>, limits: &Limits) -> Result<StaticResu
                 }
                 shells.push(ShellResult { label: s.label, kind: s.kind, stress });
             }
-            StructuralKernel::Beam(beam) => beams.push(BeamResult { label: s.label, kind: s.kind, forces: beam.forces(&ue, *body).map_err(at)? }),
+            StructuralKernel::Beam(beam) => beams.push(BeamResult { label: s.label, kind: s.kind, forces: beam.forces(&ue, *body, None).map_err(at)? }),
         }
     }
     let stress: Vec<[f64; 6]> = sum.iter().zip(&count).map(|(s, c)| s.map(|v| if *c > 0 { v / f64::from(*c) } else { 0.0 })).collect();
