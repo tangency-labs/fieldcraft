@@ -35,20 +35,33 @@ pub const CHOICES: &[(&str, &str)] = &[
     ("EN10025-S275", "S275 structural steel"),
     ("EN10025-S355", "S355 structural steel"),
     ("EN10025-S460N", "S460N structural steel"),
+    ("EN10083-C45-QT", "C45+QT engineering steel"),
+    ("EN10083-42CrMo4-QT", "42CrMo4+QT alloy steel"),
     ("EN10088-14301", "1.4301 / 304 stainless steel"),
     ("EN10088-14401", "1.4401 / 316 stainless steel"),
+    ("EN1561-GJL-250", "EN-GJL-250 grey cast iron"),
+    ("EN1563-GJS-400-15", "EN-GJS-400-15 ductile cast iron"),
     ("AA5083-H111", "5083-H111 aluminium"),
     ("AA6061-T6", "6061-T6 aluminium"),
     ("AA6063-T6", "6063-T6 aluminium"),
     ("AA6082-T6", "6082-T6 aluminium"),
     ("AA7075-T6", "7075-T6 aluminium"),
     ("AA2024-T3", "2024-T3 aluminium"),
+    ("Cu-ETP-R240", "Cu-ETP (CW004A) R240 copper"),
+    ("CuZn37-R350", "CuZn37 (CW508L) R350 brass"),
     ("Ti6Al4V-annealed", "Ti-6Al-4V annealed"),
     ("air", "Air, dry"),
 ];
 
-pub const FAMILIES: &[(&str, &str)] =
-    &[("steel", "Structural steel"), ("stainless", "Stainless steel"), ("aluminium", "Aluminium"), ("titanium", "Titanium"), ("fluid", "Fluid")];
+pub const FAMILIES: &[(&str, &str)] = &[
+    ("steel", "Steel"),
+    ("stainless", "Stainless steel"),
+    ("cast_iron", "Cast iron"),
+    ("aluminium", "Aluminium"),
+    ("copper", "Copper alloy"),
+    ("titanium", "Titanium"),
+    ("fluid", "Fluid"),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -419,7 +432,7 @@ mod tests {
     #[test]
     fn catalogue_is_cited_and_materials_remain_si_in_every_display_system() {
         let all = entries().unwrap();
-        assert_eq!(all.len(), 14);
+        assert_eq!(all.len(), 20);
         validate(all).unwrap();
         for e in all {
             let material = e.material(293.15, 293.15).unwrap();
@@ -519,6 +532,55 @@ mod tests {
         assert!(close(al6063.value(Property::SpecificHeat).unwrap(), 901.0));
         assert!(close(al6063.value(Property::Yield).unwrap(), 170e6));
         assert!(close(al6063.value(Property::Tensile).unwrap(), 215e6));
+
+        let c45 = entry("EN10083-C45-QT").unwrap();
+        assert!(close(c45.value(Property::Young).unwrap(), 210e9));
+        assert!(close(c45.value(Property::Density).unwrap(), 7800.0));
+        assert!(close(c45.value(Property::Expansion).unwrap(), 12e-6));
+        assert!(close(c45.value(Property::Yield).unwrap(), 490e6));
+        assert!(close(c45.value(Property::Tensile).unwrap(), 700e6));
+        let cr42 = entry("EN10083-42CrMo4-QT").unwrap();
+        assert!(close(cr42.value(Property::Young).unwrap(), 210e9));
+        assert!(close(cr42.value(Property::Density).unwrap(), 7800.0));
+        assert!(close(cr42.value(Property::Expansion).unwrap(), 12e-6));
+        assert!(close(cr42.value(Property::Yield).unwrap(), 900e6));
+        assert!(close(cr42.value(Property::Tensile).unwrap(), 1100e6));
+        let gjl = entry("EN1561-GJL-250").unwrap();
+        assert!(close(gjl.value(Property::Young).unwrap(), 103e9));
+        assert_eq!(gjl.properties[&Property::Young].basis, Basis::Typical);
+        assert!(close(gjl.value(Property::Poisson).unwrap(), 0.26));
+        assert!(close(gjl.value(Property::Density).unwrap(), 7200.0));
+        assert!(close(gjl.value(Property::SpecificHeat).unwrap(), 460.0));
+        assert!(close(gjl.value(Property::Expansion).unwrap(), 11.7e-6));
+        assert!(gjl.value(Property::Yield).is_none());
+        assert!(close(gjl.value(Property::Tensile).unwrap(), 250e6));
+        let gjs = entry("EN1563-GJS-400-15").unwrap();
+        assert!(close(gjs.value(Property::Young).unwrap(), 169e9));
+        assert!(close(gjs.value(Property::Poisson).unwrap(), 0.275));
+        assert!(close(gjs.value(Property::Density).unwrap(), 7100.0));
+        assert!(gjs.value(Property::Conductivity).is_none());
+        assert!(close(gjs.value(Property::SpecificHeat).unwrap(), 515.0));
+        assert!(close(gjs.value(Property::Expansion).unwrap(), 12.5e-6));
+        assert!(close(gjs.value(Property::Yield).unwrap(), 250e6));
+        assert!(close(gjs.value(Property::Tensile).unwrap(), 400e6));
+        let cu = entry("Cu-ETP-R240").unwrap();
+        assert!(close(cu.value(Property::Young).unwrap(), 115e9));
+        assert!(close(cu.value(Property::Poisson).unwrap(), 0.34));
+        assert!(close(cu.value(Property::Density).unwrap(), 8940.0));
+        assert!(close(cu.value(Property::Conductivity).unwrap(), 390.0));
+        assert!(close(cu.value(Property::SpecificHeat).unwrap(), 386.0));
+        assert!(close(cu.value(Property::Expansion).unwrap(), 17.7e-6));
+        assert!(close(cu.value(Property::Yield).unwrap(), 180e6));
+        assert!(close(cu.value(Property::Tensile).unwrap(), 240e6));
+        let brass = entry("CuZn37-R350").unwrap();
+        assert!(close(brass.value(Property::Young).unwrap(), 105e9));
+        assert!(close(brass.value(Property::Poisson).unwrap(), 0.34));
+        assert!(close(brass.value(Property::Density).unwrap(), 8440.0));
+        assert!(close(brass.value(Property::Conductivity).unwrap(), 120.0));
+        assert!(close(brass.value(Property::SpecificHeat).unwrap(), 377.0));
+        assert!(close(brass.value(Property::Expansion).unwrap(), 20.2e-6));
+        assert!(close(brass.value(Property::Yield).unwrap(), 170e6));
+        assert!(close(brass.value(Property::Tensile).unwrap(), 350e6));
     }
 
     /// EN 1993-1-2's carbon-steel specific heat (J/(kg K)) and conductivity (W/(m K)) at `c` °C,
@@ -572,9 +634,21 @@ mod tests {
             }
             assert_eq!(c.points.value(CELSIUS_ZERO + 735.0), 5000.0);
         }
+        let gjl_k = curve("EN1561-GJL-250", Property::Conductivity);
+        assert_eq!(
+            gjl_k.points.0,
+            vec![
+                [CELSIUS_ZERO + 100.0, 48.5],
+                [CELSIUS_ZERO + 200.0, 47.5],
+                [CELSIUS_ZERO + 300.0, 46.5],
+                [CELSIUS_ZERO + 400.0, 45.0],
+                [CELSIUS_ZERO + 500.0, 44.5],
+            ]
+        );
         for (id, p, [lo, hi]) in [
             ("EN10025-S235", Property::SpecificHeat, [20.0, 1200.0]),
             ("EN10025-S235", Property::Conductivity, [20.0, 1200.0]),
+            ("EN1561-GJL-250", Property::Conductivity, [100.0, 500.0]),
             ("air", Property::Density, [200.0 - CELSIUS_ZERO, 400.0 - CELSIUS_ZERO]),
         ] {
             let range = curve(id, p).points.range();
@@ -604,6 +678,11 @@ mod tests {
         assert!(close(thermal.conductivity.unwrap().axes()[0], 54.0 - 3.33));
         assert_eq!(steel.density, Some(7850.0));
         assert!(steel.temperature_dependent.as_ref().unwrap().conducts());
+        // Grey cast iron conductivity starts at 100 °C: at 20 °C it holds 48.5 W/(m K) and flags outside.
+        let gjl = entry("EN1561-GJL-250").unwrap();
+        assert_eq!(gjl.outside(DEFAULT_TEMPERATURE), vec![Property::Conductivity]);
+        let gjl_mat = gjl.material(DEFAULT_TEMPERATURE, DEFAULT_TEMPERATURE).unwrap();
+        assert!(close(gjl_mat.thermal.unwrap().conductivity.unwrap().axes()[0], 48.5));
         // Reports carry every curve in display units with its citation.
         let mm = DisplaySystem::new(Preset::MmTonneS).with_override(Quantity::Temperature, "degC").unwrap();
         let report = entry("air").unwrap().report_curves(&mm).unwrap();
