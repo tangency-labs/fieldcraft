@@ -231,6 +231,16 @@ pub struct GpuFlow {
     /// How long compiling the kernels took for this flow (zero when the process had compiled
     /// them on this device before).
     pipeline_seconds: f64,
+    /// The open-target buffer, its host copy at the full velocities, which open cells are velocity faces (the rows an
+    /// inlet ramp moves each step, see `write_ramp_targets`), the lattice velocity the ramp starts from, and the bytes
+    /// written each ramped step (kept, so the ramp allocates nothing per step).
+    open_targets: wgpu::Buffer,
+    open_host: Vec<f32>,
+    open_velocity: Vec<bool>,
+    inlet_from: [f64; 3],
+    open_bytes: Vec<u8>,
+    /// The steps over which the velocity faces rise from the initial field (0: none).
+    inlet_ramp_steps: u64,
     aa: bool,
     adapter: String,
     /// The kernels, shared with every flow on this device that uses the same variant.
@@ -1229,32 +1239,36 @@ impl GpuFlow {
         // Pressure cells each have a slot in the outlet buffer: convective history and
         // transient gathered populations for uniform-pressure extrapolation; with TRT inlet
         // reconstruction, velocity cells have one for their staged residuals (see lbm.wgsl).
-        if flow.inlet_ramp_steps() > 0 {
-            return Err(Error::Invalid("not supported yet: `inlet_ramp` on the GPU; run the flow on the CPU".into()));
-        }
         let open = flow.open_cells();
         let stencils = flow.inlet_stencils();
         let inlets = !stencils.is_empty();
-        let pressure_count = open.iter().filter(|oc| !matches!(oc.target, Target::Velocity(_))).count();
+        let inlet_ramp_steps = flow.inlet_ramp_steps();
+        if inlet_ramp_steps > 0 && flow.steps_done() > 0 {
+            return Err(Error::Invalid("not supported yet: the GPU takes an inlet ramp only from the flow's first step".into()));
+        }
+        let targets = flow.inlet_targets();
+        let pressure_count = targets.iter().filter(|t| !matches!(t, Target::Velocity(_))).count();
         let open_words = open.len().checked_mul(if inlets { 16 } else { 4 }).ok_or_else(|| Error::Limit("too many GPU open cells".into()))?;
         if (open_words as u64).checked_mul(4).is_none_or(|bytes| bytes > cap) {
             return Err(Error::Limit("GPU boundary data exceeds the device's buffer limit".into()));
         }
         let mut open_u = reserved(open_words, "open cells")?;
-        let mut open_f = reserved(4 * open.len(), "open cells")?;
+        let mut open_host = reserved(4 * open.len(), "open cells")?;
+        let mut open_velocity = Vec::with_capacity(open.len());
         let outlet_words = outlet_words(if inlets { open.len() } else { pressure_count }, cap)?;
         let mut outlet = reserved(outlet_words, "outlet cells")?;
         let states = flow.outlets().states();
-        for (k, oc) in open.iter().enumerate() {
-            let (kind, target) = match oc.target {
+        for (k, (oc, full)) in open.iter().zip(&targets).enumerate() {
+            let (kind, target) = match *full {
                 Target::Velocity(u) => (0u32, [u[0] as f32, u[1] as f32, u[2] as f32]),
                 Target::Density(rho) => (1u32, [rho as f32, 0.0, 0.0]),
                 Target::Convective(rho) => (2u32, [rho as f32, 0.0, 0.0]),
             };
             let slot = u32::try_from(outlet.len() / OUTLET).map_err(|_| Error::Limit("too many open cells for the GPU solver".into()))?;
             open_u.extend_from_slice(&[oc.cell, oc.axis as u32, kind, slot]);
-            open_f.extend_from_slice(&[target[0], target[1], target[2], oc.inward as f32]);
-            if let Target::Convective(_) = oc.target {
+            open_host.extend_from_slice(&[target[0], target[1], target[2], oc.inward as f32]);
+            open_velocity.push(matches!(full, Target::Velocity(_)));
+            if let Target::Convective(_) = full {
                 let state = states.get(k).copied().unwrap_or_default();
                 let dirs = fieldcraft_lbm::outlet::unknowns(oc.axis, oc.inward);
                 outlet.extend(state.unknowns.iter().zip(dirs).map(|(v, q)| (v - W.get(q).copied().unwrap_or(0.0)) as f32));
@@ -1432,7 +1446,7 @@ impl GpuFlow {
         let link_u = storage("lbm links", &bytes_u32(&link_u));
         let link_f = storage("lbm link du", &bytes_f32(&link_f));
         let open_u = storage("lbm open cells", &bytes_u32(&open_u));
-        let open_f = storage("lbm open targets", &bytes_f32(&open_f));
+        let open_f = storage("lbm open targets", &bytes_f32(&open_host));
         let outlet = storage("lbm outlet cells", &bytes_f32(&outlet));
         let moments = empty("lbm moments", 16 * n as u64);
         // With the hybrid collision or Vreman's model, every cell's velocity before the collision
@@ -1569,6 +1583,12 @@ impl GpuFlow {
             queue: queue.clone(),
             kernel_times: profile.then(Default::default),
             pipeline_seconds,
+            open_targets: open_f,
+            open_host,
+            open_velocity,
+            inlet_from: flow.inlet_ramp_from(),
+            open_bytes: Vec::with_capacity(16 * open.len()),
+            inlet_ramp_steps,
             aa,
             adapter: adapter_name,
             kernels,
@@ -1883,6 +1903,26 @@ impl GpuFlow {
     }
 
     /// One submission of `steps` (≤ MAX_CHUNK) time steps, then the stability check.
+    /// Under an inlet ramp: the velocity faces' targets for the next step, u0 + r (u − u0) with u the full target, u0
+    /// the initial field's velocity and r the ramp's share (`fieldcraft_lbm::inlet::ramp`), written to the device before
+    /// that step; at a share of 1 the full target itself, as on the CPU.
+    fn write_ramp_targets(&mut self) {
+        let share = fieldcraft_lbm::inlet::ramp(self.steps_done + 1, self.inlet_ramp_steps);
+        self.open_bytes.clear();
+        for (row, &velocity) in self.open_host.as_chunks::<4>().0.iter().zip(&self.open_velocity) {
+            for (c, &full) in row.iter().enumerate() {
+                let value = if velocity && c < 3 && share < 1.0 {
+                    let from = self.inlet_from[c];
+                    (from + share * (f64::from(full) - from)) as f32
+                } else {
+                    full
+                };
+                self.open_bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        self.queue.write_buffer(&self.open_targets, 0, &self.open_bytes);
+    }
+
     fn advance_chunk(&mut self, steps: u64) -> Result<()> {
         let sa_slots = self.sa.as_ref().map_or(0, SaDevice::slots);
         self.queue.write_buffer(&self.stats, 0, &bytes_u32(&[0; STATS_WORDS]));
@@ -2093,6 +2133,12 @@ impl Backend for GpuFlow {
             MAX_CHUNK
         };
         let mut left = steps;
+        // Under an inlet ramp each step up to its end, and the one past it (as on the CPU), is its own submission.
+        while left > 0 && self.inlet_ramp_steps > 0 && self.steps_done <= self.inlet_ramp_steps {
+            self.write_ramp_targets();
+            self.advance_chunk(1)?;
+            left -= 1;
+        }
         while left > 0 {
             let chunk = left.min(most);
             self.advance_chunk(chunk)?;

@@ -1880,6 +1880,11 @@ impl Flow {
         if self.inlet_ramp_steps == 0 { self.open.iter().map(|c| c.target).collect() } else { self.inlet_full.clone() }
     }
 
+    /// The lattice velocity an inlet ramp starts from: the initial field's (rest unless the domain gives it one).
+    pub fn inlet_ramp_from(&self) -> [f64; 3] {
+        self.inlet_from
+    }
+
     /// The links that do not stream from the neighbour at `−c_q`, in cell order.
     pub fn links(&self) -> &[Link] {
         &self.links

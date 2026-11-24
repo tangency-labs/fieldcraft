@@ -408,6 +408,42 @@ fn zou_he_channel_matches_the_cpu() {
     }
 }
 
+/// The Zou–He channel of [`zou_he_channel_matches_the_cpu`], started with a uniform initial field and its inlet ramped
+/// from that field to the parabolic profile over half the run (`inlet_ramp`). The CPU and the GPU are compared in the
+/// middle of the ramp and at its end, where a difference in the ramp would not have decayed yet.
+#[test]
+fn a_ramped_inlet_matches_the_cpu() {
+    for (collision, streaming) in cases() {
+        let (h, l, umax, nu) = (1.0, 4.0, 0.1, 0.05);
+        let dx = h / 10.0;
+        let mut d = domain([0.0; 3], [l, h, dx], dx);
+        d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
+        d.faces.z_min = PERIODIC;
+        d.faces.z_max = PERIODIC;
+        d.initial_velocity = [0.5 * umax, 0.0, 0.0];
+        let (end, dt) = (2.0 * l / umax, 0.05 * dx / umax);
+        let ramp = 0.5 * end;
+        let mut p = collide(end, dt, None, collision);
+        if let Procedure::Fluid { inlet_ramp, .. } = &mut p {
+            *inlet_ramp = Some(ramp);
+        }
+        let ramp_steps = (ramp / dt).round() as u64;
+        let (_, flow) = prepare(&model(1.0, nu, d, p), &[]);
+        assert_eq!(flow.inlet_ramp_steps(), ramp_steps);
+        let Some(mut gpu) = gpu(&flow, streaming) else { continue };
+        let mut cpu = flow;
+        for stop in [ramp_steps / 2, ramp_steps] {
+            let n = stop - cpu.steps_done();
+            cpu.advance(n).unwrap();
+            gpu.advance(n).unwrap();
+            let (du, drho) = field_difference(&mut cpu, &mut gpu);
+            println!("{collision:?} ramped Zou–He channel at step {stop}: CPU/GPU velocity {du:.2e}, density {drho:.2e}");
+            assert!(du < 2e-5 && drho < 1e-6, "step {stop}: {du} {drho}");
+        }
+    }
+}
+
 /// A convective outlet (fieldcraft_lbm::outlet) that a vortex crosses with reversed flow: the
 /// cells where the flow leaves convect, the reversed ones hold the pressure (Zou–He). Uniform
 /// stream U = 0.05 (lattice), periodic sides, a vortex of peak swirl 1.8 U placed at the outlet.
