@@ -3,7 +3,7 @@
 //! A `.fieldcraft` file ([`write`], [`read`]; docs/formats/fieldcraft.md) is a ZIP package of four
 //! parts and the optional ones, stored uncompressed so each can be read with any unzip tool:
 //!
-//! - `fieldcraft.json`: the manifest. The format tag (`fieldcraft/4`), the program that wrote
+//! - `fieldcraft.json`: the manifest. The format tag (`fieldcraft/5`), the program that wrote
 //!   it, the geometry the model is built on (the SolidCraft design and the imported meshes,
 //!   each a path, the SHA-256 of its content and, for a mesh read in a unit of its own, that
 //!   unit; opened again when the model is), the view state
@@ -18,6 +18,7 @@
 //!   replays, headed by the unit system its bare numbers are in ([`JournalHeader`]).
 //! - `results.bin` (optional): every solved step's result with the hash of the definition it was
 //!   solved from ([`results`]), so a model opens with its results.
+//! - `external.bin` (optional): imported result frames with their visualization grids and fields.
 //! - `geometry/<file>` (optional): copies of the geometry files, when the file embeds them
 //!   ([`Extras::embed`]); opened when the file a reference names is missing.
 //!
@@ -35,6 +36,7 @@
 
 pub mod checkpoint;
 pub mod codec;
+pub mod external;
 pub mod fs;
 pub mod gmsh;
 pub mod memory;
@@ -46,6 +48,7 @@ pub mod roots;
 pub mod stl;
 pub mod views;
 pub mod vtk;
+pub mod vtu;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
@@ -57,10 +60,10 @@ use sha2::{Digest, Sha256};
 
 /// The format version of the files this version writes, and the latest it reads (it reads every
 /// earlier one through [`migrate`]).
-pub const FORMAT_VERSION: u32 = 4;
+pub const FORMAT_VERSION: u32 = 5;
 
 /// The format tag of the files this version writes: `fieldcraft/<FORMAT_VERSION>`.
-pub const FORMAT: &str = "fieldcraft/4";
+pub const FORMAT: &str = "fieldcraft/5";
 
 /// The file name extension.
 pub const EXTENSION: &str = "fieldcraft";
@@ -465,6 +468,10 @@ pub struct ModelFile {
     pub notes: Vec<String>,
     /// The solved results the file keeps (`results.bin`), in step name order.
     pub results: Vec<results::Stored>,
+    /// Imported result frames with their own sampling grids.
+    pub external: Option<external::Series>,
+    /// Display selection on the imported grid, checked by the engine against its frame.
+    pub external_view: Option<Value>,
     /// Why the file's results were left unread (they are of another results encoding): the
     /// reader's note to the user.
     pub results_note: Option<String>,
@@ -485,6 +492,8 @@ struct Manifest {
     view: View,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     run: Run,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    external_view: Option<Value>,
     parts: BTreeMap<String, Part>,
 }
 
@@ -494,6 +503,10 @@ struct Manifest {
 pub struct Extras<'a> {
     /// Solved results to keep (`results.bin`), by step name.
     pub results: Vec<(&'a str, results::StoredRef<'a>)>,
+    /// Imported result series to embed.
+    pub external: Option<&'a external::Series>,
+    /// Display parameters applied to the imported frames on open.
+    pub external_view: Option<Value>,
     /// Geometry files to embed, by the SHA-256 of their content: a geometry source whose hash is
     /// listed gets a part holding these bytes (they must be that content).
     pub embed: BTreeMap<String, &'a [u8]>,
@@ -583,6 +596,7 @@ pub fn write_with(
         return Err(Error::Limit(format!("a model refers to at most {MAX_MESH_SOURCES} imported meshes")));
     }
     view.check()?;
+    external::check_view(extras.external_view.as_ref(), extras.external.is_some())?;
     check_run(&extras.run)?;
     let mut model_json = serde_json::to_vec_pretty(&model.without_mesh()).map_err(|e| json_error(MODEL, e))?;
     model_json.push(b'\n');
@@ -592,6 +606,9 @@ pub fn write_with(
         vec![(MODEL.into(), model_json.into()), (MESH.into(), mesh.into()), (JOURNAL.into(), journal.into())];
     if !extras.results.is_empty() {
         parts.push((results::PART.into(), results::encode(&extras.results)?.into()));
+    }
+    if let Some(series) = extras.external {
+        parts.push((external::PART.into(), external::encode(series)?.into()));
     }
     // Each embedded file once, by its content, under a name from its path.
     let mut geometry = geometry.clone();
@@ -631,12 +648,16 @@ pub fn write_with(
         geometry,
         view: view.clone(),
         run: extras.run.clone(),
+        external_view: extras.external_view.clone(),
         parts: parts.iter().map(|(name, bytes)| (name.clone(), Part { bytes: bytes.len() as u64, sha256: sha256_hex(bytes) })).collect(),
     };
     let mut manifest_json = serde_json::to_vec_pretty(&manifest).map_err(|e| json_error(MANIFEST, e))?;
     manifest_json.push(b'\n');
 
-    let total: usize = parts.iter().map(|(_, b)| b.len()).sum::<usize>() + manifest_json.len();
+    let total = parts
+        .iter()
+        .try_fold(manifest_json.len(), |size, (_, bytes)| size.checked_add(bytes.len()))
+        .ok_or_else(|| Error::Limit("model package exceeds this platform's address space".into()))?;
     if total as u64 > MAX_FILE_BYTES {
         return Err(Error::Limit(format!(
             "the file would be {} MB (at most {} MB): save without the results or the embedded geometry",
@@ -644,7 +665,9 @@ pub fn write_with(
             MAX_FILE_BYTES >> 20
         )));
     }
-    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::with_capacity(total.saturating_add(1024))));
+    let mut output = Vec::new();
+    output.try_reserve_exact(total.saturating_add(1024)).map_err(|_| Error::Limit("not enough memory to build the model package".into()))?;
+    let mut zip = zip::ZipWriter::new(Cursor::new(output));
     let zip_error = |e: zip::result::ZipError| Error::Io(format!("cannot build the package: {e}"));
     for (name, bytes) in std::iter::once((MANIFEST, manifest_json.as_slice())).chain(parts.iter().map(|(n, b)| (n.as_str(), b.as_ref()))) {
         // Fixed time and permissions: the bytes depend on the model only.
@@ -704,8 +727,13 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     if required.iter().any(|n| !listed.contains_key(*n)) {
         return invalid(format!("`{MANIFEST}` must list the parts {MODEL}, {MESH} and {JOURNAL}"));
     }
-    // Format 3 and later may also hold results and embedded geometry, each listed.
-    let optional = |name: &str| format >= 3 && (name == results::PART || check_geometry_part(name).is_ok());
+    // Format 3 introduced solved results and embedded geometry. Format 5 adds external frames
+    // and their display settings. Check the package as declared before migrating its contents.
+    if format < 5 && manifest.get("external_view").is_some() {
+        return invalid(format!("`{MANIFEST}` of format {format} cannot carry external_view"));
+    }
+    let optional =
+        |name: &str| (format >= 3 && (name == results::PART || check_geometry_part(name).is_ok())) || (format >= 5 && name == external::PART);
     if let Some(extra) = listed.keys().find(|n| !required.contains(&n.as_str()) && !optional(n)) {
         return invalid(if format >= 3 {
             format!("`{MANIFEST}` lists an unexpected part `{}`", extra.chars().filter(|c| !c.is_control()).take(80).collect::<String>())
@@ -713,7 +741,7 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
             format!("`{MANIFEST}` must list exactly the parts {MODEL}, {MESH} and {JOURNAL}")
         });
     }
-    if listed.len() > 4 + 1 + MAX_MESH_SOURCES {
+    if listed.len() > required.len() + 3 + MAX_MESH_SOURCES {
         return Err(Error::Limit(format!("`{MANIFEST}` lists {} parts", listed.len())));
     }
     let mut seen = BTreeSet::new();
@@ -744,6 +772,8 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     }
     // Decoded at once, so the part's bytes are not kept beside the results.
     let decoded = if listed.contains_key(results::PART) { Some(results::decode(&part(results::PART, results::MAX_BYTES)?)?) } else { None };
+    let external =
+        if listed.contains_key(external::PART) { Some(external::decode(&part(external::PART, external::MAX_BYTES as u64)?)?) } else { None };
     let model_json = part(MODEL, MAX_TEXT_PART_BYTES)?;
     let mesh = part(MESH, mesh::MAX_BYTES)?;
     let journal_json = part(JOURNAL, MAX_TEXT_PART_BYTES)?;
@@ -780,6 +810,7 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
         return Err(Error::Limit(format!("a model refers to at most {MAX_MESH_SOURCES} imported meshes")));
     }
     manifest.view.check()?;
+    external::check_view(manifest.external_view.as_ref(), external.is_some())?;
     check_run(&manifest.run)?;
     // Every embedded part is a copy of a geometry file the manifest names, and every copy named
     // is there.
@@ -824,6 +855,8 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
             notes,
             results,
             results_note,
+            external,
+            external_view: manifest.external_view,
             embedded,
             run: manifest.run,
         },

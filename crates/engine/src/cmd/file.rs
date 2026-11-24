@@ -290,6 +290,7 @@ impl Session {
             embed: copies.iter().map(|(sha, b)| (sha.clone(), b.as_slice())).collect(),
             // The settings of steps the model still has.
             run: self.run.iter().filter(|(step, _)| self.model.step(step).is_some()).map(|(k, v)| (k.clone(), *v)).collect(),
+            ..Default::default()
         };
         Ok(fieldcraft_io::write_with(&self.model, &geometry, &self.journal, &self.journal_header, &self.view, &extras)?)
     }

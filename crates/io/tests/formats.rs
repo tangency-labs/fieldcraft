@@ -399,7 +399,7 @@ fn every_format_1_fixture_opens_as_its_writer_read_it() {
     }
 }
 
-/// Every format 3 file (0.8.0, 0.8.1) opens through the tag-only step 3 → 4 as its writer read
+/// Every format 3 file (0.8.0, 0.8.1) opens through the tag-only steps 3 → 4 → 5 as its writer read
 /// it, with its embedded geometry: the parts format 3 and later may list. Its results, saved in
 /// the MCRSLT05 encoding, are dropped since MCRSLT06, as every older encoding's are.
 #[test]
