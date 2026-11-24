@@ -177,7 +177,7 @@ fn the_on_node_bounce_damps_the_odd_even_mode_of_its_wall_rows() {
 }
 
 /// The full sweep: both forms, the regularised, hybrid (σ 0.99), MRT and TRT collisions,
-/// τ̄ 0.50015 to 0.8, first node at u⁺ ≈ 5 and ≈ 11 (lowered where the centreline would pass
+/// τ̄ 0.50015 to 0.8 (MRT only from its stability bound, so from 0.505), first node at u⁺ ≈ 5 and ≈ 11 (lowered where the centreline would pass
 /// lattice speed 0.1); 20 000 steps each. Prints the table of growth rates per step.
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
@@ -188,6 +188,10 @@ fn the_odd_even_mode_of_the_wall_rows_across_forms_collisions_and_tau() {
     for wall in [WallModel::SpaldingBounce, WallModel::SpaldingBounceHalfway] {
         for collision in [Collision::Regularized, Collision::Hrr, Collision::Mrt, Collision::Trt] {
             for tau in [0.50015, 0.5015, 0.505, 0.55, 0.8] {
+                // The MRT collision is refused below its own stability bound (`mrt::MIN_VISCOSITY`).
+                if collision == Collision::Mrt && (tau - 0.5) / 3.0 < fieldcraft_lbm::mrt::MIN_VISCOSITY {
+                    continue;
+                }
                 for aim in [5.0, 11.0] {
                     let t = toy(wall, collision, tau, aim, steps);
                     if wall == WallModel::SpaldingBounce {

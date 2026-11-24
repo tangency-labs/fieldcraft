@@ -87,6 +87,12 @@ fn cases() -> impl Iterator<Item = (Collision, Streaming)> {
     COLLISIONS.into_iter().chain([Collision::Mrt]).flat_map(|c| [Streaming::InPlace, Streaming::TwoBuffers].map(move |s| (c, s)))
 }
 
+/// [`cases`] for a set-up below the multiple-relaxation-time collision's stability bound
+/// (`fieldcraft_lbm::mrt::MIN_VISCOSITY`, τ⁺ 0.50354), where that collision is refused.
+fn cases_close_to_one_half() -> impl Iterator<Item = (Collision, Streaming)> {
+    COLLISIONS.into_iter().flat_map(|c| [Streaming::InPlace, Streaming::TwoBuffers].map(move |s| (c, s)))
+}
+
 /// Both backends through every step; the CPU's fields and the GPU's.
 fn both(setup: &Setup, mut cpu: Flow, streaming: Streaming) -> Option<(Flow, Gpu)> {
     let mut gpu = gpu(&cpu, streaming)?;
@@ -1040,7 +1046,7 @@ fn heated_couette_flow_with_smagorinsky_matches_the_cpu() {
 /// four digits throughout, so its bound is the measured peak with a margin; TRT stays near 3e-6.
 #[test]
 fn a_cavity_held_by_the_closure_follows_the_cpu() {
-    for (collision, streaming) in cases() {
+    for (collision, streaming) in cases_close_to_one_half() {
         let (l, re, steps) = (48.0, 5000.0, 1000.0);
         let mut d = domain([0.0; 3], [l, l, 1.0], 1.0);
         d.faces.y_max = FaceCondition::MovingWall { velocity: [0.1, 0.0, 0.0] };
@@ -1152,7 +1158,7 @@ fn wall_modelled(mut p: Procedure, c: f64) -> Procedure {
 /// the f32 momentum exchange resolves; the channel below compares the wall drag.
 #[test]
 fn couette_flow_with_the_wall_model_matches_the_cpu() {
-    for (collision, streaming) in cases() {
+    for (collision, streaming) in cases_close_to_one_half() {
         let (h, nu, rho, u_wall, n, c) = (1.0, 5e-6, 1.2, 0.1, 8usize, 0.4);
         let dx = h / n as f64;
         let mut d = domain([0.0; 3], [dx, h, dx], dx);
@@ -1168,10 +1174,7 @@ fn couette_flow_with_the_wall_model_matches_the_cpu() {
         let (rc, rg) = (Backend::eddy_viscosity_ratio(&cpu), gpu.eddy_viscosity_ratio());
         println!("{collision:?} wall-modelled Couette, GPU vs CPU: velocity {du:.2e}, density {drho:.2e}; ν_t/ν CPU {rc:.4} GPU {rg:.4}");
         assert!(rc > 1.0, "the wall model's viscosity shows: {rc}");
-        // The multiple-relaxation-time collision's density keeps fewer f32 digits here (1.2e-5
-        // measured on the GB10; its velocity 6.3e-6).
-        let drho_max = if collision == Collision::Mrt { 3e-5 } else { 1e-6 };
-        assert!(du < 1e-4 && drho < drho_max, "{du} {drho}");
+        assert!(du < 1e-4 && drho < 1e-6, "{du} {drho}");
         assert!((rg - rc).abs() < 1e-3 * rc, "{rg} vs {rc}");
     }
 }
@@ -1183,12 +1186,12 @@ fn couette_flow_with_the_wall_model_matches_the_cpu() {
 /// bounce-back's exchange plus what the reconstruction takes, two parts about 450 times the body
 /// force in this start-up that nearly cancel (the net drag is 0.1 to 9 times the body force), so
 /// the states' f32 differences show in it magnified. Measured on the GB10 after 150 steps: velocity
-/// 2.3e-6 (TRT), 2.7e-6 (regularised) and 1.0e-6 (MRT), the wall cells at their imposed velocity
-/// within as much; wall drag 2.8e-4, 3.2e-4 and 9.8e-6 of itself, about 5e-6 of either part. The
+/// 2.3e-6 (TRT) and 2.7e-6 (regularised), the wall cells at their imposed velocity
+/// within as much; wall drag 2.8e-4 and 3.2e-4 of itself, about 5e-6 of either part. The
 /// steady channel below compares the drag to the force tests' tolerance.
 #[test]
 fn a_coarse_wall_modelled_channel_follows_the_cpu() {
-    for (collision, streaming) in cases() {
+    for (collision, streaming) in cases_close_to_one_half() {
         let (setup, flow) = coarse_channel(|p| wall_modelled(p, 0.1), collision);
         let grid = *flow.grid();
         let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
@@ -1275,16 +1278,16 @@ fn van_driest(mut p: Procedure, c: f64, wall_model: bool) -> Procedure {
 /// the wall model: every wall cell's u_τ from Spalding's law and every cell's damped constant
 /// change each step in a three-dimensional flow. Against the CPU after 150 steps, at the wall
 /// model's tolerances: the fields, the largest eddy viscosity ratio and the wall cells' largest
-/// y⁺ (`Backend::wall_y_plus`). Measured on the GB10, TRT / regularised / MRT: on the
-/// bounce-back walls, velocity 3.3e-6 / 5.6e-6 / 5.5e-7, density 5.3e-7 / 2.6e-7 / 7.1e-8, ν_t/ν
-/// 1.3e-5 / 1.4e-5 / 1.2e-4 of itself, y⁺ (11.8 to 12.6) 3.9e-6 / 6.3e-6 / 1.3e-6; under the wall
-/// model, velocity 2.1e-6 / 2.8e-6 / 9.8e-7, density 4.0e-7 / 2.0e-7 / 1.0e-7, ν_t/ν 1.1e-5 /
-/// 1.3e-5 / 2.3e-5, y⁺ (13.6 to 14.6) within 2e-7. With the damping left out of the GPU's
+/// y⁺ (`Backend::wall_y_plus`). Measured on the GB10, TRT / regularised: on the
+/// bounce-back walls, velocity 3.3e-6 / 5.6e-6, density 5.3e-7 / 2.6e-7, ν_t/ν
+/// 1.3e-5 / 1.4e-5 of itself, y⁺ (11.8 to 12.6) 3.9e-6 / 6.3e-6; under the wall
+/// model, velocity 2.1e-6 / 2.8e-6, density 4.0e-7 / 2.0e-7, ν_t/ν 1.1e-5 /
+/// 1.3e-5, y⁺ (13.6 to 14.6) within 2e-7. With the damping left out of the GPU's
 /// collision the velocity differs by 0.12 of the largest speed.
 #[test]
 fn a_coarse_channel_with_van_driest_damping_follows_the_cpu() {
     for wall_model in [false, true] {
-        for (collision, streaming) in cases() {
+        for (collision, streaming) in cases_close_to_one_half() {
             let (setup, flow) = coarse_channel(|p| van_driest(p, 0.1, wall_model), collision);
             assert!(flow.van_driest() && flow.wall_model() == wall_model);
             let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
@@ -1318,10 +1321,10 @@ fn on_node_turbulence(vreman: bool) -> Turbulence {
     }
 }
 
-/// The collisions the on-node bounce is checked with, and their σ: regularised, hybrid at σ 0.99,
-/// MRT and TRT.
-const ON_NODE_COLLISIONS: [(Collision, Option<HrrSigma>); 4] =
-    [(Collision::Regularized, None), (Collision::Hrr, Some(HrrSigma::Value(0.99))), (Collision::Mrt, None), (Collision::Trt, None)];
+/// The collisions the on-node bounce is checked with, and their σ: regularised, hybrid at σ 0.99
+/// and TRT.
+const ON_NODE_COLLISIONS: [(Collision, Option<HrrSigma>); 3] =
+    [(Collision::Regularized, None), (Collision::Hrr, Some(HrrSigma::Value(0.99))), (Collision::Trt, None)];
 
 /// The CPU's coarse on-node channel (`crates/lbm/tests/wall_bounce.rs`): 6 cells per half-height,
 /// Re_τ 180, periodic in x and z, the box 2δ + Δx high (13 cells) so that the walls through the
@@ -1401,7 +1404,7 @@ fn on_node_difference(flow: Flow, steps: u64, streaming: Streaming) -> Option<On
 }
 
 /// Han, Ooka and Kikumoto's on-node bounce (their eq. 14) in the perturbed coarse channel, 150
-/// steps from the start (no warm-up), on the regularised, hybrid (σ 0.99), MRT and TRT
+/// steps from the start (no warm-up), on the regularised, hybrid (σ 0.99) and TRT
 /// collisions, with Smagorinsky's model and Van Driest's damping and with Vreman's, both layouts:
 /// the fields, the walls' drag and stresses at [`check_on_node`]'s tolerances.
 #[test]
@@ -1437,11 +1440,11 @@ fn the_on_node_wall_function_bounce_follows_the_cpu_in_han_s_a20_channel() {
     }
 }
 /// The on-node bounce twice on one device gives the same fields and wall forces bit for bit (the
-/// paper's MRT with Smagorinsky's model and Van Driest's damping, and the hybrid collision with
+/// regularised collision with Smagorinsky's model and Van Driest's damping, and the hybrid collision with
 /// Vreman's, in the coarse channel), both layouts.
 #[test]
 fn the_on_node_wall_function_bounce_is_deterministic_on_its_device() {
-    for (vreman, collision, sigma) in [(false, Collision::Mrt, None), (true, Collision::Hrr, Some(HrrSigma::Value(0.99)))] {
+    for (vreman, collision, sigma) in [(false, Collision::Regularized, None), (true, Collision::Hrr, Some(HrrSigma::Value(0.99)))] {
         for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
             let (setup, flow) = on_node_channel(on_node_turbulence(vreman), collision, sigma, 150.0);
             let run = || {
@@ -1585,7 +1588,7 @@ fn a_coarse_channel_with_the_wall_function_bounce_follows_the_cpu() {
         }
         p
     };
-    for (collision, streaming) in cases() {
+    for (collision, streaming) in cases_close_to_one_half() {
         let (setup, flow) = coarse_channel(bounce, collision);
         assert!(flow.wall_bounce() && flow.van_driest());
         let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
@@ -1751,7 +1754,7 @@ fn sigma_one_is_the_regularised_collision_on_the_gpu() {
 /// Vreman's model with every collision that takes it, in both cases and layouts, against the CPU.
 #[test]
 fn vreman_s_model_follows_the_cpu() {
-    for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt] {
+    for collision in [Collision::Trt, Collision::Regularized] {
         les_cases("Vreman 0.18", 180.0, les(None, Some(VREMAN)), collision);
     }
     les_cases("Vreman 0.18", 180.0, les(Some(HrrSigma::Value(0.9)), Some(VREMAN)), Collision::Hrr);
@@ -4321,6 +4324,10 @@ fn uniform_pressure_outlet_acceptance_sweep() {
     for collision in [Collision::Trt, Collision::Mrt, Collision::Regularized, Collision::Hrr] {
         for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
             for tau in [0.5001, 0.505, 0.518, 0.55] {
+                // The MRT collision is refused below its own stability bound (`mrt::MIN_VISCOSITY`).
+                if collision == Collision::Mrt && (tau - 0.5) / 3.0 < fieldcraft_lbm::mrt::MIN_VISCOSITY {
+                    continue;
+                }
                 for size in [[4, 1, 1], [16, 8, 2]] {
                     if let Some(worst) = uniform_pressure_departure(collision, streaming, tau, size, 30_000) {
                         assert!(worst <= 1e-5, "{worst}");
@@ -4335,7 +4342,7 @@ fn uniform_pressure_outlet_acceptance_sweep() {
 #[test]
 fn wall_measurement_closes_cpu_and_gpu_momentum_budgets() {
     use wall_balance::{closed_step, musker_request, population_momentum};
-    for (collision, streaming) in cases() {
+    for (collision, streaming) in cases_close_to_one_half() {
         let (setup, mut cpu) = coarse_channel(|p| wall_modelled(p, 0.1), collision);
         let Some(mut device) = gpu(&cpu, streaming) else { return };
         let area = 2.0 * (setup.grid.cells[0] * setup.grid.cells[2]) as f64;

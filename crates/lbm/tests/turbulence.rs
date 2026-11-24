@@ -362,7 +362,7 @@ fn perturbed_channel(collision: Collision, steps: f64, wall: WallModel) -> (Setu
 /// reconstruction does not conserve mass; its drift is printed.
 #[test]
 fn the_wall_force_closes_the_momentum_budget_of_a_wall_modelled_channel() {
-    for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt] {
+    for collision in [Collision::Trt, Collision::Regularized] {
         let (setup, mut flow) = perturbed_wall_modelled_channel(collision, 40.0);
         assert!(flow.wall_model());
         let a = flow.acceleration();
@@ -415,7 +415,7 @@ fn the_wall_force_closes_the_momentum_budget_of_a_wall_modelled_channel() {
 #[test]
 fn the_fields_report_a_modelled_wall_cell_at_its_imposed_velocity() {
     use fieldcraft_lbm::backend::Backend;
-    let (_, mut flow) = perturbed_wall_modelled_channel(Collision::Mrt, 10.0);
+    let (_, mut flow) = perturbed_wall_modelled_channel(Collision::Regularized, 10.0);
     let before = flow.fields().unwrap();
     assert!((0..flow.grid().len()).all(|c| flow.moments(c).is_none_or(|m| m.1 == before.velocity[c])));
     for _ in 0..10 {
@@ -446,7 +446,7 @@ fn the_fields_report_a_modelled_wall_cell_at_its_imposed_velocity() {
 /// Spalding's law (κ 0.41, B 5.5) at half a cell.
 #[test]
 fn the_wall_function_bounce_gives_the_walls_exactly_the_law_s_stress() {
-    for collision in [Collision::Trt, Collision::Regularized, Collision::Mrt] {
+    for collision in [Collision::Trt, Collision::Regularized] {
         let (setup, mut flow) = perturbed_channel(collision, 40.0, WallModel::SpaldingBounceHalfway);
         assert!(flow.wall_bounce() && !flow.wall_model());
         let a = flow.acceleration();

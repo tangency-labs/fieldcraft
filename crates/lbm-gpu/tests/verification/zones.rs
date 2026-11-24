@@ -264,7 +264,7 @@ fn walled_fan_channel(wall: WallModel, collision: Collision) -> (Setup, Flow) {
 #[test]
 fn fans_and_porous_zones_with_every_wall_treatment_follow_the_cpu() {
     for wall in [WallModel::Musker, WallModel::SpaldingBounceHalfway, WallModel::SpaldingBounce] {
-        for collision in [Collision::Trt, Collision::Mrt] {
+        for collision in [Collision::Trt, Collision::Regularized] {
             for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
                 let (setup, flow) = walled_fan_channel(wall, collision);
                 assert_eq!(flow.zones().len(), 2);

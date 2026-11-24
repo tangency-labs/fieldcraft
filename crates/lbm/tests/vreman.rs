@@ -182,7 +182,7 @@ fn the_wall_models_run_with_the_model() {
     let n = 4;
     let dx = 1.0 / n as f64;
     for (couette, wall) in [(true, WallModel::Musker), (false, WallModel::SpaldingBounceHalfway)] {
-        for collision in [Collision::Mrt, Collision::Regularized] {
+        for collision in [Collision::Trt, Collision::Regularized] {
             let t = Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model: Some(wall) };
             // The forced channel takes a shorter time step for its Mach number.
             let (dt, nu) = if couette { (dx, 1e-5) } else { (0.1 * dx, 1e-4) };

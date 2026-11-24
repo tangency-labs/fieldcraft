@@ -17,11 +17,14 @@
 //! combinations, the quartic modes −½ of the stresses', the cubic ones 0), and the rates those
 //! of O. Malaspinas, P. Sagaut, *Wall model for large-eddy simulation based on the lattice
 //! Boltzmann method*, J. Comput. Phys. 275:25–40, 2014 (doi:10.1016/j.jcp.2014.06.020,
-//! appendix A, from d'Humières et al.'s linear stability analysis): 1.19 for the energy, 1.4
+//! appendix A, from d'Humières et al.'s linear stability analysis, which is for their optimised equilibria, not these): 1.19 for the energy, 1.4
 //! for its square and the quartic modes, 1.2 for the energy flux, 1.98 for the cubic modes, and
 //! the viscous rate 1 / (3 ν + ½) for the five stresses, which Smagorinsky's model replaces per
 //! cell (as in the paper's eqs. 47–48). Guo's force enters as `(I − S/2)` times its moments, as
 //! in the paper's eq. 34, with the equilibrium at the velocity that includes half the force.
+//!
+//! With these equilibria and rates the collision is linearly unstable below [`MIN_VISCOSITY`], at rest; a step
+//! below it is refused (`Setup::new`).
 //!
 //! Where this differs from the papers: Malaspinas and Sagaut's eq. 10 for the energy square's
 //! equilibrium is printed as (11/2) ρ (3 − u²); this module uses d'Humières et al.'s
@@ -97,6 +100,20 @@ const VISCOUS: [usize; 5] = [9, 11, 13, 14, 15];
 /// Each moment's relaxation rate, the viscous ones set per cell (the conserved moments' rates do
 /// not act: their equilibria are themselves).
 const RATES: [f64; Q] = [0.0, 1.19, 1.4, 0.0, 1.2, 0.0, 1.2, 0.0, 1.2, 0.0, 1.4, 0.0, 1.4, 0.0, 0.0, 0.0, 1.98, 1.98, 1.98];
+
+/// The smallest lattice viscosity ν Δt/Δx² = c_s² (τ − ½) at which this collision is linearly stable in fluid at
+/// rest: τ = 0.50354. Below it a band of waves near k = π (0.25, 0.42, 0.42) grows, by up to 8e-3 per step as
+/// ν → 0, with or without a subgrid model (its eddy viscosity is zero where the strain rate is), and a run fills
+/// with grid-scale noise. From the von Neumann analysis of this module's own `collide` (Lallemand & Luo, Phys.
+/// Rev. E 61:6546–6562, 2000, Sec. IV: the analysis d'Humières et al. chose these rates with), which finds the
+/// last wave stable at 1.18008e-3; `tests/mrt_stability.rs` keeps it to one per cent. d'Humières et al.
+/// (appendix A) state ν > 2.54e-3 at speeds up to 0.19 for the same rates with their optimised equilibria.
+pub const MIN_VISCOSITY: f64 = 1.1801e-3;
+
+/// [`MIN_VISCOSITY`] about a uniform stream at lattice Mach 0.1 instead of at rest (τ = 0.50369): the bound rises
+/// with the stream's speed, most along (1, ½, ½). One per cent above it no wave grows at that speed (checked over 45
+/// sampled directions of the stream); past Mach 0.1 slower waves (3e-5 per step at Mach 0.2) grow at larger viscosities too (`docs/manual/fluid/collision.md`).
+pub const MIN_VISCOSITY_AT_MACH_0_1: f64 = 1.2295e-3;
 
 /// The equilibrium moments at density `rho` and velocity `u`.
 #[inline(always)]
