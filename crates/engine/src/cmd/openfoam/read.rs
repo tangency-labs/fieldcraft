@@ -190,6 +190,9 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         .map_err(|e| EngineError::context(format!("{} is not a case deck.openfoam wrote (no {MARKER})", root.display()), e))?;
     let marker: Marker = serde_json::from_slice(&marker_bytes).map_err(|e| EngineError::invalid("path", format!("{MARKER}: {e}")))?;
     marker.check()?;
+    if marker.gas.is_some() {
+        return Err(EngineError::invalid("path", "not supported yet: reading compressible cases"));
+    }
     let (step, domain) = fieldcraft_lbm::fluid_step(&s.model, Some(&marker.step))?;
     let step_name = step.name.clone();
     let every: usize = opt(p, "every")?.unwrap_or(1);
