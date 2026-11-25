@@ -142,7 +142,7 @@ const WRITE_PRECISION: u32 = 9;
 /// explicit non-orthogonal correction to half the orthogonal part, so each
 /// non-orthogonal corrector at least halves the lag of the correction on the worst face (the mesh
 /// allows faces up to `maxNonOrtho`, where the unlimited correction is twice the orthogonal part).
-const NON_ORTHOGONAL_LIMIT: f64 = 0.333;
+pub(super) const NON_ORTHOGONAL_LIMIT: f64 = 0.333;
 
 /// Convection under LES: central differencing, second order, adds no numerical dissipation to the
 /// subgrid model's (Mittal & Moin 1997, AIAA J. 35:1415–1417; UG §6.2.5 Table 6.7, `linear`).
@@ -169,7 +169,7 @@ const NON_ORTHOGONAL_CORRECTORS: u32 = 1;
 /// The tolerance of the linear solvers, on OpenFOAM's normalised residual (UG §6.3.1.1; DOC
 /// "Residuals": Σ|b − Ax| over Σ(|Ax − Ax̄| + |b − Ax̄|), dimensionless). Results are read back
 /// into `f32` frames: a residual below an `f32`'s relative spacing changes nothing they keep.
-fn solver_tolerance() -> f64 {
+pub(super) fn solver_tolerance() -> f64 {
     f64::from(f32::EPSILON)
 }
 

@@ -29,7 +29,10 @@
 
 mod dicts;
 pub mod fields;
+pub mod gas;
+pub use dicts::SOLVER as INCOMPRESSIBLE_SOLVER;
 pub use dicts::sample_reach;
+pub use gas::{Gas, GasConditions, PressureBox};
 #[cfg(test)]
 mod grammar;
 #[cfg(test)]
@@ -121,15 +124,19 @@ pub struct CaseOptions {
     pub location: [f64; 3],
     /// MPI ranks `Allrun` runs the solver on (1: serial; at most [`MAX_PROCESSES`]).
     pub processes: u32,
-    /// The Courant number the time step adapts to ([`dicts::MAX_COURANT`] by default).
+    /// The Courant number the time step adapts to ([`dicts::MAX_COURANT`] by default; a
+    /// compressible case's at most [`gas::MAX_COURANT`]).
     pub max_courant: f64,
+    /// Compressible flow of an ideal gas (`rhoCentralFoam`) in these conditions, instead of
+    /// incompressible flow (`pimpleFoam`).
+    pub gas: Option<GasConditions>,
 }
 
 impl CaseOptions {
     /// The options with their defaults, meshed as `mesh`, around the point `location` in the
     /// fluid.
     pub fn new(mesh: MeshOptions, location: [f64; 3]) -> Self {
-        CaseOptions { mesh, location, processes: 1, max_courant: dicts::MAX_COURANT }
+        CaseOptions { mesh, location, processes: 1, max_courant: dicts::MAX_COURANT, gas: None }
     }
 }
 
@@ -146,8 +153,11 @@ pub struct Case {
     pub solver: &'static str,
     /// What the case leaves out or does differently from the lattice Boltzmann step.
     pub notes: Vec<String>,
-    /// The fluid's density (kg/m³): OpenFOAM's incompressible pressure is kinematic, p/ρ.
+    /// The fluid's density (kg/m³): OpenFOAM's incompressible pressure is kinematic, p/ρ; a
+    /// compressible case's reference density, the ambient pressure over R_s T.
     pub density: f64,
+    /// The gas of a compressible case.
+    pub gas: Option<Gas>,
     /// The background cell (metres).
     pub background: f64,
     /// Significant digits of the time directories' names.
@@ -219,7 +229,7 @@ pub fn finest_cell_of(domain: &FluidDomain, mesh: &MeshOptions, p: [f64; 3]) -> 
 /// Whether the case can be written at all: the step, its fluid domain, its material and its
 /// turbulence model are all ones the case expresses. `write_case` makes the same checks; this
 /// lets a caller refuse before costly preparation (such as finding the location).
-pub fn check(model: &Model, step: Option<&str>) -> Result<()> {
+pub fn check(model: &Model, step: Option<&str>, gas: Option<&GasConditions>) -> Result<()> {
     let step = fluid_step(model, step)?;
     let Procedure::Fluid { domain: domain_name, turbulence, .. } = &step.procedure else {
         return Err(unsupported(format!("step `{}` is not a fluid step", step.name)));
@@ -227,9 +237,25 @@ pub fn check(model: &Model, step: Option<&str>) -> Result<()> {
     let domain =
         model.fluid_domains().get(domain_name).ok_or_else(|| unsupported(format!("step `{}` names no fluid domain `{domain_name}`", step.name)))?;
     refuse_unsupported(domain, &mut Vec::new())?;
-    fluid_properties(model, domain)?;
-    dicts::turbulence_properties(turbulence.as_ref(), &mut Vec::new())?;
+    match gas {
+        Some(conditions) => {
+            refuse_turbulence_with_gas(turbulence.as_ref())?;
+            Gas::of(model, domain, conditions)?;
+        }
+        None => {
+            fluid_properties(model, domain)?;
+            dicts::turbulence_properties(turbulence.as_ref(), &mut Vec::new())?;
+        }
+    }
     Ok(())
+}
+
+/// A compressible case is laminar: a turbulence model is refused by name, never dropped.
+fn refuse_turbulence_with_gas(turbulence: Option<&fieldcraft_model::Turbulence>) -> Result<()> {
+    match turbulence {
+        Some(t) => Err(unsupported(format!("the {} turbulence model in a compressible case (laminar only so far)", t.name()))),
+        None => Ok(()),
+    }
 }
 
 /// Each refinement box's level below the background: the box's spacing (the lattice spacing
@@ -268,7 +294,18 @@ pub fn write_case(model: &Model, step: Option<&str>, obstacles: &[ObstacleSurfac
         model.fluid_domains().get(domain_name).ok_or_else(|| unsupported(format!("step `{}` names no fluid domain `{domain_name}`", step.name)))?;
     let mut notes = Vec::new();
     refuse_unsupported(domain, &mut notes)?;
-    let (density, viscosity) = fluid_properties(model, domain)?;
+    let gas = match &options.gas {
+        Some(conditions) => {
+            refuse_turbulence_with_gas(turbulence.as_ref())?;
+            notes.push("compressible: an ideal gas from the material's specific heat, viscosity and conductivity; its density is not used".into());
+            Some(Gas::of(model, domain, conditions)?)
+        }
+        None => None,
+    };
+    let (density, viscosity) = match &gas {
+        Some(g) => (g.reference_density(), g.viscosity),
+        None => fluid_properties(model, domain)?,
+    };
     let duration = match (end_time, steps, time_step) {
         (Some(t), _, _) => *t,
         (None, Some(n), Some(dt)) => *n as f64 * dt,
@@ -289,8 +326,9 @@ pub fn write_case(model: &Model, step: Option<&str>, obstacles: &[ObstacleSurfac
     if finest <= dicts::MERGE_TOLERANCE * diagonal {
         return Err(unsupported(format!("a finest cell below the mesher's merge tolerance ({} of the domain's diagonal)", dicts::MERGE_TOLERANCE)));
     }
-    if !(options.max_courant.is_finite() && options.max_courant > 0.0 && options.max_courant <= dicts::MAX_COURANT) {
-        return Err(unsupported(format!("a Courant limit outside (0, {}]", dicts::MAX_COURANT)));
+    let max_courant = if gas.is_some() { gas::MAX_COURANT } else { dicts::MAX_COURANT };
+    if !(options.max_courant.is_finite() && options.max_courant > 0.0 && options.max_courant <= max_courant) {
+        return Err(unsupported(format!("a Courant limit outside (0, {max_courant}]")));
     }
     if !(1..=MAX_PROCESSES).contains(&options.processes) {
         return Err(unsupported(format!("{} processes (1 to {MAX_PROCESSES})", options.processes)));
@@ -358,35 +396,44 @@ pub fn write_case(model: &Model, step: Option<&str>, obstacles: &[ObstacleSurfac
     files.insert("system/surfaceFeatureExtractDict".into(), dicts::feature_extract(&surfaces));
     let background = domain.spacing * f64::from(options.mesh.cell_factor);
     files.insert("system/snappyHexMeshDict".into(), dicts::snappy(&surfaces, level, &boxes, options.location, background, cells));
-    for (field, text) in fields(domain, density, &surfaces) {
-        files.insert(format!("0/{field}"), text);
-    }
-    files.insert("constant/transportProperties".into(), dicts::transport(viscosity / density));
-    files.insert("constant/turbulenceProperties".into(), dicts::turbulence_properties(turbulence.as_ref(), &mut notes)?);
-    let les = turbulence.is_some();
-    let wall_distance = matches!(turbulence, Some(fieldcraft_model::Turbulence::Smagorinsky { van_driest: Some(_), .. }));
-    files.insert("system/fvSchemes".into(), dicts::fv_schemes(les, wall_distance));
-    // Orthogonal: no obstacle surface and nothing refined (each box carries its own level).
-    let orthogonal = surfaces.is_empty() && boxes.iter().all(|(_, box_level)| *box_level == 0);
-    files.insert("system/fvSolution".into(), dicts::fv_solution(orthogonal));
+    let (solver, speed, set_fields) = match (&gas, &options.gas) {
+        (Some(g), Some(conditions)) => {
+            for (field, text) in gas::fields(domain, g, &surfaces, &mut notes)? {
+                files.insert(format!("0/{field}"), text);
+            }
+            files.insert("constant/thermophysicalProperties".into(), gas::thermophysical(g)?);
+            files.insert("constant/turbulenceProperties".into(), dicts::turbulence_properties(None, &mut notes)?);
+            files.insert("system/fvSchemes".into(), gas::fv_schemes(dicts::NON_ORTHOGONAL_LIMIT));
+            files.insert("system/fvSolution".into(), gas::fv_solution(dicts::solver_tolerance()));
+            let boxes = !conditions.initial_pressure.is_empty();
+            if boxes {
+                files.insert("system/setFieldsDict".into(), gas::set_fields(g, &conditions.initial_pressure)?);
+            }
+            (gas::SOLVER, gas::courant_speed(domain, g), boxes)
+        }
+        _ => {
+            for (field, text) in fields(domain, density, &surfaces) {
+                files.insert(format!("0/{field}"), text);
+            }
+            files.insert("constant/transportProperties".into(), dicts::transport(viscosity / density));
+            files.insert("constant/turbulenceProperties".into(), dicts::turbulence_properties(turbulence.as_ref(), &mut notes)?);
+            let les = turbulence.is_some();
+            let wall_distance = matches!(turbulence, Some(fieldcraft_model::Turbulence::Smagorinsky { van_driest: Some(_), .. }));
+            files.insert("system/fvSchemes".into(), dicts::fv_schemes(les, wall_distance));
+            // Orthogonal: no obstacle surface and nothing refined (each box carries its own level).
+            let orthogonal = surfaces.is_empty() && boxes.iter().all(|(_, box_level)| *box_level == 0);
+            files.insert("system/fvSolution".into(), dicts::fv_solution(orthogonal));
+            (dicts::SOLVER, speed_scale(domain, density), false)
+        }
+    };
     let frames = (*frames).max(1);
-    let speed = speed_scale(domain, density);
-    let control = dicts::Control { solver: dicts::SOLVER, duration, frames, courant: options.max_courant, finest, speed, average_from };
+    let control = dicts::Control { solver, duration, frames, courant: options.max_courant, finest, speed, average_from };
     files.insert("system/controlDict".into(), dicts::control(&control));
     files.insert("system/decomposeParDict".into(), dicts::decompose(options.processes));
-    files.insert("Allrun".into(), allrun(&step.name, dicts::SOLVER, options.processes));
+    files.insert("Allrun".into(), allrun(&step.name, solver, options.processes, set_fields));
     files.insert("case.foam".into(), String::new());
 
-    Ok(Case {
-        files,
-        patches,
-        background_cells: cells,
-        solver: dicts::SOLVER,
-        notes,
-        density,
-        background,
-        time_precision: dicts::time_precision(frames),
-    })
+    Ok(Case { files, patches, background_cells: cells, solver, notes, density, gas, background, time_precision: dicts::time_precision(frames) })
 }
 
 /// The fluid's density and dynamic viscosity: both required, constant and Newtonian.
@@ -731,7 +778,7 @@ fn fields(d: &FluidDomain, density: f64, surfaces: &[Surface]) -> [(&'static str
 
 /// The script. The function name `writeCellCentres` of `postProcess -func` is a keyword of the
 /// format; not in the documentation pages read (U4).
-fn allrun(step: &str, solver: &str, processes: u32) -> String {
+fn allrun(step: &str, solver: &str, processes: u32, set_fields: bool) -> String {
     let step: String = step.chars().filter(|c| !c.is_control()).collect();
     let mut s = format!(
         "#!/bin/sh\n# FieldCraft fluid step `{step}` as an OpenFOAM case: mesh, solve, reconstruct.\n\
@@ -742,6 +789,9 @@ run() {{ log=\"log.$1\"; echo \"$*  > $log\"; \"$@\" > \"$log\" 2>&1; }}\n\
 run blockMesh\nrun surfaceFeatureExtract\nrun snappyHexMesh -overwrite\nrun checkMesh\n\
 run postProcess -func writeCellCentres -time 0\n"
     );
+    if set_fields {
+        s.push_str("run setFields\n");
+    }
     if processes > 1 {
         let _ = write!(
             s,

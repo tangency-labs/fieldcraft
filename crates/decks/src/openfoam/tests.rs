@@ -480,3 +480,66 @@ fn refuses_each_case_it_cannot_write() {
         assert!(e.contains(needle), "{what}: {e}");
     }
 }
+
+/// A compressible case through `write_case`: rhoCentralFoam with the gas's own dictionaries and
+/// fields, every file in the documented grammar, a reservoir box charged by setFields; a
+/// turbulence model and a Courant limit above the gas's are refused, never dropped or clamped.
+#[test]
+fn a_compressible_case_is_written_whole() {
+    let model = |turbulence: serde_json::Value| -> Model {
+        let mut step = serde_json::json!({"type": "fluid", "domain": "Flow", "end_time": 0.01, "frames": 5});
+        if !turbulence.is_null() {
+            step["turbulence"] = turbulence;
+        }
+        serde_json::from_value(serde_json::json!({
+            "materials": {"Air": {"density": 1.2, "fluid": {"type": "newtonian", "viscosity": 1.8e-5},
+                                  "thermal": {"conductivity": 0.0257, "specific_heat": 1005.0}}},
+            "fluid_domains": {"Flow": {"material": "Air", "min": [0.0, 0.0, 0.0], "max": [0.01, 0.004, 0.004], "spacing": 0.0005,
+                "faces": {"x_min": {"type": "pressure", "pressure": 2.0e5}, "x_max": {"type": "pressure", "pressure": 0.0}},
+                "obstacles": ["Cube"]}},
+            "steps": [{"name": "Jet", "procedure": step, "output": []}]
+        }))
+        .unwrap()
+    };
+    let conditions = GasConditions {
+        ambient: 101_325.0,
+        temperature: 293.15,
+        gas_constant: 287.05,
+        far_field: 0.05,
+        initial_pressure: vec![PressureBox { min: [0.0; 3], max: [0.002, 0.004, 0.004], pressure: 2.0e5 }],
+    };
+    let gas_options = CaseOptions { gas: Some(conditions), max_courant: gas::COURANT, ..options() };
+    let case = write(&model(serde_json::Value::Null), &gas_options).unwrap();
+    assert_eq!(case.solver, "rhoCentralFoam");
+    for f in ["0/T", "constant/thermophysicalProperties", "system/setFieldsDict"] {
+        assert!(case.files.contains_key(f), "{f} missing");
+    }
+    for f in ["0/nut", "constant/transportProperties"] {
+        assert!(!case.files.contains_key(f), "{f} is not part of a compressible case");
+    }
+    for (path, text) in &case.files {
+        if path.ends_with(".stl") || path == "Allrun" || path == "case.foam" {
+            continue;
+        }
+        let tree = super::grammar::check_file(text).unwrap_or_else(|e| panic!("{path}: {e}\n{text}"));
+        assert!(tree.all_directives().is_empty(), "{path}");
+    }
+    let control = super::grammar::check_file(&case.files["system/controlDict"]).unwrap();
+    assert_eq!(control.text("application").as_deref(), Some("rhoCentralFoam"));
+    assert_eq!(control.number("maxCo"), Some(gas::COURANT));
+    let allrun = &case.files["Allrun"];
+    let (centres, set) = (allrun.find("writeCellCentres").unwrap(), allrun.find("run setFields").unwrap());
+    assert!(centres < set && set < allrun.find("run rhoCentralFoam").unwrap(), "{allrun}");
+    let expected_density = 101_325.0 / (287.05 * 293.15);
+    assert!((case.density - expected_density).abs() <= 1e-12 * expected_density, "{}", case.density);
+    assert!(case.gas.is_some());
+
+    let e = write(&model(serde_json::json!({"type": "smagorinsky", "constant": 0.16})), &gas_options).unwrap_err().to_string();
+    assert!(e.contains("smagorinsky turbulence model in a compressible case"), "{e}");
+    let e = write(&model(serde_json::Value::Null), &CaseOptions { max_courant: 0.6, ..gas_options.clone() }).unwrap_err().to_string();
+    assert!(e.contains("Courant"), "{e}");
+    // The engine's early check refuses the same, before any obstacle is tessellated.
+    let conditions = gas_options.gas.as_ref();
+    assert!(check(&model(serde_json::json!({"type": "smagorinsky", "constant": 0.16})), None, conditions).is_err());
+    assert!(check(&model(serde_json::Value::Null), None, conditions).is_ok());
+}

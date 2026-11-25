@@ -97,7 +97,7 @@ fn write(s: &mut Session, p: &Value) -> Result<Value> {
     let (step, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
     let step_name = step.name.clone();
     // What the case cannot express is refused before the obstacles are tessellated and searched.
-    fieldcraft_decks::openfoam::check(&s.model, Some(&step_name))?;
+    fieldcraft_decks::openfoam::check(&s.model, Some(&step_name), None)?;
     let mut mesh = MeshOptions::default();
     if let Some(f) = opt(p, "cell_factor")? {
         mesh.cell_factor = f;
