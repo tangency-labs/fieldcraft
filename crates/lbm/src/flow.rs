@@ -4113,6 +4113,7 @@ mod tests {
             turbulence: None,
             steady: None,
             walls: WallTreatment::Interpolated,
+            inlet_ramp: None,
         };
         m.add_step(Step::new("Run", procedure), None).unwrap();
         let obstacles = [block];
@@ -4206,6 +4207,7 @@ mod tests {
             turbulence: None,
             steady: None,
             walls: WallTreatment::Halfway,
+            inlet_ramp: None,
         };
         m.add_step(Step::new("Run", procedure), None).unwrap();
         let setup = Setup::new(&m, None, &[], &crate::Limits::default()).unwrap();
