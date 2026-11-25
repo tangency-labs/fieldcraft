@@ -723,7 +723,7 @@ pub static CATALOGUE: &[Capability] = &[
         "OpenFOAM Case",
         Solve,
         "Decks",
-        "Write a fluid step as an OpenFOAM case directory, for running it in OpenFOAM (snappyHexMesh, pimpleFoam, an Allrun script)",
+        "Write a fluid step as an OpenFOAM case directory, for running it in OpenFOAM (snappyHexMesh, pimpleFoam or, for a gas, rhoCentralFoam, an Allrun script)",
     ),
     ready(
         "deck.read",

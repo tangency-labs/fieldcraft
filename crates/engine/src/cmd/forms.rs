@@ -2786,7 +2786,31 @@ pub const DECK_OPENFOAM: &[Field] = &[
         .help("Background cells of the spacing times this (1, 2, 4, 8); snappyHexMesh refines the obstacles back to the spacing.")
         .hint("1"),
     int("processes", "Processes", 1, fieldcraft_decks::openfoam::MAX_PROCESSES as i64).help("The ranks decomposeParDict and Allrun use.").hint("1"),
-    positive("max_courant", "Max Courant", D::None).help("The Courant number the time step adapts to (at most 1).").hint("1"),
+    positive("max_courant", "Max Courant", D::None).help("The Courant number the time step adapts to (at most 1; compressible: 0.25 by default, at most 0.5).").hint("1"),
+    group(
+        "compressible",
+        "Compressible",
+        &[
+            positive("ambient", "Ambient pressure", D::Stress).help("The absolute pressure the model's gauge pressures count from.").req(),
+            num("temperature", "Temperature", D::Temperature).help("The initial, inflow and reservoir temperature.").req(),
+            positive("gas_constant", "Gas constant", D::SpecificHeat).help("The specific gas constant R/M of the gas.").req(),
+            positive("far_field", "Far-field length", D::Length)
+                .help("The far-field relaxation length of the non-reflecting outlets (OpenFOAM's waveTransmissive lInf): the distance over which an outlet's pressure relaxes towards the ambient.")
+                .req(),
+            rows_up_to(
+                "initial_pressure",
+                "Initial pressure",
+                &[
+                    xyz("min", "Min", D::Length).help("A corner of the box.").req(),
+                    xyz("max", "Max", D::Length).help("The opposite corner.").req(),
+                    num("pressure", "Pressure", D::Stress).help("The gauge pressure the box starts at.").req(),
+                ],
+                fieldcraft_decks::openfoam::gas::MAX_PRESSURE_BOXES,
+            )
+            .help("Boxes of the fluid that start at their own pressure (setFields)."),
+        ],
+    )
+    .help("Write a compressible case (rhoCentralFoam, a laminar ideal gas) instead of an incompressible one."),
     rows_up_to(
         "refine_boxes",
         "Refine boxes",
