@@ -2,7 +2,9 @@
 //! onto the step's lattice as its fluid results, for viewing with FieldCraft's slices, probes,
 //! lines and measurements. The files are read in OpenFOAM's documented ASCII format
 //! ([`fieldcraft_decks::openfoam::fields`]); what OpenFOAM computed is shown, never used to judge
-//! FieldCraft's own results.
+//! FieldCraft's own results. A compressible case (rhoCentralFoam) also gives its temperature and
+//! each cell's density and Mach number, from the gas it was written with; a pressure or temperature
+//! that is not positive is refused, naming its cell.
 //!
 //! Every count a file gives is bounded before it is used: the cell centres by the memory the
 //! fluid results may take, each field by the centres' count, the processor directories by the
@@ -20,7 +22,7 @@ use fieldcraft_model::units::Quantity;
 use fieldcraft_model::{BoxFace, FaceCondition};
 use serde_json::{Value, json};
 
-use super::{MARKER, Marker, nearest};
+use super::{MARKER, Marker, MarkerGas, nearest};
 use crate::cmd::opt;
 use crate::requirement::Requirement;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session, StepResult};
@@ -28,7 +30,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session, StepResult};
 pub const READ: CommandSpec = CommandSpec {
     id: "results.openfoam",
     label: "Read OpenFOAM Results",
-    params: r#"{"path": "case_dir", "spacing"?: 0.4, "max_cells"?: 16000000, "every"?: 1, "from"?: 0, "to"?: 1} — reads the results of a case `deck.openfoam` wrote and OpenFOAM ran (ASCII; reconstructed, or else straight from its processor directories) as the fluid results of its step, for viewing: the written times from `from` to `to` (input units, inclusive), every `every`-th of them and always the last, each a frame sampled at the centres of a lattice over the step's domain box (its spacing, or `spacing` in the input units) from the nearest OpenFOAM cell; the obstacles' cells are solid. Velocity, and the gauge pressure (OpenFOAM's kinematic pressure times the density the case was written with). A lattice cell no OpenFOAM cell is near is an error, never a zero. Replaces the step's results; the model is unchanged"#,
+    params: r#"{"path": "case_dir", "spacing"?: 0.4, "max_cells"?: 16000000, "every"?: 1, "from"?: 0, "to"?: 1} — reads the results of a case `deck.openfoam` wrote and OpenFOAM ran (ASCII; reconstructed, or else straight from its processor directories) as the fluid results of its step, for viewing: the written times from `from` to `to` (input units, inclusive), every `every`-th of them and always the last, each a frame sampled at the centres of a lattice over the step's domain box (its spacing, or `spacing` in the input units) from the nearest OpenFOAM cell; the obstacles' cells are solid. Velocity, and the gauge pressure (OpenFOAM's kinematic pressure times the density the case was written with). A compressible case (rhoCentralFoam): the gauge pressure (the absolute pressure less the ambient the case was written with), the temperature above the case's temperature, each cell's density p/(R T) from the gas the case was written with, and `max_mach`, the largest Mach number of the frames read. A pressure or temperature that is not positive is an error naming its cell. A lattice cell no OpenFOAM cell is near is an error, never a zero. Replaces the step's results; the model is unchanged"#,
     form: Some(crate::cmd::forms::RESULTS_OPENFOAM),
     kind: CommandKind::Session,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -93,9 +95,69 @@ impl Budget {
     }
 }
 
-/// The bytes a frame of incompressible results takes per lattice cell: a velocity (3 × f32) and
-/// a pressure (f32).
-const FRAME_BYTES_PER_CELL: u64 = 4 * std::mem::size_of::<f32>() as u64;
+/// The bytes a frame takes per lattice cell: a velocity (3 × f32) and a pressure (f32); a
+/// compressible frame also a temperature and a density (f32 each).
+pub(super) fn frame_bytes_per_cell(gas: bool) -> u64 {
+    (if gas { 6 } else { 4 }) * std::mem::size_of::<f32>() as u64
+}
+
+/// What a compressible frame keeps of one fluid cell, in f64 (the frame stores f32).
+#[derive(Clone, Copy)]
+struct GasCell {
+    pressure: f64,
+    temperature: f64,
+    density: f64,
+    mach: f64,
+}
+
+impl GasCell {
+    /// A solid cell holds no gas: every value is zero.
+    const SOLID: GasCell = GasCell { pressure: 0.0, temperature: 0.0, density: 0.0, mach: 0.0 };
+}
+
+/// A fluid cell's values from its absolute pressure `p` (Pa), absolute temperature `t` (K) and
+/// speed (m/s): the gauge pressure, the temperature above the case's, the density of the ideal
+/// gas ρ = p/(R_s T) (doc.openfoam.com, "Perfect gas") and the Mach number |u|/c, with
+/// c = √(γ R_s T). `p` and `t` are positive: [`refuse_unless_positive`] checks every cell first.
+fn gas_cell(gas: &MarkerGas, gamma: f64, p: f64, t: f64, speed: f64) -> GasCell {
+    GasCell {
+        pressure: p - gas.ambient,
+        temperature: t - gas.temperature,
+        density: p / (gas.gas_constant * t),
+        mach: speed / (gamma * gas.gas_constant * t).sqrt(),
+    }
+}
+
+/// Refuses the first cell of `values`, a field joined over `parts` (of `sizes` cells each), whose
+/// `what` is not finite and positive, naming the part's file (`rel` under it) and the cell's
+/// index in that file; `need` says why it must be. A run that failed leaves such a cell, and the
+/// density and sound speed are undefined there. Every cell of the case is checked, before any
+/// is sampled.
+fn refuse_unless_positive(
+    units: &fieldcraft_model::DisplaySystem,
+    (parts, sizes): (&[PathBuf], &[usize]),
+    rel: &Path,
+    values: &[f64],
+    what: &str,
+    q: Quantity,
+    need: &str,
+) -> Result<()> {
+    let Some((global, v)) = values.iter().enumerate().find(|(_, v)| !(v.is_finite() && **v > 0.0)) else { return Ok(()) };
+    // The part holding the cell, and its index there.
+    let (mut part, mut local) = (parts.first(), global);
+    for (p, &n) in parts.iter().zip(sizes) {
+        if local < n {
+            part = Some(p);
+            break;
+        }
+        local -= n;
+    }
+    let file = part.map_or_else(|| rel.to_path_buf(), |p| p.join(rel));
+    Err(EngineError::invalid(
+        "path",
+        format!("{}: cell {local} has a {what} of {}: {need}", file.display(), crate::units::shown(units, crate::units::si(), q, *v)),
+    ))
+}
 
 fn field(path: &Path, count: Count, max_bytes: u64) -> Result<FieldValues> {
     let bytes = super::super::file::read_file(&path.to_string_lossy(), max_bytes)?;
@@ -190,9 +252,6 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         .map_err(|e| EngineError::context(format!("{} is not a case deck.openfoam wrote (no {MARKER})", root.display()), e))?;
     let marker: Marker = serde_json::from_slice(&marker_bytes).map_err(|e| EngineError::invalid("path", format!("{MARKER}: {e}")))?;
     marker.check()?;
-    if marker.gas.is_some() {
-        return Err(EngineError::invalid("path", "not supported yet: reading compressible cases"));
-    }
     let (step, domain) = fieldcraft_lbm::fluid_step(&s.model, Some(&marker.step))?;
     let step_name = step.name.clone();
     let every: usize = opt(p, "every")?.unwrap_or(1);
@@ -249,7 +308,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     // At most `max_cells` (and `MAX_CELLS_PER_SIDE` along an axis), which an index addresses.
     let cells = cells.map(|n| n as usize);
     let grid = Grid { origin: domain.min, spacing, cells };
-    let frame_bytes = total.saturating_mul(FRAME_BYTES_PER_CELL).saturating_mul(chosen.len() as u64);
+    let frame_bytes = total.saturating_mul(frame_bytes_per_cell(marker.gas.is_some())).saturating_mul(chosen.len() as u64);
     if frame_bytes > ceilings.max_frame_ceiling() {
         return Err(EngineError::invalid(
             "spacing",
@@ -310,35 +369,73 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         }
     })?;
 
+    let gas = marker.gas.as_ref().map(|g| (g, g.gamma()));
     let mut frames = Vec::with_capacity(chosen.len());
     let mut max_speed = 0.0f64;
+    let mut max_mach = 0.0f64;
     for &k in &chosen {
         let Some((time, path)) = written.get(k) else { continue };
         let name = path.file_name().map(PathBuf::from).unwrap_or_default();
         let (_, u) = joined(&parts, &sizes, &name.join("U"), true, budget)?;
         let (pf, _) = joined(&parts, &sizes, &name.join("p"), false, budget)?;
+        let tf = match gas {
+            Some(_) => Some(joined(&parts, &sizes, &name.join("T"), false, budget)?.0),
+            None => None,
+        };
+        if let Some(tf) = &tf {
+            // Every cell of the case, before any is sampled: a failed run leaves one behind.
+            let absolute = |what: &str| format!("an absolute {what} must be finite and positive (the run failed there)");
+            refuse_unless_positive(s.units(), (&parts, &sizes), &name.join("p"), &pf, "pressure", Quantity::Pressure, &absolute("pressure"))?;
+            refuse_unless_positive(s.units(), (&parts, &sizes), &name.join("T"), tf, "temperature", Quantity::Temperature, &absolute("temperature"))?;
+            // The density the frame stores (f32): p/(R_s T) of two positive numbers still overflows.
+            if let Some((g, _)) = gas {
+                let rho: Vec<f64> = pf.iter().zip(tf).map(|(p, t)| f64::from((p / (g.gas_constant * t)) as f32)).collect();
+                let need = "the density p/(R T) of the gas must be finite and positive as a single-precision number";
+                refuse_unless_positive(s.units(), (&parts, &sizes), &name.join("T"), &rho, "density", Quantity::Density, need)?;
+            }
+        }
         let mut frame = Frame { time: *time, step: k as u64, ..Frame::default() };
         frame.velocity = Vec::with_capacity(grid.len());
         frame.pressure = Vec::with_capacity(grid.len());
+        if tf.is_some() {
+            frame.temperature = Vec::with_capacity(grid.len());
+            frame.density = Vec::with_capacity(grid.len());
+        }
         let mut fluid = 0usize;
+        let mut gas_mass = 0.0f64;
         for slot in &nearest {
-            let (v, kinematic) = match slot {
+            let (v, p, t) = match slot {
                 Some(id) => {
                     let id = *id as usize;
                     // `joined` read exactly one value per centre, so every id has one.
                     let v = u.get(id).copied().ok_or_else(|| EngineError::invalid("path", "a cell without a velocity"))?;
-                    let pv = pf.get(id).copied().ok_or_else(|| EngineError::invalid("path", "a cell without a pressure"))?;
+                    let p = pf.get(id).copied().ok_or_else(|| EngineError::invalid("path", "a cell without a pressure"))?;
+                    let t = match &tf {
+                        Some(tf) => Some(tf.get(id).copied().ok_or_else(|| EngineError::invalid("path", "a cell without a temperature"))?),
+                        None => None,
+                    };
                     fluid += 1;
-                    (v, pv)
+                    (v, p, t)
                 }
-                // A solid cell: no flow in it.
-                None => ([0.0; 3], 0.0),
+                // A solid cell: no flow in it, and no gas.
+                None => ([0.0; 3], 0.0, tf.as_ref().map(|_| 0.0)),
             };
-            max_speed = max_speed.max((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt());
+            let speed = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            max_speed = max_speed.max(speed);
             frame.velocity.push(v.map(|c| c as f32));
-            frame.pressure.push((kinematic * marker.density) as f32);
+            match (gas, t) {
+                (Some((g, gamma)), Some(t)) => {
+                    let cell = if slot.is_some() { gas_cell(g, gamma, p, t, speed) } else { GasCell::SOLID };
+                    max_mach = max_mach.max(cell.mach);
+                    gas_mass += cell.density * spacing.powi(3);
+                    frame.pressure.push(cell.pressure as f32);
+                    frame.temperature.push(cell.temperature as f32);
+                    frame.density.push(cell.density as f32);
+                }
+                _ => frame.pressure.push((p * marker.density) as f32),
+            }
         }
-        frame.mass = marker.density * spacing.powi(3) * fluid as f64;
+        frame.mass = if gas.is_some() { gas_mass } else { marker.density * spacing.powi(3) * fluid as f64 };
         frames.push(frame);
     }
 
@@ -359,7 +456,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         shear_dependent_tau: None,
         velocity: max_speed,
         lattice_velocity: 0.0,
-        mach: 0.0,
+        mach: max_mach,
         cell_updates: 0,
         backend: format!("openfoam ({})", marker.solver),
         tau_thermal: None,
@@ -371,7 +468,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     let history_times = frames.iter().map(|f| f.time).collect();
     let n_frames = frames.len();
     let result = FluidResult {
-        port_properties: Some(PortProperties { density: marker.density, specific_heat: None }),
+        port_properties: Some(PortProperties { density: marker.density, specific_heat: gas.map(|(g, _)| g.specific_heat) }),
         step: step_name.clone(),
         grid,
         solid,
@@ -385,13 +482,17 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         stats,
         warnings: vec![format!("read from the OpenFOAM case {} ({}), not solved on the lattice", root.display(), marker.solver)],
         steady: None,
-        temperature_reference: fieldcraft_model::units::CELSIUS_ZERO,
+        temperature_reference: gas.map_or(fieldcraft_model::units::CELSIUS_ZERO, |(g, _)| g.temperature),
         solids: Vec::new(),
         surface: None,
     };
     s.store_result(StepResult::Fluid(Box::new(result)));
     let source = if decomposed { format!("decomposed ({} processors)", parts.len()) } else { "reconstructed".to_string() };
-    Ok(json!({"step": step_name, "path": dir, "solver": marker.solver, "source": source, "frames": n_frames,
+    let mut reply = json!({"step": step_name, "path": dir, "solver": marker.solver, "source": source, "frames": n_frames,
         "written_times": written.len(), "end_time": end_time, "cells": cells, "spacing": spacing, "fluid_cells": fluid_cells,
-        "openfoam_cells": centres.len(), "max_speed": max_speed}))
+        "openfoam_cells": centres.len(), "max_speed": max_speed});
+    if gas.is_some() {
+        reply["max_mach"] = json!(max_mach);
+    }
+    Ok(reply)
 }
