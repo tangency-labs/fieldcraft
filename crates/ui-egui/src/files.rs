@@ -89,6 +89,9 @@ pub struct Services {
     /// Opens a link in the browser (Help › Report a Bug); without it, egui's own
     /// `open_url` (the browser build opens the link itself).
     pub open_url: Option<OpenUrl>,
+    /// Draws a character the interface's faces lack with an installed font (`fonts`, the desktop
+    /// only): off in tests, so their text does not depend on the machine's fonts.
+    pub system_fonts: bool,
 }
 
 enum PickerAction {

@@ -107,6 +107,19 @@ Windows need `sysctl` and `GlobalMemoryStatusEx` through FFI, which `unsafe_code
 rules out) or a crate built on C code. Cost if this is wrong: the bound is a little off on some
 platform, and the remedy stays inside `fieldcraft_engine::machine`.
 
+**Installed fonts: fontdb** (MIT), in `fieldcraft-ui-egui` only, desktop builds (not the
+browser), without its `fontconfig` and `memmap` features (*decided 2026-11-25, #991*). A character none of the
+interface's faces has (a file, folder or body named in Japanese, Korean or Chinese) is drawn with
+an installed font that has it: the fonts are listed once on a thread, and an egui font provider
+answers each missing character (`crates/ui-egui/src/fonts.rs`, adapted from SolidCraft's). Shipping
+a CJK face costs several megabytes per script; eframe's `system_fonts` feature
+(`egui_system_font_provider`) does the same through the systems' own fallback but adds seven
+crates, and fontdb adds two (`fontdb`, `tinyvec`; ttf-parser and slotmap were already in the
+tree). Without fontconfig it reads the font folders, not fontconfig's settings. The characters a
+face has are read with skrifa, egui's own font reader (already in the tree), so a face is offered
+only for what egui will find in it. Cost if this
+is wrong: such text depends on the machine's fonts, and the remedy stays inside `fonts.rs`.
+
 **Allowed:** MIT, BSD-2/3, Apache-2.0, ISC, Zlib, Unicode, MPL-2.0 (as an unmodified dependency),
 CC0 and public domain.
 

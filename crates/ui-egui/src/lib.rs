@@ -37,6 +37,8 @@ pub mod elide;
 pub mod feature_graph;
 pub mod fields;
 pub mod files;
+#[cfg(not(target_arch = "wasm32"))]
+mod fonts;
 pub mod form;
 pub mod frame;
 pub mod framing;
@@ -2267,6 +2269,10 @@ impl ModelApp {
         self.now = ctx.input(|i| i.time);
         if self.styled != Some(self.ui.dark) {
             theme::apply(ctx, self.ui.dark);
+            #[cfg(not(target_arch = "wasm32"))]
+            if self.services.system_fonts {
+                fonts::install(ctx);
+            }
             self.styled = Some(self.ui.dark);
         }
         self.drain_control(ctx);

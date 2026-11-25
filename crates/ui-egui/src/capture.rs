@@ -85,6 +85,15 @@ impl ModelApp {
         let panels = std::mem::take(&mut self.panel_rects);
         self.capturing = true;
         crate::theme::apply(&off.ctx, self.ui.dark);
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.services.system_fonts {
+            crate::fonts::install(&off.ctx);
+            // Started by this capture or still running since the window started: the frame
+            // waits for it rather than drawing boxes for characters an installed font has.
+            if !crate::fonts::wait() {
+                log::warn!("capture: the installed fonts are still being listed; characters only they have are drawn as boxes");
+            }
+        }
         // A capture is one still frame: windows and menus appear without fading in.
         off.ctx.global_style_mut(|s| s.animation_time = 0.0);
         let mut shapes = Vec::new();
