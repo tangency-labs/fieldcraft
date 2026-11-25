@@ -12,17 +12,22 @@
 //! The probe set its initial field to rest after giving the domain an initial velocity of 1; here the domain's initial
 //! velocity is zero, so the start is the same rest field and the inlet is the only ramped quantity.
 //!
-//! The two-period row gives the ratio rms(T₀) / rms(2 T₀), which theory puts at 5; the measured ratio is 5.198, a 4.0 %
-//! excess that is an open discrepancy (#1134), so this test prints it and asserts nothing about it. The ramp's own
-//! reference check is the inlet velocity's exact formula, in `inlet_ramp.rs`, in the trunk gate.
+//! The printed rms values are frozen: the run is bit-for-bit deterministic, so they must print as this code printed
+//! them. Beside each ramped row the test prints the references of `common::ramp_tube`: the linear formula (the limit
+//! Ma → 0), the ideal tube (the same ramp by characteristics, which keeps the Mach-number effects of the period and of
+//! the round trip, sampled as the probe is), and the ideal tube times this run's own decay of the fundamental (printed,
+//! not asserted, since that decay is read from the run it would check). The ideal tube's own error at this grid is the
+//! Richardson bound on 384, 768 and 1536 intervals, printed with its observed order.
 //!
-//! The no-ramp, one-period, two-period and 2.5-period rms are regression values: the run is bit-for-bit deterministic,
-//! so they must print as this code printed them. They carry no reference of their own here.
+//! Nothing is asserted against the ideal tube here. The rms carries the shedding's pressure variance at Re 3900, which
+//! the one-dimensional tube does not have, and this test does not bound it; so the rows are regression values, and the
+//! comparison to the ideal tube is printed. The sharp check of the solver against the ideal tube is
+//! `inlet_ramp_tube.rs`, with no body in the tube.
 
 mod common;
 
+use common::ramp_tube::{RampTube, linear_rms, rest_period, richardson, rms};
 use common::*;
-use fieldcraft_lbm::Backend;
 use fieldcraft_model::{Collision, FaceCondition, Outflow, Procedure, Profile, Turbulence, WallTreatment};
 
 /// The box and the flow, in D = 1 units: 24 D long, 12 D high, 6 D of the cylinder's centre from the inlet.
@@ -38,12 +43,19 @@ const END_D_PER_U: f64 = 120.0;
 const SMAGORINSKY: f64 = 0.1;
 /// Steps between far-field samples (the probe's).
 const SAMPLE_EVERY: u64 = 90;
-/// The period T₀ = 4 L / c_s of the box between the inlet and the outlet: L = 384 cells, c_s = 1/√3 (rounded).
+/// The ramp unit of the manual's rows, in steps: 4 · 384 · √3 rounded, the rest period of a tube as long as the box.
 const PERIOD_STEPS: u64 = 2660;
+/// The far-field probe's cell from the inlet: 3 D at 16 cells per D.
+const PROBE_CELL: f64 = 48.0;
 
-/// The far-field pressure coefficient of the probe, C_p = (ρ − 1) / 3 / (½ U²) with c_s² = 1/3, and its rms over the
-/// second half of the run. `ramp_steps` is the inlet's ramp in steps (none: no ramp).
-fn far_field_rms(ramp_steps: Option<u64>) -> (f64, f64) {
+/// The box's cells along the flow.
+fn cells() -> f64 {
+    LENGTH_D * CELLS_PER_D
+}
+
+/// The far-field pressure coefficient of the probe after every step, C_p = (ρ − 1) / 3 / (½ U²) with c_s² = 1/3.
+/// `ramp_steps` is the inlet's ramp in steps (none: no ramp).
+fn far_field(ramp_steps: Option<u64>) -> Vec<f64> {
     let dx = 1.0 / CELLS_PER_D;
     let span = dx;
     let (xc, yc) = (UP_D, HEIGHT_D / 2.0);
@@ -77,25 +89,108 @@ fn far_field_rms(ramp_steps: Option<u64>) -> (f64, f64) {
     assert_eq!(flow.inlet_ramp_steps(), ramp_steps.unwrap_or(0), "the ramp is not the requested number of steps");
     let grid = *flow.grid();
     let probe = grid.cell_at([(xc - 3.0).max(0.5), yc + 3.0, span / 2.0]).expect("the far-field probe is in the box");
-    let mut cp = Vec::new();
-    for _ in 0..setup.steps / SAMPLE_EVERY {
-        flow.advance(SAMPLE_EVERY).unwrap();
+    assert_eq!(grid.cell_at([(PROBE_CELL + 0.5) * dx, yc + 3.0, span / 2.0]), Some(probe), "the probe is not cell {PROBE_CELL} from the inlet");
+    let mut cp = Vec::with_capacity(setup.steps as usize);
+    for _ in 0..setup.steps {
+        flow.step().unwrap();
         let (rho, _) = flow.moments(probe).expect("the probe is a fluid cell");
         cp.push((rho - 1.0) / 3.0 / (0.5 * LATTICE_SPEED * LATTICE_SPEED));
     }
-    let tail = &cp[cp.len() / 2..];
-    let mean = tail.iter().sum::<f64>() / tail.len() as f64;
-    let rms = (tail.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / tail.len() as f64).sqrt();
-    (mean, rms)
+    cp
 }
 
-/// The theory of the fundamental's rms after a ramp of `m` periods: the residual pressure amplitude
-/// (4/π)(2/Ma) |cos(π m)| / |4 m² − 1| (the step's (4/π) fundamental, the ramp's factor), as the rms of a sinusoid (÷ √2),
-/// and the closed–open mode's cosine at the probe 3 D from the inlet, cos(k x) with k = π / (2 L), L = 24 D.
-fn theory_rms(m: f64) -> f64 {
-    let mach = 3f64.sqrt() * LATTICE_SPEED;
-    let amplitude = 4.0 / std::f64::consts::PI * 2.0 / mach * (std::f64::consts::PI * m).cos().abs() / (4.0 * m * m - 1.0).abs();
-    amplitude / 2f64.sqrt() * (std::f64::consts::PI * 3.0 / (2.0 * LENGTH_D)).cos()
+/// The probe's rms: a sample every `SAMPLE_EVERY` steps, over the second half of the samples.
+fn sampled_rms(cp: &[f64]) -> f64 {
+    let samples: Vec<f64> = (1..=cp.len() / SAMPLE_EVERY as usize).map(|k| cp[k * SAMPLE_EVERY as usize - 1]).collect();
+    rms(&samples[samples.len() / 2..])
+}
+
+/// The pressure coefficient per unit of density: c_s² / (½ U²) with c_s² = 1/3.
+fn cp_per_density() -> f64 {
+    1.0 / 3.0 / (0.5 * LATTICE_SPEED * LATTICE_SPEED)
+}
+
+/// The ideal tube for this box, on `intervals` cells. Its acoustic length is between two bounds: the faces set their
+/// cells' moments at the cell centres, 383 cells apart (`placement` 0), and a face acting at the box's face, half a cell
+/// outside its centre, would add half a cell at each end, 384 (`placement` 1). The reference is the middle, 383.5; the
+/// probe moves with the inlet's half cell.
+fn ideal_tube(placement: f64, ramp_steps: u64, intervals: usize) -> RampTube {
+    RampTube {
+        length: cells() - 1.0 + placement,
+        speed: LATTICE_SPEED,
+        ramp_steps: ramp_steps as f64,
+        probe: PROBE_CELL + 0.5 * placement,
+        intervals,
+    }
+}
+
+/// The ideal tube's rms, sampled as the probe is, on `intervals` cells.
+fn ideal_rms(placement: f64, ramp_steps: u64, steps: u64, intervals: usize) -> f64 {
+    let rho = ideal_tube(placement, ramp_steps, intervals).density(steps);
+    sampled_rms(&rho) * cp_per_density()
+}
+
+/// The ideal tube's error at this box's grid, relative: the Richardson bound on its 384-interval rms from 768 and 1536
+/// intervals, with the observed order.
+fn reference_bound(ramp_steps: u64, steps: u64) -> (f64, f64) {
+    let c = |intervals| ideal_rms(0.5, ramp_steps, steps, intervals);
+    let (order, bound) = richardson(c(cells() as usize), c(2 * cells() as usize), c(4 * cells() as usize));
+    (order, bound / c(cells() as usize))
+}
+
+/// The linear formula's rms for this box and probe (Ma → 0), the manual's fundamental.
+fn linear(ramp_steps: u64) -> f64 {
+    let tube = ideal_tube(0.5, ramp_steps, cells() as usize);
+    linear_rms(tube.length, LATTICE_SPEED, ramp_steps as f64, tube.probe, 1)
+}
+
+/// The period of the fundamental with the inlet at its speed, T₀ / (1 − Ma²): the wave goes down at c_s + U and
+/// comes back at c_s − U.
+fn flow_period() -> f64 {
+    rest_period(cells() - 0.5) / (1.0 - 3.0 * LATTICE_SPEED * LATTICE_SPEED)
+}
+
+/// The decay rate of the fundamental, per step: the least-squares slope of the logarithm of its amplitude over
+/// consecutive windows of two periods from the ramp's end (the projection on the sine and cosine of `flow_period`).
+fn decay_rate(cp: &[f64], ramp_steps: u64) -> f64 {
+    let omega = 2.0 * std::f64::consts::PI / flow_period();
+    let window = (2.0 * flow_period()).round() as usize;
+    let mut logs = Vec::new();
+    let mut start = ramp_steps as usize;
+    while start + window <= cp.len() {
+        let w = &cp[start..start + window];
+        let mean = w.iter().sum::<f64>() / window as f64;
+        let (mut s, mut c) = (0.0, 0.0);
+        for (i, v) in w.iter().enumerate() {
+            s += (v - mean) * (omega * i as f64).sin();
+            c += (v - mean) * (omega * i as f64).cos();
+        }
+        logs.push((2.0 * (s * s + c * c).sqrt() / window as f64).ln());
+        start += window;
+    }
+    let n = logs.len() as f64;
+    let (mean_k, mean_log) = ((n - 1.0) / 2.0, logs.iter().sum::<f64>() / n);
+    let slope = logs.iter().enumerate().map(|(k, l)| (k as f64 - mean_k) * (l - mean_log)).sum::<f64>()
+        / logs.iter().enumerate().map(|(k, _)| (k as f64 - mean_k).powi(2)).sum::<f64>();
+    -slope / window as f64
+}
+
+/// The references of a ramped row, printed: the linear formula, the ideal tube, and the ideal tube times this run's
+/// decay from the ramp's end to the middle of the rms window. Returns the ideal tube's rms.
+fn print_references(label: &str, cp: &[f64], ramp_steps: u64) -> f64 {
+    let steps = cp.len() as u64;
+    let ideal = ideal_rms(0.5, ramp_steps, steps, cells() as usize);
+    let rate = decay_rate(cp, ramp_steps);
+    // The rms window is the second half of the samples: its middle is three quarters of the run.
+    let elapsed = 0.75 * steps as f64 - ramp_steps as f64;
+    let (order, bound) = reference_bound(ramp_steps, steps);
+    println!("{label}: linear formula rms {:.3}", linear(ramp_steps));
+    println!("{label}: ideal tube rms {ideal:.3}; reference error {:.2e} relative at observed order {order:.2} (Richardson)", bound);
+    println!(
+        "{label}: decay of the fundamental {rate:.2e} per step; ideal tube times the decay {:.3} (printed, not asserted)",
+        ideal * (-rate * elapsed).exp()
+    );
+    ideal
 }
 
 /// The rms must print as this code printed it, to its three decimals (a regression value, frozen).
@@ -104,33 +199,44 @@ fn assert_printed(label: &str, rms: f64, printed: &str) {
     assert_eq!(format!("{rms:.3}"), printed, "{label}");
 }
 
-/// The theory ratio of the one-period and two-period residuals: |cos π| / |4 − 1| over |cos 2π| / |16 − 1|.
-const THEORY_RATIO: f64 = 5.0;
-
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
 fn far_field_rms_without_a_ramp_is_a_regression_value() {
-    let (_, rms) = far_field_rms(None);
-    assert_printed("no ramp", rms, "20.190");
+    // No reference: without a ramp the ideal tube's wave steepens into shocks, which the characteristics do not capture.
+    assert_printed("no ramp", sampled_rms(&far_field(None)), "20.190");
 }
 
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
 fn far_field_rms_with_two_and_a_half_period_ramp_is_a_regression_value() {
-    let (_, rms) = far_field_rms(Some(PERIOD_STEPS * 5 / 2));
-    assert_printed("ramp 2.5 T0", rms, "0.049");
+    let ramp = PERIOD_STEPS * 5 / 2;
+    let cp = far_field(Some(ramp));
+    assert_printed("ramp 2.5 T0", sampled_rms(&cp), "0.049");
+    // The ideal tube's value at the two bounds of the acoustic length: it moves by about a third between them, which
+    // is the spread the 2.5 T0 comparison is printed against.
+    let steps = cp.len() as u64;
+    let (short, long) = (ideal_rms(0.0, ramp, steps, cells() as usize), ideal_rms(1.0, ramp, steps, cells() as usize));
+    println!("ramp 2.5 T0: ideal tube at the bounds {short:.3} and {long:.3}, a spread of {:.0} %", 100.0 * (long - short).abs() / short);
+    print_references("ramp 2.5 T0", &cp, ramp);
 }
 
-/// The one- and two-period rms, printed against their theory. The ratio is printed next to its theory value (5); it
-/// is not asserted: the 4.0 % excess is the open discrepancy of #1134.
+/// The one- and two-period rms, printed against their references. The ratio is printed next to the linear formula's
+/// (5) and the ideal tube's.
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
-fn one_and_two_period_ramps_print_the_ratio_see_1134() {
-    let (_, one) = far_field_rms(Some(PERIOD_STEPS));
+fn one_and_two_period_ramps_print_the_references() {
+    let cp = far_field(Some(PERIOD_STEPS));
+    let one = sampled_rms(&cp);
     assert_printed("ramp 1 T0", one, "7.020");
-    println!("ramp 1 T0: theory rms {:.3}", theory_rms(1.0));
-    let (_, two) = far_field_rms(Some(2 * PERIOD_STEPS));
+    let ideal_one = print_references("ramp 1 T0", &cp, PERIOD_STEPS);
+    let cp_two = far_field(Some(2 * PERIOD_STEPS));
+    let two = sampled_rms(&cp_two);
     assert_printed("ramp 2 T0", two, "1.350");
-    println!("ramp 2 T0: theory rms {:.3}", theory_rms(2.0));
-    println!("ratio rms(1 T0) / rms(2 T0) = {:.3}, theory {THEORY_RATIO} (see #1134)", one / two);
+    let ideal_two = print_references("ramp 2 T0", &cp_two, 2 * PERIOD_STEPS);
+    println!(
+        "ratio rms(1 T0) / rms(2 T0) = {:.3}; linear formula {:.3}; ideal tube {:.3}",
+        one / two,
+        linear(PERIOD_STEPS) / linear(2 * PERIOD_STEPS),
+        ideal_one / ideal_two
+    );
 }
