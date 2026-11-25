@@ -81,6 +81,39 @@ What is refused, rather than read as something else:
 - a field whose count differs from its mesh's cells, binary files, and counts beyond the memory the
   fluid results may take.
 
+## Compressible cases
+
+`"compressible": {"ambient": 0.101325, "temperature": 20, "gas_constant": 287.05, "far_field": 50}`
+writes a `rhoCentralFoam` case instead: a laminar ideal gas, for flows the lattice cannot run, such
+as a choked nozzle. Every value is required; no gas is assumed.
+
+| Input | What it is |
+|---|---|
+| `ambient` | the absolute pressure the model's gauge pressures count from |
+| `temperature` | the initial temperature, and the total temperature of the reservoirs |
+| `gas_constant` | the specific gas constant R/M of the gas (air: about 287 J/(kg·K)) |
+| `far_field` | the far-field relaxation length of the non-reflecting outlets (OpenFOAM's `lInf`): the distance over which an outlet's pressure relaxes towards its value |
+| `initial_pressure` | boxes of the fluid that start at their own gauge pressure (`setFields`), such as a charged reservoir |
+| the material | the specific heat, viscosity and conductivity (isotropic); its density is not used |
+
+| Model | Compressible case |
+|---|---|
+| `pressure` face above the ambient | a reservoir: total pressure and total temperature |
+| other `pressure` faces | a non-reflecting outlet at that pressure |
+| `velocity` face | `U` fixed, `T` at `temperature` |
+| walls, obstacle faces | no-slip and adiabatic |
+| time step | adapts to `max_courant`: ¼ unless given, at most ½ (Kurganov and Tadmor's central scheme, Theorem 5.1, on OpenFOAM's Courant number summed over the axes) |
+
+A turbulence model is refused in a compressible case: it is laminar.
+
+Reading a compressible case back gives each cell's gauge pressure (the absolute pressure less
+`ambient`), its temperature, and its density ρ = p/(R T). A cell whose temperature or pressure is
+not positive is refused. The ports' mass flow, mixed temperature and heat then weigh each cell by
+its own density.
+
+Results saved by FieldCraft 0.8 and earlier (the `MCRSLT05` results encoding and older) open with their model and
+without their results; solve the step again.
+
 ## Not written yet
 
 The command fails and names what it cannot write yet:
@@ -90,7 +123,7 @@ The command fails and names what it cannot write yet:
 - body accelerations
 - periodic faces
 - parabolic inlet profiles
-- Vreman's and the Spalart–Allmaras models
+- Vreman's and the Spalart–Allmaras models; any turbulence model in a compressible case
 - non-Newtonian viscosity, and a density or viscosity that follows the temperature
 - a material without a density or a viscosity (no value is assumed)
 - a case directory that already holds files: choose a new or empty one (nothing is overwritten or deleted)
