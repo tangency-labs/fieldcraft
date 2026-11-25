@@ -173,6 +173,8 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
         prefs: fieldcraft_io::recovery::default_dir()
             .and_then(|d| d.parent().map(|p| fieldcraft_ui_egui::files::PrefsStore::file(p.join("prefs.json")))),
         open_url: Some(Box::new(open_url)),
+        // A name in Japanese, Korean or Chinese is drawn with the installed fonts (#991).
+        system_fonts: true,
         ..Default::default()
     }
 }
@@ -325,6 +327,9 @@ fn main() -> eframe::Result {
         centered: true,
         depth_buffer: DEPTH_BITS,
         multisampling: MSAA,
+        // FieldCraft finds a missing character in the installed fonts itself (`system_fonts`), so
+        // eframe's stand-in, which only logs, stays out.
+        system_font_fallback: false,
         ..Default::default()
     };
     eframe::run_native(

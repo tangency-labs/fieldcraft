@@ -85,6 +85,12 @@ solidcraft-ui-registry = { git = "https://github.com/tangency-labs/solidcraft", 
 solidcraft-ui-text = { git = "https://github.com/tangency-labs/solidcraft", rev = "1b1e940cc48e4d1d5d01971a4be20e2e55647066" }
 # native file pickers (the desktop app only; the UI crate takes them as services)
 rfd = "0.17"
+# The installed fonts, for a character the interface's faces lack (the desktop only, #991; MIT,
+# pure Rust). Without fontconfig, so it adds no system library, and without memmap: a file read,
+# not mapped, so one truncated meanwhile cannot fault. skrifa, which egui draws with, reads the
+# characters each face maps, so the provider and egui agree on them.
+fontdb = { version = "0.24", default-features = false, features = ["std", "fs"] }
+skrifa = { version = "0.44", default-features = false, features = ["std"] }
 
 # Geometry: SolidCraft's B-rep kernel (MIT OR Apache-2.0), pinned at a release tag
 # (v0.42.0, 1b1e940, 2026-11-14; docs/architecture.md, "SolidCraft pin"). Its
