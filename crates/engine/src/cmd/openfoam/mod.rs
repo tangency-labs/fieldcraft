@@ -46,6 +46,14 @@ pub(crate) struct MarkerGas {
     pub specific_heat: f64,
 }
 
+impl MarkerGas {
+    /// The ratio of specific heats, γ = c_p / (c_p − R_s), derived rather than stored so it
+    /// cannot disagree with them.
+    pub fn gamma(&self) -> f64 {
+        self.specific_heat / (self.specific_heat - self.gas_constant)
+    }
+}
+
 impl Marker {
     /// The most bytes a marker may have: it holds a step name (at most
     /// [`fieldcraft_model::MAX_NAME_LEN`] characters), a solver name and at most eight numbers, a
@@ -263,5 +271,7 @@ fn write(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_gas_read;
 #[cfg(test)]
 mod tests_gas_write;
