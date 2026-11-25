@@ -357,30 +357,55 @@ For a tolerance ε on the residual, the envelope is below ε when 4 m² − 1 �
 
     m ≥ ½ √(1 + 8 / (π ε Ma))
 
+**What the formula leaves out.** It is linear acoustics, the limit Ma → 0. A wave travels at c_s ± u (the Riemann
+invariants u ± c_s ln ρ of a fluid with p = c_s² ρ; Whitham, *Linear and Nonlinear Waves*, 1974, §6.8). While the inlet
+rises, a wave's trip back sees a faster flow than its trip down, so the round trip is longer than 2 L / c_s by a time
+proportional to U. This leaves a residual in the pressure coefficient (0.43 at one period: the ideal tube sits 0.43 above the
+formula, 7.207 against 6.775), which the formula's 1/Ma does not carry, so its share of the formula's value grows with Ma. Once the inlet is at U, the period is T₀ / (1 − Ma²) (down at c_s + U, back
+at c_s − U), so a ramp of m T₀ no longer sits on the zero at m = 2.5. The "ideal tube" column below has both effects: it
+is the one-dimensional solution by characteristics (`crates/lbm/tests/common/ramp_tube.rs`). In an empty tube of 192
+cells the solver is within 0.13 % of it at m = 1 and 0.08 % at m = 2 (`crates/lbm/tests/inlet_ramp_tube.rs`), and the
+period it shows is that of a tube 191.3 cells long: the faces act between their cells' centres (191 apart) and the
+box's faces (192 apart), so L is the box's length less about half a cell.
+
+A body in the box then damps the mode. In the cylinder case the fundamental decays by 1.08 × 10⁻⁶ per step, which is
+2.8 % by the middle of the rms window. *Inferred, not derived:* the rate is what the cylinder's drag, linearised about
+the mean flow, would take from the mode, C_d U D sin²(k x_c) / (L H) per unit time (x_c the body's distance from the
+inlet, H the box's height), with C_d near 0.7.
+
 The time T is yours to choose: the code recommends none. The measured rows below are the evidence.
 
-**Measured against theory.** The heavy test `crates/lbm/tests/inlet_ramp_cylinder.rs` prints these rows: a 2-D
+**Measured against the references.** The heavy test `crates/lbm/tests/inlet_ramp_cylinder.rs` prints these rows: a 2-D
 cylinder in a 24 D × 12 D box, 16 cells per D, Hrr with Smagorinsky C = 0.1 at Re 3900, halfway walls, CPU, f64,
 started at rest, run to 120 D/U. The far-field C_p rms is at the probe 3 D upstream of the centre and 3 D above it,
-over the second half of the run. The printed values are frozen, since the run is deterministic. The theory column is
-the envelope's fundamental at that probe: its residual amplitude (4/π)(2/Ma)|cos πm|/|4m² − 1|, taken as an rms (÷ √2),
-times cos(π/16), the closed–open mode's cosine at the probe's distance 3 D from the inlet (k = π/(2L), L = 24 D).
+over the second half of the run. The printed values are frozen, since the run is deterministic. The formula column is
+`linear_rms` in `crates/lbm/tests/common/ramp_tube.rs`: the envelope's fundamental at that probe, its residual amplitude
+(4/π)(2/Ma)|cos πm|/|4m² − 1| taken as an rms (÷ √2), times cos(k x_probe) with k = π/(2L).
 
 The residual C_p,res and the tolerance ε in the formulas above are amplitudes at the velocity face: the peak of the
 standing wave's pressure coefficient. They are not rms values; the rms of a sinusoid of amplitude A is A / √2.
 
-| ramp T | m | far-field C_p rms (measured) | theory, fundamental (rms) | measured against theory |
-|---|---|---|---|---|
-| none | 0 | 20.190 | the step's own wave (no single mode) | regression value |
-| 2660 steps (T₀) | 1 | 7.020 | 6.797 | +3.3 % (open discrepancy, #1134) |
-| 5320 steps (2 T₀) | 2 | 1.350 | 1.359 | −0.7 % |
-| 6650 steps (2.5 T₀) | 2.5 | 0.049 | 0 (cos 2.5π = 0) | regression value |
+The formula and ideal tube columns are for a tube of 383.5 cells with the probe 48.25 cells from the inlet, as an rms
+sampled as the probe is. The ideal tube is the one-dimensional solution by characteristics on 384 cells; its error at
+this grid, from a Richardson estimate on 384, 768 and 1536 cells, is about 10⁻⁶ relative. The last column multiplies the
+ideal tube by the run's own measured decay of the fundamental to the middle of the window (printed by the test, not
+asserted).
 
-The one- and two-period rows give the ratio rms(T₀)/rms(2 T₀) = 5.198, against 5 from theory (|cos π|/|4 − 1| over
-|cos 2π|/|16 − 1|): +4.0 %. The one-period row is 3.3 % above its theory, and the two-period row is within 0.7 % of its
-own, so the excess is open and tracked in #1134; the ratio is printed in the heavy test, not asserted. Measured
-against theory, the two-period row is −0.7 %, not asserted (#1134). A period shift to T₀ / (1 − Ma²) would move it to about −2.3 %, so that agreement is coincidence, not evidence; the one-period row's +3.3 % has no diagnosis yet. Of the measured
-ramps, 2.5 T₀ removes most of the start's pulse for this case: 0.049 against 20.190 with no ramp.
+| ramp T | m | far-field C_p rms (measured) | formula (Ma → 0), fundamental | ideal tube | ideal tube × measured decay |
+|---|---|---|---|---|---|
+| none | 0 | 20.190 | (the step's wave steepens into shocks) | | |
+| 2660 steps (T₀) | 1 | 7.020 | 6.775 | 7.207 | 7.008 |
+| 5320 steps (2 T₀) | 2 | 1.350 | 1.356 | 1.377 | 1.357 |
+| 6650 steps (2.5 T₀) | 2.5 | 0.049 | 0.008 | 0.058 | 0.058 |
+
+The one-period row is 3.6 % above the formula (7.020 against 6.775) and 2.6 % below the ideal tube (7.207). The ideal
+tube times the run's own decay gives 7.008, within 0.2 % of the measurement, so the excess over the formula is the
+Mach-number effects the formula leaves out together with the body's damping of the mode. The two-period row is 0.4 %
+below the formula and 0.5 % below the ideal tube times its decay. The one- and two-period rows give rms(T₀)/rms(2T₀) =
+5.198; the formula gives 4.997 and the ideal tube 5.235 (printed), so the ideal tube accounts for the ratio, and the
+measured ratio is 0.7 % below it. At 2.5 T₀ the ideal tube moves by 35 % between the two bounds of the acoustic length
+(0.050 to 0.067, printed), so its 0.058 against the measured 0.049 is within that spread. Of the measured ramps, 2.5 T₀
+removes most of the start's pulse for this case: 0.049 against 20.190 with no ramp.
 
 The refusals: `inlet_ramp` needs a velocity face; a free surface is not supported yet; a ramp longer than the run
 is refused, since the faces would never reach their velocities; and the time must be positive and finite. Moving
