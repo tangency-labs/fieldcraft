@@ -247,3 +247,111 @@ fn a_solved_heated_flow_s_ports_carry_its_inflow_and_its_heat() {
     assert!((rise * rho * cp * q_in / power - 1.0).abs() < 0.02, "outlet rise {rise}");
     assert!((carried / power - 1.0).abs() < 0.02, "{carried} carried vs {power} generated");
 }
+
+/// Two open faces of one flow's saved frame, compared stream by stream (`close` for values).
+fn same_streams(a: &[fieldcraft_lbm::ports::Port], b: &[fieldcraft_lbm::ports::Port]) {
+    assert_eq!(a.len(), b.len());
+    let same = |x: Option<f64>, y: Option<f64>| match (x, y) {
+        (Some(x), Some(y)) => close(x, y),
+        (None, None) => {}
+        _ => panic!("{x:?} vs {y:?}"),
+    };
+    for (p, q) in a.iter().zip(b) {
+        for (s, t) in [(p.inflow, q.inflow), (p.outflow, q.outflow)] {
+            close(s.volume_flow, t.volume_flow);
+            same(s.mass_flow, t.mass_flow);
+            same(s.temperature, t.temperature);
+            same(s.pressure, t.pressure);
+            same(s.sensible_heat, t.sensible_heat);
+        }
+    }
+}
+
+/// A steady one-dimensional isothermal flow has ρu constant: the volume flow grows where the
+/// density falls, and the mass flow does not.
+#[test]
+fn an_isothermal_duct_flow_conserves_mass_while_its_volume_flow_grows() {
+    let mut r = saved();
+    let f = r.frames.last_mut().unwrap();
+    // x_min layer (cells 0, 2, 4, 6) at density 4 and speed 0.5; x_max layer (1, 3, 5, 7) at 1 and 2.
+    f.density = (0..8).map(|c| if c % 2 == 0 { 4.0 } else { 1.0 }).collect();
+    for (c, v) in f.velocity.iter_mut().enumerate() {
+        v[0] = if c % 2 == 0 { 0.5 } else { 2.0 };
+    }
+    let ports = r.ports(r.frames.len() - 1).unwrap();
+    close(ports[0].inflow.volume_flow, 2.0);
+    close(ports[0].inflow.mass_flow.unwrap(), 8.0);
+    close(ports[1].outflow.volume_flow, 8.0);
+    close(ports[1].outflow.mass_flow.unwrap(), 8.0);
+    close(ports[1].outflow.temperature.unwrap(), 293.15);
+    close(inlet_temperature(&ports).unwrap(), 293.15);
+    close(ports[1].outflow.sensible_heat.unwrap(), 0.0);
+    close(ports[0].inflow.sensible_heat.unwrap(), 0.0);
+}
+
+/// Two streams mix by their own densities (#950's case): the outflow temperature is
+/// Σ ρq T / Σ ρq, not the volume mean.
+#[test]
+fn compressible_frames_weigh_each_cell_by_its_own_density() {
+    let mut r = saved();
+    let f = r.frames.last_mut().unwrap();
+    f.velocity[1][0] = 1.0;
+    f.velocity[3][0] = 1.0;
+    f.velocity[5][0] = -2.0;
+    f.temperature[1] = 10.0;
+    f.temperature[3] = 30.0;
+    f.temperature[5] = 40.0;
+    f.pressure[1] = 10.0;
+    f.pressure[3] = 30.0;
+    f.density = vec![1.0; 8];
+    f.density[3] = 4.0;
+    f.density[5] = 3.0;
+    let ports = r.ports(r.frames.len() - 1).unwrap();
+    let p = &ports[1];
+    close(p.outflow.volume_flow, 2.0);
+    close(p.outflow.mass_flow.unwrap(), 5.0);
+    close(p.inflow.mass_flow.unwrap(), 6.0);
+    close(p.outflow.temperature.unwrap(), 273.15 + 26.0);
+    close(p.outflow.pressure.unwrap(), 20.0);
+    close(p.inflow.temperature.unwrap(), 273.15 + 40.0);
+    close(inlet_temperature(&ports).unwrap(), 273.15 + 40.0);
+    // cp (Σ ρq T − T_in Σ ρq) = 5 (1 (10 − 40) + 4 (30 − 40)).
+    close(p.outflow.sensible_heat.unwrap(), -350.0);
+}
+
+/// A density equal to the reference everywhere gives the reference density's ports.
+#[test]
+fn a_uniform_density_gives_the_reference_density_s_ports() {
+    let mut r = saved();
+    let f = r.frames.last_mut().unwrap();
+    f.velocity[1][0] = 1.0;
+    f.velocity[3][0] = 1.0;
+    f.velocity[5][0] = -2.0;
+    f.temperature[1] = 10.0;
+    f.temperature[3] = 30.0;
+    f.temperature[5] = 40.0;
+    // A density that no power of two represents, so the weights' rounding is exercised; the frame
+    // stores it as f32, so the reference is that f32.
+    let rho = 1.2f32;
+    r.port_properties = Some(PortProperties { density: f64::from(rho), specific_heat: Some(5.0) });
+    let without = r.ports(r.frames.len() - 1).unwrap();
+    r.frames.last_mut().unwrap().density = vec![rho; 8];
+    same_streams(&without, &r.ports(r.frames.len() - 1).unwrap());
+}
+
+/// A density that is missing, not positive or not finite in an open face's cell is refused.
+#[test]
+fn a_density_that_is_not_positive_or_complete_is_refused() {
+    let base = saved();
+    let cases: [(&str, Vec<f32>); 4] = [
+        ("one value short", vec![2.0; 7]),
+        ("nan", vec![2.0, f32::NAN, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]),
+        ("zero", vec![2.0, 0.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]),
+        ("negative", vec![2.0, -1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]),
+    ];
+    for (name, density) in cases {
+        let mut bad = base.clone();
+        bad.frames.last_mut().unwrap().density = density;
+        assert!(bad.ports(bad.frames.len() - 1).is_err(), "{name}");
+    }
+}

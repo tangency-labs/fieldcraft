@@ -400,7 +400,8 @@ fn every_format_1_fixture_opens_as_its_writer_read_it() {
 }
 
 /// Every format 3 file (0.8.0, 0.8.1) opens through the tag-only step 3 → 4 as its writer read
-/// it, with its results and its embedded geometry: the parts format 3 and later may list.
+/// it, with its embedded geometry: the parts format 3 and later may list. Its results, saved in
+/// the MCRSLT05 encoding, are dropped since MCRSLT06, as every older encoding's are.
 #[test]
 fn every_format_3_fixture_opens_as_its_writer_read_it() {
     let all = fixtures(3);
@@ -417,8 +418,12 @@ fn every_format_3_fixture_opens_as_its_writer_read_it() {
         for key in ["model", "geometry", "journal", "view"] {
             assert!(got[key] == want[key], "{name}: {key} differs from what its writer read at {}", first_difference(&got[key], &want[key], ""));
         }
-        assert_eq!(json!(file.results.len()), want["results"], "{name}");
-        assert!(!file.results.is_empty(), "{name}: the fixture keeps a solved step");
+        // Its writer kept a solved step, saved in the MCRSLT05 results encoding. Since MCRSLT06 an
+        // older encoding's results are dropped (the model opens; the step is solved again), with a
+        // note naming the encoding.
+        assert!(want["results"].as_u64().is_some_and(|n| n > 0), "{name}: the fixture keeps a solved step");
+        assert!(file.results.is_empty(), "{name}: MCRSLT05 results are dropped");
+        assert!(file.results_note.as_deref().is_some_and(|note| note.contains("MCRSLT05")), "{name}: {:?}", file.results_note);
         assert_eq!(json!(file.embedded.keys().collect::<Vec<_>>()), want["embedded"], "{name}");
         assert_eq!(file.geometry.meshes.len(), 1, "{name}");
         assert_eq!(file.geometry.meshes[0].unit(), None, "{name}: a format 3 mesh is read in millimetres");

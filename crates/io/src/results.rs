@@ -5,7 +5,7 @@
 //! Little-endian:
 //!
 //! ```text
-//! "MCRSLT05"                     magic, 8 bytes (the results encoding's version is 05)
+//! "MCRSLT06"                     magic, 8 bytes (the results encoding's version is 06)
 //! u32 steps
 //! steps × { u64 length, step name (UTF-8),
 //!           32 bytes: SHA-256 of the definition it was solved from ([`definition_hash`]),
@@ -19,7 +19,8 @@
 //! reactions, nodal stresses and contact states); a frequency or
 //! buckling step's modes; a heat transfer step's temperature frames, fluxes and heat flows; an
 //! explicit step's field frames, histories, energies, contacts and erosion; a fluid step's grid
-//! (origin, spacing, cells), cell fields per frame (velocity, pressure, temperature), wall
+//! (origin, spacing, cells), cell fields per frame (velocity, pressure, temperature, and a
+//! density where the result carries one), wall
 //! forces, heat and zone histories, statistics and steady-state monitors.
 //!
 //! The payload follows the field and variant order of the solvers' result types, so the
@@ -39,8 +40,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{Error, Geometry, MAX_FILE_BYTES, Result, codec, invalid};
 
-/// The magic bytes the part starts with (the `05` is the results encoding's version).
-pub const MAGIC: &[u8; 8] = b"MCRSLT05";
+/// The magic bytes the part starts with (the `06` is the results encoding's version).
+pub const MAGIC: &[u8; 8] = b"MCRSLT06";
 
 /// The part's name.
 pub const PART: &str = "results.bin";
@@ -186,6 +187,10 @@ pub fn encode(results: &[(&str, StoredRef<'_>)]) -> Result<Vec<u8>> {
         out.extend_from_slice(&(name.len() as u64).to_le_bytes());
         out.extend_from_slice(name.as_bytes());
         out.extend_from_slice(&stored.definition);
+        // What reading refuses is not written: a file that would not open is never saved.
+        if let SolvedRef::Fluid(f) = stored.result {
+            check_fluid(f).map_err(|why| Error::Invalid(format!("{PART}: the result of step `{name}`: {why}")))?;
+        }
         out.push(stored.result.kind());
         // The payload is encoded in place, its length written before it once known.
         let at = out.len();
@@ -413,8 +418,12 @@ fn check_fluid(f: &FluidResult) -> std::result::Result<(), String> {
                 ("a frame's pressure", frame.pressure.len(), false),
                 ("a frame's temperature", frame.temperature.len(), true),
                 ("a frame's fill level", frame.fill.len(), true),
+                ("a frame's density", frame.density.len(), true),
             ],
         )?;
+        if frame.density.iter().zip(&f.solid).any(|(rho, solid)| !solid && !(rho.is_finite() && *rho > 0.0)) {
+            return Err("a frame's density is not positive in a fluid cell".into());
+        }
     }
     let samples = f.history_times.len();
     let histories = f.forces.iter().map(|h| ("a force history", h.force.len())).chain(f.heat.iter().map(|h| ("a heat history", h.power.len())));

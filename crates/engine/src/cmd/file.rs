@@ -1686,11 +1686,48 @@ mod tests {
         }
     }
 
+    /// A fluid frame's density is checked where a file is read: one value per cell, and positive
+    /// in every fluid cell (a solid cell's density is not read).
+    #[test]
+    fn a_saved_fluid_density_is_checked_on_read() {
+        use fieldcraft_io::results::{Solved, check};
+        let mut flow = crate::flow::tests::channel();
+        let n = flow.grid.len();
+        let fluid_cell = flow.solid.iter().position(|s| !s).unwrap();
+        let mut density = vec![1.0f32; n];
+        density[flow.solid.iter().position(|s| *s).unwrap()] = 0.0;
+        flow.frames.last_mut().unwrap().density = density.clone();
+        assert!(check(&Solved::Fluid(Box::new(flow.clone()))).is_ok());
+        flow.frames.last_mut().unwrap().density = density[1..].to_vec();
+        assert!(check(&Solved::Fluid(Box::new(flow.clone()))).is_err(), "one value short");
+        density[fluid_cell] = 0.0;
+        flow.frames.last_mut().unwrap().density = density;
+        assert!(check(&Solved::Fluid(Box::new(flow))).is_err(), "zero in a fluid cell");
+    }
+
+    /// What reading refuses is not written: a density that is infinite (a temperature near zero read
+    /// back from a case) makes `results::encode` refuse, so no file is saved that will not open.
+    #[test]
+    fn a_fluid_density_that_would_not_open_is_not_saved() {
+        use fieldcraft_io::results::{self, Solved, SolvedRef, StoredRef, check};
+        let mut flow = crate::flow::tests::channel();
+        let fluid_cell = flow.solid.iter().position(|s| !s).unwrap();
+        let mut density = vec![1.0f32; flow.grid.len()];
+        density[fluid_cell] = f32::INFINITY;
+        flow.frames.last_mut().unwrap().density = density;
+        assert!(check(&Solved::Fluid(Box::new(flow.clone()))).is_err());
+        let name = flow.step.clone();
+        let refused = results::encode(&[(name.as_str(), StoredRef { definition: [0; 32], result: SolvedRef::Fluid(&flow) })]);
+        assert!(refused.unwrap_err().to_string().contains("density"));
+        flow.frames.last_mut().unwrap().density[fluid_cell] = 1.0;
+        results::encode(&[(name.as_str(), StoredRef { definition: [0; 32], result: SolvedRef::Fluid(&flow) })]).unwrap();
+    }
+
     /// Older result encodings keep their model definitions and request a new solve.
     #[test]
     fn older_result_encodings_open_without_their_results() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/results");
-        for encoding in ["MCRSLT01", "MCRSLT02", "MCRSLT03", "MCRSLT04"] {
+        for encoding in ["MCRSLT01", "MCRSLT02", "MCRSLT03", "MCRSLT04", "MCRSLT05"] {
             for (name, step) in [("cantilever", "Bend"), ("couette", "Shear"), ("impact", "Impact")] {
                 let bytes = std::fs::read(fixtures.join(encoding).join(format!("{name}.fieldcraft"))).unwrap();
                 let file = fieldcraft_io::read(&bytes).unwrap();
@@ -1772,10 +1809,15 @@ mod tests {
             let mut s = Session::default();
             let r = s.execute("file.open", &json!({"path": path.to_str().unwrap()})).unwrap();
             assert_eq!(r["migrated_from"], 3, "{release}: {r}");
-            assert!(r["warnings"].as_array().is_none_or(|w| w.is_empty()), "{release}: {r}");
+            // 0.8.x saved its results in the MCRSLT05 encoding; since MCRSLT06 they open as every
+            // older encoding does: the model kept, the results dropped (solve again), and a warning
+            // naming the encoding.
+            let warnings = r["warnings"].as_array().cloned().unwrap_or_default();
+            assert!(warnings.len() == 1 && warnings[0].as_str().is_some_and(|w| w.contains("MCRSLT05")), "{release}: {r}");
             assert!(s.design.as_ref().is_some_and(|d| d.body("Case").is_some()), "{release}");
             assert_eq!(s.surfaces.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["Probe"], "{release}");
-            assert!(!s.model.elements().is_empty() && s.result_steps().next().is_some(), "{release}");
+            assert!(!s.model.elements().is_empty(), "{release}");
+            assert!(s.result_steps().next().is_none(), "{release}: the MCRSLT05 results are dropped");
             assert_eq!(std::fs::read(&path).unwrap(), original, "{release}: opening writes nothing");
             s.execute("file.save", &json!({})).unwrap();
             assert_eq!(fieldcraft_io::fs::format_of_file(&path), Some(fieldcraft_io::FORMAT_VERSION), "{release}");
