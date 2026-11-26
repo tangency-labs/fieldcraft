@@ -1,0 +1,98 @@
+{
+ "title": "A cantilever of a general beam profile: Timoshenko and Euler–Bernoulli tip deflections",
+ "kind": "theory",
+ "source": "Cantilever under end loads: S. P. Timoshenko and J. M. Gere, Mechanics of Materials, Van Nostrand 1972 (bending P L³/(3 E I), Saint-Venant twist T L/(G J)); the shear deflection P L/(G A_s) of the Timoshenko beam, S. P. Timoshenko, Phil. Mag. 41:744-746, 1921; G = E/(2(1 + ν))",
+ "quantities": [
+  {
+   "id": "timoshenko_axial",
+   "quantity": "Timoshenko beam: tip stretch u_x, N L/(E A)",
+   "measure": {
+    "from": "tips",
+    "pointer": "/nodes/0/displacement/0"
+   },
+   "value": 0.0011904761904761906,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "round-off only: the two-node beam's stiffness is the exact flexibility of a beam under end loads (interdependent interpolation, Friedman and Kosmatka 1993; with no shear flexibility the Hermite element)"
+  },
+  {
+   "id": "timoshenko_width",
+   "quantity": "Timoshenko beam: tip deflection u_y across the width, P_y L³/(3 E I_z) + P_y L/(G A_s,y)",
+   "measure": {
+    "from": "tips",
+    "pointer": "/nodes/0/displacement/1"
+   },
+   "value": 0.4123015873015873,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "round-off only: the two-node beam's stiffness is the exact flexibility of a beam under end loads (interdependent interpolation, Friedman and Kosmatka 1993; with no shear flexibility the Hermite element)"
+  },
+  {
+   "id": "timoshenko_height",
+   "quantity": "Timoshenko beam: tip deflection u_z across the height, P_z L³/(3 E I_y) + P_z L/(G A_s,z)",
+   "measure": {
+    "from": "tips",
+    "pointer": "/nodes/0/displacement/2"
+   },
+   "value": -0.16428571428571428,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "round-off only: the two-node beam's stiffness is the exact flexibility of a beam under end loads (interdependent interpolation, Friedman and Kosmatka 1993; with no shear flexibility the Hermite element)"
+  },
+  {
+   "id": "timoshenko_twist",
+   "quantity": "Timoshenko beam: tip twist θ_x, T L/(G J)",
+   "measure": {
+    "from": "tips",
+    "pointer": "/nodes/0/rotation/0"
+   },
+   "value": 0.06190476190476191,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "round-off only: the two-node beam's stiffness is the exact flexibility of a beam under end loads (interdependent interpolation, Friedman and Kosmatka 1993; with no shear flexibility the Hermite element)"
+  },
+  {
+   "id": "euler_bernoulli_width",
+   "quantity": "Euler–Bernoulli beam: tip deflection u_y, P_y L³/(3 E I_z) (no shear term)",
+   "measure": {
+    "from": "tips",
+    "pointer": "/nodes/1/displacement/1"
+   },
+   "value": 0.3968253968253968,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "as timoshenko_width; the shear terms (3.8 % and 9.4 % of the Timoshenko deflections) are absent"
+  },
+  {
+   "id": "euler_bernoulli_height",
+   "quantity": "Euler–Bernoulli beam: tip deflection u_z, P_z L³/(3 E I_y)",
+   "measure": {
+    "from": "tips",
+    "pointer": "/nodes/1/displacement/2"
+   },
+   "value": -0.1488095238095238,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "as euler_bernoulli_width"
+  },
+  {
+   "id": "euler_bernoulli_twist",
+   "quantity": "Euler–Bernoulli beam: tip twist θ_x, T L/(G J)",
+   "measure": {
+    "from": "tips",
+    "pointer": "/nodes/1/rotation/0"
+   },
+   "value": 0.06190476190476191,
+   "tolerance": {
+    "relative": 1e-09
+   },
+   "reason": "round-off only: the two-node beam's stiffness is the exact flexibility of a beam under end loads (interdependent interpolation, Friedman and Kosmatka 1993; with no shear flexibility the Hermite element)"
+  }
+ ]
+}

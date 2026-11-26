@@ -1,0 +1,33 @@
+{
+  "note": "FieldCraft's accepted results for this case, written by `cargo xtask oracle --bless`. A result outside its band fails CI.",
+  "values": {
+    "euler_bernoulli_height": {
+      "band": 1.488095238095238e-10,
+      "value": -0.14880952380952156
+    },
+    "euler_bernoulli_twist": {
+      "band": 6.190476190476191e-11,
+      "value": 0.06190476190476188
+    },
+    "euler_bernoulli_width": {
+      "band": 3.968253968253968e-10,
+      "value": 0.39682539682539086
+    },
+    "timoshenko_axial": {
+      "band": 1.1904761904761906e-12,
+      "value": 0.00119047619047619
+    },
+    "timoshenko_height": {
+      "band": 1.642857142857143e-10,
+      "value": -0.1642857142857139
+    },
+    "timoshenko_twist": {
+      "band": 6.190476190476191e-11,
+      "value": 0.06190476190476188
+    },
+    "timoshenko_width": {
+      "band": 4.123015873015873e-10,
+      "value": 0.412301587301587
+    }
+  }
+}
