@@ -301,6 +301,7 @@ lets it through.
 | LDLᵀ on 1 and several threads | values and pivot order bit-identical | `same_factor_on_any_number_of_threads` |
 | `Auto` selection and refinement | Cholesky for SPD, LDLᵀ otherwise with the right inertia; refined solutions | `auto_selection_and_refinement` |
 | LDLᵀ cost on a hex8 stiffness pattern of 140 000 equations (1.5 · 10⁸ entries) | 1.1 times the Cholesky factor; 1.2 times on a shift with 10 600 negative eigenvalues and 7 700 2 × 2 pivots | `speed_against_cholesky` (heavy) |
+| Static solve of a tet10 block (70 644 unknowns) and a hex20 block (75 924) on 1, 4 and the machine's threads | reactions balance the load; displacements, reactions and stresses bit-identical on every thread count; the times are printed | `tests/speed.rs`: `static_solve_speed` (heavy); `static_solve_is_the_same_on_any_number_of_threads` (blocks of 4 cells a side) |
 | Orderings | a permutation with separators last; graph dissection deterministic; less fill than planes on a thin curved wall; a block keeps the better ordering | `ordering::tests` |
 | Constraint budget | a held distributing coupling of 12 321 nodes refused with its size before allocating; byte counts that overflow refused | `oversized_reductions_are_refused_before_allocating`, `reduced_matrix_budget_refuses_byte_counts_that_overflow` |
 | Lanczos basis under a raised cap | 33 and 166 vectors at 6 000 000 equations | `raised_factor_budget_keeps_the_lanczos_vector_limit` |
@@ -332,6 +333,7 @@ CI on any change of a frozen result beyond its band (10⁻⁹ of the value).
 | `crates/solver/src/constraints.rs` | `Reduction`, `Budget` |
 | `crates/solver/src/analysis.rs` | `pattern`, `factor_raw`, `factor_symmetric`, `factor_error`, `budget`, `lanczos_basis` |
 | `crates/solver/src/lib.rs` | `Limits`, `Error::factor_limit` |
+| `crates/solver/tests/speed.rs` | the static solve's times on a tet10 and a hex20 block |
 | `crates/engine/src/cmd/solve.rs` | `limits`, `FACTOR_ENTRY_CEILING`, `threads` |
 
 ## References
