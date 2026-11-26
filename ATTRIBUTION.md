@@ -306,7 +306,8 @@ alone.
 
 | Crate | Source | Licence | Permission |
 |---|---|---|---|
-| solidcraft-ui-kit, solidcraft-theme, solidcraft-look | https://github.com/tangency-labs/solidcraft (`crates/ui-kit`, `crates/theme`, `crates/look`), pinned by tag in Cargo.toml | SolidCraft Brand and Interface Licence (each crate's `LICENSE`; `LicenseRef-SolidCraft-Brand` in deny.toml) | §3a/§3b written permission to link and distribute them as part of FieldCraft: requested by jyviko on 2026-11-10, approved by SolidCraft's maintainer bherbruck in https://github.com/tangency-labs/fieldcraft/pull/872 (docs/adr/0001-libraries.md) |
+| solidcraft-ui-kit, solidcraft-theme, solidcraft-icon-svg | https://github.com/tangency-labs/solidcraft (`crates/ui-kit`, `crates/theme`, `crates/icon-svg`), pinned by commit in Cargo.toml | MIT OR Apache-2.0 from SolidCraft 615a4adc1f on (each crate's `license.workspace`) | none needed |
+| solidcraft-look (icon artwork, name, logo, app icon) | https://github.com/tangency-labs/solidcraft (`crates/look`), pinned by commit in Cargo.toml | Code MIT OR Apache-2.0; icon artwork and brand under SolidCraft Brand and Interface Licence (`LicenseRef-SolidCraft-Brand` in deny.toml) | written permission to link and distribute the brand artwork as part of FieldCraft: requested by jyviko on 2026-11-10, approved by SolidCraft's maintainer bherbruck in https://github.com/tangency-labs/fieldcraft/pull/872 (docs/adr/0001-libraries.md) |
 
 The interface's icons, fonts and themes that are not FieldCraft's own come from `solidcraft-look`
 under this permission: SolidCraft's icon artwork (FieldCraft's ids that alias it are listed in

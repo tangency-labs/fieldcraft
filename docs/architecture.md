@@ -61,23 +61,21 @@ A native open runs on the same background job as opening a SolidCraft design.
 
 `solidcraft-*` come from https://github.com/tangency-labs/solidcraft (formerly
 bherbruck/solidcraft, which redirects there), pinned in the workspace `Cargo.toml` by
-`tag = "v0.42.0"` (the commit 1b1e940, 2026-11-14) on every SolidCraft git line: the `solidcraft-*`
-and `solidcore-*` crates and the two patches. They must all name the same tag, so they resolve to
-one commit; `Cargo.lock` records that commit. FieldCraft pins a SolidCraft tag, either a release
-or a nightly (#1152 takes tonight's nightly). A bare commit needs an explicit owner exception,
-recorded beside the pin. The tag lines of `Cargo.toml` hold the version; this paragraph and the
-comments there name it too, so a repin changes them together (docs/releasing.md, "Repinning
-SolidCraft"). From v0.40 SolidCraft's
+`tag = "v0.51.0"` (SolidCraft's release, which contains the relicence 615a4adc1f) on every SolidCraft git line: the `solidcraft-*` and `solidcore-*` crates
+and the patches. They must all name the same commit, so they resolve to one; `Cargo.lock` records
+it. A bare commit needs an explicit owner exception, recorded beside the
+pin. The pin lines and the comments there name the tag, so a repin changes them together
+(docs/releasing.md, "Repinning SolidCraft"). From v0.40 SolidCraft's
 modelling kernel is solidcore (Apache-2.0, a Rust port of NVIDIA's SMLib), which replaced the
 truck crates; SolidCraft vendors it in its repository (`solidcore/`). SolidCraft's API takes and
 gives solidcore's records (`Vec3`, `Plane`, `Region2`, …), so `fieldcraft-geometry` also depends
-on `solidcore-record`, from SolidCraft's repository at the same tag: bump both together, or the
-build carries two copies of it whose types do not match. The desktop UI draws with SolidCraft's UI
-kit (`solidcraft-ui-kit`, and the `solidcraft-theme` tokens it draws from) at the same tag, so
+on `solidcore-record` and `solidcore-tess`, from SolidCraft's repository at the same commit: bump
+them together, or the build carries two copies of them whose types do not match. The desktop UI draws with SolidCraft's UI
+kit (`solidcraft-ui-kit`, and the `solidcraft-theme` tokens it draws from) at the same commit, so
 FieldCraft is on SolidCraft's egui line (0.37) and moves with it. SolidCraft's `[patch.crates-io]`
 does not reach dependents; the workspace repeats the patches its desktop app needs (`egui-wgpu`:
 MSAA clamped to what the device supports, 1x on OpenGL adapters, so the 4x never fails pipeline
-validation at start; `winit`) from the same tag. `solidcraft-engine` comes without its default
+validation at start; `winit`) from the same commit. `solidcraft-engine` comes without its default
 `plugins` feature (from v0.42, a sandboxed WebAssembly plugin host on wasmtime): FieldCraft runs
 command scripts and loads no plugin.
 
@@ -87,7 +85,8 @@ than the pin reads (`fieldcraft_geometry::DESIGN_FORMAT`) fails with "this desig
 newer SolidCraft (format N); this FieldCraft reads up to M. Update FieldCraft to open it" (#605:
 FieldCraft 0.7.0 read up to format 21, SolidCraft 0.16.2 saves 27; #655: a FieldCraft on 0.16.2
 reads up to 27, SolidCraft 0.17 and 0.18 save 28; the pin after 0.40.1 reads up to 55, which
-SolidCraft 0.41.0 saves, and 0.42.0 saves 57).
+SolidCraft 0.41.0 saves, and 0.42.0 saves 57; SolidCraft 0.50.0 saves 69, and the post-0.50.0 pin
+reads up to 70 and dropped `.solvecraft` from `solidcraft_io::DESIGN_EXTS`).
 
 A newer pin can also name the same geometry otherwise: SolidCraft 0.16 names the pieces of a
 split face from their history (`F9:face:4` became `F9:section`), so a model saved before names
@@ -109,7 +108,10 @@ without a migration: a full cylinder or sphere that truck made of two half faces
 and many faces of split bodies carry other names (the corpus bracket's frozen list lost 120 names
 and gained 114). From 2874e78 a face made from other faces names them in brackets
 (`F3:blend:F2:side:l3|F2:side:l4` is `F3:blend(F2:side:l3|F2:side:l4)`, `F2:inner:F1:+x` is
-`F2:inner(F1:+x)`, and the edges and vertices that name such a face with it). Opening a model saved before applies the checks above: a stale name is
+`F2:inner(F1:+x)`, and the edges and vertices that name such a face with it). Moving the pin to
+`88f676138` also swaps `F5:bore:side:0#1` and `F5:bore:side:0#2` across split cells `Bracket.10` and
+`Bracket.12` (12 edge/vertex names in `filleted-bracket-blocks.txt`, zero face base names lost).
+Opening a model saved before applies the checks above: a stale name is
 followed only where the model's mesh finds its face again unambiguously (one face, its area
 within 5 %), and every other use is refused and listed to be picked again, never remapped by
 guess.

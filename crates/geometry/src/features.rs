@@ -302,7 +302,7 @@ fn sketch_geometry(ss: &SolvedSketch, sel: Option<&solidcraft_doc::ProfileSel>) 
 
 impl History {
     /// The feature `id` of the timeline, described against `body` (its faces and edges).
-    fn node(&self, f: &solidcraft_doc::Feature, faces: Vec<String>, edges: Vec<String>) -> FeatureNode {
+    fn node(&self, f: &solidcraft_doc::Feature, faces: Vec<String>, edges: Vec<String>) -> crate::Result<FeatureNode> {
         let (vals, _) = self.doc.param_values();
         let eval = |e: &str, k: Kind| Document::eval_in(&vals, e, k).ok().filter(|v| v.is_finite());
         let mut values = BTreeMap::new();
@@ -323,6 +323,9 @@ impl History {
         }
         let point = |p: &[solidcraft_doc::Expr; 3]| -> Option<[f64; 3]> {
             Some([eval(&p[0], Kind::Length)?, eval(&p[1], Kind::Length)?, eval(&p[2], Kind::Length)?])
+        };
+        let dir = |d: &solidcraft_doc::DirExpr| -> Option<[f64; 3]> {
+            unit([eval(&d[0], Kind::Unitless)?, eval(&d[1], Kind::Unitless)?, eval(&d[2], Kind::Unitless)?])
         };
         let sketch_of = |id: solidcraft_doc::SketchId| self.state.sketch(*id);
         let mut node = FeatureNode {
@@ -375,16 +378,23 @@ impl History {
             FeatureKind::Cylinder { base, axis, operation, .. } => {
                 node.operation = Some(operation_name(*operation).into());
                 node.placement = point(base);
-                node.direction = unit(xyz(**axis));
+                node.direction = dir(axis);
             }
             FeatureKind::Sphere { center, operation, .. } | FeatureKind::Torus { center, operation, .. } => {
                 node.operation = Some(operation_name(*operation).into());
                 node.placement = point(center);
             }
-            FeatureKind::Hole { position, direction, .. } => {
+            FeatureKind::Hole { position, at, direction, .. } => {
                 node.operation = Some("cut".into());
-                node.placement = Some(xyz(**position));
-                node.direction = unit(xyz(**direction));
+                // A parametric position that no longer evaluates is an error, as in SolidCraft: the
+                // creation-time `position` is not a fallback for it.
+                node.placement = match at {
+                    Some(expr) => {
+                        Some(point(expr).ok_or_else(|| crate::Error::Invalid(format!("hole `{}`: its position does not evaluate", f.name)))?)
+                    }
+                    None => Some(xyz(**position)),
+                };
+                node.direction = dir(direction);
             }
             FeatureKind::Combine { target, tools, operation, .. } => {
                 node.operation = Some(operation_name(*operation).into());
@@ -423,7 +433,7 @@ impl History {
             }
             _ => {}
         }
-        node
+        Ok(node)
     }
 }
 
@@ -493,7 +503,7 @@ fn body_features(history: &History, shape: &Shape) -> Result<BodyFeatures> {
         }
         let tagged: BTreeSet<u32> = own.iter().filter_map(|n| shape.face_index(n)).collect();
         let on: Vec<String> = edges.iter().filter(|e| e.faces.iter().any(|i| tagged.contains(i))).map(|e| e.name.clone()).collect();
-        features.push(history.node(f, own, on));
+        features.push(history.node(f, own, on)?);
         if features.len() >= MAX_FEATURES_PER_BODY {
             break;
         }
@@ -605,5 +615,27 @@ mod tests {
         // The cut tool is gone; the graph of every body comes in the design's order.
         let all = design.features(None).unwrap();
         assert_eq!(all.iter().map(|b| b.body.as_str()).collect::<Vec<_>>(), design.bodies.iter().map(|b| b.name.as_str()).collect::<Vec<_>>());
+    }
+
+    /// A hole whose parametric `at` expression fails to evaluate is an error, not its
+    /// creation-time `position`.
+    #[cfg(feature = "scripts")]
+    #[test]
+    fn hole_with_unevaluable_at_does_not_fall_back_to_stale_position() {
+        let script = r#"[
+            {"command": "solid.box", "params": {"length": 20, "width": 20, "height": 10}},
+            {"command": "solid.hole", "params": {"position": [10, 10, 10], "diameter": 4, "depth": 5}}
+        ]"#;
+        let design = crate::open_design(&crate::script_design(script).unwrap()).unwrap();
+        let history = design.history.as_ref().unwrap();
+        let mut hole = history.doc.features.iter().find(|f| matches!(f.kind, FeatureKind::Hole { .. })).unwrap().clone();
+        let mut patched = false;
+        if let FeatureKind::Hole { at, .. } = &mut hole.kind {
+            *at = Some(serde_json::from_value(serde_json::json!(["missing_param", "0", "0"])).unwrap());
+            patched = true;
+        }
+        assert!(patched);
+        let error = history.node(&hole, Vec::new(), Vec::new()).err().map(|e| e.to_string());
+        assert!(error.is_some_and(|e| e.contains("does not evaluate")));
     }
 }

@@ -2349,9 +2349,10 @@ pub(crate) mod tests {
         for path in ["part.step", "part.StP", "part.IGES", "part.igs"] {
             assert_eq!(Kind::of(path).map(Kind::command), Some("geometry.open"));
         }
-        for path in ["part.FCStd", "part.3dm", "old.solvecraft"] {
+        for path in ["part.FCStd", "part.3dm", "old.solidcraft"] {
             assert_eq!(Kind::of(path).map(Kind::command), Some("geometry.open"), "{path}");
         }
+        assert_eq!(Kind::of("old.solvecraft"), None);
         for path in ["part.stl", "part.OBJ", "scan.ply", "part.glb"] {
             assert_eq!(Kind::of(path).map(Kind::command), Some("geometry.import.mesh"), "{path}");
         }
@@ -2364,7 +2365,7 @@ pub(crate) mod tests {
     #[test]
     fn open_filters_follow_the_format_table() {
         let any = &open_filters()[0];
-        for e in ["fieldcraft", "sc", "solvecraft", "step", "IGES", "fcstd", "3dm", "stl", "STL", "obj", "ply", "3mf", "glb", "msh"] {
+        for e in ["fieldcraft", "sc", "solidcraft", "step", "IGES", "fcstd", "3dm", "stl", "STL", "obj", "ply", "3mf", "glb", "msh"] {
             assert!(any.extensions.iter().any(|x| x == e), "{e}");
         }
         assert!(filters(Kind::Mesh)[0].extensions.iter().any(|x| x == "stl"));

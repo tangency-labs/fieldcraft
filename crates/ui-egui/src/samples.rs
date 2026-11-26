@@ -3,9 +3,10 @@
 //! one exists. Thumbnails are the gallery captures (docs/media/examples) cropped and scaled to
 //! 320 px, embedded at build time so they work on the web too.
 
-use egui::TextureHandle;
+use std::sync::Arc;
+
 use fieldcraft_engine::sample::{SAMPLES, Sample};
-use solidcraft_ui_kit::{self as kit, BackingTooltipExt as _};
+use solidcraft_ui_kit::{self as kit, BackingTooltipExt as _, PreviewArt, PreviewImage, PreviewTextures};
 
 /// The order the samples are offered in: these first, then any other in the registry's order.
 const FLAGSHIP: &[&str] = &["crank-arm", "drop-test", "rubber-seal", "heated-bracket", "bracket-hex", "flow-past", "cantilever", "impact", "parts"];
@@ -64,20 +65,24 @@ fn decode(bytes: &[u8]) -> Option<egui::ColorImage> {
 pub(crate) const ICON: &str = "ui.views";
 
 /// The thumbnail of sample `name`, uploaded once; `None` when it has none.
-pub(crate) fn thumbnail(ctx: &egui::Context, name: &'static str) -> Option<TextureHandle> {
+///
+/// The kit draws a thumbnail from its [`PreviewArt`], whose ids are valid only while the
+/// [`PreviewTextures`] they came from live: those are kept (shared) in the context's data.
+pub(crate) fn thumbnail(ctx: &egui::Context, name: &'static str) -> Option<PreviewArt> {
     let key = egui::Id::unique(("fc_sample_thumbnail", name));
-    if let Some(cached) = ctx.data(|d| d.get_temp::<Option<TextureHandle>>(key)) {
-        return cached;
+    if let Some(cached) = ctx.data(|d| d.get_temp::<Option<Arc<PreviewTextures>>>(key)) {
+        return cached.map(|textures| textures.art());
     }
-    let texture = THUMBNAILS.iter().find(|(n, _)| *n == name).and_then(|(_, bytes)| {
-        let image = decode(bytes);
-        if image.is_none() {
+    let textures = THUMBNAILS.iter().find(|(n, _)| *n == name).and_then(|(_, bytes)| {
+        let picture = decode(bytes);
+        if picture.is_none() {
             log::warn!("sample thumbnail {name}: does not decode");
         }
-        image.map(|i| ctx.load_texture(format!("sample:{name}"), i, egui::TextureOptions::LINEAR))
+        picture.map(|picture| Arc::new(PreviewTextures::load(ctx, &format!("sample:{name}"), PreviewImage { picture, shadow: None })))
     });
-    ctx.data_mut(|d| d.insert_temp(key, texture.clone()));
-    texture
+    let art = textures.as_ref().map(|textures| textures.art());
+    ctx.data_mut(|d| d.insert_temp(key, textures));
+    art
 }
 
 /// The samples as the kit's sample cards (as SolidCraft's start page shows its own); `open` gets
@@ -96,16 +101,11 @@ pub fn grid(ui: &mut egui::Ui, max_height: Option<f32>, open: &mut Option<&'stat
 
 fn cards(ui: &mut egui::Ui, open: &mut Option<&'static str>) {
     let samples = ordered();
-    let textures: Vec<Option<TextureHandle>> = samples.iter().map(|s| thumbnail(ui.ctx(), s.name)).collect();
+    let thumbnails: Vec<Option<PreviewArt>> = samples.iter().map(|s| thumbnail(ui.ctx(), s.name)).collect();
     let cards: Vec<kit::SampleCard> = samples
         .iter()
-        .zip(&textures)
-        .map(|(s, texture)| kit::SampleCard {
-            title: s.label,
-            description: s.about,
-            icon: kit::Icon::Kit(ICON),
-            thumbnail: texture.as_ref().map(|t| (t.id(), t.size_vec2())),
-        })
+        .zip(thumbnails)
+        .map(|(s, thumbnail)| kit::SampleCard { title: s.label, description: s.about, icon: kit::Icon::Kit(ICON), thumbnail })
         .collect();
     for (sample, response) in samples.iter().zip(kit::FileView::sample_grid(ui, "fc_samples", &cards)) {
         ui.ctx().data_mut(|d| d.insert_temp(card_id(sample.name), (response.rect, response.interact_rect)));

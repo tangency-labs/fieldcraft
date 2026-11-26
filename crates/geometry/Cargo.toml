@@ -17,6 +17,7 @@ solidcraft-io = { workspace = true }
 solidcore-record = { workspace = true }
 solidcore-tess = { workspace = true }
 thiserror = { workspace = true }
+log = { workspace = true }
 zip = { workspace = true }
 quick-xml = { workspace = true }
 solidcraft-engine = { workspace = true, optional = true }

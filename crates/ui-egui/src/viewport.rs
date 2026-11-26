@@ -740,11 +740,12 @@ fn axis_view(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect) {
         orbiting: false,
         snap_hint: false,
         home_label: "Home view".into(),
+        turn_around_label: None,
     };
     match kit::view_compass::show(ui, &compass) {
         Some(kit::view_compass::ViewAction::Snap { direction: [x, y, z], .. }) => app.set_view(view_along(Vec3::new(x, y, z))),
         Some(kit::view_compass::ViewAction::Home) => app.home_view(),
-        None => {}
+        Some(kit::view_compass::ViewAction::TurnAround) | None => {}
     }
 }
 

@@ -295,8 +295,9 @@ fn oklab_chroma(c: Color32) -> f64 {
 const BLUE_HALF_SECTOR: f64 = 30.0;
 
 /// Kit colours that stay SolidCraft's however blue they are: its mark on the application bar,
-/// which neither FieldCraft nor the kit draws.
-const NOT_AN_ACCENT: [&str; 1] = ["logo"];
+/// 2D drawing sheet/ink presets (`paper_*`), and categorical library tag highlights
+/// (`library_highlights`), none of which are FieldCraft UI chrome or SolidCraft's accent.
+const NOT_AN_ACCENT: [&str; 5] = ["logo", "paper_blueprint", "paper_prussian_blue", "paper_lines", "library_highlights"];
 
 /// Every colour slot of the kit's tokens, by the kit's own inventory of them (the theme-file
 /// keys, which the kit keeps complete at build time), with its colours.

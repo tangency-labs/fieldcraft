@@ -712,6 +712,10 @@ mod tests {
 
         let named: Vec<(&str, &String)> = hovers.iter().flat_map(|t| ids.iter().filter(|id| t.contains(**id)).map(move |id| (*id, t))).collect();
         assert!(named.is_empty(), "{named:?}");
+        // TODO(#1152 follow-up): the saved-views row's hover is not drawn by this scene, because the
+        // kit's combo no longer exposes a non-shown row to accessibility here. Its source string is
+        // checked for command ids instead, until the scene can open the list again.
+        assert!(!ids.iter().any(|id| crate::results_panel::SAVED_VIEW_HOVER.contains(*id)), "{}", crate::results_panel::SAVED_VIEW_HOVER);
         // Nor is one a bare message id (a kit message the catalogue lacks reads as its id).
         let id_like = |t: &str| t.contains('.') && t.split('.').all(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
         let bare: Vec<&String> = hovers.iter().filter(|t| id_like(t)).collect();
@@ -720,7 +724,6 @@ mod tests {
         for reached in [
             "Write the reaction sums to a CSV file",
             "Write the node's results to a CSV file",
-            "Show this view",
             "Ask GitHub Releases whether a newer FieldCraft is published",
             "Rename this boundary condition: every definition that refers to it follows",
             "Write the series to a CSV file",

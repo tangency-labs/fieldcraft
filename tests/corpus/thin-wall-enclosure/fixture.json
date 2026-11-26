@@ -22,7 +22,7 @@
   "values": {
     "boundary.feature_edges": {
       "band": 0,
-      "value": 341
+      "value": 342
     },
     "boundary.genus": {
       "band": 0,
@@ -34,7 +34,7 @@
     },
     "boundary.vertices": {
       "band": 0,
-      "value": 691
+      "value": 703
     },
     "build.bodies": {
       "band": 0,
@@ -46,11 +46,11 @@
     },
     "build.triangles": {
       "band": 0,
-      "value": 1378
+      "value": 1402
     },
     "cdt.cavities": {
       "band": 0,
-      "value": 14
+      "value": 13
     },
     "cdt.flat": {
       "band": 0,
@@ -58,11 +58,11 @@
     },
     "cdt.steiner": {
       "band": 0,
-      "value": 89
+      "value": 101
     },
     "cdt.tets": {
       "band": 0,
-      "value": 2010
+      "value": 2095
     },
     "hex.elements": {
       "band": 0,
@@ -77,16 +77,16 @@
       "value": 0.7071067811865474
     },
     "quality.max_dihedral_deg": {
-      "band": 1.425984747102326e-7,
-      "value": 142.59747471023258
+      "band": 1.4455104429335417e-7,
+      "value": 144.55004429335418
     },
     "quality.min_dihedral_deg": {
-      "band": 3.2045454133908344e-8,
-      "value": 32.04445413390834
+      "band": 3.1631189556233e-8,
+      "value": 31.630189556233
     },
     "quality.min_radius_ratio": {
-      "band": 2.9102879500097187e-10,
-      "value": 0.29002879500097184
+      "band": 2.643869860877851e-10,
+      "value": 0.2633869860877851
     },
     "quality.slivers": {
       "band": 0,
@@ -94,23 +94,23 @@
     },
     "quality.slivers_cdt": {
       "band": 0,
-      "value": 545
+      "value": 533
     },
     "quality.tets": {
       "band": 0,
-      "value": 29887
+      "value": 28743
     },
     "surface.enclosed_mm3": {
-      "band": 0.000015564001000000035,
-      "value": 15564.000000000035
+      "band": 0.000015564000999999812,
+      "value": 15563.99999999981
     },
     "surface.enclosed_vs_exact": {
       "band": 1e-9,
-      "value": 2.220560181660966e-15
+      "value": -1.2154645204881076e-14
     },
     "surface.solidcraft_mm3": {
-      "band": 0.000015564001,
-      "value": 15564.0
+      "band": 0.000015564000999999974,
+      "value": 15563.999999999975
     }
   }
 }

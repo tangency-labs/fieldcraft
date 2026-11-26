@@ -572,6 +572,9 @@ fn rows(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) {
     }
 }
 
+/// The hover text of a saved view's row in the Views list.
+pub(crate) const SAVED_VIEW_HOVER: &str = "Show this view: its camera and results display";
+
 /// The saved views: a list that shows one (`view.restore`) and Save View… (`view.save`'s
 /// form, the viewport's camera filled in); whether Save View… was clicked.
 fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Value)>) -> bool {
@@ -582,11 +585,7 @@ fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Val
         ui.add_enabled_ui(!views.is_empty(), |ui| {
             kit::bounded_dropdown_menu(ui, "fc_results_views", shown, ui.available_width(), |ui| {
                 for v in views {
-                    if ui
-                        .selectable_label(current == Some(v.name.as_str()), &v.name)
-                        .backing_on_hover_text("Show this view: its camera and results display")
-                        .clicked()
-                    {
+                    if ui.selectable_label(current == Some(v.name.as_str()), &v.name).backing_on_hover_text(SAVED_VIEW_HOVER).clicked() {
                         run.push(("view.restore", json!({"name": v.name})));
                     }
                 }

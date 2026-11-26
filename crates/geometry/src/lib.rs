@@ -342,17 +342,32 @@ impl Shape {
             let v = if self.face_map.is_empty() { Some(face) } else { self.face_map.get(face).map(|&v| v as usize) };
             v.and_then(|v| self.faces.get(v)).map_or_else(|| format!("#{face}"), |f| format!("`{}`", f.name))
         };
-        // A face a bound limited is listed whether or not it met the tolerance after all.
-        let off: Vec<_> = stats.over_tolerance.iter().filter(|f| !f.within).collect();
+        // `sag::refine` refines interior triangles to `f.tol` against surface-projected corners,
+        // while `solidcore_tess` (#18432) still emits an uncapped `OverTolerance` (`caps` empty)
+        // when `sag::worst` measures a triangle touching a held boundary vertex above `f.tol`.
+        // Accept such an uncapped residual only when every sample was measured and `f.sag` stays
+        // within `uncapped_sag_limit(f.tol)`; reject capped, unmeasured, or larger residuals.
+        for f in &stats.over_tolerance {
+            if !f.within && f.caps.is_empty() && !exceeds_tolerance(f) {
+                log::warn!(
+                    "tessellation of body `{}` face {} has uncapped boundary residual (sag {:.6} vs tol {:.6})",
+                    self.name,
+                    name(f.face),
+                    f.sag,
+                    f.tol,
+                );
+            }
+        }
+        let off: Vec<_> = stats.over_tolerance.iter().filter(|f| exceeds_tolerance(f)).collect();
         if let Some(f) = off.first() {
             return Err(Error::Failed(format!(
                 "SolidCraft could not mesh {} of the faces of body `{}` within the tessellation tolerance (face {} first)",
                 off.len(),
                 self.name,
-                name(f.face)
+                name(f.face),
             )));
         }
-        let (m, refused) = plan.welded();
+        let (m, refused) = guard("tessellate", || plan.welded().map_err(KernelError::from))?;
         if let Some(f) = refused.first() {
             return Err(Error::Failed(format!(
                 "SolidCraft could not triangulate {} of the faces of body `{}` (face {} first: {})",
@@ -399,6 +414,32 @@ impl Shape {
     pub fn has_merged_faces(&self) -> bool {
         !self.face_map.is_empty()
     }
+}
+
+/// Maximum ratio between `solidcore_tess`'s `sag::worst` tangent-plane normal projection and
+/// `edges::bisect_at`'s quarter-point chord check (`t = 0.25, 0.5, 0.75`) on a locally
+/// quadratic curve segment: for a parameter-midpoint shift of up to half a quarter-step
+/// (`α = 1/4`), `bisect_at` measures `s_max * (1 - α²)` while `sag::worst` measures
+/// `s_max * (1 + α²)`, giving `(1 + 1/16) / (1 - 1/16) = 17/15`.
+const BOUNDARY_SAG_RATIO: f64 = 17.0 / 15.0;
+
+/// Upper bound on an uncapped boundary residual (`OverTolerance` with `caps` empty and
+/// `unmeasured == 0`): the quarter-point/tangent-plane ratio on `tol` plus the held
+/// boundary-vertex tolerance (`2.0 * LINEAR_TOLERANCE`, matching `SurfaceMesh::weld_distance`).
+fn uncapped_sag_limit(tol: f64) -> f64 {
+    tol * BOUNDARY_SAG_RATIO + 2.0 * LINEAR_TOLERANCE
+}
+
+/// Whether `OverTolerance` failed the chordal tolerance check: any capped face with `!within`,
+/// or any uncapped face that is unmeasured, non-finite, or exceeds [`uncapped_sag_limit`].
+fn exceeds_tolerance(f: &solidcore_tess::OverTolerance) -> bool {
+    if f.within {
+        return false;
+    }
+    if !f.caps.is_empty() {
+        return true;
+    }
+    f.unmeasured > 0 || !f.sag.is_finite() || !f.tol.is_finite() || f.tol <= 0.0 || f.sag > uncapped_sag_limit(f.tol)
 }
 
 impl SurfaceMesh {
@@ -487,5 +528,67 @@ mod tests {
         for t in [0.0, -1.0, f64::NAN, f64::INFINITY] {
             assert!(b.tessellate(t).is_err());
         }
+    }
+
+    /// Reproducer from #967 / #1141: a box joined with a corner cylinder boss tessellates at chord
+    /// 0.078 mm with an uncapped boundary-edge residual (`within: false, caps: []` in SolidCraft
+    /// v0.44+) where both the `OverTolerance` sag and the cylinder wall triangles stay within
+    /// `uncapped_sag_limit`.
+    #[test]
+    fn uncapped_boundary_residual_still_tessellates_within_chord() {
+        use solidcore_record::Vec3;
+        let bx = solidcraft_kernel::box_solid(Vec3::new(0.0, 0.0, 0.0), Vec3::new(56.0, 42.0, 16.0)).unwrap();
+        let cyl = solidcraft_kernel::cylinder(Vec3::new(-1.0, -1.0, 0.0), Vec3::new(0.0, 0.0, 1.0), 6.5, 16.0).unwrap();
+        let body = solidcraft_kernel::boolean(&bx, &cyl, solidcraft_kernel::BoolOp::Union).unwrap().unwrap();
+        let tol = 0.078;
+        let spec = solidcore_tess::MeshSpec { chord: tol, size: None, min_angle: TESS_MIN_ANGLE };
+        let (_, stats) = solidcore_tess::mesh(body.record(), &spec, body.size(), None).unwrap();
+        let uncapped: Vec<_> = stats.over_tolerance.iter().filter(|f| !f.within && f.caps.is_empty()).collect();
+        assert!(!uncapped.is_empty(), "expected CornerBoss to produce an uncapped boundary residual: {:?}", stats.over_tolerance);
+        for f in uncapped {
+            assert_eq!(f.unmeasured, 0, "unexpected unmeasured residual: {f:?}");
+            assert!(f.sag > f.tol, "expected uncapped sag to exceed tol: {f:?}");
+            assert!(f.sag <= uncapped_sag_limit(f.tol), "sag {} exceeded uncapped limit {}", f.sag, uncapped_sag_limit(f.tol));
+        }
+
+        let shape = Shape { name: "CornerBoss".into(), body, faces: Vec::new(), face_map: Vec::new(), cuts: Vec::new() };
+        let mesh = shape.tessellate(tol).unwrap();
+        let surfaces = shape.face_surfaces().unwrap();
+        let mut checked = 0usize;
+        for (tri, &face) in mesh.triangles.iter().zip(&mesh.tri_face) {
+            let Some(Some(FaceSurface::Cylinder { origin, axis, radius })) = surfaces.get(face as usize) else {
+                continue;
+            };
+            checked += 1;
+            let [a, b, c] = tri.map(|i| mesh.positions[i as usize]);
+            let mid = |u: [f64; 3], v: [f64; 3]| [0, 1, 2].map(|k| 0.5 * (u[k] + v[k]));
+            let centroid = [0, 1, 2].map(|k| (a[k] + b[k] + c[k]) / 3.0);
+            for p in [centroid, mid(a, b), mid(b, c), mid(c, a)] {
+                let d = [0, 1, 2].map(|k| p[k] - origin[k]);
+                let along = d[0] * axis[0] + d[1] * axis[1] + d[2] * axis[2];
+                let perp = [0, 1, 2].map(|k| d[k] - along * axis[k]);
+                let r = (perp[0] * perp[0] + perp[1] * perp[1] + perp[2] * perp[2]).sqrt();
+                assert!(
+                    (r - radius).abs() <= uncapped_sag_limit(tol),
+                    "cylindrical sag {} exceeds uncapped_sag_limit({tol}) = {}",
+                    (r - radius).abs(),
+                    uncapped_sag_limit(tol)
+                );
+            }
+        }
+        assert!(checked > 0, "expected cylindrical wall triangles");
+    }
+
+    #[test]
+    fn exceeds_tolerance_rejects_capped_and_large_or_unmeasured_uncapped() {
+        let mk = |within, tol, sag, unmeasured, caps| solidcore_tess::OverTolerance { face: 0, sag, unmeasured, tol, within, caps };
+        assert!(!exceeds_tolerance(&mk(true, 0.1, 0.2, 1, vec![solidcore_tess::Cap::Refine])));
+        assert!(exceeds_tolerance(&mk(false, 0.1, 0.1001, 0, vec![solidcore_tess::Cap::Refine])));
+        assert!(exceeds_tolerance(&mk(false, 0.1, 0.05, 1, Vec::new())));
+        assert!(exceeds_tolerance(&mk(false, 0.1, f64::NAN, 0, Vec::new())));
+        assert!(exceeds_tolerance(&mk(false, 0.1, f64::INFINITY, 0, Vec::new())));
+        assert!(exceeds_tolerance(&mk(false, 0.01, 0.05, 0, Vec::new())));
+        assert!(exceeds_tolerance(&mk(false, 0.1, uncapped_sag_limit(0.1) + 1e-4, 0, Vec::new())));
+        assert!(!exceeds_tolerance(&mk(false, 0.07798869, 0.07803468, 0, Vec::new())));
     }
 }
