@@ -455,6 +455,34 @@ reproducible from what is published. A40 was not run.
 > The remaining error is resolution: 16–24 cells per diameter leave the separating shear layers on one or two cells.
 > Density stays within 0.84–1.18 (square) and 0.93–1.08 (cylinder) of the reference, local Mach numbers up to 0.28.
 
+### Re 3900 cylinder rows rerun after the two-step force (#788, #1109)
+
+> Probe runs of 2026-11-25 on develop d2b829be (NVIDIA GB10, f32, `solve.fluid` `backend: gpu`, in-place streaming).
+> One setup for the three rows, so they compare with each other: D = U = ρ = 1 m, ν = 1/3900, the box 24 D × 12 D
+> × 3.1667 D at Δx = D/12, convective outlet, slip sides, periodic span, free stream everywhere (no wake perturbation), HRR
+> σ 0.99 (dynamic for its row), Smagorinsky C 0.1, lattice speed 0.05, 200 D/U, the 3D cylinder imported as a
+> 1024-segment prism (`geometry.import.mesh`). C_d = 2F_x/(ρU²DS), averaged over 100–200 D/U in 8 blocks, Student-t
+> 95 % half-width from the block means (df 7). The last column is #788's old statistic on its own setup; the two differ in setup (below).
+>
+> Start: free stream everywhere, no cross-flow seed, no inlet ramp. The Re 3900 cylinder's C_d is start-sensitive (#1153): on 16 cells per D the probe's 1 % cross-flow wave gives 1.113 ± 0.012, and the same setup without it 1.437 ± 0.009. These rows are unseeded and on 12 cells per D. Their absolute values are not comparable with the seeded 1.113 or with #788's perturbed-start rows; they compare only with each other.
+>
+> Reproduce: one `fieldcraft-cli run` of a JSON command script per row, all with the same model: `model.units` (m-kg-s-N-Pa); `model.material.create` (Fluid, density 1, newtonian viscosity 2.5641025641e-4); `geometry.import.mesh` (the cylinder: an analytic binary STL, radius 0.5 m about (6, 6) m, 1024 segments, z from −0.5 to 3.6667 m); `model.fluid_domain.create` (Flow, min [0, 0, 0], max [24, 12, 3.1666666666666665], spacing 0.08333333333333333, x_min velocity [1, 0, 0], x_max convective pressure 0, y slip, z periodic, obstacle `cylinder`, initial_velocity [1, 0, 0]); `model.step.create` (Run: fluid, end_time 200, time_step 0.0041666667, frames 1, collision hrr, turbulence smagorinsky constant 0.1 prandtl 0.9, sigma 0.99); `solve.fluid` (backend gpu); `solve.probe` (step Run, forces `cylinder/face0`). The Musker row adds `"wall_model": "musker"` to the turbulence; the dynamic row sets sigma to `dynamic`.
+
+| row | C_d ± 95 % (this setup, 2026-11-25) | block lag-1 | half-window drift | #788 old (develop cb976117, perturbed start) |
+|---|---|---|---|---|
+| baseline (HRR σ 0.99) | 1.799 ± 0.018 | −0.115 | +0.016 | 1.354 ± 0.040 |
+| Musker wall model | −0.026 ± 0.064 | 0.565 | +0.114 | 2.441 ± 0.171 |
+| dynamic σ | 1.620 ± 0.043 | −0.127 | +0.045 | 1.649 ± 0.022 |
+
+Musker's row is not converged: its block means drift (+0.11 between the window's halves) and correlate (lag-1
+0.57), so its interval is not a block interval of a stationary mean. The manual (`les.md`) records the Musker wall
+model as failing on the regularised and hybrid collisions at Re_τ 1000; this row is a second instance, not a fix.
+
+Why the absolute values move: the setups differ. The old driver seeded a wake perturbation (v and w with ζ = 2πz/S),
+which excites the spanwise mode; this run starts from free stream everywhere, with no seed. The two-step force also changed every recorded force
+near τ⁺ = ½ (here τ⁺ = 0.50046), so the old numbers are not a valid baseline for the new force either. Neither
+effect was separated: a run of the old setup on the new force would be needed.
+
 ### Wall-modelled channel at Re_τ 1000 on the regularised collision (#785)
 
 > Probe runs of 2026-11-23/24 on develop 655d92fe: 2πδ × 2δ × πδ, constant force u_τ²/δ, Smagorinsky C 0.1, the
