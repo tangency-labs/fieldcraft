@@ -727,6 +727,8 @@ struct Variant {
     sa: bool,
     /// Its own wall law on the on-node wall (`spalart_allmaras_bounce`).
     sa_law: bool,
+    /// The matched on-node wall's layer rows per node (`LAYER_ROWS`; 0 without the matched wall).
+    layer_rows: u32,
     /// Some of them take the quadratic form.
     quadratic: bool,
 }
@@ -789,6 +791,12 @@ fn compile(device: &wgpu::Device, variant: Variant) -> Result<Kernels> {
                     ("SA_KAPPA", fieldcraft_lbm::sa::KAPPA),
                     ("SA_CV1_3", fieldcraft_lbm::sa::C_V1.powi(3)),
                     ("NODE", f64::from(NODE)),
+                    ("LAYER_ROWS", f64::from(variant.layer_rows)),
+                    ("BOUNCE_KAPPA", fieldcraft_lbm::wall::BOUNCE_KAPPA),
+                    ("BOUNCE_B", fieldcraft_lbm::wall::BOUNCE_B),
+                    ("MIXING_KAPPA", fieldcraft_lbm::wall::MIXING_KAPPA),
+                    ("MIXING_A_PLUS", fieldcraft_lbm::wall::MIXING_A_PLUS),
+                    ("SPALDING_ITERATIONS", fieldcraft_lbm::wall::SPALDING_ITERATIONS as f64),
                     ("RESET", f64::from(RESET)),
                     ("INTERP", f64::from(INTERP)),
                     ("QUAD", f64::from(QUAD)),
@@ -913,9 +921,6 @@ impl GpuFlow {
         }
         if flow.characteristic_outlet_cells() > 0 {
             return Err(Error::Invalid("the characteristic outlet is not supported on the GPU yet: solve on the CPU".into()));
-        }
-        if flow.wall_nodes().is_some_and(|w| w.rows() > 1) {
-            return Err(Error::Invalid("not supported yet: `spalding_bounce_matched` on the GPU; solve on the CPU (`backend: \"cpu\"`)".into()));
         }
         if flow.rheology().is_some_and(|r| r.table.is_some()) {
             return Err(Error::Invalid(
@@ -1102,15 +1107,33 @@ impl GpuFlow {
         // carries what the node took from the fluid (its link from outside the box along the
         // normal, an open placeholder with no exchange of its own).
         let mut node_links: Vec<(u32, u32)> = Vec::new();
+        // The matched wall's layer rows per node: its sample is MATCHING_ROWS cells out, and the rows between
+        // the interior node and the sample (rows 1 … rows − 1) relax with the mixing length.
+        let layer_rows = flow.wall_nodes().map_or(0, |n| n.rows().saturating_sub(1));
         if let Some(nodes) = flow.wall_nodes() {
             let links = flow.links();
-            for w in nodes.nodes() {
+            let [nx, ny, _] = flow.grid().cells;
+            let rows = nodes.rows();
+            for (node, w) in nodes.nodes().iter().enumerate() {
                 let (cell, axis) = (w.cell as usize, usize::from(w.axis).min(2));
                 let mut normal = [0i32; 3];
                 normal[axis] = i32::from(w.inward.signum());
                 let q = C.iter().position(|c| *c == normal).ok_or_else(|| Error::Invalid(format!("boundary node {cell} has no normal")))?;
                 if let Some(u) = fluid_u32.get_mut(cell) {
                     *u = NODE;
+                }
+                // The matched wall's layer cells, rows 1 … rows − 1 from the interior node (`layer_omega`):
+                // each flag word holds its slot + 1, slot = node · layer_rows + row − 1.
+                let stride = [1, nx, nx * ny][axis] as i64;
+                for row in 0..layer_rows {
+                    let slot = node * layer_rows + row;
+                    let flag = u32::try_from(slot + 1)
+                        .ok()
+                        .filter(|s| *s < 1 << 31)
+                        .ok_or_else(|| Error::Limit("too many layer cells for the GPU's flags".into()))?;
+                    let layer = w.interior as i64 + i64::from(w.inward) * row as i64 * stride;
+                    let word = usize::try_from(layer).ok().and_then(|c| fluid_u32.get_mut(c));
+                    *word.ok_or_else(|| Error::Invalid(format!("boundary node {cell} has no layer cells inside the box")))? = 1 | flag << 1;
                 }
                 let first = links.partition_point(|l| (l.cell as usize) < cell);
                 let link = links
@@ -1122,7 +1145,7 @@ impl GpuFlow {
                     .and_then(|i| u32::try_from(first + i).ok())
                     .ok_or_else(|| Error::Invalid(format!("boundary node {cell} has no link from outside the box")))?;
                 wall_rows.extend(normal.map(|v| v as f32));
-                wall_rows.push(1.0);
+                wall_rows.push(rows as f32);
                 wall_rows.extend([0.0, 0.0, 0.0, f32::from_bits(w.interior)]);
                 wall_rows.extend([0.0; 4]);
                 wall_rows.extend([0.0, 0.0, 0.0, f32::from_bits(link)]);
@@ -1520,6 +1543,7 @@ impl GpuFlow {
             interpolated,
             sa: sa_faces.is_some(),
             sa_law,
+            layer_rows: u32::try_from(layer_rows).map_err(|_| Error::Limit("too many layer rows for the GPU solver".into()))?,
             quadratic,
         })?;
         // Every binding's buffer in bind group k (the two differ in the phase and the A–B swap).

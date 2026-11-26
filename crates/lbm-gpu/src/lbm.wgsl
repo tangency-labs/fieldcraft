@@ -84,11 +84,12 @@
 // outermost cell layer at each wall face is boundary nodes, the wall through their centres. They
 // stream like fluid cells but do not collide and are left out of the gradients, moments, mass
 // and mean velocity (`is_fluid`). Before the collision `bounce_sample` takes each node's stress
-// from Spalding's law, or with SA_LAW the Spalart–Allmaras model's own, at its interior node (one
-// cell into the fluid, distance 1); after it `node_bounce` runs eq. 14 on each node in place of a
-// collision, with the AA addressing of a collision (each node reads and writes only its own
+// from Spalding's law, or with SA_LAW the Spalart–Allmaras model's own, at its sample cell (its interior
+// node one cell into the fluid, distance 1; the matched wall's MATCHING_ROWS cells from the wall, `node_sample`),
+// and its layer cells relax with the mixing-length rates (`layer_omega`); after it `node_bounce` runs eq. 14
+// on each node in place of a collision, with the AA addressing of a collision (each node reads and writes only its own
 // populations), handing the fluid the stress less ½ρa and recording what the node took plus ½ρa
-// (ρ the interior node's density, from its populations), which `wall_forces` gives the node's box face.
+// (ρ the sample's density, from its populations), which `wall_forces` gives the node's box face.
 //
 // Spalart–Allmaras (`SA`) f32 guards: r = ν̃/(S̃ κ² d²) only where the denominator is positive,
 // r⁶ and g⁶ by multiplication, pow only for the ^(1/6) of a positive argument.
@@ -181,6 +182,17 @@ override INTERP: u32;
 override QUAD: u32;
 // The flag word of a boundary node of the on-node bounce (native.rs, NODE, which sets it for every pipeline).
 override NODE: u32;
+// The matched on-node wall's layer rows per node (native.rs: MATCHING_ROWS − 1; 0 without the matched
+// wall). Layer cells relax with the mixing-length rate of their node's friction velocity (`layer_omega`).
+override LAYER_ROWS: u32;
+// Han et al.'s Kármán constant and intercept, the mixing-length layer's κ and A⁺ (Malaspinas and Sagaut's
+// 0.384 and 26), and Spalding's bisection cap: fieldcraft_lbm::wall's BOUNCE_KAPPA, BOUNCE_B, MIXING_KAPPA,
+// MIXING_A_PLUS and SPALDING_ITERATIONS, passed by native.rs as SA_KAPPA is.
+override BOUNCE_KAPPA: f32;
+override BOUNCE_B: f32;
+override MIXING_KAPPA: f32;
+override MIXING_A_PLUS: f32;
+override SPALDING_ITERATIONS: u32;
 
 struct Params {
     n: u32,
@@ -740,6 +752,14 @@ fn bounce_shift(q: u32, cell: u32) -> f32 {
     return 0.5 * dot(walls[4u * (k - 1u) + 2u].xyz, vec3<f32>(d));
 }
 
+// The cell an on-node wall's law reads (fieldcraft_lbm::bounce::WallNode::sample): its interior node `interior`
+// moved `row0.w − 1` cells into the fluid along the inward normal `row0.xyz`, where row0.w is the sample's
+// distance in rows (1 for Han et al.'s interior node, MATCHING_ROWS for the matched wall).
+fn node_sample(row0: vec4<f32>, interior: u32) -> u32 {
+    let p = coords(interior) + vec3<i32>(round(row0.xyz)) * (i32(round(row0.w)) - 1);
+    return u32((p.z * i32(params.ny) + p.y) * i32(params.nx) + p.x);
+}
+
 // The wall-function bounce's sample before the collision (fieldcraft_lbm::wall::Walls::
 // sample_stress): wall cell k's stress ρ u_τ² along its own velocity parallel to its wall, u_τ
 // from Spalding's law, or with SA_LAW from the Spalart–Allmaras model's own, at its distance; into row
@@ -751,7 +771,8 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
     if !(WALL_BOUNCE || ON_NODE) || k >= params.wall.x { return; }
     let a = walls[4u * k];
     let b = walls[4u * k + 1u];
-    let cell = bitcast<u32>(b.w);
+    var cell = bitcast<u32>(b.w);
+    if ON_NODE { cell = node_sample(a, cell); }
     var xyz = vec3<i32>(0);
     if AA_MODE && params.phase.x == 1u { xyz = coords(cell); }
     var drho = 0.0;
@@ -774,7 +795,7 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
         if SA_LAW {
             ut = sa_law_friction(speed, a.w, params.smag.w);
         } else {
-            ut = spalding_root(speed, a.w, params.smag.w, 0.41, 5.5);
+            ut = spalding_root(speed, a.w, params.smag.w, BOUNCE_KAPPA, BOUNCE_B);
         }
         let scale = rho * ut * ut / speed;
         if speed > 0.0 && scale < 1e30 {
@@ -789,8 +810,9 @@ fn bounce_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_i
 // Han, Ooka and Kikumoto's on-node wall-function bounce (`spalding_bounce`, their eq. 14;
 // fieldcraft_lbm::bounce, whose notes state the scheme): boundary node k, after the collision of
 // the fluid cells, in place of its own collision. Its rows in `walls`: the unit normal into the
-// fluid and the distance 1; zero and its interior node (as bits), one cell into the fluid; the
-// stress `bounce_sample` took at the interior node (xyz); and the momentum the node took from the
+// fluid and the distance `rows` (1 for spalding_bounce, MATCHING_ROWS for the matched wall); zero and its
+// interior node (as bits), one cell into the fluid; the stress `bounce_sample` took at the sample row (xyz);
+// and the momentum the node took from the
 // fluid this step plus its half-cell body force (xyz, written here), with the index of one of the node's links (w, as bits),
 // whose group (the node's box face) takes it in `wall_forces`. With n the inward normal and e1,
 // e2 the two axes along the wall, every population of the node is assigned explicitly (no loop
@@ -815,15 +837,16 @@ fn node_bounce(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
     for (var q = 0u; q < Q; q = q + 1u) {
         fq[q] = population(q, cell, xyz);
     }
-    // The node's half cell's body force, ½ ρ a (fieldcraft_lbm::bounce::WallNode::body): ρ the
-    // interior node's density, 1 plus its deviations. The collision conserves mass, so these are
-    // the populations `bounce_sample` took the density from, and no row carries it.
-    let ixyz = coords(interior);
-    var rho_i = 1.0;
+    // The node's half cell's body force, ½ ρ a (fieldcraft_lbm::bounce::WallNode::body): ρ the sample's
+    // density, 1 plus its deviations. The collision conserves mass, so these are the populations
+    // `bounce_sample` took the density from, and no row carries it.
+    let sample_cell = node_sample(walls[4u * k], interior);
+    let sxyz = coords(sample_cell);
+    var rho_s = 1.0;
     for (var q = 0u; q < Q; q = q + 1u) {
-        rho_i = rho_i + population(q, interior, ixyz);
+        rho_s = rho_s + population(q, sample_cell, sxyz);
     }
-    let body = 0.5 * rho_i * acc_of(cell);
+    let body = 0.5 * rho_s * acc_of(cell);
     // For the inward normal along +axis: the axis directions into (a_in) and out of (a_out) the
     // fluid; the diagonals into the fluid along +e (dp) and −e (dm), and their images into the
     // wall (mp = −n + e, mm = −n − e), for e1 (…1) and e2 (…2); the four wall-parallel pairs
@@ -1036,7 +1059,7 @@ fn wall_sample(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id)
             let m = musker(y_plus);
             let up = m.x;
             let dudy = ut * ut / nu * m.y;
-            let l = 0.384 * a.w * (1.0 - exp(-y_plus / 26.0));
+            let l = MIXING_KAPPA * a.w * (1.0 - exp(-y_plus / MIXING_A_PLUS));
             let nu_t = l * l * abs(dudy);
             let u1 = ut * up;
             if u1 < 1e30 && nu_t < 1e30 {
@@ -1090,6 +1113,53 @@ fn wall_omega(cell: u32) -> f32 {
     let k = fluid[cell] >> 1u;
     if k == 0u { return -1.0; }
     return walls[4u * (k - 1u) + 2u].w;
+}
+
+// Spalding's slope du⁺/dy⁺ at y⁺ (fieldcraft_lbm::wall::spalding_u_plus): bisection on y⁺(u⁺), which rises
+// with u⁺ from 0. It stops when the bracket is 1e-6 of its upper end, about 8 f32 ulps (one ulp is 2⁻²³ ≈ 1.2e-7
+// of the value): the slope needs no more, and the CPU's 1e-14 is below f32's resolution. The cap is the CPU's
+// SPALDING_ITERATIONS: the bracket halves each step, so the cap is reached only at a bracket near 2⁻¹⁰⁰ of y⁺.
+fn spalding_slope(y_plus: f32) -> f32 {
+    var lo = 0.0;
+    var hi = y_plus;
+    for (var i = 0u; i < SPALDING_ITERATIONS; i = i + 1u) {
+        if hi - lo <= 1e-6 * hi { break; }
+        let mid = 0.5 * (lo + hi);
+        if spalding(mid, BOUNCE_KAPPA, BOUNCE_B).x < y_plus { lo = mid; } else { hi = mid; }
+    }
+    return 1.0 / spalding(0.5 * (lo + hi), BOUNCE_KAPPA, BOUNCE_B).y;
+}
+
+// The matched wall's mixing-length rate of the layer cell `row` cells from the wall for the node's friction
+// velocity `ut_in` (fieldcraft_lbm::bounce::mixing_rate, with the fluid's ν = params.smag.w); 0 when not finite.
+fn mixing_rate(ut_in: f32, row: u32) -> f32 {
+    let nu = params.smag.w;
+    let ut = select(0.0, ut_in, ut_in > 0.0 && ut_in < 1e30);
+    let y = f32(row);
+    let y_plus = y * ut / nu;
+    let dudy = ut * ut / nu * spalding_slope(y_plus);
+    let l = MIXING_KAPPA * y * (1.0 - exp(-y_plus / MIXING_A_PLUS));
+    let nu_t = l * l * dudy;
+    let rate = 1.0 / (3.0 * (nu + nu_t) + 0.5);
+    return select(0.0, rate, rate > 0.0 && rate < 1e30);
+}
+
+// The rate of a matched wall's layer cell from its node's last sample (its flag word holds slot + 1, with
+// slot = node · LAYER_ROWS + row − 1, native.rs); −1 for any other cell.
+fn layer_omega(cell: u32) -> f32 {
+    let s = fluid[cell] >> 1u;
+    // The divisor is clamped: with no layers (LAYER_ROWS 0) the pipeline still folds the division, and a
+    // division by a constant zero is refused when the kernels are created.
+    let layers = max(LAYER_ROWS, 1u);
+    if LAYER_ROWS == 0u || s == 0u { return -1.0; }
+    let slot = s - 1u;
+    return mixing_rate(walls[4u * (slot / layers) + 2u].w, slot % layers + 1u);
+}
+
+// The rate a cell relaxes with from its wall: the wall model's, or the matched wall's layer rate; −1 for none.
+fn own_omega(cell: u32) -> f32 {
+    if WALL_MODEL { return wall_omega(cell); }
+    return layer_omega(cell);
 }
 
 // The eddy viscosity of a cell relaxing at `w` (c_s² = ⅓), kept for the reply and, with heat, for
@@ -1705,8 +1775,7 @@ fn collide_cell(cell: u32, lid: u32) {
     if turbulent() {
         // The cell's own rate: the wall model's, Smagorinsky's of its flux, or Vreman's explicit
         // one; with none (Vreman's ν_t = 0) the fluid's own rates below, exactly.
-        var wp = -1.0;
-        if WALL_MODEL { wp = wall_omega(cell); }
+        var wp = own_omega(cell);
         if !(wp > 0.0) {
             if SMAGORINSKY {
                 wp = smagorinsky_omega(flux(&fq, drho, rho, u, force, forced), rho, params.omega_plus, smagorinsky_c2(cell));
@@ -1835,8 +1904,7 @@ fn mrt_row(k: u32, q: u32) -> f32 {
 fn collide_mrt(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, array<f32, 19>>, drho: f32, rho: f32, u: vec3<f32>, force: vec3<f32>, forced: bool, g: Gradient) {
     var omega = params.omega_plus;
     if turbulent() {
-        var wall = -1.0;
-        if WALL_MODEL { wall = wall_omega(cell); }
+        let wall = own_omega(cell);
         if wall > 0.0 {
             omega = wall;
         } else if SMAGORINSKY {
@@ -1927,8 +1995,7 @@ fn collide_regularized(cell: u32, lid: u32, xyz: vec3<i32>, fq: ptr<function, ar
     var sigma = 1.0;
     if HRR && !DYNAMIC { sigma = params.les.x; }
     if turbulent() {
-        var wall = -1.0;
-        if WALL_MODEL { wall = wall_omega(cell); }
+        let wall = own_omega(cell);
         if wall > 0.0 {
             omega = wall;
             record_eddy(cell, lid, omega, u);

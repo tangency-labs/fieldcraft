@@ -91,9 +91,9 @@
 //!
 //! **Where it runs.** On plane box faces at rest with the box periodic along the wall (the
 //! paper's channel); obstacles, moving walls, a wall that meets another non-periodic face at an
-//! edge, and heat are refused ("not supported yet"). The GPU backend runs `spalding_bounce` and
-//! `spalart_allmaras_bounce` (`crates/lbm-gpu/src/lbm.wgsl`, `node_bounce`) and refuses
-//! `spalding_bounce_matched` ("not supported yet").
+//! edge, and heat are refused ("not supported yet"). The GPU backend runs `spalding_bounce`,
+//! `spalart_allmaras_bounce` and `spalding_bounce_matched` (`crates/lbm-gpu/src/lbm.wgsl`,
+//! `bounce_sample`, `node_bounce` and `layer_omega`).
 //!
 //! No code of any lattice Boltzmann package was read; this is written from the paper.
 
@@ -221,14 +221,14 @@ pub struct WallNode {
     /// The force group of its box face.
     pub group: u32,
     /// The stress from the last sample (lattice units: the momentum the wall takes per step,
-    /// along the interior node's velocity parallel to the wall).
+    /// along the sample row's velocity parallel to the wall).
     pub stress: [f64; 3],
     /// The momentum the wall took at the node in the last step: what the node took from the fluid
     /// plus `body`. Along the wall it is `stress` to round-off.
     pub taken: [f64; 3],
     /// The friction velocity u_τ of the last sample (lattice units; 0 when the stress is).
     pub friction: f64,
-    /// The body force on the node's half cell from the last sample, `½ ρ a`: ρ the interior node's
+    /// The body force on the node's half cell from the last sample, `½ ρ a`: ρ the sample row's
     /// density, a the body acceleration of the node's cell. The node hands the fluid `stress − body`
     /// along the wall, and the wall receives `body` with what the node takes from the fluid.
     pub body: [f64; 3],
