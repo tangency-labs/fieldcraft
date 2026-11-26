@@ -1009,6 +1009,17 @@ pub const FLUID_DOMAIN: &[Field] = &[
         ],
     )
     .help("Zero-thickness no-slip sheets across the whole box; with heat they conduct through their thickness and each side's temperature and heat flux are reported. For now: closed boxes, clear of obstacles, laminar, no phase change or free surface, CPU only."),
+    rows(
+        "layers",
+        "Absorbing layers",
+        &[
+            choice("face", "Face", BOX_FACES).help("The box face the layer sits next to: a velocity or pressure face.").req(),
+            above_zero("width", "Width", D::Length).help("How far the layer reaches into the box from the face: a whole number of cell sizes.").req(),
+            above("reflection", "Reflection", D::None, 0.0, 1.0).help("The fraction of a wave's size the layer may send back, above 0 and below 1.").req(),
+            xyz("reference_velocity", "Reference velocity", D::Velocity).help("Pressure face only: the far-field velocity the layer pulls the flow toward."),
+        ],
+    )
+    .help("Absorbing layers next to open faces, kept on edit. The fluid solve refuses them for now (not supported yet)."),
     FREE_SURFACE,
 ];
 
@@ -1028,6 +1039,18 @@ pub const FLUID_THERMAL_BOUNDARY: &[Field] = &[
         .req()
         .def("\"x_min\""),
     variants("condition", "Condition", THERMAL_CONDITION).help("The thermal condition on that boundary.").req().def(r#"{"type": "temperature"}"#),
+];
+
+pub const FLUID_ABSORBING_LAYER: &[Field] = &[
+    reference("domain", "Domain", C::FluidDomain).help("The fluid domain whose face gets the layer.").req(),
+    choice("face", "Face", BOX_FACES).help("The box face the layer sits next to: a velocity or pressure face.").req(),
+    above_zero("width", "Width", D::Length).help("How far the layer reaches into the box from the face: a whole number of cell sizes.").req(),
+    above("reflection", "Reflection", D::None, 0.0, 1.0)
+        .help("The fraction of a wave's size the layer may send back, above 0 and below 1. Smaller reflects less and needs a wider layer.")
+        .req(),
+    xyz("reference_velocity", "Reference velocity", D::Velocity)
+        .help("Pressure face only: the far-field velocity the layer pulls the flow toward. Leave empty at a velocity face."),
+    flag("remove", "Remove").help("Clear this face's absorbing layer; the other fields are then left out."),
 ];
 
 pub const FLUID_COMPONENT_LIMIT: &[Field] = &[

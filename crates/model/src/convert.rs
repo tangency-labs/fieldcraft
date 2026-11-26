@@ -294,6 +294,7 @@ impl Quantities for FluidDomain {
             fans,
             baffles,
             free_surface,
+            layers,
         } = self;
         each(min, Q::Length, f);
         each(max, Q::Length, f);
@@ -312,6 +313,12 @@ impl Quantities for FluidDomain {
         each(acceleration, Q::Acceleration, f);
         if let Some(t) = tolerance {
             f(Q::Length, t);
+        }
+        for AbsorbingLayer { face: _, width, reflection: _, reference_velocity } in layers {
+            f(Q::Length, width);
+            if let Some(v) = reference_velocity {
+                each(v, Q::Velocity, f);
+            }
         }
         for ThinWall { name: _, axis: _, position, conductance } in baffles {
             f(Q::Length, position);
