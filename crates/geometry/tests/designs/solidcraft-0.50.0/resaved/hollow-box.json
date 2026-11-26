@@ -1,0 +1,14 @@
+[
+ {
+  "command": "doc.open",
+  "params": {
+   "path": "../../hollow-box.solidcraft"
+  }
+ },
+ {
+  "command": "file.save",
+  "params": {
+   "path": "hollow-box.solidcraft"
+  }
+ }
+]
