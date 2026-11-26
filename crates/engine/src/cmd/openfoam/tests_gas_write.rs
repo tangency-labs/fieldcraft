@@ -95,7 +95,7 @@ fn a_compressible_case_is_written_with_its_gas_recorded() {
         assert!(!case.join(file).exists(), "{file} is not written for a gas");
     }
     let control = std::fs::read_to_string(case.join("system/controlDict")).unwrap();
-    assert!(control.contains("maxCo 2.5e-1;"), "the default Courant limit is 1/4: {control}");
+    assert!(control.contains("maxCo 2e-1;"), "the default Courant limit is 0.2, the CFL number of Greenshields et al. 2010 §4.1: {control}");
     let gamma = r["gas"]["gamma"].as_f64().unwrap();
     assert!((gamma - 1005.0 / (1005.0 - 287.05)).abs() < 1e-9, "gamma {gamma}");
     let marker: Value = serde_json::from_str(&std::fs::read_to_string(case.join(MARKER)).unwrap()).unwrap();

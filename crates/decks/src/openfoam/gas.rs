@@ -11,11 +11,18 @@ use crate::{Error, Result};
 pub const SOLVER: &str = "rhoCentralFoam";
 /// The molar gas constant R = N_A k, J/(mol K): exact since the 2019 SI (BIPM SI Brochure, 9th ed.).
 pub const MOLAR_GAS_CONSTANT: f64 = 8.314_462_618_153_24;
-/// Default Courant limit: KT Theorem 5.1's maximum-principle bound, summed over the axes as OpenFOAM's
-/// Courant number sums it (notes/c1-compressible.md §2.2).
-pub const COURANT: f64 = 0.25;
-/// Largest Courant limit: the central schemes' stability limit (KT §3; Greenshields et al. 2010 §4.1).
+/// Default Courant limit, 0.2: the CFL number Greenshields et al. (2010, IJNMF 63, §4.1 and §4.2)
+/// ran their central-scheme cases at (shock tube and forward step; their figures 2 and 3 use 0.2).
+pub const COURANT: f64 = 0.2;
+/// Largest Courant limit, ½: the stability limit of the central schemes that Greenshields et al.
+/// (2010, §4.1) state ("below the stability limit of 0.5 of the central schemes"). The paper states
+/// it and does not derive it; it is not proved here (docs/manual/fluid/openfoam.md).
 pub const MAX_COURANT: f64 = 0.5;
+/// Largest ratio of specific heats of an ideal gas, 5/3: c_v = c_p − R_s is at least the three
+/// translational quadratic terms, 3R_s/2 (equipartition; Kittel & Kroemer, *Thermal Physics*, 2nd
+/// ed., ch. 3), so γ = 1 + R_s/c_v ≤ 5/3, with equality for a monatomic gas. A larger γ is noted on
+/// the case, not refused: rounded data for a monatomic gas can sit just above it.
+pub const MAX_IDEAL_GAMMA: f64 = 5.0 / 3.0;
 /// Most initial-pressure boxes: a cap on a hostile input (each is a region of setFieldsDict).
 pub const MAX_PRESSURE_BOXES: usize = 1024;
 

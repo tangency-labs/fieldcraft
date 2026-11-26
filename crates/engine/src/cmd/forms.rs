@@ -2786,7 +2786,7 @@ pub const DECK_OPENFOAM: &[Field] = &[
         .help("Background cells of the spacing times this (1, 2, 4, 8); snappyHexMesh refines the obstacles back to the spacing.")
         .hint("1"),
     int("processes", "Processes", 1, fieldcraft_decks::openfoam::MAX_PROCESSES as i64).help("The ranks decomposeParDict and Allrun use.").hint("1"),
-    positive("max_courant", "Max Courant", D::None).help("The Courant number the time step adapts to (at most 1; compressible: 0.25 by default, at most 0.5).").hint("1"),
+    positive("max_courant", "Max Courant", D::None).help("The Courant number the time step adapts to (at most 1; compressible: 0.2 by default, at most 0.5).").hint("1"),
     group(
         "compressible",
         "Compressible",

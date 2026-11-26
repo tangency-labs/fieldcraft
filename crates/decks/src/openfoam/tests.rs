@@ -483,6 +483,34 @@ fn refuses_each_case_it_cannot_write() {
 
 /// A compressible case through `write_case`: rhoCentralFoam with the gas's own dictionaries and
 /// fields, every file in the documented grammar, a reservoir box charged by setFields; a
+/// A channel of air whose specific heat is `specific_heat` (J/(kg K)), for the gas's γ.
+fn gas_model(specific_heat: f64) -> Model {
+    serde_json::from_value(serde_json::json!({
+        "materials": {"Air": {"density": 1.2, "fluid": {"type": "newtonian", "viscosity": 1.8e-5},
+                              "thermal": {"conductivity": 0.0257, "specific_heat": specific_heat}}},
+        "fluid_domains": {"Flow": {"material": "Air", "min": [0.0, 0.0, 0.0], "max": [0.01, 0.004, 0.004], "spacing": 0.0005,
+            "faces": {"x_min": {"type": "pressure", "pressure": 2.0e5}, "x_max": {"type": "pressure", "pressure": 0.0}}}},
+        "steps": [{"name": "Jet", "procedure": {"type": "fluid", "domain": "Flow", "end_time": 0.01, "frames": 5}, "output": []}]
+    }))
+    .unwrap()
+}
+
+/// A gas whose γ is above 5/3 is written from its data and the case says so; it is not refused,
+/// since rounded data for a monatomic gas sits just above it.
+#[test]
+fn a_gamma_above_five_thirds_is_noted_and_written() {
+    let gas_options = CaseOptions {
+        gas: Some(GasConditions { ambient: 101_325.0, temperature: 293.15, gas_constant: 287.05, far_field: 0.05, initial_pressure: Vec::new() }),
+        max_courant: gas::COURANT,
+        ..options()
+    };
+    // γ = c_p / (c_p − R): 717 gives 1.6676, 718 gives 1.6661 (5/3 is 1.6667).
+    let above = write(&gas_model(717.0), &gas_options).unwrap();
+    assert!(above.notes.iter().any(|n| n.contains("γ = 1.6676") && n.contains("5/3")), "{:?}", above.notes);
+    let below = write(&gas_model(718.0), &gas_options).unwrap();
+    assert!(!below.notes.iter().any(|n| n.contains("5/3")), "{:?}", below.notes);
+}
+
 /// turbulence model and a Courant limit above the gas's are refused, never dropped or clamped.
 #[test]
 fn a_compressible_case_is_written_whole() {
