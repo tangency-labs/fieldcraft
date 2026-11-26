@@ -502,6 +502,246 @@ about four minutes on the build server): 8 cells per δ, 2 δ/u_τ discarded and
 stable run (largest local Mach below 0.3), finite positive row means and U_b⁺ within 30 % of Lee & Moser's; it is not the
 accuracy bar. The study's table (grids 16, 24, 32) is not recorded yet: the runs take hours.
 
+
+### Matched on-node wall on the GPU against Lee & Moser at Re_τ 1000, 2000 and 5200 (#1108)
+
+The CPU study above, run on the device (`crates/lbm-gpu/tests/matched_channel.rs`). The grid and Re_τ come from the environment, and
+the study is ignored unless the grid is set:
+
+```
+FIELDCRAFT_MATCHED_CHANNEL_GPU=16 FIELDCRAFT_MATCHED_RE_TAU=1000 cargo test --release -p fieldcraft-lbm-gpu --test matched_channel -- --ignored --nocapture matched_wall_channel_on_the_gpu
+```
+
+`FIELDCRAFT_MATCHED_RE_TAU` must be 1000, 2000 or 5200 (1000 when unset); any other value is refused.
+
+- **Device and precision.** NVIDIA GB10 (a borrowed box, reached through `gpurun`), single-precision populations (`Streaming::InPlace`).
+  The GPU backend's stated tolerances (`crates/lbm-gpu/tests/verification.rs`) apply: the fields are f32, so a row's U⁺ carries
+  f32 round-off on top of the discretisation error. The study is not checked against the CPU at these grids, except for the bounded
+  regression below.
+- **Protocol.** The CPU study's: the same box, walls, driving, regularised collision, Smagorinsky C 0.1 with `spalding_bounce_matched`,
+  the start-up field with `libm` sin, cos and pow as the CPU uses, 20 δ/u_τ discarded, at least 50 averaged, a cap of 400 δ/u_τ
+  (inconclusive, never a pass), and the `Blocks` stop on the bulk speed. The pass bars are the CPU study's, unchanged: C_f and
+  (U_b⁺_LM / U_b⁺)² − 1 within 5 %, and U⁺ within 5 % on every row at least 4 cells from a wall.
+- **Read-back and the block.** The flow is read back every `block / 32` steps, so a block has 32 samples; the block statistic is the
+  mean of its samples and the stop is checked at each block's end. At 16 cells per δ and Re_τ 1000 the block is 32 read-backs of 99
+  steps, 3168 of the 3198 steps, so a block spans 0.99 δ/u_τ (the span is printed with each run). Sub-sampling a correlated series
+  inside a block leaves the block mean an unbiased estimate of the same quantity, so the stop keeps its meaning. The CPU study samples
+  every step. The largest local Mach number is taken over the read-backs, not over every step.
+- **Reference.** M. Lee and R. D. Moser, *Direct numerical simulation of turbulent channel flow up to Re_τ = 5200*, J. Fluid Mech.
+  774:395–415, 2015, doi:10.1017/jfm.2015.268. Mean profiles `LM_Channel_{1000,2000,5200}_mean_prof.dat` from the public data at
+  turbulence.oden.utexas.edu (channel2015/data). The 16 points are linearly interpolated in y between the file's rows, and clamped to
+  the last row (the files end at y/δ 0.997 to 0.999, and the centreline takes that row). The 1000 table is the CPU study's, shared in
+  `crates/lbm/tests/common/lee_moser.rs`. The bulk is U_b⁺ = 1/u_τ = 19.990, 21.796 and 24.102 for u_τ 0.0500256, 0.0458794 and
+  0.0414872. The data files are not committed.
+- **Bounded regression.** `a_coarse_matched_wall_channel_on_the_gpu_stays_stable_over_a_short_run` (heavy job): 8 cells per δ at Re_τ
+  1000 with the CPU bounded regression's protocol, on the GB10. U_b⁺ 19.792 against the CPU's 19.792 (`a_coarse_matched_wall_channel_at_re_tau_1000_stays_stable_over_a_short_run`,
+  same printed value), largest Mach 0.245 on both. The GPU stops at 6370 steps, the CPU at 6397: the GPU's cap is a whole number of
+  read-backs. The test asserts stability, finite rows and U_b⁺ within 30 % of Lee & Moser; it is not the accuracy bar.
+- **Set-up refusal.** `the_setup_refuses_re_tau_5200_at_16_cells_per_delta_and_accepts_re_tau_1000` (fast, in the trunk gate) checks
+  the refusal at 16 cells per δ and that Re_τ 1000 at the same grid is accepted.
+
+Wall time is the test's own clock on the GB10 (one job per grid, one at a time on the box). Verdicts: every run that set up hit the
+400 δ/u_τ cap without an accepted block mean, so each is **inconclusive (time cap): not passed**.
+
+| Re_τ | cells per δ | U_b⁺ (LM) | C_f error | worst row error (≥ 4 cells from a wall) | h_wm/δ | stop | steps | wall | verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| 1000 | 16 | 20.281 (19.990) | −2.85 % | 6.04 % | 0.250 (above 0.1) | time cap | 1 279 278 | 287 s | inconclusive (time cap): not passed |
+| 1000 | 24 | 20.698 (19.990) | −6.73 % | 6.87 % | 0.167 (above 0.1) | time cap | 1 918 971 | 1 153 s | inconclusive (time cap): not passed |
+| 1000 | 32 | 20.922 (19.990) | −8.71 % | 7.11 % | 0.125 (above 0.1) | time cap | 2 558 543 | 3 464 s | inconclusive (time cap): not passed |
+| 2000 | 16 | 21.999 (21.796) | −1.83 % | 5.58 % | 0.250 (above 0.1) | time cap | 1 394 928 | 338 s | inconclusive (time cap): not passed |
+| 2000 | 24 | 22.467 (21.796) | −5.88 % | 6.41 % | 0.167 (above 0.1) | time cap | 2 092 431 | 1 291 s | inconclusive (time cap): not passed |
+| 2000 | 32 | 22.783 (21.796) | −8.47 % | 6.93 % | 0.125 (above 0.1) | time cap | 2 789 752 | 3 732 s | inconclusive (time cap): not passed |
+| 5200 | 16, 24, 32 | not run | | | | | | | not run: set-up refused (τ below the stability bound) |
+
+Every grid's h_wm/δ is above 0.1, so every grid lies outside Kawai & Larsson's second condition (4Δx ≤ 0.1δ, about 40 cells per δ).
+The row errors are the time-averaged profile at the cap, reported as they are. Nothing was tuned: the wall-model constants and the
+bars are the CPU study's. The per-row tables below recompute each printed reference from the table above (the printed references
+of the first runs came from an earlier sampler and differ by at most 0.001 U⁺, which moves no verdict).
+
+**Re_τ 5200 is not runnable on these grids.** The set-up refuses the lattice viscosity at 16, 24 and 32 cells per δ: the relaxation time
+is τ = 0.50004, 0.50006 and 0.50008, below the solver's stability bound 0.5001. From the lattice viscosity ν_lat = (1/Re_τ)·0.1/(U_b⁺Δx),
+τ − 1/2 = 3 ν_lat = 0.3 n / (Re_τ U_b⁺), so the bound τ ≥ 0.5001 needs n ≥ 0.0001 · Re_τ · U_b⁺ / 0.3 = 41.8, that is **n ≥ 42**
+cells per δ at Re_τ 5200. No grid at 42 or finer was run.
+
+**Re_τ 1000 series.** C_f error grows with resolution (−2.85 %, −6.73 %, −8.71 % at 16, 24, 32 cells per δ) instead of falling, and the
+row errors stay near 6 % to 7 % from the sample row to the centreline. Re_τ 2000 shows the same trend.
+
+Per-row results, wall to centreline (the mirror half agrees within 0.2 %):
+
+Re_τ 1000, 16 cells per δ (wall to centreline; the mirror half agrees within 0.2 %; worst row error at ≥ 4 cells from a wall: 6.04 %):
+
+| y/δ | U⁺ (GPU) | Lee & Moser | error | within 5 %? |
+|---|---|---|---|---|
+| 0.0625 | 14.518 | 15.360 | -5.48 % | not in the bar (wall rows) |
+| 0.1250 | 16.284 | 17.003 | -4.23 % | not in the bar (wall rows) |
+| 0.1875 | 17.013 | 18.032 | -5.65 % | not in the bar (wall rows) |
+| 0.2500 | 18.826 | 18.816 | +0.05 % | yes |
+| 0.3125 | 20.521 | 19.440 | +5.56 % | no |
+| 0.3750 | 21.115 | 19.978 | +5.69 % | no |
+| 0.4375 | 21.673 | 20.445 | +6.01 % | no |
+| 0.5000 | 22.020 | 20.858 | +5.57 % | no |
+| 0.5625 | 22.371 | 21.230 | +5.37 % | no |
+| 0.6250 | 22.630 | 21.560 | +4.96 % | yes |
+| 0.6875 | 22.874 | 21.853 | +4.67 % | yes |
+| 0.7500 | 23.052 | 22.097 | +4.32 % | yes |
+| 0.8125 | 23.204 | 22.303 | +4.04 % | yes |
+| 0.8750 | 23.305 | 22.452 | +3.80 % | yes |
+| 0.9375 | 23.373 | 22.542 | +3.69 % | yes |
+| 1.0000 | 23.392 | 22.593 | +3.54 % | yes |
+
+Re_τ 1000, 24 cells per δ (wall to centreline; the mirror half agrees within 0.2 %; worst row error at ≥ 4 cells from a wall: 6.87 %):
+
+| y/δ | U⁺ (GPU) | Lee & Moser | error | within 5 %? |
+|---|---|---|---|---|
+| 0.0417 | 13.252 | 14.347 | -7.63 % | not in the bar (wall rows) |
+| 0.0833 | 15.272 | 16.030 | -4.73 % | not in the bar (wall rows) |
+| 0.1250 | 16.030 | 17.003 | -5.72 % | not in the bar (wall rows) |
+| 0.1667 | 17.777 | 17.725 | +0.29 % | yes |
+| 0.2083 | 19.397 | 18.312 | +5.92 % | no |
+| 0.2500 | 19.981 | 18.816 | +6.19 % | no |
+| 0.2917 | 20.556 | 19.243 | +6.83 % | no |
+| 0.3333 | 20.942 | 19.630 | +6.68 % | no |
+| 0.3750 | 21.333 | 19.978 | +6.78 % | no |
+| 0.4167 | 21.637 | 20.294 | +6.62 % | no |
+| 0.4583 | 21.930 | 20.589 | +6.51 % | no |
+| 0.5000 | 22.173 | 20.858 | +6.30 % | no |
+| 0.5417 | 22.403 | 21.111 | +6.12 % | no |
+| 0.5833 | 22.604 | 21.345 | +5.90 % | no |
+| 0.6250 | 22.790 | 21.560 | +5.71 % | no |
+| 0.6667 | 22.954 | 21.759 | +5.49 % | no |
+| 0.7083 | 23.103 | 21.941 | +5.30 % | no |
+| 0.7500 | 23.233 | 22.097 | +5.14 % | no |
+| 0.7917 | 23.348 | 22.244 | +4.96 % | yes |
+| 0.8333 | 23.444 | 22.354 | +4.88 % | yes |
+| 0.8750 | 23.521 | 22.452 | +4.76 % | yes |
+| 0.9167 | 23.577 | 22.524 | +4.68 % | yes |
+| 0.9583 | 23.611 | 22.559 | +4.66 % | yes |
+| 1.0000 | 23.623 | 22.593 | +4.56 % | yes |
+
+Re_τ 1000, 32 cells per δ (wall to centreline; the mirror half agrees within 0.2 %; worst row error at ≥ 4 cells from a wall: 7.11 %):
+
+| y/δ | U⁺ (GPU) | Lee & Moser | error | within 5 %? |
+|---|---|---|---|---|
+| 0.0312 | 12.254 | 13.561 | -9.64 % | not in the bar (wall rows) |
+| 0.0625 | 14.553 | 15.360 | -5.25 % | not in the bar (wall rows) |
+| 0.0938 | 15.349 | 16.307 | -5.87 % | not in the bar (wall rows) |
+| 0.1250 | 17.031 | 17.003 | +0.16 % | yes |
+| 0.1562 | 18.601 | 17.556 | +5.95 % | no |
+| 0.1875 | 19.179 | 18.032 | +6.36 % | no |
+| 0.2188 | 19.739 | 18.448 | +7.00 % | no |
+| 0.2500 | 20.121 | 18.816 | +6.93 % | no |
+| 0.2812 | 20.503 | 19.141 | +7.11 % | no |
+| 0.3125 | 20.805 | 19.440 | +7.02 % | no |
+| 0.3438 | 21.099 | 19.722 | +6.98 % | no |
+| 0.3750 | 21.349 | 19.978 | +6.86 % | no |
+| 0.4062 | 21.588 | 20.216 | +6.79 % | no |
+| 0.4375 | 21.804 | 20.445 | +6.65 % | no |
+| 0.4688 | 22.010 | 20.659 | +6.54 % | no |
+| 0.5000 | 22.201 | 20.858 | +6.44 % | no |
+| 0.5312 | 22.383 | 21.049 | +6.34 % | no |
+| 0.5625 | 22.555 | 21.230 | +6.24 % | no |
+| 0.5938 | 22.718 | 21.401 | +6.15 % | no |
+| 0.6250 | 22.872 | 21.560 | +6.09 % | no |
+| 0.6562 | 23.017 | 21.710 | +6.02 % | no |
+| 0.6875 | 23.153 | 21.853 | +5.95 % | no |
+| 0.7188 | 23.280 | 21.981 | +5.91 % | no |
+| 0.7500 | 23.396 | 22.097 | +5.88 % | no |
+| 0.7812 | 23.503 | 22.207 | +5.83 % | no |
+| 0.8125 | 23.597 | 22.303 | +5.80 % | no |
+| 0.8438 | 23.679 | 22.379 | +5.81 % | no |
+| 0.8750 | 23.747 | 22.452 | +5.77 % | no |
+| 0.9062 | 23.801 | 22.514 | +5.71 % | no |
+| 0.9375 | 23.840 | 22.542 | +5.76 % | no |
+| 0.9688 | 23.864 | 22.568 | +5.74 % | no |
+| 1.0000 | 23.872 | 22.593 | +5.66 % | no |
+
+Re_τ 2000, 16 cells per δ (wall to centreline; the mirror half agrees within 0.2 %; worst row error at ≥ 4 cells from a wall: 5.58 %):
+
+| y/δ | U⁺ (GPU) | Lee & Moser | error | within 5 %? |
+|---|---|---|---|---|
+| 0.0625 | 16.263 | 16.955 | -4.08 % | not in the bar (wall rows) |
+| 0.1250 | 17.956 | 18.716 | -4.06 % | not in the bar (wall rows) |
+| 0.1875 | 18.698 | 19.801 | -5.57 % | not in the bar (wall rows) |
+| 0.2500 | 20.571 | 20.606 | -0.17 % | yes |
+| 0.3125 | 22.298 | 21.242 | +4.97 % | yes |
+| 0.3750 | 22.910 | 21.780 | +5.19 % | no |
+| 0.4375 | 23.488 | 22.247 | +5.58 % | no |
+| 0.5000 | 23.834 | 22.659 | +5.19 % | no |
+| 0.5625 | 24.188 | 23.032 | +5.02 % | no |
+| 0.6250 | 24.434 | 23.364 | +4.58 % | yes |
+| 0.6875 | 24.674 | 23.660 | +4.29 % | yes |
+| 0.7500 | 24.847 | 23.905 | +3.94 % | yes |
+| 0.8125 | 24.998 | 24.112 | +3.68 % | yes |
+| 0.8750 | 25.095 | 24.259 | +3.45 % | yes |
+| 0.9375 | 25.163 | 24.346 | +3.35 % | yes |
+| 1.0000 | 25.181 | 24.396 | +3.22 % | yes |
+
+Re_τ 2000, 24 cells per δ (wall to centreline; the mirror half agrees within 0.2 %; worst row error at ≥ 4 cells from a wall: 6.41 %):
+
+| y/δ | U⁺ (GPU) | Lee & Moser | error | within 5 %? |
+|---|---|---|---|---|
+| 0.0417 | 15.219 | 15.996 | -4.86 % | not in the bar (wall rows) |
+| 0.0833 | 16.962 | 17.667 | -3.99 % | not in the bar (wall rows) |
+| 0.1250 | 17.718 | 18.716 | -5.33 % | not in the bar (wall rows) |
+| 0.1667 | 19.549 | 19.482 | +0.35 % | yes |
+| 0.2083 | 21.199 | 20.091 | +5.52 % | no |
+| 0.2500 | 21.791 | 20.606 | +5.75 % | no |
+| 0.2917 | 22.390 | 21.042 | +6.41 % | no |
+| 0.3333 | 22.773 | 21.432 | +6.26 % | no |
+| 0.3750 | 23.170 | 21.780 | +6.38 % | no |
+| 0.4167 | 23.465 | 22.097 | +6.19 % | no |
+| 0.4583 | 23.759 | 22.391 | +6.11 % | no |
+| 0.5000 | 23.996 | 22.659 | +5.90 % | no |
+| 0.5417 | 24.226 | 22.913 | +5.73 % | no |
+| 0.5833 | 24.421 | 23.148 | +5.50 % | no |
+| 0.6250 | 24.607 | 23.364 | +5.32 % | no |
+| 0.6667 | 24.769 | 23.565 | +5.11 % | no |
+| 0.7083 | 24.920 | 23.748 | +4.93 % | yes |
+| 0.7500 | 25.051 | 23.905 | +4.80 % | yes |
+| 0.7917 | 25.167 | 24.052 | +4.63 % | yes |
+| 0.8333 | 25.261 | 24.162 | +4.55 % | yes |
+| 0.8750 | 25.336 | 24.259 | +4.44 % | yes |
+| 0.9167 | 25.391 | 24.329 | +4.36 % | yes |
+| 0.9583 | 25.426 | 24.363 | +4.36 % | yes |
+| 1.0000 | 25.437 | 24.396 | +4.27 % | yes |
+
+Re_τ 2000, 32 cells per δ (wall to centreline; the mirror half agrees within 0.2 %; worst row error at ≥ 4 cells from a wall: 6.93 %):
+
+| y/δ | U⁺ (GPU) | Lee & Moser | error | within 5 %? |
+|---|---|---|---|---|
+| 0.0312 | 14.447 | 15.324 | -5.72 % | not in the bar (wall rows) |
+| 0.0625 | 16.270 | 16.955 | -4.04 % | not in the bar (wall rows) |
+| 0.0938 | 17.030 | 17.967 | -5.22 % | not in the bar (wall rows) |
+| 0.1250 | 18.817 | 18.716 | +0.54 % | yes |
+| 0.1562 | 20.427 | 19.305 | +5.81 % | no |
+| 0.1875 | 21.011 | 19.801 | +6.11 % | no |
+| 0.2188 | 21.605 | 20.230 | +6.80 % | no |
+| 0.2500 | 21.991 | 20.606 | +6.72 % | no |
+| 0.2812 | 22.389 | 20.938 | +6.93 % | no |
+| 0.3125 | 22.691 | 21.242 | +6.82 % | no |
+| 0.3438 | 22.992 | 21.524 | +6.82 % | no |
+| 0.3750 | 23.242 | 21.780 | +6.71 % | no |
+| 0.4062 | 23.487 | 22.018 | +6.67 % | no |
+| 0.4375 | 23.701 | 22.247 | +6.53 % | no |
+| 0.4688 | 23.910 | 22.460 | +6.45 % | no |
+| 0.5000 | 24.102 | 22.659 | +6.37 % | no |
+| 0.5312 | 24.288 | 22.851 | +6.29 % | no |
+| 0.5625 | 24.462 | 23.032 | +6.21 % | no |
+| 0.5938 | 24.628 | 23.204 | +6.14 % | no |
+| 0.6250 | 24.784 | 23.364 | +6.08 % | no |
+| 0.6562 | 24.932 | 23.515 | +6.02 % | no |
+| 0.6875 | 25.070 | 23.660 | +5.96 % | no |
+| 0.7188 | 25.197 | 23.788 | +5.92 % | no |
+| 0.7500 | 25.315 | 23.905 | +5.90 % | no |
+| 0.7812 | 25.421 | 24.016 | +5.85 % | no |
+| 0.8125 | 25.515 | 24.112 | +5.82 % | no |
+| 0.8438 | 25.597 | 24.187 | +5.83 % | no |
+| 0.8750 | 25.665 | 24.259 | +5.80 % | no |
+| 0.9062 | 25.719 | 24.320 | +5.75 % | no |
+| 0.9375 | 25.759 | 24.346 | +5.80 % | no |
+| 0.9688 | 25.782 | 24.372 | +5.79 % | no |
+| 1.0000 | 25.790 | 24.396 | +5.71 % | no |
+
 ### Wall-modelled LES: Malaspinas & Sagaut against Lee & Moser and Dean (#664, #749)
 
 **Void (#1057).** Every run of this section used the MRT collision below its stability bound (lattice viscosity
