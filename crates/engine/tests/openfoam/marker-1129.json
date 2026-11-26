@@ -1,0 +1,8 @@
+{
+  "step": "Flow",
+  "solver": "pimpleFoam",
+  "density": 1.2,
+  "background": 0.005,
+  "spacing": 0.005,
+  "time_precision": 9
+}

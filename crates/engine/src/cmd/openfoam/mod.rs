@@ -275,3 +275,5 @@ mod tests;
 mod tests_gas_read;
 #[cfg(test)]
 mod tests_gas_write;
+#[cfg(test)]
+mod tests_marker;

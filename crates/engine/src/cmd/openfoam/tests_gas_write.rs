@@ -14,17 +14,17 @@ fn show(s: &Session, q: Quantity, si: f64) -> f64 {
 
 /// The session of a plate's sample design, its box holding air: a pressure face at 2 bar gauge on
 /// the inlet side and the ambient pressure on the outlet side, the plate as the obstacle.
-struct Air {
+pub(super) struct Air {
     _guard: crate::tests::TempDir,
-    s: Session,
-    dir: std::path::PathBuf,
+    pub(super) s: Session,
+    pub(super) dir: std::path::PathBuf,
     min: Vec<f64>,
     max: Vec<f64>,
 }
 
 /// `thermal`: the material has its conductivity and specific heat. `turbulence`: the step has a
 /// Smagorinsky model.
-fn air(thermal: bool, turbulence: bool) -> Air {
+pub(super) fn air(thermal: bool, turbulence: bool) -> Air {
     let (guard, design) = crate::tests::sample_design_file(&fieldcraft_geometry::sample::Plate::default());
     let dir = std::path::Path::new(&design).parent().unwrap().to_path_buf();
     let mut s = Session::default();
