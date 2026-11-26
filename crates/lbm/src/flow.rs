@@ -152,6 +152,7 @@ use fieldcraft_model::{BoxFace, Collision, FaceCondition, Outflow, Profile, Ther
 
 use fieldcraft_parallel as parallel;
 
+use crate::absorbing::{AbsorbingCell, LayerSetup};
 use crate::bounce::{MATCHING_ROWS, NodeLaw, WallNode, WallNodes};
 use crate::conduction::{Interface, Layout, SolidHeat};
 use crate::lattice::{C, Q, W, c, equilibrium, moving_wall, opposite};
@@ -932,6 +933,11 @@ pub struct Flow {
     characteristic: Vec<crate::outlet::Characteristic>,
     characteristic_rate: f64,
     characteristic_held: u64,
+    /// The cells of the absorbing layers that collide, in cell order, each with its half-step factor and target
+    /// ([`crate::absorbing`]; empty without layers).
+    absorbing: Vec<AbsorbingCell>,
+    /// The layers' cells inside obstacles, where the flow is not physical (counted, and warned about by the solve).
+    absorbing_blocked: u64,
     /// The free surface: which fluid cells hold liquid, with a free surface.
     pub(crate) surface: Option<Surface>,
 }
@@ -1012,6 +1018,33 @@ fn shifted_copy(dst: &mut [f64], src: &[f64], start: usize, off: isize) {
     if let (Some(d), Some(s)) = (dst.get_mut(lo..hi), src.get(from..from + (hi - lo))) {
         d.copy_from_slice(s);
     }
+}
+
+/// The box of an absorbing layer's cells, `lo..hi` per axis: its depth along its own axis from its face.
+fn layer_region(grid: &Grid, l: &LayerSetup) -> ([usize; 3], [usize; 3]) {
+    let a = l.report.face.axis();
+    let depth = l.rates.len().min(grid.cells[a]);
+    let mut lo = [0; 3];
+    let mut hi = grid.cells;
+    if l.report.face.is_max() {
+        lo[a] = grid.cells[a] - depth;
+    } else {
+        hi[a] = depth;
+    }
+    (lo, hi)
+}
+
+/// The number of cells in an absorbing layer's box.
+fn layer_region_len(grid: &Grid, l: &LayerSetup) -> usize {
+    let (lo, hi) = layer_region(grid, l);
+    (0..3).fold(1usize, |len, a| len.saturating_mul(hi[a] - lo[a]))
+}
+
+/// A cell's depth in an absorbing layer, counted from the layer's face, when the cell lies within its rates.
+fn layer_depth(grid: &Grid, l: &LayerSetup, ijk: [usize; 3]) -> Option<usize> {
+    let a = l.report.face.axis();
+    let d = if l.report.face.is_max() { grid.cells[a] - 1 - ijk[a] } else { ijk[a] };
+    (d < l.rates.len()).then_some(d)
 }
 
 /// A vector allocated without aborting when memory runs out.
@@ -1411,6 +1444,28 @@ impl Flow {
         let velocity_first = |f: &BoxFace| !matches!(domain.faces.get(*f), FaceCondition::Velocity { .. });
         let mut faces = BoxFace::ALL;
         faces.sort_by_key(velocity_first);
+        // A velocity face's profile factor at a cell: its column's share of the parabola in each tangential
+        // direction. The open cells and the absorbing layers take it alike.
+        let profile_scale = |profile: Profile, a: usize, ijk: [usize; 3]| -> f64 {
+            let (t1, t2) = ((a + 1) % 3, (a + 2) % 3);
+            let mut scale = 1.0;
+            if profile == Profile::Parabolic {
+                for t in [t1, t2].into_iter().filter(|t| !periodic[*t]) {
+                    let s = (ijk[t] as f64 + 0.5) / grid.cells[t] as f64;
+                    // A symmetry plane at one end is the middle of the whole
+                    // model's profile (the half of a channel); at both, the
+                    // direction is unbounded, as a periodic one.
+                    let s = match (is_symmetry(BoxFace::of(t, false)), is_symmetry(BoxFace::of(t, true))) {
+                        (false, false) => s,
+                        (false, true) => s / 2.0,
+                        (true, false) => 0.5 + s / 2.0,
+                        (true, true) => 0.5,
+                    };
+                    scale *= 4.0 * s * (1.0 - s);
+                }
+            }
+            scale
+        };
         for face in faces {
             let a = face.axis();
             let layer = if face.is_max() { grid.cells[a] - 1 } else { 0 };
@@ -1427,23 +1482,7 @@ impl Flow {
                     }
                     let target = match *domain.faces.get(face) {
                         FaceCondition::Velocity { velocity, profile } => {
-                            let mut scale = 1.0;
-                            if profile == Profile::Parabolic {
-                                for t in [t1, t2].into_iter().filter(|t| !periodic[*t]) {
-                                    let s = (ijk[t] as f64 + 0.5) / grid.cells[t] as f64;
-                                    // A symmetry plane at one end is the middle of the whole
-                                    // model's profile (the half of a channel); at both, the
-                                    // direction is unbounded, as a periodic one.
-                                    let s = match (is_symmetry(BoxFace::of(t, false)), is_symmetry(BoxFace::of(t, true))) {
-                                        (false, false) => s,
-                                        (false, true) => s / 2.0,
-                                        (true, false) => 0.5 + s / 2.0,
-                                        (true, true) => 0.5,
-                                    };
-                                    scale *= 4.0 * s * (1.0 - s);
-                                }
-                            }
-                            Target::Velocity(setup.to_lattice(velocity).map(|v| v * scale))
+                            Target::Velocity(setup.to_lattice(velocity).map(|v| v * profile_scale(profile, a, ijk)))
                         }
                         // A characteristic outlet starts as a uniform one ([`Flow::characteristic_outlet`]).
                         FaceCondition::Pressure { pressure, outflow: Outflow::Uniform | Outflow::Characteristic, .. } => {
@@ -1705,6 +1744,59 @@ impl Flow {
                 Some(SaState { field, distance, vorticity: filled(n, 0.0, "vorticities")?, substeps: None, model: true })
             }
         };
+        // The absorbing layers' cells ([`crate::absorbing`]). Each cell of a layer's box is visited once, in the first
+        // layer that holds it; over every layer that holds it the rates add, and the target is the rate-weighted
+        // mean of the layers' conserved targets (a cell of one layer keeps that layer's target bit for bit).
+        let u_scale = |m: &LayerSetup, ijk: [usize; 3]| match setup.domain.faces.get(m.report.face) {
+            FaceCondition::Velocity { profile, .. } => profile_scale(*profile, m.report.face.axis(), ijk),
+            _ => 1.0,
+        };
+        let capacity = setup.layers.iter().fold(0usize, |total, l| total.saturating_add(layer_region_len(&grid, l)));
+        let mut absorbing = Vec::new();
+        absorbing.try_reserve_exact(capacity).map_err(|_| Error::Limit("not enough memory for the absorbing layers' cells".into()))?;
+        let mut absorbing_blocked = 0u64;
+        for (li, layer) in setup.layers.iter().enumerate() {
+            let (lo, hi) = layer_region(&grid, layer);
+            for k in lo[2]..hi[2] {
+                for j in lo[1]..hi[1] {
+                    for i in lo[0]..hi[0] {
+                        let ijk = [i, j, k];
+                        if setup.layers.get(..li).unwrap_or_default().iter().any(|e| layer_depth(&grid, e, ijk).is_some()) {
+                            continue;
+                        }
+                        let cell = grid.index(ijk);
+                        if !fluid.get(cell).copied().unwrap_or(false) {
+                            absorbing_blocked += 1;
+                            continue;
+                        }
+                        if !bulk.is_empty() && !bulk.get(cell).copied().unwrap_or(false) {
+                            continue;
+                        }
+                        let mut rate = 0.0;
+                        for m in &setup.layers {
+                            if let Some(&r) = layer_depth(&grid, m, ijk).and_then(|d| m.rates.get(d)) {
+                                rate += r;
+                            }
+                        }
+                        let (mut density, mut momentum) = (0.0, [0.0; 3]);
+                        for m in &setup.layers {
+                            if let Some(&r) = layer_depth(&grid, m, ijk).and_then(|d| m.rates.get(d)) {
+                                let w = r / rate;
+                                let k = u_scale(m, ijk);
+                                density += w * m.density;
+                                for a in 0..3 {
+                                    momentum[a] += w * m.density * (m.velocity[a] * k);
+                                }
+                            }
+                        }
+                        let velocity = momentum.map(|m| m / density);
+                        absorbing.push(AbsorbingCell { cell: cell as u32, half: libm::tanh(0.5 * rate), density, velocity });
+                    }
+                }
+            }
+        }
+        absorbing.sort_unstable_by_key(|c| c.cell);
+        absorbing.shrink_to_fit();
         open.shrink_to_fit();
         let inlet_full = if setup.inlet_ramp_steps > 0 { open.iter().map(|c| c.target).collect() } else { Vec::new() };
         let mut flow = Flow {
@@ -1773,6 +1865,8 @@ impl Flow {
             characteristic: Vec::new(),
             characteristic_rate: 0.0,
             characteristic_held: 0,
+            absorbing,
+            absorbing_blocked,
             surface,
         };
         flow.outlets = Outlets::new(&flow.open, &View { flow: &flow, f: &flow.f });
@@ -1997,6 +2091,7 @@ impl Flow {
             + bytes(&self.fluid)
             + bytes(&self.links)
             + bytes(&self.open)
+            + bytes(&self.absorbing)
             + bytes(&self.cell_force)
             + bytes(&self.cell_u)
             + bytes(&self.cell_nu_t)
@@ -2328,6 +2423,7 @@ impl Flow {
     pub fn step(&mut self) -> Result<()> {
         self.ramp_inlets();
         self.targets()?;
+        self.absorb(true);
         self.refresh_buoyancy();
         self.refresh_fans();
         self.refresh_damping();
@@ -2345,6 +2441,7 @@ impl Flow {
                 max_u2.sqrt()
             )));
         }
+        self.absorb(false);
         self.stream();
         self.apply_stress();
         self.surface_stream();
@@ -2384,6 +2481,36 @@ impl Flow {
                 oc.target = Target::Velocity(target);
             }
         }
+    }
+
+    /// One half of the absorbing layers' step on every layer cell: before the collision (`implicit`) or after it
+    /// ([`crate::absorbing`]). The target's velocity follows the inlet ramp, as the velocity faces do.
+    fn absorb(&mut self, implicit: bool) {
+        if self.absorbing.is_empty() {
+            return;
+        }
+        let share = crate::inlet::ramp(self.steps_done + 1, self.inlet_ramp_steps);
+        let from = self.inlet_from;
+        let (block, n, s) = (self.block, self.n, self.stride);
+        let cells = &self.absorbing;
+        let mut blocks = cell_blocks(&mut self.f, s, n, block);
+        parallel::for_each_mut(&mut blocks, |b, f| {
+            let start = b * block;
+            let first = cells.partition_point(|c| (c.cell as usize) < start);
+            for c in cells.get(first..).unwrap_or_default().iter().take_while(|c| (c.cell as usize) < start + block) {
+                let i = c.cell as usize - start;
+                // The block holds all 19 directions of each of its cells.
+                let mut fq: [f64; Q] = std::array::from_fn(|q| f.get(q).and_then(|d| d.get(i)).copied().unwrap_or(0.0));
+                let u = if share >= 1.0 { c.velocity } else { std::array::from_fn(|k| from[k] + share * (c.velocity[k] - from[k])) };
+                if crate::absorbing::relax(&mut fq, c.half, c.density, u, implicit) {
+                    for (q, v) in fq.iter().enumerate() {
+                        if let Some(slot) = f.get_mut(q).and_then(|d| d.get_mut(i)) {
+                            *slot = *v;
+                        }
+                    }
+                }
+            }
+        });
     }
 
     /// The streaming targets (the second arrays of populations), allocated before the first step.
@@ -2792,6 +2919,16 @@ impl Flow {
     /// The characteristic outlet's cell count (0 without one).
     pub fn characteristic_outlet_cells(&self) -> usize {
         self.characteristic.len()
+    }
+
+    /// The absorbing layers' cells that collide (0 without layers).
+    pub fn absorbing_cells(&self) -> usize {
+        self.absorbing.len()
+    }
+
+    /// The absorbing layers' cells inside obstacles, where the flow is not physical.
+    pub fn absorbing_blocked(&self) -> u64 {
+        self.absorbing_blocked
     }
 
     /// With the wall-function bounce: each wall cell's stress from its own density and velocity
@@ -3729,6 +3866,9 @@ impl crate::backend::Backend for Flow {
             characteristic: _,
             characteristic_rate: _,
             characteristic_held: _,
+            // Fixed by the setup; the layers keep nothing between steps.
+            absorbing: _,
+            absorbing_blocked: _,
             surface,
         } = self;
         let n = *n;
@@ -4035,6 +4175,10 @@ impl crate::backend::Backend for Flow {
         Flow::characteristic_held(self)
     }
 
+    fn absorbing_blocked(&self) -> u64 {
+        Flow::absorbing_blocked(self)
+    }
+
     fn empty_obstacles(&self) -> &[String] {
         &self.empty_obstacles
     }
@@ -4055,6 +4199,7 @@ impl crate::backend::Backend for Flow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fieldcraft_model::BoxFaces;
 
     /// The general collision of a block, cell by cell, as `Flow::collide` runs it when no model
     /// changes a cell's state or rates.
@@ -4260,6 +4405,237 @@ mod tests {
         let (plain, general) = (run(false), run(true));
         assert!(plain.iter().any(|&b| f64::from_bits(b) != 0.0));
         assert!(plain == general, "the plain path differs from the general path");
+    }
+
+    /// A box of fluid at viscosity 0.02 with the given faces and absorbing layers, one step of the model's
+    /// procedure (its inlet ramp and collision as given).
+    fn layered_setup(faces: BoxFaces, max: [f64; 3], layers: Vec<fieldcraft_model::AbsorbingLayer>, collision: Option<Collision>, inlet_ramp: Option<f64>) -> Setup {
+        use fieldcraft_model::{Fluid, FluidDomain, Material, Model, Procedure, Step, WallTreatment};
+        let domain = FluidDomain {
+            material: "Fluid".into(),
+            min: [0.0; 3],
+            max,
+            spacing: 1.0,
+            faces,
+            obstacles: vec![],
+            surfaces: vec![],
+            initial_velocity: [0.0; 3],
+            acceleration: [0.0; 3],
+            tolerance: None,
+            thermal: None,
+            porous: vec![],
+            fans: vec![],
+            baffles: vec![],
+            free_surface: None,
+            layers,
+        };
+        let mut m = Model::default();
+        m.add_material("Fluid", Material { density: Some(1.0), fluid: Some(Fluid::Newtonian { viscosity: 0.02 }), ..Material::default() }).unwrap();
+        m.add_fluid_domain("Flow", domain).unwrap();
+        let procedure = Procedure::Fluid {
+            domain: "Flow".into(),
+            end_time: None,
+            steps: Some(10),
+            time_step: Some(1.0),
+            frames: 1,
+            magic: None,
+            sigma: None,
+            collision,
+            turbulence: None,
+            steady: None,
+            walls: WallTreatment::Halfway,
+            inlet_ramp,
+        };
+        m.add_step(Step::new("Run", procedure), None).unwrap();
+        Setup::new(&m, None, &[], &crate::Limits::default()).unwrap()
+    }
+
+    /// The split-mix generator of the tests of the collisions: values in [0, 1).
+    fn split_mix() -> impl FnMut() -> f64 {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        move || {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            ((z ^ (z >> 31)) >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    /// Each cell's density and momentum, the bare sums over its populations.
+    fn cell_moments(flow: &Flow) -> Vec<(f64, [f64; 3])> {
+        (0..flow.n)
+            .map(|cell| {
+                let mut rho = 0.0;
+                let mut j = [0.0; 3];
+                for q in 0..Q {
+                    let v = flow.f[q * flow.stride + cell];
+                    rho += v;
+                    for a in 0..3 {
+                        j[a] += v * c(q)[a];
+                    }
+                }
+                (rho, j)
+            })
+            .collect()
+    }
+
+    /// The box of the absorbing-layer tests: a velocity face at x_min, a pressure face at x_max, walls or
+    /// periodic faces on the other sides as given by the caller.
+    fn layer_faces(x_min: FaceCondition, x_max: FaceCondition, y_min: FaceCondition, y_max: FaceCondition, z_min: FaceCondition, z_max: FaceCondition) -> BoxFaces {
+        BoxFaces { x_min, x_max, y_min, y_max, z_min, z_max }
+    }
+
+    fn uniform_pressure(pressure: f64) -> FaceCondition {
+        FaceCondition::Pressure { pressure, outflow: Outflow::Uniform, sigma: None }
+    }
+
+    #[test]
+    fn a_layer_cell_gains_the_layers_share_with_every_collision() {
+        use fieldcraft_model::AbsorbingLayer;
+        let reference = [0.03, 0.0, 0.0];
+        for collision in [Collision::Trt, Collision::Regularized, Collision::Hrr, Collision::Mrt] {
+            let faces = layer_faces(
+                FaceCondition::Velocity { velocity: reference, profile: Profile::Uniform },
+                uniform_pressure(0.0),
+                FaceCondition::Periodic {},
+                FaceCondition::Periodic {},
+                FaceCondition::Periodic {},
+                FaceCondition::Periodic {},
+            );
+            let layer = AbsorbingLayer { face: BoxFace::XMax, width: 6.0, reflection: 1e-3, reference_velocity: Some(reference) };
+            let setup = layered_setup(faces, [12.0, 4.0, 4.0], vec![layer], Some(collision), None);
+            let mut flow = Flow::new(&setup, &[]).unwrap();
+            let mut random = split_mix();
+            for v in flow.f.iter_mut() {
+                *v *= 1.0 + 1e-3 * random();
+            }
+            let before = cell_moments(&flow);
+            flow.targets().unwrap();
+            flow.absorb(true);
+            flow.gradient_velocities();
+            flow.collide();
+            flow.absorb(false);
+            let after = cell_moments(&flow);
+            let rates = &setup.layers[0].rates;
+            let nx = setup.grid.cells[0];
+            for k in 0..setup.grid.cells[2] {
+                for j in 0..setup.grid.cells[1] {
+                    for i in 0..nx {
+                        let cell = setup.grid.index([i, j, k]);
+                        let (rho0, j0) = before[cell];
+                        let (rho1, j1) = after[cell];
+                        let depth = nx - 1 - i;
+                        if depth < rates.len() {
+                            let g = 1.0 - libm::exp(-rates[depth]);
+                            assert!((rho1 - rho0 - g * (1.0 - rho0)).abs() < 1e-13, "{collision:?} cell {cell}: density");
+                            for a in 0..3 {
+                                assert!((j1[a] - j0[a] - g * (reference[a] - j0[a])).abs() < 1e-13, "{collision:?} cell {cell}: momentum {a}");
+                            }
+                        } else {
+                            assert!((rho1 - rho0).abs() < 1e-13, "{collision:?} cell {cell}: density outside the layer");
+                            for a in 0..3 {
+                                assert!((j1[a] - j0[a]).abs() < 1e-13, "{collision:?} cell {cell}: momentum outside the layer");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_layers_target_follows_the_inlet_ramp() {
+        use fieldcraft_model::AbsorbingLayer;
+        let reference = [0.03, 0.0, 0.0];
+        let faces = layer_faces(
+            FaceCondition::Velocity { velocity: reference, profile: Profile::Uniform },
+            uniform_pressure(0.0),
+            FaceCondition::Periodic {},
+            FaceCondition::Periodic {},
+            FaceCondition::Periodic {},
+            FaceCondition::Periodic {},
+        );
+        let layer = AbsorbingLayer { face: BoxFace::XMax, width: 6.0, reflection: 1e-3, reference_velocity: Some(reference) };
+        let setup = layered_setup(faces, [12.0, 4.0, 4.0], vec![layer], None, Some(8.0));
+        let mut flow = Flow::new(&setup, &[]).unwrap();
+        let share = crate::inlet::ramp(1, 8);
+        for q in 0..Q {
+            for cell in 0..flow.n {
+                flow.f[q * flow.stride + cell] = equilibrium(q, 1.0, [share * 0.03, 0.0, 0.0]);
+            }
+        }
+        let before = flow.f.clone();
+        flow.targets().unwrap();
+        flow.absorb(true);
+        for (idx, (a, b)) in before.iter().zip(&flow.f).enumerate() {
+            assert!((a - b).abs() < 1e-15, "population {idx} moved by {}", (a - b).abs());
+        }
+    }
+
+    #[test]
+    fn overlapping_layers_add_their_rates() {
+        use fieldcraft_model::AbsorbingLayer;
+        let (ux, uy) = ([0.03, 0.0, 0.0], [0.0, 0.02, 0.0]);
+        let faces = layer_faces(
+            FaceCondition::Velocity { velocity: ux, profile: Profile::Uniform },
+            uniform_pressure(0.0),
+            FaceCondition::Wall {},
+            FaceCondition::Velocity { velocity: uy, profile: Profile::Uniform },
+            FaceCondition::Periodic {},
+            FaceCondition::Periodic {},
+        );
+        let layers = vec![
+            AbsorbingLayer { face: BoxFace::XMax, width: 4.0, reflection: 0.01, reference_velocity: Some(ux) },
+            AbsorbingLayer { face: BoxFace::YMax, width: 4.0, reflection: 0.1, reference_velocity: None },
+        ];
+        let setup = layered_setup(faces, [12.0, 8.0, 4.0], layers, None, None);
+        let flow = Flow::new(&setup, &[]).unwrap();
+        assert!(flow.absorbing.windows(2).all(|w| w[0].cell < w[1].cell));
+        let (lx, ly) = (setup.layers[0].rates[1], setup.layers[1].rates[2]);
+        let cell = setup.grid.index([10, 5, 0]);
+        let found = flow.absorbing.iter().find(|c| c.cell as usize == cell).copied().unwrap();
+        assert_eq!(found.half, libm::tanh(0.5 * (lx + ly)));
+        assert!((found.density - 1.0).abs() < 1e-15);
+        let expected = [(lx * ux[0] + ly * uy[0]) / (lx + ly), (lx * ux[1] + ly * uy[1]) / (lx + ly), 0.0];
+        for a in 0..3 {
+            assert!((found.velocity[a] - expected[a]).abs() < 1e-15, "velocity {a}");
+        }
+        let alone = flow.absorbing.iter().find(|c| c.cell as usize == setup.grid.index([10, 0, 0])).copied().unwrap();
+        assert_eq!(alone.density, 1.0);
+        assert_eq!(alone.velocity, ux);
+    }
+
+    #[test]
+    fn a_profiled_inlets_layer_takes_each_columns_velocity() {
+        use fieldcraft_model::AbsorbingLayer;
+        let inlet = [0.03, 0.0, 0.0];
+        let faces = layer_faces(
+            FaceCondition::Velocity { velocity: inlet, profile: Profile::Parabolic },
+            uniform_pressure(0.0),
+            FaceCondition::Wall {},
+            FaceCondition::Wall {},
+            FaceCondition::Periodic {},
+            FaceCondition::Periodic {},
+        );
+        let layer = AbsorbingLayer { face: BoxFace::XMin, width: 3.0, reflection: 0.01, reference_velocity: None };
+        let setup = layered_setup(faces, [12.0, 6.0, 4.0], vec![layer], None, None);
+        let flow = Flow::new(&setup, &[]).unwrap();
+        let mut checked = 0;
+        for k in 0..setup.grid.cells[2] {
+            for j in 0..setup.grid.cells[1] {
+                let open = flow.open.iter().find(|o| o.cell as usize == setup.grid.index([0, j, k])).unwrap();
+                let Target::Velocity(u) = open.target else {
+                    panic!("the inlet's open cell has no velocity target");
+                };
+                for i in 0..3 {
+                    let entry = flow.absorbing.iter().find(|c| c.cell as usize == setup.grid.index([i, j, k])).unwrap();
+                    assert!(entry.velocity == u, "column ({j}, {k}) at x {i}: {:?} against {u:?}", entry.velocity);
+                    checked += 1;
+                }
+            }
+        }
+        assert_eq!(checked, 3 * 6 * 4);
     }
 
     /// The vectorised plain collision gives the general collision's populations, velocities and

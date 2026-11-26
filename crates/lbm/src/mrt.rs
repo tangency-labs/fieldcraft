@@ -101,6 +101,13 @@ const VISCOUS: [usize; 5] = [9, 11, 13, 14, 15];
 /// not act: their equilibria are themselves).
 const RATES: [f64; Q] = [0.0, 1.19, 1.4, 0.0, 1.2, 0.0, 1.2, 0.0, 1.2, 0.0, 1.4, 0.0, 1.4, 0.0, 0.0, 0.0, 1.98, 1.98, 1.98];
 
+/// The bulk viscosity ζ = (5 − 9 c_s²)/9 (1/s_e − ½) of this collision (d'Humières et al. 2002, Phil. Trans. R. Soc.
+/// Lond. A 360:437–451, its moment rates; lattice units), with s_e the energy's rate `RATES[1]`. It adds to the
+/// longitudinal viscosity 4ν/3 + ζ a plane sound wave decays with.
+pub(crate) fn bulk_viscosity() -> f64 {
+    (5.0 - 9.0 * crate::lattice::CS2) / 9.0 * (1.0 / RATES[1] - 0.5)
+}
+
 /// The smallest lattice viscosity ν Δt/Δx² = c_s² (τ − ½) at which this collision is linearly stable in fluid at
 /// rest: τ = 0.50354. Below it a band of waves near k = π (0.25, 0.42, 0.42) grows, by up to 8e-3 per step as
 /// ν → 0, with or without a subgrid model (its eddy viscosity is zero where the strain rate is), and a run fills

@@ -649,6 +649,7 @@ pub(crate) mod tests {
             frozen: None,
             free_surface: None,
             wall_links: None,
+            absorbing_layers: Vec::new(),
         };
         FluidResult {
             baffles: Box::default(),
@@ -755,15 +756,19 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_fluid_solve_with_an_absorbing_layer_is_refused_not_supported_yet() {
+    fn a_fluid_solve_with_an_absorbing_layer_reports_it() {
         let mut s = tank_session();
         s.execute(
             "model.fluid_domain.absorbing_layer",
             &json!({"domain": "Tank", "face": "x_max", "width": 2, "reflection": 0.01, "reference_velocity": [0.01, 0, 0]}),
         )
         .unwrap();
-        let e = s.execute("solve.fluid", &json!({})).unwrap_err().to_string();
-        assert!(e.contains("not supported yet") && e.contains("absorbing layers"), "{e}");
+        let r = s.execute("solve.fluid", &json!({})).unwrap();
+        assert_eq!(r["absorbing_layers"][0]["face"], "x_max", "{r}");
+        assert_eq!(r["absorbing_layers"][0]["cells"], 2, "{r}");
+        assert_eq!(r["absorbing_layers"][0]["reflection"], 0.01, "{r}");
+        // Two cells cannot resolve a reflection of 0.01: the rate peaks at 1.28 per step, above the speed of sound.
+        assert!(r["warnings"].to_string().contains("do not resolve"), "{r}");
     }
 
     /// Water in a box freezes on a face held at −10 °C, through commands: the phase change is

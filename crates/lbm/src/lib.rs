@@ -13,6 +13,8 @@
 //!   (Darcy–Forchheimer resistance) as body forces.
 //! - [`distance`]: every fluid cell's exact distance to the nearest no-slip wall, for
 //!   turbulence models that read it.
+//! - [`absorbing`]: absorbing layers next to open faces (Xu & Sagaut 2013), a sponge of relaxation
+//!   toward the face's target that lets outgoing waves leave.
 //! - [`bounce`]: Han, Ooka and Kikumoto's on-node wall-function bounce (their eq. 14).
 //! - [`outlet`]: convective pressure outlets, which carry a wake or vortices out of the box, and
 //!   characteristic ones, which let an outgoing pressure wave leave.
@@ -64,6 +66,7 @@
 // Population arrays are indexed by cell and direction counts fixed when they are allocated.
 #![allow(clippy::needless_range_loop)]
 
+pub mod absorbing;
 pub mod backend;
 pub mod baffle;
 pub mod bounce;
@@ -97,6 +100,7 @@ pub mod wall;
 pub use backend::{Backend, Choice, Fields, device_available, register_backend};
 pub use flow::{Flow, Group, Interpolation, Link, OpenCell, Rule, Target, ThermalState, WallLinks, ZoneSample};
 pub use memory::{DeviceBuffer, Memory};
+pub use absorbing::{LayerReport, LayerSetup};
 pub use ports::{FaceMean, Port, PortProperties, Stream};
 pub use setup::{ContactSetup, PhaseSetup, SolidSetup, SurfaceSetup, ThermalSetup};
 pub use setup::{Obstacle, SaSetup, Setup, ZoneKind, ZoneSetup, fluid_step};

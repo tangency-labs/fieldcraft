@@ -464,6 +464,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         frozen: None,
         free_surface: None,
         wall_links: None,
+        absorbing_layers: Vec::new(),
     };
     let history_times = frames.iter().map(|f| f.time).collect();
     let n_frames = frames.len();

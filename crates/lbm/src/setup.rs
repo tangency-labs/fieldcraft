@@ -319,6 +319,8 @@ pub struct Setup {
     pub zones: Vec<ZoneSetup>,
     /// The free surface's liquid regions, when the domain has one.
     pub surface: Option<SurfaceSetup>,
+    /// The domain's absorbing layers in lattice units ([`crate::absorbing`]).
+    pub layers: Vec<crate::absorbing::LayerSetup>,
     /// A shear-dependent fluid: each cell's own relaxation time (`crate::rheology`).
     pub rheology: Option<Rheology>,
     /// With one: τ⁺ at the flow's characteristic shear rate, before `tau_plus` holds it within
@@ -776,9 +778,6 @@ impl Setup {
         }
         let walls = *walls;
         let domain = domain.clone();
-        if !domain.layers.is_empty() {
-            return Err(Error::Invalid("not supported yet: absorbing layers (`layers`) in the fluid solve; remove them (model.fluid_domain.absorbing_layer with remove) to solve".into()));
-        }
         let (smagorinsky, vreman, spalart_allmaras, turbulent_prandtl, van_driest, wall_model) = match turbulence {
             None => (0.0, 0.0, None, 0.9, None, None),
             Some(t) => {
@@ -878,6 +877,9 @@ impl Setup {
         // refused by name rather than run unverified.
         if let Some(fs) = &domain.free_surface {
             let refuse = |what: &str| Err(Error::Invalid(format!("not supported yet: {what} with a free surface (`free_surface`)")));
+            if !domain.layers.is_empty() {
+                return refuse("absorbing layers (`layers`)");
+            }
             if let Some(face) = BoxFace::ALL.iter().find(|f| matches!(domain.faces.get(**f), FaceCondition::Pressure { .. })) {
                 return refuse(&format!("a pressure face (box face `{}`); use walls, slip faces and velocity inlets", face.name()));
             }
@@ -1434,7 +1436,7 @@ impl Setup {
             }
         }
 
-        Ok(Setup {
+        let mut setup = Setup {
             step: s.name.clone(),
             grid,
             density,
@@ -1471,7 +1473,12 @@ impl Setup {
             warnings,
             domain,
             limits: *limits,
-        })
+            layers: Vec::new(),
+        };
+        let (layers, notes) = crate::absorbing::layers(&setup)?;
+        setup.layers = layers;
+        setup.warnings.extend(notes);
+        Ok(setup)
     }
 
     /// Model units per lattice unit of volume flow (cell volumes per step).

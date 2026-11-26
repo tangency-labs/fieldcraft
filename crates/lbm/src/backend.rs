@@ -117,6 +117,11 @@ pub trait Backend {
     fn characteristic_held(&self) -> u64 {
         0
     }
+    /// With absorbing layers: how many of their cells lie inside obstacles, where the flow is not physical.
+    /// A backend without layers refuses them when it is made, so the default is none.
+    fn absorbing_blocked(&self) -> u64 {
+        0
+    }
     fn groups(&self) -> &[Group];
     fn fluid_cells(&self) -> usize;
     fn is_fluid(&self, cell: usize) -> bool;
@@ -208,6 +213,7 @@ pub fn backend(choice: Choice, flow: Flow, setup: &Setup) -> Result<Box<dyn Back
         Choice::Device if setup.domain.characteristic_outlet().is_some() => {
             Err(Error::Invalid("the characteristic outflow is not supported on the GPU yet: solve on the CPU".into()))
         }
+        Choice::Device if !setup.layers.is_empty() => Err(Error::Invalid("absorbing layers are not supported on the GPU yet: solve on the CPU".into())),
         Choice::Device => match backend_factory() {
             Some(make) => make(&flow, setup),
             None => Err(Error::Backend("no GPU backend is available in this build: solve on the CPU (`backend: \"cpu\"`)".into())),

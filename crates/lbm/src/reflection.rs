@@ -23,9 +23,17 @@
 //! ±5w/c_s steps. The window cuts off the relaxation's slow tail (time constant 2/K), so it is
 //! not the outlet's |R| at those frequencies: it is this duct's number, kept so that a change to
 //! the outlet shows.
+//!
+//! **The layer check** ([`layer_reflection`]) runs the same pulse in a duct of [`LAYER_CELLS`] cells
+//! with and without an absorbing layer ([`crate::absorbing`]) at its pressure end. The layer's
+//! stated reflection R is that of the round trip through the layer alone; the duct's own pressure
+//! face returns the rest, so the layered run is compared with the plain one and the ratio of the
+//! two returned pulses is the layer's reflection. Its difference from R is the viscous part the
+//! setup reports and the grid's own part, which theory does not give and the manual reports.
 
-use fieldcraft_model::{BoxFace, BoxFaces, Collision, FaceCondition, Fluid, FluidDomain, Material, Model, Outflow, Procedure, Profile, Step};
+use fieldcraft_model::{AbsorbingLayer, BoxFace, BoxFaces, Collision, FaceCondition, Fluid, FluidDomain, Material, Model, Outflow, Procedure, Profile, Step};
 
+use crate::absorbing::LayerReport;
 use crate::lattice::CS2;
 use crate::{Error, Flow, Limits, Result, Setup};
 
@@ -98,8 +106,8 @@ pub fn outlet_reflection(sigma: f64, omegas: &[f64]) -> Result<OutletReflection>
     let cs = CS2.sqrt();
     let n = CELLS as f64;
     let rate = sigma * cs / n;
-    let uniform = probe_series(None)?;
-    let characteristic = probe_series(Some(sigma))?;
+    let uniform = duct_series(&outlet_duct(None))?.0;
+    let characteristic = duct_series(&outlet_duct(Some(sigma)))?.0;
 
     // The incident pulse passes the probe at t_inc, its reflection at t_ref; the windows span
     // ±5w/c_s steps; the record ends before the inlet's reflection of the reflection returns.
@@ -180,27 +188,130 @@ pub fn outlet_reflection(sigma: f64, omegas: &[f64]) -> Result<OutletReflection>
     })
 }
 
-/// The probe's density over ρ₀, less one, after each of [`STEPS`] steps of the duct with the
-/// uniform outlet or with the characteristic outlet of σ.
-fn probe_series(sigma: Option<f64>) -> Result<Vec<f64>> {
+/// The duct of the layer check: its length in cells, the pulse's starting centre and the probe, in cells.
+pub const LAYER_CELLS: usize = 1024;
+pub const LAYER_START: f64 = 500.0;
+pub const LAYER_PROBE: usize = 700;
+/// The largest stream the layer check takes, in lattice speed: the round trip's exponent is sound well below
+/// the speed of sound.
+const MAX_STREAM: f64 = 0.2;
+
+/// What [`layer_reflection`] measures.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayerReflection {
+    /// The layer's setup report (its stated reflection, the predicted returns and the peak rate).
+    pub report: LayerReport,
+    /// The duct without the layer: the pressure face's own returned over incident peak.
+    pub plain: f64,
+    /// The layer's measured reflection: the layered run's returned over incident peak, over `plain`.
+    pub measured: f64,
+}
+
+/// Run the duct without and with an absorbing layer of `cells` cells and stated `reflection` at its
+/// pressure end, in a stream of lattice speed `stream` along +x, and compare the returned pulse. The
+/// pulse runs right from [`LAYER_START`] and is read at [`LAYER_PROBE`]; the record ends after its
+/// return and the window of its peaks (±5 w / c_s steps, as the outlet check's).
+pub fn layer_reflection(collision: Collision, cells: usize, reflection: f64, stream: f64) -> Result<LayerReflection> {
+    if !(stream.is_finite() && stream.abs() < MAX_STREAM) {
+        return Err(Error::Invalid(format!("the stream is {stream}: give one finite and below {MAX_STREAM} in lattice speed")));
+    }
+    if cells == 0 || cells >= LAYER_PROBE / 2 {
+        return Err(Error::Invalid(format!("the layer has {cells} cells: give 1 to {} (the probe's half of the duct)", LAYER_PROBE / 2 - 1)));
+    }
     let cs = CS2.sqrt();
+    let n = LAYER_CELLS as f64;
+    let probe = LAYER_PROBE as f64;
+    let (forward, backward) = (cs + stream, cs - stream);
+    let t_inc = (probe - LAYER_START) / forward;
+    let t_ref = t_inc + (n - probe) * (1.0 / forward + 1.0 / backward);
+    let half = (5.0 * WIDTH / cs) as usize;
+    let steps = t_ref as usize + half + 1;
+    let duct = |layer: Option<(usize, f64)>| Duct {
+        cells: LAYER_CELLS,
+        start: LAYER_START,
+        probe: LAYER_PROBE,
+        steps,
+        collision,
+        stream,
+        outlet_sigma: None,
+        layer,
+    };
+    let (plain_series, _) = duct_series(&duct(None))?;
+    let (layered_series, setup) = duct_series(&duct(Some((cells, reflection))))?;
+    let report = setup.layers.first().map(|l| l.report).ok_or_else(|| Error::Invalid("the layer check's duct has no layer".into()))?;
+    let incident_plain = peak_about(&plain_series, t_inc, half);
+    let incident_layered = peak_about(&layered_series, t_inc, half);
+    for (incident, what) in [(incident_plain, "plain"), (incident_layered, "layered")] {
+        if !(incident > 0.0 && incident.is_finite()) {
+            return Err(Error::Unstable(format!("the {what} incident pulse did not reach the probe")));
+        }
+    }
+    let plain = peak_about(&plain_series, t_ref, half) / incident_plain;
+    let layered = peak_about(&layered_series, t_ref, half) / incident_layered;
+    Ok(LayerReflection { report, plain, measured: layered / plain })
+}
+
+/// The largest |ρ − 1| of a series within `half` steps of `centre`.
+fn peak_about(series: &[f64], centre: f64, half: usize) -> f64 {
+    let c0 = centre as usize;
+    let last = series.len().saturating_sub(1);
+    (c0.saturating_sub(half)..=c0.saturating_add(half).min(last)).filter_map(|t| series.get(t)).fold(0.0_f64, |m, v| m.max(v.abs()))
+}
+
+/// One run of the duct: its cells, the pulse's starting centre and the probe (cells), the steps, the collision,
+/// the stream along +x (lattice speed), the characteristic outlet's σ at x_max (none: uniform), and an absorbing
+/// layer at x_max as (cells, reflection) (none: no layer).
+struct Duct {
+    cells: usize,
+    start: f64,
+    probe: usize,
+    steps: usize,
+    collision: Collision,
+    stream: f64,
+    outlet_sigma: Option<f64>,
+    layer: Option<(usize, f64)>,
+}
+
+/// The duct of the outlet check: TRT, at rest, with the uniform outlet or the characteristic one of σ.
+fn outlet_duct(sigma: Option<f64>) -> Duct {
+    Duct {
+        cells: CELLS,
+        start: START,
+        probe: PROBE,
+        steps: STEPS,
+        collision: Collision::Trt,
+        stream: 0.0,
+        outlet_sigma: sigma,
+        layer: None,
+    }
+}
+
+/// The probe's density over ρ₀, less one, after each step of the duct, and the setup it ran with.
+fn duct_series(duct: &Duct) -> Result<(Vec<f64>, Setup)> {
+    let cs = CS2.sqrt();
+    let stream = [duct.stream, 0.0, 0.0];
     let faces = BoxFaces {
-        x_min: FaceCondition::Velocity { velocity: [0.0; 3], profile: Profile::Uniform },
+        x_min: FaceCondition::Velocity { velocity: stream, profile: Profile::Uniform },
         x_max: FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None },
         y_min: FaceCondition::Periodic {},
         y_max: FaceCondition::Periodic {},
         z_min: FaceCondition::Periodic {},
         z_max: FaceCondition::Periodic {},
     };
+    let layers = duct
+        .layer
+        .map(|(cells, reflection)| AbsorbingLayer { face: BoxFace::XMax, width: cells as f64, reflection, reference_velocity: Some(stream) })
+        .into_iter()
+        .collect();
     let domain = FluidDomain {
         material: "Fluid".into(),
         min: [0.0; 3],
-        max: [CELLS as f64, 1.0, 1.0],
+        max: [duct.cells as f64, 1.0, 1.0],
         spacing: 1.0,
         faces,
         obstacles: vec![],
         surfaces: vec![],
-        initial_velocity: [0.0; 3],
+        initial_velocity: stream,
         acceleration: [0.0; 3],
         tolerance: None,
         thermal: None,
@@ -208,7 +319,7 @@ fn probe_series(sigma: Option<f64>) -> Result<Vec<f64>> {
         fans: vec![],
         baffles: vec![],
         free_surface: None,
-        layers: Vec::new(),
+        layers,
     };
     let mut model = Model::default();
     let fluid = Material { density: Some(1.0), fluid: Some(Fluid::Newtonian { viscosity: (TAU - 0.5) / 3.0 }), ..Material::default() };
@@ -216,13 +327,13 @@ fn probe_series(sigma: Option<f64>) -> Result<Vec<f64>> {
     model.add_fluid_domain("Duct", domain)?;
     let procedure = Procedure::Fluid {
         domain: "Duct".into(),
-        end_time: Some(STEPS as f64),
+        end_time: Some(duct.steps as f64),
         steps: None,
         time_step: Some(1.0),
         frames: 1,
         magic: None,
         sigma: None,
-        collision: Some(Collision::Trt),
+        collision: Some(duct.collision),
         turbulence: None,
         steady: None,
         walls: Default::default(),
@@ -231,22 +342,23 @@ fn probe_series(sigma: Option<f64>) -> Result<Vec<f64>> {
     model.add_step(Step::new("Run", procedure), None)?;
     let setup = Setup::new(&model, None, &[], &Limits::default())?;
     let mut flow = Flow::new(&setup, &[])?;
-    if let Some(s) = sigma {
+    if let Some(s) = duct.outlet_sigma {
         flow.characteristic_outlet(BoxFace::XMax, s)?;
     }
     let grid = *flow.grid();
+    let (start, stream_speed) = (duct.start, duct.stream);
     flow.set_equilibrium(|cell| {
         let x = grid.centre(cell).first().copied().unwrap_or(0.0);
-        let r = AMPLITUDE * libm::exp(-(x - START).powi(2) / (2.0 * WIDTH * WIDTH));
-        (1.0 + r, [cs * r, 0.0, 0.0])
+        let r = AMPLITUDE * libm::exp(-(x - start).powi(2) / (2.0 * WIDTH * WIDTH));
+        (1.0 + r, [stream_speed + cs * r, 0.0, 0.0])
     });
-    let probe = grid.index([PROBE, 0, 0]);
-    let mut series = Vec::with_capacity(STEPS);
-    for _ in 0..STEPS {
+    let probe = grid.index([duct.probe, 0, 0]);
+    let mut series = Vec::with_capacity(duct.steps);
+    for _ in 0..duct.steps {
         fieldcraft_model::progress::check()?;
         flow.step()?;
         let (rho, _) = flow.moments(probe).ok_or_else(|| Error::Invalid("the probe is not a fluid cell".into()))?;
         series.push(rho - 1.0);
     }
-    Ok(series)
+    Ok((series, setup))
 }

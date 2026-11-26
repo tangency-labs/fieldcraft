@@ -216,6 +216,9 @@ pub struct FluidStats {
     /// not saved, like `frozen`.
     #[serde(skip)]
     pub wall_links: Option<crate::flow::WallLinks>,
+    /// The absorbing layers, with what each is predicted to send back. Reported by the solve, not saved, like `frozen`.
+    #[serde(skip)]
+    pub absorbing_layers: Vec<crate::absorbing::LayerReport>,
 }
 
 /// How a free surface fared over the run (masses in model units).
@@ -743,6 +746,12 @@ fn run_checkpointed(
             "the characteristic outlet did not absorb in {held} cell updates: there its balance was not finite and positive (check the run for divergence) or the cell has no fluid cell inside it (an obstacle in the outlet's inner layer)"
         ));
     }
+    let blocked = flow.absorbing_blocked();
+    if blocked > 0 {
+        warnings.push(format!(
+            "{blocked} cells of the absorbing layers lie inside obstacles: the flow inside a layer is not physical, so forces on a body there are not either; keep obstacles out of the layers"
+        ));
+    }
     for body in flow.empty_obstacles() {
         warnings.push(format!("obstacle `{body}` covers no cell centre: it is smaller than the spacing or outside the box"));
     }
@@ -866,6 +875,7 @@ fn run_checkpointed(
             frozen: flow.frozen(),
             free_surface,
             wall_links: flow.wall_links(),
+            absorbing_layers: setup.layers.iter().map(|l| l.report).collect(),
         },
         warnings,
         steady,

@@ -1197,6 +1197,14 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
             "linear_moving_wall": w.linear_moving_wall,
             "linear_too_few_nodes": w.linear_too_few_nodes,
         })),
+        "absorbing_layers": r.stats.absorbing_layers.iter().map(|l| json!({
+            "face": l.face.name(),
+            "cells": l.cells,
+            "reflection": l.reflection,
+            "reflection_with_stream": l.stream_reflection,
+            "viscous_reflection": l.viscous_reflection,
+            "peak_rate_per_step": l.peak_rate,
+        })).collect::<Vec<_>>(),
         "eddy_viscosity_ratio": r.stats.eddy_viscosity_ratio,
         "velocity_scale": r.stats.velocity,
         "lattice_velocity": r.stats.lattice_velocity,
@@ -2910,6 +2918,7 @@ pub(crate) mod tests {
             frozen: None,
             free_surface: None,
             wall_links: None,
+            absorbing_layers: Vec::new(),
         };
         // Per preset: the mean temperature's mean and rms, and the residual's mean, as shown.
         for (preset, mean_t, rms_t, residual, units) in [

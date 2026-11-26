@@ -152,6 +152,8 @@ struct Shape {
     inlets: bool,
     /// The cells of a characteristic outlet's face (each keeps its boundary state).
     characteristic_cells: u64,
+    /// The absorbing layers' cells, a cell of two layers counted twice ([`crate::absorbing`]).
+    layer_cells: u64,
     surface: bool,
     baffle_bytes: u64,
     /// The momentum links at the thin walls, both sides.
@@ -211,6 +213,18 @@ impl Shape {
                 domain
                     .characteristic_outlets()
                     .map(|(f, _)| [ny * nz, nx * nz, nx * ny].get(f.axis()).copied().unwrap_or(0))
+                    .fold(0, u64::saturating_add)
+            },
+            layer_cells: {
+                let [nx, ny, nz] = domain.cells()?;
+                domain
+                    .layers
+                    .iter()
+                    .map(|l| {
+                        let a = l.face.axis();
+                        let depth = ((l.width / domain.spacing).round() as u64).min([nx, ny, nz].get(a).copied().unwrap_or(0));
+                        depth.saturating_mul([ny.saturating_mul(nz), nx.saturating_mul(nz), nx.saturating_mul(ny)].get(a).copied().unwrap_or(0))
+                    })
                     .fold(0, u64::saturating_add)
             },
             surface: domain.free_surface.is_some(),
@@ -328,7 +342,8 @@ impl Memory {
             flow += SURFACE;
         }
         let characteristic = s.characteristic_cells.saturating_mul(size_of::<crate::outlet::Characteristic>() as u64);
-        let prepared = per_cell(flow).saturating_add(boundary).saturating_add(characteristic).saturating_add(s.baffle_bytes);
+        let layers = s.layer_cells.saturating_mul(size_of::<crate::absorbing::AbsorbingCell>() as u64);
+        let prepared = per_cell(flow).saturating_add(boundary).saturating_add(characteristic).saturating_add(layers).saturating_add(s.baffle_bytes);
         // The wall distance is the last thing the flow builds: its transform's passes sit on top
         // of the prepared flow, and are gone before the steps.
         let transform = if s.spalart_allmaras { crate::distance::transform_bytes(s.cells) } else { 0 };
