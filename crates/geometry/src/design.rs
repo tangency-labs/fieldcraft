@@ -513,7 +513,7 @@ mod tests {
     fn a_newer_design_asks_for_a_newer_fieldcraft() {
         let newer = DESIGN_FORMAT + 1;
         let container = sample::plate_design(&Plate::default()).unwrap();
-        let text = String::from_utf8(solidcraft_io::write_design(&solidcraft_io::read_design(&container).unwrap())).unwrap();
+        let text = String::from_utf8(solidcraft_io::write_design(&solidcraft_io::read_design(&container).unwrap()).unwrap()).unwrap();
         let json = text.replacen(&format!("\"solidcraft/{DESIGN_FORMAT}\""), &format!("\"solidcraft/{newer}\""), 1);
         assert_ne!(json, text, "the sample design says its format");
         let error = open_design(json.as_bytes()).unwrap_err();

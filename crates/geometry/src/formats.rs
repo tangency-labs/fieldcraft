@@ -3,7 +3,7 @@
 //! never keeps an extension list of its own (#1049).
 //!
 //! - Rows importing a design open as a [`Source::Design`]: SolidCraft's design files
-//!   (`solidcraft_io::DESIGN_EXTS`: `.sc`, `.solidcraft`, `.solvecraft`). The row's plain `.json`
+//!   (`solidcraft_io::DESIGN_EXTS`: `.sc`, `.solidcraft`). The row's plain `.json`
 //!   design is left out: a `.json` file in FieldCraft is a command script (File › Run Script).
 //! - Rows importing B-rep CAD open as a [`Source::Brep`]: STEP and IGES, and FreeCAD and Rhino
 //!   (read through cadmpeg) in native builds ([`NATIVE`]).
@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn designs_cad_and_triangles_follow_the_table() {
-        assert_eq!(extensions(Source::Design), vec!["sc", "solidcraft", "solvecraft"]);
+        assert_eq!(extensions(Source::Design), vec!["sc", "solidcraft"]);
         let brep = extensions(Source::Brep);
         for e in ["step", "stp", "igs", "iges"] {
             assert!(brep.contains(&e), "{e}");
@@ -113,7 +113,8 @@ mod tests {
         }
         for (path, source) in [
             ("a/Part.SC", Some(Source::Design)),
-            ("old.SolveCraft", Some(Source::Design)),
+            ("old.SolidCraft", Some(Source::Design)),
+            ("old.SolveCraft", None),
             ("p.StP", Some(Source::Brep)),
             ("p.IGES", Some(Source::Brep)),
             ("bin.STL", Some(Source::Triangles)),

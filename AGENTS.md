@@ -85,12 +85,14 @@ section 1, which is where they change.
   solver and version, their model, their results). They are a cross-check and a lead: a large
   disagreement is a reason to look for a defect against the standard. They are never the
   acceptance reference, never a tuning target, and never committed as expected values.
-- **Dependencies are permissively licensed**, with one recorded exception: SolidCraft's UI kit,
-  theme and look (`solidcraft-ui-kit`, `solidcraft-theme`, `solidcraft-look`) are under the
-  SolidCraft Brand and Interface Licence and are used only under the written permission recorded in
-  docs/adr/0001-libraries.md (requested by jyviko, approved by SolidCraft's maintainer bherbruck in
-  #872). `deny.toml` accepts that licence for those three crates only; nothing else non-permissive
-  is allowed, and any other brand-licensed SolidCraft crate needs its own recorded permission.
+- **Dependencies are permissively licensed**, with one recorded exception: SolidCraft's brand
+  artwork in `solidcraft-look` (its icon SVG masters, the name, the logo and the app icon) is under
+  the SolidCraft Brand and Interface Licence and is used only under the written permission recorded
+  in docs/adr/0001-libraries.md (requested by jyviko, approved by SolidCraft's maintainer bherbruck in
+  #872). SolidCraft's UI kit, theme and icon SVG parser are MIT OR Apache-2.0 from SolidCraft
+  615a4adc1f on. `deny.toml` accepts the brand licence for `solidcraft-look` only; nothing else
+  non-permissive is allowed, and any other brand-licensed SolidCraft crate needs its own recorded
+  permission.
 - **Assets — absolutely essential.** FieldCraft contains **no iconography, images, fonts or
   artwork from commercial CAE products — ever.** Icons are original artwork made with VectorCraft
   (commit the editable `.vectorcraft` source beside the exported SVG/PNG) or come from

@@ -50,43 +50,43 @@
     },
     "cdt.cavities": {
       "band": 0,
-      "value": 80
+      "value": 78
     },
     "cdt.flat": {
       "band": 0,
-      "value": 1
+      "value": 2
     },
     "cdt.steiner": {
       "band": 0,
-      "value": 1304
+      "value": 1276
     },
     "cdt.tets": {
       "band": 0,
-      "value": 11909
+      "value": 11830
     },
     "hex.elements": {
       "band": 0,
-      "value": 1617
+      "value": 1659
     },
     "hex.hex20_min_sj": {
-      "band": 1.3268981610653231e-10,
-      "value": 0.1316898161065323
+      "band": 1.1454603908713123e-10,
+      "value": 0.11354603908713122
     },
     "hex.hex8_min_sj": {
-      "band": 1.326898161065323e-10,
-      "value": 0.13168981610653227
+      "band": 1.1454603908712248e-10,
+      "value": 0.11354603908712248
     },
     "quality.max_dihedral_deg": {
-      "band": 1.409817746278051e-7,
-      "value": 140.9807746278051
+      "band": 1.372963661141624e-7,
+      "value": 137.2953661141624
     },
     "quality.min_dihedral_deg": {
-      "band": 3.4299215856279755e-8,
-      "value": 34.298215856279754
+      "band": 3.33309364841844e-8,
+      "value": 33.3299364841844
     },
     "quality.min_radius_ratio": {
-      "band": 3.0278354278836067e-10,
-      "value": 0.30178354278836067
+      "band": 3.231565809137693e-10,
+      "value": 0.3221565809137693
     },
     "quality.slivers": {
       "band": 0,
@@ -94,11 +94,11 @@
     },
     "quality.slivers_cdt": {
       "band": 0,
-      "value": 631
+      "value": 642
     },
     "quality.tets": {
       "band": 0,
-      "value": 61232
+      "value": 63079
     },
     "surface.enclosed_mm3": {
       "band": 0.00003200000100000014,
@@ -109,8 +109,8 @@
       "value": 4.092726157978177e-15
     },
     "surface.solidcraft_mm3": {
-      "band": 0.000032000000999999974,
-      "value": 31999.999999999967
+      "band": 0.00003200000100000002,
+      "value": 32000.00000000002
     }
   }
 }

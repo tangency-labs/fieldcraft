@@ -191,14 +191,9 @@ fn paint_badge(p: &egui::Painter, item: Rect, b: Badge, t: &Tokens) {
 }
 
 /// Text for an item's tooltip: what it did, and whether a click reaches it.
-fn tip(item: &Item, reachable: bool) -> String {
-    let mut s = describe(item);
-    if reachable {
-        s.push_str("\nClick to roll the model to here");
-    } else {
-        s.push_str(&format!("\nThis command is {BEYOND_HISTORY}"));
-    }
-    s
+fn tip(item: &Item, reachable: bool) -> kit::StatusTip {
+    let tail = if reachable { "Click to roll the model to here".to_string() } else { format!("This command is {BEYOND_HISTORY}") };
+    kit::StatusTip { head: describe(item), error: None, warning: None, tail }
 }
 
 /// Where the History strip publishes its marker and steps.
@@ -605,7 +600,7 @@ mod tests {
         assert_eq!(badge("model.load.edit"), Some(Badge::Edit));
         assert_eq!(describe(&create), "Add reference point RP1");
         assert_eq!(describe(&delete), "Delete reference point RP1");
-        assert!(!tip(&delete, true).contains('{'));
+        assert!(!tip(&delete, true).plain().contains('{'));
         let nodes = Item { end: 3, ..item("mesh.node.add", json!({"label": 1, "xyz": [0, 0, 0]})) };
         assert_eq!(describe(&nodes), "Add Node × 3");
     }

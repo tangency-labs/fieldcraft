@@ -9,7 +9,7 @@ algorithms, where the obvious open-source implementations are GPL-family, must c
 
 ## Decision
 
-**Geometry: SolidCraft**, as git dependencies pinned by tag (`solidcraft-kernel`,
+**Geometry: SolidCraft**, as git dependencies pinned by commit (`solidcraft-kernel`,
 `solidcraft-geom`, `solidcraft-doc`, `solidcraft-io`; MIT OR Apache-2.0, built on the Apache-2.0
 truck crates until v0.30 and on solidcore, an Apache-2.0 Rust port of NVIDIA's SMLib, from
 v0.40, with its `solidcore-record` geometry records from the copy SolidCraft vendors). SolidCraft
@@ -19,7 +19,7 @@ exchange files (STEP, which SolidCraft's kernel already reads) can be added as s
 through the same crate. Only `fieldcraft-geometry` may depend on SolidCraft.
 
 **Desktop UI: SolidCraft's UI kit** (`solidcraft-ui-kit` and the `solidcraft-theme` token contract
-it draws from; same pinned tag, under the SolidCraft Brand and Interface Licence, see below).
+it draws from; same pinned commit, MIT OR Apache-2.0 from 615a4adc1f on, see below).
 *Decided 2026-11-10 (owner):* the desktop UI
 draws its windows, confirmations, menus, form rows, fields and buttons with the kit instead of
 FieldCraft's adapted copies of SolidCraft's widgets, so the two apps share one implementation and
@@ -30,20 +30,21 @@ nothing else of SolidCraft's. The kit builds for `wasm32-unknown-unknown`, so th
 the same UI. craft-ui (storytold/craft-libs), used before for tabs, icon buttons and widget states,
 is no longer a dependency.
 
-**SolidCraft's brand-licensed crates: used by written permission.** From SolidCraft 2874e78 on,
-`solidcraft-ui-kit`, `solidcraft-theme` and `solidcraft-look` are under the SolidCraft Brand and
-Interface Licence (each crate's `LICENSE`), not MIT or Apache-2.0: they are **not permissively
-licensed**, and §3a and §3b of that licence require the maintainers' written permission to link
-them from, or distribute them with, software that is not SolidCraft. *Permission requested
-2026-11-10* by FieldCraft's owner (GitHub `jyviko`) for FieldCraft to link these three crates and
-to distribute them as part of FieldCraft. *Approval* by SolidCraft's maintainer bherbruck is
-recorded by their approving review of the pull request that adds this section,
-https://github.com/tangency-labs/fieldcraft/pull/872; FieldCraft does not ship these crates without
-it. The permission covers those three crates only: any other SolidCraft crate under the brand
-licence needs its own permission, recorded here, before FieldCraft depends on it. `deny.toml` accepts the licence for exactly these three crates (a
-`LicenseRef-SolidCraft-Brand` clarification and exception each), never in its global allow list.
-FieldCraft does not use `solidcraft-look` yet: whether it draws SolidCraft's icons and themes or its
-own is still the owner's decision.
+**SolidCraft's UI code is MIT OR Apache-2.0; its brand artwork is used by written permission.**
+From SolidCraft 615a4adc1f (2026-11-26) on, `solidcraft-ui-kit`, `solidcraft-theme` and
+`solidcraft-icon-svg` are dual-licensed MIT OR Apache-2.0 like the rest of the workspace, so they
+need no permission and no `deny.toml` exception. The SolidCraft Brand and Interface Licence now
+covers only the SolidCraft name, logo, app icon, brand kit and the icon artwork (the SVG masters)
+shipped in `solidcraft-look`; `solidcraft-look`'s code is MIT OR Apache-2.0, and its licence
+expression names the brand and font parts (`(MIT OR Apache-2.0) AND LicenseRef-SolidCraft-Brand AND
+OFL-1.1`). The permission for that artwork: *requested 2026-11-10* by FieldCraft's owner (GitHub
+`jyviko`) for FieldCraft to link and distribute `solidcraft-look`, and *approved* by SolidCraft's
+maintainer bherbruck in https://github.com/tangency-labs/fieldcraft/pull/872. FieldCraft does not
+ship the brand artwork, name or logo without it. `deny.toml` accepts the brand licence for
+`solidcraft-look` only (a `LicenseRef-SolidCraft-Brand` clarification and exception), never in its
+global allow list; any other crate under that licence needs its own recorded permission before
+FieldCraft depends on it. FieldCraft does not use `solidcraft-look` yet: whether it draws
+SolidCraft's icons and themes or its own is still the owner's decision.
 
 **Meshing: our own**, implemented from published papers (`docs/meshing/literature.md`).
 Robust predicates follow Shewchuk's adaptive-precision arithmetic (the paper; his reference
@@ -164,7 +165,7 @@ models that come from ABC, GrabCAD or Siemens NX; HexMe's Gmsh-made models are a
 Thingi10K is not used either (owner decision 2026-10-13: authoring tools unrecorded). **The test
 corpus is our own:** parts built with SolidCraft (scripts or designs authored in SolidCraft,
 committed as their recipes so the geometry is regenerated, not stored) and analytic shapes.
-Recipes are SolidCraft command scripts run through `solidcraft-engine` (same pinned tag), a
+Recipes are SolidCraft command scripts run through `solidcraft-engine` (same pinned commit), a
 dependency of `fieldcraft-geometry` only behind its non-default `scripts` feature, which the test
 tooling (`fieldcraft-testkit`) enables; the shipped library opens designs without it.
 
@@ -179,10 +180,10 @@ docs/verification.md).
 
 - The tet and hex meshers are significant original work; the literature survey decides the
   order and the methods.
-- SolidCraft and FieldCraft move together: bumping the pinned tag bumps `solidcore-record` (from
+- SolidCraft and FieldCraft move together: bumping the pinned commit bumps `solidcore-record` (from
   SolidCraft's repository) and the repeated `[patch.crates-io]` entries in the same commit. The
   pin is a SolidCraft release tag's commit or, when FieldCraft needs a change not yet released, a
-  commit on SolidCraft's main branch,
+  commit on SolidCraft's main branch (owner exception 2026-11-27, bare commit until the next tag),
   and a scheduled check opens designs saved by SolidCraft's latest release, so a release that
   saves a design format the pin can't read is caught before users meet it
   (docs/architecture.md, "SolidCraft pin").

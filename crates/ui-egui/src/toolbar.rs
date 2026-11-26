@@ -241,6 +241,7 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
                             icon: c.id,
                             size: ribbon::ButtonSize { width: width + extra, min_width: ribbon::BUTTON_MIN_WIDTH + extra },
                             enabled: of(c).is_some_and(|s| s.enabled),
+                            planned: false,
                             pressed: of(c).is_some_and(|s| s.running),
                             exit: false,
                             split: None,
@@ -474,6 +475,8 @@ fn menu_style(ctx: &egui::Context) -> ribbon::MenuStyle<'static> {
         focus: egui::Id::unique("fc_dropdown_row"),
         entry: &["dropdown:"],
         pin: "dropdown_pin:",
+        more: "",
+        more_tip: "",
         hot: "dropdown_hot:",
         reveal: "ribbon:reveal",
     }

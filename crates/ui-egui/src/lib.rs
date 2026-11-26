@@ -495,9 +495,6 @@ pub struct ModelApp {
     /// This frame's input holds events the control channel injected: what they click opens no
     /// browser ([`ModelApp::open_link`]).
     driven: bool,
-    /// The width the title bar drew in the kit's offer span last frame (Solve, the Update pill):
-    /// the kit puts the link pills left of it ([`appbar`]).
-    offer_drawn: f32,
     /// Files dropped on the window by the control channel (`ui.drop`): the next frame takes them
     /// with the window system's drops.
     pub synthetic_drops: Vec<String>,
@@ -647,7 +644,6 @@ impl ModelApp {
             synthetic: Vec::new(),
             synthetic_mods: egui::Modifiers::default(),
             driven: false,
-            offer_drawn: 0.0,
             synthetic_drops: Vec::new(),
             control_rx: None,
             shots: Vec::new(),

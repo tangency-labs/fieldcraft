@@ -73,16 +73,16 @@ pollster = "1.0"
 # SolidCraft's UI kit, the token contract it draws from and SolidCraft's look (its icons, glyphs,
 # interface faces and built-in themes): the desktop UI draws with them. Under the SolidCraft Brand
 # and Interface Licence, used by the maintainer's written permission (docs/adr/0001-libraries.md);
-# only fieldcraft-ui-egui uses them. The same tag as the geometry crates below.
-solidcraft-ui-kit = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
-solidcraft-theme = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
-solidcraft-look = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
+# only fieldcraft-ui-egui uses them. The same commit as the geometry crates below.
+solidcraft-ui-kit = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+solidcraft-theme = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+solidcraft-look = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
 # The kit's widget registry (where its widgets were drawn, by name; MIT OR Apache-2.0): the UI
 # reads the application bar's parts from it and clears it as each frame starts.
-solidcraft-ui-registry = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
+solidcraft-ui-registry = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
 # The kit's message catalogues (MIT OR Apache-2.0): FieldCraft installs its own English text for
 # the kit's message ids (crates/ui-egui/locales/en.json).
-solidcraft-ui-text = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
+solidcraft-ui-text = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
 # native file pickers (the desktop app only; the UI crate takes them as services)
 rfd = "0.17"
 # The installed fonts, for a character the interface's faces lack (the desktop only, #991; MIT,
@@ -92,25 +92,25 @@ rfd = "0.17"
 fontdb = { version = "0.24", default-features = false, features = ["std", "fs"] }
 skrifa = { version = "0.44", default-features = false, features = ["std"] }
 
-# Geometry: SolidCraft's B-rep kernel (MIT OR Apache-2.0), pinned at a release tag
-# (v0.42.0, 1b1e940, 2026-11-14; docs/architecture.md, "SolidCraft pin"). Its
+# Geometry: SolidCraft's B-rep kernel (MIT OR Apache-2.0), pinned at a commit of its main branch
+# (tag v0.51.0, which contains the relicence 615a4adc1f: docs/architecture.md, "SolidCraft pin"). Its
 # modelling kernel is solidcore (Apache-2.0), vendored in SolidCraft's repository. Only
 # crates/geometry uses it (docs/adr/0001-libraries.md).
-solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
-solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
-solidcraft-doc = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
-solidcraft-io = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
+solidcraft-geom = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+solidcraft-kernel = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+solidcraft-doc = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+solidcraft-io = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
 # Runs SolidCraft command scripts (the test corpus recipes); only behind fieldcraft-geometry's
 # `scripts` feature. Without its default `plugins` feature (from v0.42, a sandboxed WebAssembly
 # plugin host on wasmtime): the recipes are plain command scripts and never load a plugin.
-solidcraft-engine = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0", default-features = false }
+solidcraft-engine = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0", default-features = false }
 # The geometry records SolidCraft's API speaks in (points, planes, profiles): solidcore's record
 # crate (Apache-2.0), from the copy of solidcore SolidCraft vendors (its `solidcore/`), at the same
 # rev as the crates above, so the build carries one copy of it and the types match.
-solidcore-record = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
+solidcore-record = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
 # solidcore's tessellator (Apache-2.0), same copy and tag: the analysis meshes of the B-rep faces
 # (`solidcore_tess::mesh`) that fieldcraft-geometry hands the volume meshers.
-solidcore-tess = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
+solidcore-tess = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -170,13 +170,21 @@ lto = "thin"
 codegen-units = 16
 debug = "line-tables-only"
 
-# SolidCraft builds egui-wgpu and winit with local fixes (its vendor/ directory). Patches don't
-# reach a dependent workspace, so FieldCraft applies them itself, from the same SolidCraft tag as
-# the crates above (egui 0.37).
+# SolidCraft builds vendored egui 0.37 crates and winit with local fixes (its vendor/ directory).
+# Patches don't reach a dependent workspace, so FieldCraft mirrors them from the same SolidCraft
+# commit as the crates above: without them the workspace carries two copies of emath and epaint.
 [patch.crates-io]
-# egui-wgpu with SolidCraft's fixes (vendor/egui-wgpu there): MSAA clamped to what the device
+ecolor = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+eframe = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+egui = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+# egui-wgpu with SolidCraft's fixes (vendor/egui/crates/egui-wgpu): MSAA clamped to what the device
 # supports and 1x on OpenGL adapters, so the requested 4x never fails pipeline validation at start.
-egui-wgpu = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
+egui-wgpu = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+egui-winit = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+egui_glow = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+emath = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+epaint = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+epaint_default_fonts = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
 # winit with SolidCraft's fix (vendor/winit there): trackpad pinch and rotation gestures on Wayland
 # (zwp_pointer_gestures_v1), which winit 0.30 never binds.
-winit = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.42.0" }
+winit = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }

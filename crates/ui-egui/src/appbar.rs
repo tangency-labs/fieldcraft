@@ -1,8 +1,8 @@
 //! The application bar: the window's title bar, drawn by the kit's application bar
 //! (`solidcraft_ui_kit::app_bar`) as SolidCraft's is: FieldCraft's mark and name, Home (the
 //! start page), File and its actions (save, undo, redo), a quick-access button (the theme), the
-//! model's document tab, Solve, Settings, Help, the community pills (Donate, Discord:
-//! [`crate::links`]), Report a bug and the version. The command search
+//! model's document tab, the community pills (Donate, Discord: [`crate::links`]), Settings, Help,
+//! Report a bug, the version, and Solve. The command search
 //! is at the end of the ribbon's tab row, SolidCraft's default place for it ([`crate::toolbar`]).
 //! The kit's window chrome (`solidcraft_ui_kit::window_chrome`, [`crate::titlebar`]) makes its
 //! empty space move the window and draws the caption buttons on Windows and Linux; macOS keeps
@@ -32,7 +32,6 @@ const HANDLES: app_bar::Handles<'static> = app_bar::Handles {
     home_rect: &["app_bar:home"],
     file: &["app_bar:file"],
     file_rect: &["app_bar:file"],
-    plugins: "app_bar:plugins",
     button: &["app_bar:"],
     separator: "app_bar:separator:",
     search: "ribbon:search",
@@ -88,13 +87,16 @@ fn release_notes() -> String {
     format!("https://github.com/tangency-labs/fieldcraft/releases/tag/v{}", crate::VERSION)
 }
 
-/// The name the kit's bar reads the offer span's drawn width under (`app_bar::show`, SolidCraft's
-/// Update pill's handle): FieldCraft publishes Solve and its Update pill's room there.
-const KIT_OFFER: &str = "titlebar:update";
-
 /// Solve's label and icon: the kit's primary icon-label action.
 const SOLVE: &str = "Solve";
 const SOLVE_ICON: &str = "play";
+/// App-owned item identifiers shared between [`bar`] and [`fill_overflow_rows`].
+const QUICK_THEME_ID: &str = "quick:0";
+const OFFERED_ID: &str = "offered";
+const UPDATE_ID: &str = "update";
+/// Smallest width at which Solve still renders cleanly as a compact icon button on the bar.
+const COMPACT_SOLVE_MIN_W: f32 = 28.0;
+const COMPACT_SOLVE_MAX_W: f32 = 32.0;
 
 pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
     let t = Tokens::get(app.ui.dark);
@@ -104,8 +106,11 @@ pub fn app_bar(app: &mut ModelApp, ui: &mut egui::Ui) {
     host.show_edge(ui, panel, host.edge_frame(t.app_bar), |ui| {
         let r = ui.max_rect();
         app.place("app_bar", r);
-        let chrome =
-            window_chrome::TitleBar { traffic_lights: app.integrated_titlebar && !fullscreen(ui.ctx()), caption_buttons: app.custom_titlebar };
+        let chrome = window_chrome::TitleBar {
+            traffic_lights: app.integrated_titlebar && !fullscreen(ui.ctx()),
+            caption_buttons: app.custom_titlebar,
+            hide_caption_buttons: false,
+        };
         let action = chrome.show(ui, r, |ui, content| bar(app, ui, r, content));
         if let Some(action) = action {
             crate::titlebar::run(app, ui.ctx(), action);
@@ -124,13 +129,14 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
     let button = |id, icon, tip, enabled, wide_only| BarButton { id, icon, tip, enabled, narrow: true, wide_only };
     let chrome = |id, icon, tip| BarButton { id, icon, tip, enabled: true, narrow: false, wide_only: false };
     let data = app_bar::AppBar {
+        items: None,
+        quick_ids: &[],
         mark: &mark,
         name: "FieldCraft",
+        leading: None,
         home: chrome("home", "home", "Start: new, open, recent files and samples"),
         file: "File",
         file_open: app.ui.menu.as_deref() == Some("file"),
-        // FieldCraft runs no plugins.
-        plugins: None,
         actions: vec![
             button("save", "save", &save_tip, !busy, false),
             button("undo", "undo", &undo_tip, undo > 0 && !busy, true),
@@ -144,19 +150,17 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
             tip: "Report a bug: draft a GitHub issue with the version, the OS and the last error; nothing is sent until you submit it",
             icon_only: false,
         },
-        pills: crate::links::pills(&app.prefs, r.width() >= app_bar::PILL_LABEL_MIN),
+        pills: crate::links::pills(&app.prefs, true),
         search: false,
         search_shortcut: None,
         assistant: false,
         version: Some(app_bar::Version { text: &version, url: &url }),
         handles: HANDLES,
     };
-    // What the bar drew in the kit's offer span last frame (Solve, the Update pill), where the kit
-    // reads it, so it puts the link pills left of it as it does SolidCraft's Update pill.
-    if app.offer_drawn > 0.0 {
-        solidcraft_ui_registry::publish_rect(KIT_OFFER, Rect::from_min_size(pos2(r.left(), r.top()), vec2(app.offer_drawn, r.height())));
-    }
-    let out = app_bar::show(ui, &data, r, content);
+    let solve_full = kit::icon_label_width(ui, SOLVE, Some(SOLVE_ICON), true);
+    let update_full = update_pill_label(app).map(|(full, _)| update_pill_width(ui, &full));
+    let offered = (solve_full + update_full.map_or(0.0, |w| w + 8.0)).ceil();
+    let mut out = app_bar::show_with_offers(ui, &data, r, content, app_bar::Offers { update: Some(offered), managed: None });
     // The kit's buttons, where it published them this frame (`ui.inspect`'s layout).
     for region in
         ["app_bar:home", "app_bar:file", "app_bar:save", "app_bar:undo", "app_bar:redo", "app_bar:help", "app_bar:settings", "app_bar:report"]
@@ -171,6 +175,54 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
                 app.place(region, rect);
             }
         }
+    }
+    let cy = r.center().y;
+    // The quick-access button: the theme.
+    if let Some((first, _)) = out.quick {
+        let rect = Rect::from_center_size(pos2(first, cy), vec2(32.0, 32.0));
+        let (icon, tip) = if app.ui.dark { ("ui.sun", "Light theme") } else { ("ui.moon", "Dark theme") };
+        if quick_button(ui, "theme", icon, rect, tip) {
+            app.ui.dark = !app.ui.dark;
+        }
+        app.place("app_bar:theme", rect);
+    }
+    // Reserve Solve's slot before placing the Update pill so Update never starves Solve.
+    let k = solidcraft_theme::Tokens::get();
+    let mut offer = out.offer;
+    let solve_w = kit::icon_label_width(ui, if out.offer_labeled { SOLVE } else { "" }, Some(SOLVE_ICON), true);
+    let solve_reserve = if out.offer_labeled { solve_w } else { COMPACT_SOLVE_MIN_W };
+    let update_span = if offer.width() >= solve_reserve + 8.0 {
+        Rect::from_min_max(pos2(offer.left() + solve_reserve + 8.0, offer.top()), offer.right_bottom())
+    } else {
+        Rect::NOTHING
+    };
+    let update_drawn = if let Some(pill) = update_pill(app, ui, update_span, out.offer_labeled) {
+        offer.max.x = pill.left() - 8.0;
+        app.place("app_bar:update", pill);
+        true
+    } else {
+        false
+    };
+    let (drawn_left, solve_drawn) = if offer.width() >= solve_w {
+        let solve = Rect::from_center_size(pos2(offer.right() - solve_w / 2.0, cy), vec2(solve_w, k.control_height));
+        solve_button(app, ui, solve, out.offer_labeled);
+        app.place("app_bar:solve", solve);
+        (solve.left(), true)
+    } else if !out.offer_labeled && offer.width() >= COMPACT_SOLVE_MIN_W {
+        // The kit's "offered" slot steps down to 32 px before overflowing; `icon_label_width`
+        // for a primary button without text is 52 px, so paint a compact icon button instead of
+        // letting Solve vanish from both the bar and the More menu.
+        let w = offer.width().min(COMPACT_SOLVE_MAX_W);
+        let solve = Rect::from_center_size(pos2(offer.right() - w / 2.0, cy), vec2(w, k.control_height));
+        solve_compact_button(app, ui, solve);
+        app.place("app_bar:solve", solve);
+        (solve.left(), true)
+    } else {
+        (offer.right(), false)
+    };
+    fill_overflow_rows(app, &mut out.overflow_items, !solve_drawn, !update_drawn);
+    if let Some(action) = app_bar::overflow_menu(ui.ctx(), &out.overflow_items, out.overflow_button) {
+        out.actions.push(action);
     }
     for action in &out.actions {
         match action {
@@ -190,7 +242,7 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
                     let _ = app.run("edit.redo", json!({}));
                 }
                 "settings" => app.open_settings(),
-                _ => {}
+                other => log::warn!("unhandled app bar button action: {other}"),
             },
             BarAction::Help { .. } => app.toggle_menu("help"),
             BarAction::Report => app.report_bug(None),
@@ -201,42 +253,19 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
                 }
             }
             BarAction::HidePill { id } => app.hide_link(id),
-            // The bar shows no Plugins button (`plugins: None`).
-            BarAction::Plugins { .. } => {}
+            BarAction::App { id } => match id.as_str() {
+                QUICK_THEME_ID => app.ui.dark = !app.ui.dark,
+                OFFERED_ID => {
+                    if app.unavailable("solve.run").is_none() && app.busy().is_none() {
+                        app.solve_all();
+                    }
+                }
+                UPDATE_ID => app.toggle_menu("update"),
+                other => log::warn!("unhandled app bar app action: {other}"),
+            },
         }
     }
-    let cy = r.center().y;
-    // The quick-access button: the theme.
-    if let Some((first, _)) = out.quick {
-        let rect = Rect::from_center_size(pos2(first, cy), vec2(32.0, 32.0));
-        let (icon, tip) = if app.ui.dark { ("ui.sun", "Light theme") } else { ("ui.moon", "Dark theme") };
-        if quick_button(ui, "theme", icon, rect, tip) {
-            app.ui.dark = !app.ui.dark;
-        }
-        app.place("app_bar:theme", rect);
-    }
-    // An update on offer: SolidCraft's Update pill at the offer span's right end, before the
-    // right cluster; Solve goes left of it.
-    let k = solidcraft_theme::Tokens::get();
-    let mut offer = out.offer;
-    if let Some(pill) = update_pill(app, ui, offer, out.offer_labeled) {
-        offer.max.x = pill.left() - 8.0;
-        app.place("app_bar:update", pill);
-    }
-    // Solve: right-aligned where the kit leaves room for an offer pill, before the right cluster.
-    let solve_w = kit::icon_label_width(ui, if out.offer_labeled { SOLVE } else { "" }, Some(SOLVE_ICON), true);
-    let solve = Rect::from_center_size(pos2(offer.right() - solve_w / 2.0, cy), vec2(solve_w, k.control_height));
-    let drawn_left = if offer.width() >= solve_w {
-        solve_button(app, ui, solve, out.offer_labeled);
-        app.place("app_bar:solve", solve);
-        solve.left()
-    } else {
-        offer.right()
-    };
-    // Room the offer span's contents take from its right end, with the gap the kit keeps before
-    // the pills (it adds its own `+ 4`); none when nothing is drawn there.
-    app.offer_drawn = if drawn_left < out.offer.right() { out.offer.right() - drawn_left } else { 0.0 };
-    // The document tab ends before the pills, or before Solve when there are none.
+    // The document tab ends before the right cluster, or before Solve if it ever reaches left of it.
     let tabs_end = drawn_left.min(out.controls_left) - 8.0;
     document_tab(app, ui, r, out.tabs_start, tabs_end);
     let help_at = solidcraft_ui_registry::rect_of("app_bar:help").unwrap_or(r);
@@ -247,31 +276,96 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
     }
 }
 
-/// The Update pill's height and the room it leaves the document tab before it shortens its
-/// label (SolidCraft's `PILL_HEIGHT`, `update::TAB_ROOM`).
-const PILL_HEIGHT: f32 = 22.0;
-const PILL_TAB_ROOM: f32 = 300.0;
+/// Fill labels, icons and availability for app-owned rows in the `More` overflow menu, ensuring
+/// Solve and Update appear there whenever they could not be painted on the bar.
+fn fill_overflow_rows(app: &ModelApp, rows: &mut Vec<app_bar::OverflowItem>, append_solve: bool, append_update: bool) {
+    let solve_enabled = app.unavailable("solve.run").is_none() && app.busy().is_none();
+    let update_label = update_pill_label(app);
+    for row in rows.iter_mut() {
+        match row.id.as_str() {
+            QUICK_THEME_ID => {
+                let (icon, label) = if app.ui.dark { ("ui.sun", "Light theme") } else { ("ui.moon", "Dark theme") };
+                row.label = label.to_string();
+                row.icon = icon.to_string();
+                row.enabled = true;
+            }
+            OFFERED_ID => {
+                row.label = SOLVE.to_string();
+                row.icon = SOLVE_ICON.to_string();
+                row.enabled = solve_enabled;
+            }
+            UPDATE_ID => {
+                if let Some((full, _)) = &update_label {
+                    row.label = full.clone();
+                } else {
+                    row.label = "Update".to_string();
+                }
+                row.icon = crate::updates::UPDATE_ICON.to_string();
+                row.enabled = true;
+            }
+            other => {
+                if !other.starts_with("action:") && !other.starts_with("pill:") {
+                    log::warn!("unhandled app bar overflow item: {other}");
+                }
+            }
+        }
+    }
+    if append_solve && !rows.iter().any(|r| r.id == OFFERED_ID) {
+        rows.push(app_bar::OverflowItem {
+            id: OFFERED_ID.to_string(),
+            label: SOLVE.to_string(),
+            icon: SOLVE_ICON.to_string(),
+            enabled: solve_enabled,
+            action: BarAction::App { id: OFFERED_ID.to_string() },
+        });
+    }
+    if append_update
+        && let Some((full, _)) = update_label
+        && !rows.iter().any(|r| r.id == UPDATE_ID)
+    {
+        rows.push(app_bar::OverflowItem {
+            id: UPDATE_ID.to_string(),
+            label: full,
+            icon: crate::updates::UPDATE_ICON.to_string(),
+            enabled: true,
+            action: BarAction::App { id: UPDATE_ID.to_string() },
+        });
+    }
+}
 
-/// SolidCraft's Update pill (`update::button`, `toolbar::offer_pill`): an accent pill at the right
-/// end of `span` reading "Update to X", or "Update" when the document tab would be squeezed, or
-/// its icon alone in a narrow bar. A click opens the update menu ([`crate::updates::offer_menu`]).
-/// None when nothing is on offer or there is no room.
-fn update_pill(app: &mut ModelApp, ui: &mut egui::Ui, span: Rect, labeled: bool) -> Option<Rect> {
+/// The Update pill's height (SolidCraft's `PILL_HEIGHT`).
+const PILL_HEIGHT: f32 = 22.0;
+
+fn update_pill_label(app: &ModelApp) -> Option<(String, String)> {
     use crate::updates::Offer;
     let offer = crate::updates::offer(app)?;
-    let (full, tip) = match &offer {
+    Some(match &offer {
         Offer::Release(version) => (format!("Update to {version}"), format!("FieldCraft {version} is available")),
         Offer::Busy(busy) => ("Update".to_string(), busy.clone()),
         Offer::Reload => ("Reload to update".to_string(), "A new version of FieldCraft is available".to_string()),
-    };
+    })
+}
+
+fn update_pill_width(ui: &egui::Ui, text: &str) -> f32 {
     let k = solidcraft_theme::Tokens::get();
     let font = FontId::proportional(k.font_label);
-    let (icon_x, text_x, right_pad) = (16.0, 29.0, 11.0);
+    let (text_x, right_pad) = (29.0, 11.0);
+    text_x + ui.painter().layout_no_wrap(text.to_string(), font, k.app_bar_text).size().x + right_pad
+}
+
+/// SolidCraft's Update pill (`update::button`, `toolbar::offer_pill`): an accent pill at the right
+/// end of `span` reading "Update to X", or "Update", or its icon alone in a narrow bar. A click
+/// opens the update menu ([`crate::updates::offer_menu`]). None when nothing is on offer or there
+/// is no room.
+fn update_pill(app: &mut ModelApp, ui: &mut egui::Ui, span: Rect, labeled: bool) -> Option<Rect> {
+    let (full, tip) = update_pill_label(app)?;
+    let k = solidcraft_theme::Tokens::get();
+    let font = FontId::proportional(k.font_label);
+    let (icon_x, text_x) = (16.0, 29.0);
     let labels = [full.as_str(), "Update"];
-    let label = labels.iter().enumerate().filter(|_| labeled).find_map(|(i, text)| {
-        let width = text_x + ui.painter().layout_no_wrap(text.to_string(), font.clone(), k.app_bar_text).size().x + right_pad;
-        let room = if i + 1 < labels.len() { span.width() - PILL_TAB_ROOM } else { span.width() };
-        (width <= room).then_some((*text, width))
+    let label = labels.iter().filter(|_| labeled).find_map(|text| {
+        let width = update_pill_width(ui, text);
+        (width <= span.width()).then_some((*text, width))
     });
     let width = label.map_or(PILL_HEIGHT + 4.0, |(_, w)| w);
     if width > span.width() {
@@ -324,6 +418,30 @@ fn solve_button(app: &mut ModelApp, ui: &mut egui::Ui, solve: Rect, labeled: boo
     }
 }
 
+/// Compact primary icon-only Solve button for the kit's 32 px narrow-bar offer slot.
+fn solve_compact_button(app: &mut ModelApp, ui: &mut egui::Ui, solve: Rect) {
+    let missing = app.unavailable("solve.run");
+    let can = missing.is_none() && app.busy().is_none();
+    let head = if missing.is_some() { "Solve: not ready yet (or try Home › Samples)" } else { "Solve every step and show the results" };
+    let tip = fieldcraft_engine::requirement::Unavailable::tip(head, missing.as_ref());
+    let k = solidcraft_theme::Tokens::get();
+    let resp = ui
+        .add_enabled_ui(can, |ui| {
+            let resp = ui.interact(solve, ui.scope_id().with("fc_solve_compact"), Sense::click());
+            let fill = if resp.hovered() && can { k.app_bar_hover_button } else { k.form_primary };
+            ui.painter().rect_filled(solve, k.control_radius, fill);
+            let icon_rect = Rect::from_center_size(solve.center(), vec2(k.space_14, k.space_14));
+            kit::icons::paint_ink(ui.painter(), icon_rect, SOLVE_ICON, k.on_accent);
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can, SOLVE));
+            resp
+        })
+        .inner;
+    let resp = if can { resp.backing_on_hover_text(tip) } else { resp.backing_on_disabled_hover_text(tip) };
+    if resp.clicked() && can {
+        app.solve_all();
+    }
+}
+
 /// The model's document tab: the kit's tab strip (SolidCraft's `documents::tabs`) with the one
 /// tab a FieldCraft window holds, from the documents separator at `x0` up to `x1`. Its × closes
 /// the model and its + starts a new one: both are File › New (`file.new`), which asks first
@@ -343,11 +461,12 @@ fn document_tab(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32
         }
     }
     let close_key = shortcut("W");
-    let menu = [app_bar::TabMenuRow { id: "close", label: "Close", key_on_selected: &close_key, needs_others: false }];
+    let menu = [app_bar::TabMenuRow::new("close", "Close", &close_key)];
     let mut strip = app_bar::TabStrip {
-        tabs: vec![app_bar::DocTab { name: &name, list_name: &name, dirty, place: &place, security: None }],
+        tabs: vec![app_bar::DocTab { name: &name, list_name: &name, dirty, place: &place, security: None, views: &[], collapsed: false }],
         selected: 0,
         shown_selected: (!app.start_shown()).then_some(0),
+        pop_out: false,
         title_bar: true,
         double_click_renames: false,
         rename: None,
@@ -358,6 +477,31 @@ fn document_tab(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32
         new_tip: "New model (File › New)",
         id: egui::Id::unique("fc_document_tabs"),
         handles: TAB_HANDLES,
+        views_as_tabs: false,
+        switcher_always: false,
+        clear_view_tabs: false,
+        view_text: app_bar::ViewText {
+            close_view: "",
+            close_design: "",
+            new_view: "",
+            more: "",
+            switch_view: "",
+            collapse_views: "",
+            expand_views: "",
+        },
+        view_menu: &[],
+        view_right_row: "",
+        view_rename_row: "",
+        view_rename: None,
+        plus_menu: &[],
+        layout_menu: &[],
+        view_layout: None,
+        layout_current: "",
+        layout_tip: "",
+        layout_fill: "",
+        layout_fill_heading: "",
+        switcher_menu: &[],
+        tear_off_below: 0.0,
     };
     // The strip's hit regions stay clear of what is right of it.
     let room = Rect::from_min_max(pos2(x0, r.top()), pos2(x1, r.bottom()));
@@ -391,6 +535,13 @@ const TAB_HANDLES: app_bar::TabHandles<'static> = app_bar::TabHandles {
     rename: "document_tab_rename",
     menu_row: "document_tab_menu:",
     more_row: "document_tabs_more:",
+    view: "document_view:",
+    view_close: "document_view_close:",
+    view_new: "document_view_new",
+    view_more: "document_view_more",
+    switcher: "document_view_switcher",
+    view_collapse: "document_view_collapse",
+    file_drop: "document_file_drop",
 };
 
 /// The shortcut text with this platform's command key.
@@ -496,9 +647,9 @@ mod tests {
         app.layout
     }
 
-    /// Left to right as in SolidCraft: Home, File, its actions, the theme, the document tab, Solve,
-    /// Settings, Help and Report a bug; the left group starts after the traffic
-    /// lights, and Solve and the right cluster stay put.
+    /// Left to right as in SolidCraft: Home, File, its actions, the theme, the document tab,
+    /// Settings, Help, Report a bug, and Solve in the reserved offer span; the left group starts
+    /// after the traffic lights, and Solve and the right cluster stay put.
     #[test]
     fn the_title_bar_is_laid_out_as_solidcrafts() {
         let at = |m: &std::collections::BTreeMap<&'static str, Rect>, k: &str| m.get(k).copied().unwrap_or_else(|| panic!("{k} not drawn"));
@@ -515,23 +666,23 @@ mod tests {
                 "app_bar:redo",
                 "app_bar:theme",
                 "document_tab",
-                "app_bar:solve",
                 "app_bar:settings",
                 "app_bar:help",
                 "app_bar:report",
+                "app_bar:solve",
             ];
             for pair in order.windows(2) {
                 let (a, b) = (at(&m, pair[0]), at(&m, pair[1]));
                 assert!(a.right() <= b.left() + 0.5, "{} {a:?} before {} {b:?}", pair[0], pair[1]);
             }
-            assert!(at(&m, "app_bar:report").right() < 1400.0 && at(&m, "app_bar:solve").left() > 700.0);
+            assert!(at(&m, "app_bar:solve").right() < 1400.0 && at(&m, "app_bar:solve").left() > 700.0);
         }
     }
 
-    /// An update on offer is SolidCraft's Update pill before the right cluster, Solve left of it;
-    /// with none on offer there is no pill.
+    /// An update on offer is SolidCraft's Update pill at the right end of the offer span after
+    /// Settings/Report and Solve; with none on offer there is no pill.
     #[test]
-    fn an_update_on_offer_is_a_pill_before_settings() {
+    fn an_update_on_offer_is_a_pill_in_the_offer_span() {
         let draw = |reload: bool| {
             let mut app = ModelApp::new(Session::default());
             if reload {
@@ -548,8 +699,8 @@ mod tests {
         assert!(!draw(false).contains_key("app_bar:update"));
         let m = draw(true);
         let at = |k: &str| m.get(k).copied().unwrap_or_else(|| panic!("{k} not drawn"));
-        let (solve, update, settings) = (at("app_bar:solve"), at("app_bar:update"), at("app_bar:settings"));
-        assert!(solve.right() < update.left() && update.right() < settings.left(), "{solve:?} {update:?} {settings:?}");
+        let (settings, solve, update) = (at("app_bar:settings"), at("app_bar:solve"), at("app_bar:update"));
+        assert!(settings.right() < solve.left() && solve.right() < update.left(), "{settings:?} {solve:?} {update:?}");
     }
 
     /// The document tab is the kit's tab strip, as SolidCraft's: it starts just after the
@@ -612,8 +763,9 @@ mod tests {
         }
     }
 
-    /// Donate, then Discord, sit after the document tab and before Solve and Report a bug, as
-    /// SolidCraft's sit before its Update pill, each a capsule in its service's own colour (the kit's `app_bar::brand`), and `ui.inspect`'s layout names them.
+    /// Donate, then Discord, sit after the document tab and before Report a bug and Solve, each a
+    /// capsule in its service's own colour (the kit's `app_bar::brand`), and `ui.inspect`'s layout
+    /// names them.
     #[test]
     fn the_community_pills_sit_before_report_a_bug_in_their_own_colours() {
         let mut app = ModelApp::new(Session::default());
@@ -622,8 +774,8 @@ mod tests {
         let out = frame(&mut app, &ctx, Vec::new());
         let (tab, donate, discord) = (region(&app, "document_tab"), region(&app, "app_bar:donate"), region(&app, "app_bar:discord"));
         let (solve, report) = (region(&app, "app_bar:solve"), region(&app, "app_bar:report"));
-        for (a, b) in [(tab, donate), (donate, discord), (discord, solve), (solve, report)] {
-            assert!(a.right() <= b.left(), "{a:?} before {b:?}: tab {tab:?} donate {donate:?} discord {discord:?} solve {solve:?} report {report:?}");
+        for (a, b) in [(tab, donate), (donate, discord), (discord, report), (report, solve)] {
+            assert!(a.right() <= b.left(), "{a:?} before {b:?}: tab {tab:?} donate {donate:?} discord {discord:?} report {report:?} solve {solve:?}");
         }
         for (pill, fill) in [(donate, app_bar::brand::KOFI), (discord, app_bar::brand::DISCORD)] {
             let painted = out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.fill == fill && r.rect.contains_rect(pill)));
@@ -712,5 +864,82 @@ mod tests {
         }
         let menu = app.layout.get("menu:help").copied().unwrap_or_else(|| panic!("Help menu not drawn"));
         assert!(menu.bottom() <= screen.bottom(), "{menu:?}");
+    }
+
+    /// In a narrow bar that hides items into `More`, clicking `More` opens the overflow menu and
+    /// choosing an app-owned control (such as the theme button) dispatches its action.
+    #[test]
+    fn narrow_bar_overflow_menu_runs_hidden_controls() {
+        let mut app = ModelApp::new(Session::default());
+        let start_dark = app.ui.dark;
+        let ctx = egui::Context::default();
+        let draw = |app: &mut ModelApp, events: Vec<egui::Event>| {
+            let mut raw =
+                egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(420.0, 600.0))), events, ..Default::default() };
+            app.raw_input_hook(&ctx, &mut raw);
+            app.layout.clear();
+            solidcraft_ui_registry::clear_handles();
+            let mut out = ctx.run_ui(raw, |ui| app_bar(app, ui));
+            out.textures_delta.clear();
+        };
+        let click_at = |app: &mut ModelApp, at: egui::Pos2| {
+            draw(app, vec![egui::Event::PointerMoved(at)]);
+            let button =
+                |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            draw(app, vec![egui::Event::PointerMoved(at), button(true), button(false)]);
+        };
+        draw(&mut app, Vec::new());
+        draw(&mut app, Vec::new());
+        let more = solidcraft_ui_registry::handle_at("appbar:overflow").unwrap_or_else(|| panic!("no appbar:overflow handle"));
+        click_at(&mut app, more);
+        let theme_row =
+            solidcraft_ui_registry::handle_at("menu:appbar:overflow:quick:0").unwrap_or_else(|| panic!("no menu:appbar:overflow:quick:0 handle"));
+        click_at(&mut app, theme_row);
+        assert_ne!(app.ui.dark, start_dark, "clicking overflowed theme row should toggle dark mode");
+    }
+
+    /// Across narrow widths (down to where the kit steps the offer slot to 32 px or moves items
+    /// into More), Solve never silently disappears: it is always either drawn on the bar or
+    /// present in the More overflow menu.
+    #[test]
+    fn narrow_bar_always_exposes_solve_on_bar_or_in_overflow() {
+        for has_update in [false, true] {
+            for width in [360.0_f32, 420.0, 480.0, 540.0, 600.0, 680.0, 760.0] {
+                let mut app = ModelApp::new(Session::default());
+                if has_update {
+                    app.reload = Some(Box::new(|| {}));
+                }
+                let ctx = egui::Context::default();
+                let draw = |app: &mut ModelApp, events: Vec<egui::Event>| {
+                    let mut raw =
+                        egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 600.0))), events, ..Default::default() };
+                    app.raw_input_hook(&ctx, &mut raw);
+                    app.layout.clear();
+                    solidcraft_ui_registry::clear_handles();
+                    let mut out = ctx.run_ui(raw, |ui| app_bar(app, ui));
+                    out.textures_delta.clear();
+                };
+                draw(&mut app, Vec::new());
+                draw(&mut app, Vec::new());
+                if let Some(solve) = app.layout.get("app_bar:solve").copied() {
+                    assert!(solve.width() >= COMPACT_SOLVE_MIN_W, "width={width} has_update={has_update}: drawn Solve too narrow: {solve:?}");
+                } else {
+                    let more = solidcraft_ui_registry::handle_at("appbar:overflow")
+                        .unwrap_or_else(|| panic!("width={width} has_update={has_update}: neither Solve nor More overflow button is drawn"));
+                    draw(&mut app, vec![egui::Event::PointerMoved(more)]);
+                    let button = |pressed| egui::Event::PointerButton {
+                        pos: more,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    };
+                    draw(&mut app, vec![egui::Event::PointerMoved(more), button(true), button(false)]);
+                    assert!(
+                        solidcraft_ui_registry::handle_at("menu:appbar:overflow:offered").is_some(),
+                        "width={width} has_update={has_update}: Solve missing from both bar and More overflow menu"
+                    );
+                }
+            }
+        }
     }
 }
