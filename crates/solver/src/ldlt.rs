@@ -351,7 +351,7 @@ fn supernode<T: Scalar>(context: &Context<T>, j: usize, done: &[Block<T>], base:
         if c1 < w {
             // The rest of the supernode minus the panel's L D Lᵀ.
             let tiles = products(&Panel { m, data: &own.values }, c0..c1, c1, m - c1, w - c1, own.pivots.get(c0..c1))?;
-            subtract(&mut own.values, m, &tiles, m - c1, w - c1, |i| c1 + i);
+            subtract(&mut own.values, m, &tiles, m - c1, w - c1, |i| c1 + i)?;
         }
         c0 = c1;
     }

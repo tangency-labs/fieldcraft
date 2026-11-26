@@ -44,6 +44,7 @@ Internal constants (`crates/solver/src/cholesky.rs`, `scalar.rs`, `ldlt.rs`, `or
 | `PARALLEL_WORK` | 2²¹ multiply–adds | dense work from which a kernel's tiles run in parallel |
 | `BATCH_BYTES` | 32 MB | products of updates that the supernodes above the subtree tasks compute and hold at once: in all, on any number of threads, real and complex alike |
 | `PACKED_KEPT` | 2¹⁴ packed rows (1 MB real, 2 MB complex) | most packed rows a thread keeps from one tile to the next; a larger buffer is given back when its tile is done |
+| `PARALLEL_ENTRIES` | 2¹⁶ entries | size of an update from which its columns are subtracted in parallel |
 | `SORTED` | 1024 | columns of the matrix that one task copies or sorts |
 | `BLOCK` | 3 | unknowns of a block in the symbolic analysis by blocks (a node's displacements) |
 | `SUBTREE_SHARE` | 256 | subtrees are handed to threads in pieces of about 1/256 of the total work |
@@ -67,6 +68,10 @@ Where their values come from:
 - `PACKED_KEPT`: 2¹⁴ packed rows serve a tile over 2048 columns and are 1 MB of real values, the
   order of a core's second-level cache. A larger buffer would not stay in the cache, and taking
   it anew costs 1/wu of the work of a tile over wu columns.
+- `PARALLEL_ENTRIES`: on the same models and machine, 2¹⁴ and 2¹⁶ entries take the same time
+  within the 1 % that two runs differ by, and 2¹⁸ takes 1 to 3 % more on the models of 129 000
+  unknowns and more. 2¹⁶ is the larger of the two that are as fast, so that fewer small updates
+  are handed out.
 - `SORTED`: a task must be long beside the cost of handing it out, and a large matrix must
   still give many more tasks than threads. On the same models and machine, 256, 1024 and 4096
   columns take the same time within the 1 % that two runs differ by; 1024 is the middle one.
@@ -137,9 +142,10 @@ column order from zero, and updates are subtracted in supernode order. Disjoint 
 supernodal tree are factored concurrently (a supernode reads only its descendants), the dense
 work of a large supernode is split into row tiles, and a supernode above the subtree tasks
 computes the products of the updates it receives several at a time (as many as `BATCH_BYTES`
-holds) and subtracts them in supernode order; none of this changes any entry's sequence of
-operations, and multiplications and additions are never fused, so the factor is the same bit for
-bit on any number of threads and on every platform.
+holds) and subtracts them in supernode order, a large update column by column in parallel (every
+entry takes one subtraction); none of this changes any entry's sequence of operations, and
+multiplications and additions are never fused, so the factor is the same bit for bit on any
+number of threads and on every platform.
 
 **Singularity.** A pivot at or below 10⁻¹⁰ times the matrix's own diagonal entry means the matrix
 is singular to working precision (an unconstrained rigid-body motion, a disconnected part, a
@@ -344,6 +350,7 @@ lets it through.
 | Sparse SPD factor and solve; cap refused before allocation; singular matrix located; cancellation; empty and 1 × 1 matrices | exact solution, located errors | `cholesky::tests::factor_and_solve_a_sparse_spd_matrix` |
 | Supernodes wider than two panels, 1, 2 and 7 threads; the products of updates one at a time, a few at a time and all at once | residual < 10⁻¹², factor bit-identical on every thread count and batch size; only the supernodes above the subtree tasks hold a batch, and none on one thread | `supernodes_panels_and_threads` |
 | Size of a batch | counts what its products take, whole tiles; an update over the limit goes alone | `a_batch_counts_the_tiles_of_its_products` |
+| An update whose columns are not in its supernode, one after another | an internal error, not a wrong factor | `an_update_outside_its_supernode_is_an_error` |
 | Symbolic analysis by blocks | the tree and the counts of the analysis column by column, on a matrix of blocks and on the ordered, constrained stiffness of a hex8 model held at its base; a ragged or shorter block, or one node held in one direction, is analysed column by column | `the_structure_of_uniform_blocks_is_the_structure_by_columns`, `a_solid_models_stiffness_is_analysed_by_blocks` |
 | The matrix's upper triangle copied and its columns sorted by tasks of `SORTED` columns, on more than three tasks | every column's rows sorted, every value kept | `the_matrix_is_copied_and_reordered_whole` |
 | Workspace of a dense kernel that cannot be had | the out-of-memory error with the factor's entries, no abort | `a_kernel_without_memory_is_an_error` |
