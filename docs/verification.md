@@ -483,6 +483,37 @@ which excites the spanwise mode; this run starts from free stream everywhere, wi
 near τ⁺ = ½ (here τ⁺ = 0.50046), so the old numbers are not a valid baseline for the new force either. Neither
 effect was separated: a run of the old setup on the new force would be needed.
 
+### Bluff-body LES reruns with HRR + Vreman on the GB10 (#1106, #785 step 7)
+
+> Measurement only, 2026-11-25, on develop d2b829be, NVIDIA GB10 (f32) through `crates/lbm-gpu/tests/bluff_body_les.rs`
+> (`FIELDCRAFT_BLUFF_CASE`, `#[ignore]`d: heavy). Hybrid recursive regularised collision with σ 0.99 or dynamic σ, Vreman
+> C_s 0.18 (Jacob, Malaspinas & Sagaut 2018), interpolated walls, the start at rest on the body, the inlet raised over
+> 2.5 fundamental periods (20.8 D/U). Box 24 D long, body 6 D from the inlet, convective outlet, slip sides, periodic span
+> 3.125 D; 16 cells per D; averaging window 100–240 D/U in 8 blocks. Not converged, one realisation, not an acceptance run.
+> References: Kravchenko & Moin 2000 (C_d 0.99, St 0.215 at Re 3900); Lyn et al. 1995 (C_d about 2.1, St 0.132 at Re 22 000).
+> Wall time is the run's own clock.
+
+| case | σ | C_d (95 % block interval) | against C_d | St | L_r/D from the rear | ρ over the fluid cells | wall |
+|---|---|---|---|---|---|---|---|
+| cylinder Re 3900, 16 cells per D | 0.99 | — (unstable at 3.6 D/U, lattice speed 0.547) | — | — | — | — | 13 s |
+| same | dynamic | 1.827 ± 0.073 | +85 % (0.99) | 0.057 against 0.215 | 1.35 | 0.856–1.208 | 557 s |
+| square Re 22 000, 16 cells per D, blockage 7.1 % | 0.99 | — (unstable at 3.2 D/U, lattice speed 0.538) | — | — | — | — | 13 s |
+| same | dynamic | 2.176 ± 0.088 | +4 % (2.1, Lyn); +0 % (2.18 DNS, Trias) | 0.057 against 0.132 | 1.38 | 0.840–1.194 | 656 s |
+
+> Against the earlier records on develop 655d92fe (fixed σ, halfway or staircase walls, table above): the cylinder's C_d
+> was 1.11 with the interpolated walls and a start at rest, and the square's 1.73–1.81 at 16 cells; the recirculation
+> lengths were 2.0–2.2 D and 1.5–1.9 D. The density ranges were 0.93–1.08 and 0.84–1.18.
+>
+> Changes against the earlier records: with dynamic σ and Vreman the cylinder's C_d is 1.83 (1.11 before, with the same
+> walls and start), and its bubble is 1.35 D (2.0–2.2 D before); the square's C_d is 2.18 (1.73–1.81 before), inside the
+> Lyn band, and its bubble is 1.38 D (1.5–1.9 D before). The cylinder's Strouhal peak is 0.057, far from 0.215, and the
+> square's lowest lift peak is also 0.057 with a second peak at 0.171: the shedding frequency is not identified in these
+> windows (not analysed further).
+>
+> Fixed σ 0.99 with Vreman is unstable from a start at rest and the ramp, at 3.6 D/U (cylinder) and 3.2 D/U (square), where
+> the lattice speed reaches 0.55 and 0.54. Those are failed runs and are reported as such. The cylinder's +85 % is the
+> measurement, not tuned away.
+
 ### Wall-modelled channel at Re_τ 1000 on the regularised collision (#785)
 
 > Probe runs of 2026-11-23/24 on develop 655d92fe: 2πδ × 2δ × πδ, constant force u_τ²/δ, Smagorinsky C 0.1, the
