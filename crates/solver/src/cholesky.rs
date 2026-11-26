@@ -1341,11 +1341,17 @@ impl Symbolic {
         let ns = self.supernodes();
         let mut values: Vec<Vec<T>> = Vec::new();
         values.try_reserve_exact(ns).map_err(|_| FactorError::OutOfMemory { entries: self.entries })?;
-        for s in 0..ns {
-            let mut v = Vec::new();
-            v.try_reserve_exact(self.structure.size(s)).map_err(|_| FactorError::OutOfMemory { entries: self.entries })?;
-            v.resize(self.structure.size(s), T::ZERO);
-            values.push(v);
+        values.resize_with(ns, Vec::new);
+        // Each supernode's memory is taken and zeroed by a task: the system hands it out page
+        // by page as it is first written, which is most of the time this takes.
+        // One that is refused stays empty.
+        parallel::for_each_mut(&mut values, |s, v| {
+            if v.try_reserve_exact(self.structure.size(s)).is_ok() {
+                v.resize(self.structure.size(s), T::ZERO);
+            }
+        });
+        if values.iter().enumerate().any(|(s, v)| v.len() != self.structure.size(s)) {
+            return Err(FactorError::OutOfMemory { entries: self.entries });
         }
         Ok(values)
     }
