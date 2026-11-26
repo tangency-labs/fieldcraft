@@ -490,12 +490,17 @@ beam2 to B31 with the profile's BEAM SECTION (B21 in a 2D model, its first secti
 CBEAM with its PBEAML (in a 2D model the same cards, the beam grids holding 3, 4, 5), and an LS-DYNA
 Belytschko–Schwer resultant beam (ELEMENT_BEAM_ORIENTATION) given the profile's area, second
 moments, torsion constant and shear area, the numbers this element uses (isotropic elastic
-materials only; I and box profiles whose shear areas differ by direction have no LS-DYNA
+materials only; I, box and general profiles whose shear areas differ by direction have no LS-DYNA
 counterpart, its resultant beams taking one shear area); beams in a 2D model have no LS-DYNA counterpart;
+a general profile (its section properties given directly) to B31 with a BEAM GENERAL SECTION and its
+TRANSVERSE SHEAR STIFFNESS (B21 in a 2D model, its first section axis (0, 0, −1)), CBEAM with a uniform
+PBEAM, and the same resultant beam (its stress and strain output in Abaqus are the section forces SF and
+section strains SE, a general section having no section points to give S and E at);
 pyramid5 to C3D5, CPYRAM and an LS-DYNA degenerate solid. The Euler–Bernoulli beam (`beam_theory`
-euler_bernoulli) has no shear flexibility: B33 with the same BEAM SECTION as B31; CBAR with a PBAR
+euler_bernoulli) has no shear flexibility: B33 with the same BEAM SECTION as B31 (with a general
+profile its BEAM GENERAL SECTION without TRANSVERSE SHEAR STIFFNESS); CBAR with a PBAR
 of A, I1, I2 and J and blank shear factors K1 and K2 (Nastran; PBEAML and PBARL compute shear factors
-from the shape, so neither can express it); no LS-DYNA counterpart is written, its resultant beam
+from the shape, so neither can express it; a general profile's PBAR takes its own properties); no LS-DYNA counterpart is written, its resultant beam
 always taking a shear area, so that deck is refused by name. Pipes under a pipe pressure go to Abaqus as PIPE31
 with a THICK PIPE beam section and `*DLOAD` PI / PE lines (the pressure and the effective inner or outer
 diameter, closed ends); the Nastran and LS-DYNA decks refuse the load by name, since their beams as written here

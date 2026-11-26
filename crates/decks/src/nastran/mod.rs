@@ -9,7 +9,9 @@
 //! - solids: `CTETRA` (tet4, tet10), `CPENTA` (wedge6), `CPYRAM` (pyramid5), `CHEXA` (hex8, hex20) with `PSOLID`;
 //!   shells: `CTRIA3`, `CQUAD4`, `CTRIA6`, `CQUAD8` with `PSHELL`; beams: `CBEAM` with `PBEAML`
 //!   (Euler–Bernoulli sections: `CBAR` with a `PBAR` of the profile's area, second moments and
-//!   torsion constant, whose blank K1 and K2 mean no transverse shear flexibility);
+//!   torsion constant, whose blank K1 and K2 mean no transverse shear flexibility; a general
+//!   profile's own properties likewise); a general profile otherwise: `PBEAM` with its section
+//!   properties, see `beam_property`;
 //!   rods: `CROD` with `PROD`. Nastran numbers a 20-node hexahedron's mid-side nodes bottom
 //!   edges, vertical edges, top edges, where the model has bottom, top, vertical
 //!   ([`grids`] reorders them); every other kind keeps the model's order;
@@ -485,10 +487,6 @@ impl<'m> Deck<'m> {
                     self.add_property(sname, Property::Shell { mid, thickness, offset, mcid }, elements.iter().copied())?;
                 }
                 SectionKind::Beam { profile, orientation } => {
-                    if let BeamProfile::General { .. } = profile {
-                        self.problems.insert(format!("section `{sname}`: general beam profiles (not written yet)"));
-                        continue;
-                    }
                     let Some(mid) = ids.isotropic else { continue };
                     let shear_rigid = match sec.formulation.beam_theory {
                         BeamTheory::Timoshenko => None,
@@ -871,10 +869,7 @@ impl<'m> Deck<'m> {
                 // has no transverse shear flexibility (MSC Nastran Linear Static Analysis User's
                 // Guide, the CBAR element); I12 is zero for every profile.
                 Property::Beam { mid, shear_rigid: Some(p), .. } => Card::new("PBAR").int(pid).int(*mid).reals([p.area, p.iy, p.iz, p.torsion]),
-                Property::Beam { mid, profile, .. } => {
-                    let (shape, dims) = beam_dimensions(*profile);
-                    Card::new("PBEAML").int(pid).int(*mid).blank().text(shape).end_line().reals(dims)
-                }
+                Property::Beam { mid, profile, .. } => beam_property(pid, *mid, *profile),
                 Property::Rod { mid, area } => Card::new("PROD").int(pid).int(*mid).real(*area),
                 Property::Membrane { mid, thickness, .. } => Card::new("PSHELL").int(pid).int(*mid).real(*thickness),
             };
@@ -1094,19 +1089,39 @@ impl<'m> Deck<'m> {
     }
 }
 
-/// `PBEAML`'s shape and dimensions. Nastran's sections have their height along the element y
-/// axis and their width (flanges) along z, which [`Deck::beam_vector`] makes the profile's
-/// local 1 direction.
-fn beam_dimensions(p: BeamProfile) -> (&'static str, Vec<f64>) {
+/// A beam section's property entry: `PBEAML` with a shape's dimensions, or `PBEAM` with a general
+/// profile's section properties.
+///
+/// Nastran's sections have their height along the element y axis and their width (flanges)
+/// along z, which [`Deck::beam_vector`] makes the profile's local 1 direction. So plane 1 (the
+/// element x–y plane) bends across the profile's height: `PBEAM`'s I1 is the model's I_y and I2
+/// its I_z, and the shear factors are K1 = A_s,z / A and K2 = A_s,y / A. A uniform `PBEAM` is
+/// written out in full: end A's properties, its stress recovery points (at the centroid), end B
+/// (`SO` YESA, `X/XB` 1.0) with the same properties, then K1 and K2, whose default differs
+/// between Nastran dialects.
+fn beam_property(pid: u32, mid: u32, p: BeamProfile) -> Card {
+    let pbeaml = |shape: &'static str, dims: Vec<f64>| Card::new("PBEAML").int(pid).int(mid).blank().text(shape).end_line().reals(dims);
     match p {
-        BeamProfile::Rectangle { width, height } => ("BAR", vec![width, height]),
-        BeamProfile::Circle { radius } => ("ROD", vec![radius]),
-        BeamProfile::Pipe { radius, thickness } if radius - thickness > 0.0 => ("TUBE", vec![radius, radius - thickness]),
-        BeamProfile::Pipe { radius, .. } => ("ROD", vec![radius]),
-        BeamProfile::I { height, width, web, flange } => ("I", vec![height, width, width, web, flange, flange]),
-        BeamProfile::Box { width, height, thickness } => ("BOX", vec![width, height, thickness, thickness]),
-        // Refused when the sections are planned.
-        BeamProfile::General { .. } => ("", Vec::new()),
+        BeamProfile::Rectangle { width, height } => pbeaml("BAR", vec![width, height]),
+        BeamProfile::Circle { radius } => pbeaml("ROD", vec![radius]),
+        BeamProfile::Pipe { radius, thickness } if radius - thickness > 0.0 => pbeaml("TUBE", vec![radius, radius - thickness]),
+        BeamProfile::Pipe { radius, .. } => pbeaml("ROD", vec![radius]),
+        BeamProfile::I { height, width, web, flange } => pbeaml("I", vec![height, width, width, web, flange, flange]),
+        BeamProfile::Box { width, height, thickness } => pbeaml("BOX", vec![width, height, thickness, thickness]),
+        BeamProfile::General { area, iy, iz, torsion, shear_y, shear_z } => {
+            let section = [area, iy, iz, 0.0, torsion];
+            Card::new("PBEAM")
+                .int(pid)
+                .int(mid)
+                .reals(section)
+                .blank()
+                .reals([0.0; 8])
+                .text("YESA")
+                .real(1.0)
+                .reals(section)
+                .blank()
+                .reals([shear_z / area, shear_y / area])
+        }
     }
 }
 
