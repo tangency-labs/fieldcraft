@@ -411,6 +411,11 @@ fn check_expressible(model: &Model) -> Result<()> {
             ));
         }
     }
+    for (name, section) in model.sections() {
+        if matches!(section.kind, SectionKind::Beam { profile: BeamProfile::General { .. }, .. }) {
+            bad.insert(format!("section `{name}`: general beam profiles (not written yet)"));
+        }
+    }
     for step in model.steps().iter().filter(|s| matches!(s.procedure, Procedure::ExplicitDynamic(_))) {
         bad.insert(format!("step `{}`: explicit dynamic steps (not written to Abaqus input yet)", step.name));
     }
@@ -1105,6 +1110,12 @@ impl Deck {
                         BeamProfile::Pipe { radius, thickness } => ("PIPE", vec![radius, thickness]),
                         BeamProfile::I { height, width, web, flange } => ("I", vec![height / 2.0, height, width, width, flange, flange, web]),
                         BeamProfile::Box { width, height, thickness } => ("BOX", vec![width, height, thickness, thickness, thickness, thickness]),
+                        BeamProfile::General { .. } => {
+                            return Err(Error::Unsupported {
+                                format: FORMAT,
+                                what: format!("section `{name}`: general beam profiles (not written yet)"),
+                            });
+                        }
                     };
                     self.line(&format!("*BEAM SECTION, SECTION={shape}, ELSET={set}, MATERIAL={material}"));
                     self.numbers_line("", &dims)?;

@@ -485,6 +485,10 @@ impl<'m> Deck<'m> {
                     self.add_property(sname, Property::Shell { mid, thickness, offset, mcid }, elements.iter().copied())?;
                 }
                 SectionKind::Beam { profile, orientation } => {
+                    if let BeamProfile::General { .. } = profile {
+                        self.problems.insert(format!("section `{sname}`: general beam profiles (not written yet)"));
+                        continue;
+                    }
                     let Some(mid) = ids.isotropic else { continue };
                     let shear_rigid = match sec.formulation.beam_theory {
                         BeamTheory::Timoshenko => None,
@@ -1101,6 +1105,8 @@ fn beam_dimensions(p: BeamProfile) -> (&'static str, Vec<f64>) {
         BeamProfile::Pipe { radius, .. } => ("ROD", vec![radius]),
         BeamProfile::I { height, width, web, flange } => ("I", vec![height, width, width, web, flange, flange]),
         BeamProfile::Box { width, height, thickness } => ("BOX", vec![width, height, thickness, thickness]),
+        // Refused when the sections are planned.
+        BeamProfile::General { .. } => ("", Vec::new()),
     }
 }
 

@@ -171,6 +171,14 @@ impl Quantities for Section {
                         f(Q::Length, v);
                     }
                 }
+                BeamProfile::General { area, iy, iz, torsion, shear_y, shear_z } => {
+                    for v in [area, shear_y, shear_z] {
+                        f(Q::Area, v);
+                    }
+                    for v in [iy, iz, torsion] {
+                        f(Q::SecondMomentOfArea, v);
+                    }
+                }
             },
             SectionKind::Rod { area } => f(Q::Area, area),
             SectionKind::PlaneStress { thickness } | SectionKind::PlaneStrain { thickness } => f(Q::Length, thickness),
@@ -750,5 +758,31 @@ mod tests {
         assert_eq!(back.node(2), m.node(2));
         assert_eq!(back.node(3).unwrap().xyz, [0.005, 0.0, 0.0]);
         assert!(m.converted(&|_, v| Some(v * f64::MAX * 4.0)).is_err());
+    }
+
+    /// A general beam profile's areas convert as areas and its second moments and torsion
+    /// constant as fourth powers of a length.
+    #[test]
+    fn general_beam_profiles_convert_by_quantity() {
+        let mut m = Model::default();
+        m.set_node(1, [0.0; 3]).unwrap();
+        m.set_node(2, [1.0, 0.0, 0.0]).unwrap();
+        m.set_element(1, crate::ElementKind::Beam2, vec![1, 2]).unwrap();
+        m.add_set("all", crate::Set { elements: vec![1], ..crate::Set::default() }).unwrap();
+        let profile = BeamProfile::General { area: 1e-3, iy: 2e-6, iz: 3e-6, torsion: 4e-6, shear_y: 5e-4, shear_z: 6e-4 };
+        let kind = SectionKind::Beam { profile, orientation: [0.0, 1.0, 0.0] };
+        m.add_material(
+            "Steel",
+            crate::Material { elastic: Some(crate::Elastic::Isotropic { young: 2.1e11, poisson: 0.3 }), ..crate::Material::default() },
+        )
+        .unwrap();
+        m.add_section("b", Section { set: "all".into(), material: "Steel".into(), kind, formulation: crate::Formulation::default() }).unwrap();
+        let mm = crate::units::DisplaySystem::new(crate::units::Preset::MmTonneS);
+        let shown = m.converted(&|q, v| mm.express(q, v).ok()).unwrap();
+        let SectionKind::Beam { profile, .. } = shown.section("b").unwrap().kind else { panic!("a beam section") };
+        let BeamProfile::General { area, iy, iz, torsion, shear_y, shear_z } = profile else { panic!("{profile:?}") };
+        let close = |a: f64, b: f64| (a / b - 1.0).abs() < 1e-12;
+        assert!(close(area, 1e3) && close(shear_y, 5e2) && close(shear_z, 6e2), "{profile:?}");
+        assert!(close(iy, 2e6) && close(iz, 3e6) && close(torsion, 4e6), "{profile:?}");
     }
 }

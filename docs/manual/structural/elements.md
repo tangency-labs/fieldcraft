@@ -56,7 +56,7 @@ Timoshenko beam and an Euler–Bernoulli beam:
 | `offset` | −0.5 to 0.5 | 0 | shell reference surface offset from the mid-surface, as a fraction of the thickness (0.5: on the side the normal points to) |
 | `points` | 1 to 15 | 5 | shell integration points through the thickness |
 | `type` | `beam` | — | two-node beam (beam2): Timoshenko, or Euler–Bernoulli by the formulation |
-| `profile` | `rectangle {width, height}`, `circle {radius}`, `pipe {radius, thickness}`, `i {height, width, web, flange}`, `box {width, height, thickness}` | — | the cross-section; `width` along local y, `height` along local z |
+| `profile` | `rectangle {width, height}`, `circle {radius}`, `pipe {radius, thickness}`, `i {height, width, web, flange}`, `box {width, height, thickness}`, `general {area, iy, iz, torsion, shear_y, shear_z}` | — | the cross-section; `width` along local y, `height` along local z; a general profile gives the section properties directly in the principal local axes (iy = ∫ z² dA, iz = ∫ y² dA), refused when no section could have them: a shear area above the area, a torsion constant above iy + iz, or iy + iz below A²/2π (a disc's) |
 | `orientation` | `[x, y, z]`, nonzero, not along the beam | — | the profile's local y direction, projected normal to each beam's axis; in a 2D model along Z (`[0, 0, 1]`): the width out of the plane, the height in it |
 | `type` | `rod` | — | truss (rod2, rod3) |
 | `area` | > 0 | — | truss cross-sectional area |
