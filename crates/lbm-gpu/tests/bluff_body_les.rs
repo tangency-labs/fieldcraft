@@ -58,6 +58,7 @@ struct Case {
     ramp: f64,
     vreman: bool,
     dump: bool,
+    perturb: f64,
 }
 
 impl Case {
@@ -79,6 +80,7 @@ impl Case {
             ramp: 2.5,
             vreman: true,
             dump: false,
+            perturb: 0.0,
         };
         for kv in rest.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             let (k, v) = kv.split_once('=').ok_or_else(|| format!("expected key=value, got {kv}"))?;
@@ -117,6 +119,7 @@ impl Case {
                     }
                 }
                 "dump" => c.dump = num()? != 0.0,
+                "perturb" => c.perturb = num()?,
                 other => return Err(format!("unknown key {other}")),
             }
         }
@@ -244,9 +247,15 @@ fn run(c: &Case) -> Result<(), String> {
     let grid = *flow.grid();
     let [nxc, nyc, nzc] = grid.cells;
     flow.set_equilibrium(|cell| {
-        let [x, y, _] = grid.centre(cell);
+        let [x, y, z] = grid.centre(cell);
         let [u, v] = start_velocity(c, x, y);
-        (1.0, [LATTICE_SPEED * u, LATTICE_SPEED * v, 0.0])
+        // The perturbation of the probe runs (#785): a cross-flow wave of amplitude `perturb` in a Gaussian band
+        // 1 D behind the body, varying across the span as 1 + cos ζ in v and sin ζ in w, with ζ = 2π z / span.
+        let zeta = 2.0 * std::f64::consts::PI * z / d.span;
+        let band = (-((x - xc - 1.0).powi(2) + (y - yc).powi(2)) / 4.0).exp();
+        let dv = c.perturb * band * (1.0 + zeta.cos());
+        let dw = c.perturb * band * zeta.sin();
+        (1.0, [LATTICE_SPEED * u, LATTICE_SPEED * (v + dv), LATTICE_SPEED * dw])
     });
     let (tau, _) = flow.omegas();
     println!(
