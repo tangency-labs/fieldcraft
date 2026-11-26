@@ -449,6 +449,12 @@ fn refuses_each_case_it_cannot_write() {
             "baffles",
         ),
         (
+            "absorbing layer",
+            channel(serde_json::json!({"layers": [{"face": "x_max", "width": 0.001, "reflection": 0.01, "reference_velocity": [1.0, 0.0, 0.0]}]})),
+            options(),
+            "absorbing layers",
+        ),
+        (
             "free surface",
             channel(serde_json::json!({"free_surface": {"liquid": [{"min": [0.0, 0.0, 0.0], "max": [0.005, 0.004, 0.004]}]}})),
             options(),

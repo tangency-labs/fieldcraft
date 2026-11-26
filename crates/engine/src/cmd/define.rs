@@ -7,8 +7,8 @@
 //! existing definition, `delete` refuses while another definition refers to it.
 
 use fieldcraft_model::{
-    BoundaryCondition, Coupling, FaceCondition, FluidBoundary, FluidDomain, Load, Material, Model, PointMass, ReferencePoint, Section, Set, Spring,
-    Step, ThermalCondition,
+    AbsorbingLayer, BoundaryCondition, BoxFace, Coupling, FaceCondition, FluidBoundary, FluidDomain, Load, Material, Model, PointMass,
+    ReferencePoint, Section, Set, Spring, Step, ThermalCondition,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -426,6 +426,29 @@ fn fluid_component_limit(s: &mut Session, p: &Value) -> Result<Value> {
     let limit: Option<f64> = opt(p, "limit")?;
     s.model.set_component_limit(domain, body, limit)?;
     Ok(json!({"domain": domain, "body": body}))
+}
+
+pub const FLUID_ABSORBING_LAYER: CommandSpec = CommandSpec {
+    id: "model.fluid_domain.absorbing_layer",
+    label: "Absorbing Layer (preview)",
+    params: r#"{"domain": "Flow", "face": "x_max", "width": 0.5 (a whole number of spacings from the face into the box), "reflection": 0.01 (the fraction of a wave's amplitude it may send back, above 0 and below 1), "reference_velocity": [u, v, w] (pressure faces only: the far-field velocity it pulls toward), "remove": true (clears the face's layer; the other keys are then left out)} — an absorbing layer next to a velocity or pressure face (Xu & Sagaut 2013): the layer is stored in the model, but the fluid solve refuses a domain that has one (not supported yet), so no solve runs it yet; the cells inside it are not physical flow"#,
+    form: Some(super::forms::FLUID_ABSORBING_LAYER),
+    kind: CommandKind::Model,
+    requires: &[Requirement::FluidDomain],
+    run: fluid_absorbing_layer,
+};
+
+fn fluid_absorbing_layer(s: &mut Session, p: &Value) -> Result<Value> {
+    let domain: &str = req(p, "domain")?;
+    let face: BoxFace = req(p, "face")?;
+    if opt::<bool>(p, "remove")? == Some(true) {
+        s.model.set_absorbing_layer(domain, face, None)?;
+    } else {
+        let layer =
+            AbsorbingLayer { face, width: req(p, "width")?, reflection: req(p, "reflection")?, reference_velocity: opt(p, "reference_velocity")? };
+        s.model.set_absorbing_layer(domain, face, Some(layer))?;
+    }
+    Ok(json!({"domain": domain, "face": face.name()}))
 }
 
 pub const STEP_CREATE: CommandSpec = CommandSpec {

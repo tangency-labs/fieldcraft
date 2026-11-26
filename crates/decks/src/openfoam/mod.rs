@@ -514,6 +514,7 @@ fn refuse_unsupported(d: &FluidDomain, notes: &mut Vec<String>) -> Result<()> {
         (!d.porous.is_empty(), "porous zones"),
         (!d.fans.is_empty(), "fans"),
         (!d.baffles.is_empty(), "thin walls (baffles)"),
+        (!d.layers.is_empty(), "absorbing layers"),
         (d.free_surface.is_some(), "a free surface"),
         (d.acceleration.iter().any(|a| *a != 0.0), "a body acceleration"),
     ];
