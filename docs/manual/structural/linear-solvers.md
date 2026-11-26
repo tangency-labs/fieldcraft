@@ -249,7 +249,7 @@ The same entry budget guards two more stores:
 ## Algorithm
 
 1. **Pattern.** `NodeGraph::new` from the elements', trusses', shells', beams' and discrete
-   elements' node lists.
+   elements' node lists, its rows sorted in parallel.
 2. **Order.** `fill_reducing_order` on the mesh nodes: coordinate and graph dissection, the one
    with the smaller symbolic fill kept.
 3. **Reduce.** `constraints::Reduction` eliminates prescribed values and constraint rows in that
