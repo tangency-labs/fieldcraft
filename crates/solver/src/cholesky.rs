@@ -10,7 +10,10 @@
 //! nested structures are merged into **fundamental supernodes** (J. W. H. Liu, E. G. Ng, B. W.
 //! Peyton, *On finding supernodes for sparse matrix computations*, SIAM J. Matrix Anal. Appl.
 //! 14(1):242–252, 1993): a supernode's columns share one row structure and are stored as one
-//! dense lower trapezoid, so the factor holds exactly the entries of L.
+//! dense lower trapezoid, so the factor holds exactly the entries of L. A matrix made of blocks
+//! of three indistinguishable unknowns (a solid model's nodes) has its tree and counts from the
+//! compressed matrix of the blocks (`uniform_blocks`; C. Ashcraft, *Compressed graphs and the
+//! minimum degree algorithm*, SIAM J. Sci. Comput. 16(6):1404–1411, 1995), the same ones.
 //!
 //! **Numeric** (left-looking supernodal Cholesky: E. Ng, B. W. Peyton, *Block sparse Cholesky
 //! algorithms on advanced uniprocessor computers*, SIAM J. Sci. Comput. 14(5):1034–1056, 1993;
@@ -189,8 +192,77 @@ pub(crate) fn factor_entries<T>(a: &UpperColumns<T>) -> usize {
     symbolic(a).1.iter().sum()
 }
 
-/// The elimination tree and the entry count of each column of L, without computing values.
+/// Unknowns of a block that share one structure, when the matrix is made of such blocks
+/// ([`uniform_blocks`]): the three displacement components of a node or a shape function.
+const BLOCK: usize = 3;
+
+/// The matrix of the blocks of [`BLOCK`] consecutive unknowns, when every block's unknowns
+/// have one structure: each couples with the whole of every block it couples with, its own
+/// included (a solid model: three displacements a node, each with every displacement of the
+/// nodes around). Its pattern has a ninth of the entries; `None` for any other matrix. Such
+/// unknowns are indistinguishable, and the blocks' matrix is the compressed graph of Ashcraft
+/// (1995, see the module's head).
+fn uniform_blocks<T>(a: &UpperColumns<T>) -> Option<UpperColumns<T>> {
+    if a.n == 0 || !a.n.is_multiple_of(BLOCK) {
+        return None;
+    }
+    let mut ptr = Vec::with_capacity(a.n / BLOCK + 1);
+    ptr.push(0);
+    let mut idx = Vec::with_capacity(a.idx.len() / (BLOCK * BLOCK) + a.n / BLOCK);
+    for q in 0..a.n / BLOCK {
+        // The first unknown's column: whole blocks above, then itself.
+        let (&own, above) = a.column(BLOCK * q).0.split_last()?;
+        if own != BLOCK * q || !above.len().is_multiple_of(BLOCK) {
+            return None;
+        }
+        for block in above.chunks(BLOCK) {
+            let first = *block.first()?;
+            if !first.is_multiple_of(BLOCK) || !block.iter().enumerate().all(|(i, row)| *row == first + i) {
+                return None;
+            }
+            idx.push(first / BLOCK);
+        }
+        idx.push(q);
+        // The others': the same above, then the block's unknowns up to themselves.
+        for c in 1..BLOCK {
+            let rows = a.column(BLOCK * q + c).0;
+            let (same, within) = rows.split_at_checked(above.len())?;
+            if same != above || within.len() != c + 1 || !within.iter().enumerate().all(|(i, row)| *row == BLOCK * q + i) {
+                return None;
+            }
+        }
+        ptr.push(idx.len());
+    }
+    Some(UpperColumns { n: a.n / BLOCK, ptr, idx, val: Vec::new() })
+}
+
+/// The elimination tree and the entry count of each column of L, without computing values. A
+/// matrix of uniform blocks ([`uniform_blocks`]) has them from the blocks' matrix, a ninth of
+/// the work: within a block every unknown's parent is the next one, the last one's is the first
+/// unknown of the block's parent, and unknown c of a block whose column of blocks has `count`
+/// of them has BLOCK · count − c entries (the rows of the blocks below, and its own block's
+/// from itself on).
 fn symbolic<T>(a: &UpperColumns<T>) -> (Vec<usize>, Vec<usize>) {
+    let Some(blocks) = uniform_blocks(a) else { return symbolic_by_columns(a) };
+    let (block_parent, block_counts) = symbolic_by_columns(&blocks);
+    let (mut parent, mut counts) = (Vec::with_capacity(a.n), Vec::with_capacity(a.n));
+    for (q, (above, count)) in block_parent.iter().zip(&block_counts).enumerate() {
+        for c in 0..BLOCK {
+            parent.push(if c + 1 < BLOCK {
+                BLOCK * q + c + 1
+            } else if *above == NONE {
+                NONE
+            } else {
+                BLOCK * above
+            });
+            counts.push(BLOCK * count - c);
+        }
+    }
+    (parent, counts)
+}
+
+/// [`symbolic`] column by column, for any matrix.
+fn symbolic_by_columns<T>(a: &UpperColumns<T>) -> (Vec<usize>, Vec<usize>) {
     let parent = etree(a);
     let mut counts = vec![1usize; a.n];
     let mut stack = vec![0; a.n];
@@ -1802,6 +1874,135 @@ mod tests {
         assert_eq!(batch_end(3, 10, 0, |_| 1000), 4);
         assert_eq!(batch_end(3, 10, usize::MAX, |_| usize::MAX), 10);
         assert_eq!(batch_end(10, 10, 4096, |_| 1), 10);
+    }
+
+    /// A matrix of blocks of three unknowns has its tree and its column counts from the
+    /// blocks' matrix, the same as column by column; any other matrix is taken column by column.
+    #[test]
+    fn the_structure_of_uniform_blocks_is_the_structure_by_columns() {
+        let nodes = 40;
+        let mut seed = 7u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize
+        };
+        let mut dense = vec![vec![0.0; BLOCK * nodes]; BLOCK * nodes];
+        let couple = |dense: &mut Vec<Vec<f64>>, a: usize, b: usize| {
+            for i in 0..BLOCK {
+                for j in 0..BLOCK {
+                    dense[BLOCK * a + i][BLOCK * b + j] = if a == b && i == j { 100.0 } else { 0.5 };
+                    dense[BLOCK * b + j][BLOCK * a + i] = dense[BLOCK * a + i][BLOCK * b + j];
+                }
+            }
+        };
+        for a in 0..nodes {
+            couple(&mut dense, a, a);
+            for _ in 0..3 {
+                let b = next() % nodes;
+                couple(&mut dense, a.max(b), a.min(b));
+            }
+        }
+        let upper = UpperColumns::from_symmetric(&dense_to_csr(&dense));
+        let blocks = uniform_blocks(&upper).expect("blocks of three");
+        assert_eq!((blocks.n, blocks.ptr.len()), (nodes, nodes + 1));
+        assert_eq!(symbolic(&upper), symbolic_by_columns(&upper));
+        let f = Factor::new(&upper, usize::MAX).unwrap();
+        check_solve(&dense_to_csr(&dense), &f, 1e-10);
+        // One entry short of a block, one unknown short of whole blocks: column by column.
+        let (a, b) = (BLOCK * (nodes - 1), 1);
+        assert!(dense[a][b] == 0.0 || dense[a][b] == 0.5);
+        let mut other = dense.clone();
+        let was = other[a][b];
+        other[a][b] = if was == 0.0 { 0.5 } else { 0.0 };
+        other[b][a] = other[a][b];
+        let ragged = UpperColumns::from_symmetric(&dense_to_csr(&other));
+        assert!(uniform_blocks(&ragged).is_none());
+        assert_eq!(symbolic(&ragged), symbolic_by_columns(&ragged));
+        let shorter: Vec<Vec<f64>> = dense.iter().take(BLOCK * nodes - 1).map(|row| row[..BLOCK * nodes - 1].to_vec()).collect();
+        assert!(uniform_blocks(&UpperColumns::from_symmetric(&dense_to_csr(&shorter))).is_none());
+    }
+
+    /// The stiffness matrix the static analysis factors for a block of n³ hex8 elements held
+    /// at its base: assembled, reduced by the constraints and in the fill-reducing order, as
+    /// `solve_static` builds it. With `roller`, one more node is held in x alone.
+    fn solid_stiffness(n: usize, roller: bool) -> Csr {
+        use crate::analysis::{Setup, assemble, budget, pattern, reduction};
+        use fieldcraft_model::{
+            BoundaryCondition, Elastic, ElementKind, Formulation, Material, Model, Procedure, Section, SectionKind, Set, Step, Target,
+        };
+        let mut model = Model::default();
+        let label = |i: usize, j: usize, k: usize| (1 + i + (n + 1) * (j + (n + 1) * k)) as u32;
+        let (mut base, mut elements) = (Vec::new(), Vec::new());
+        for k in 0..=n {
+            for j in 0..=n {
+                for i in 0..=n {
+                    model.set_node(label(i, j, k), [i as f64, j as f64, k as f64]).unwrap();
+                    if k == 0 {
+                        base.push(label(i, j, k));
+                    }
+                }
+            }
+        }
+        for k in 0..n {
+            for j in 0..n {
+                for i in 0..n {
+                    let e = (1 + i + n * (j + n * k)) as u32;
+                    let corners = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)];
+                    model.set_element(e, ElementKind::Hex8, corners.iter().map(|(a, b, c)| label(i + a, j + b, k + c)).collect()).unwrap();
+                    elements.push(e);
+                }
+            }
+        }
+        model.add_set("all", Set { elements, ..Set::default() }).unwrap();
+        model.add_set("base", Set { nodes: base, ..Set::default() }).unwrap();
+        model.add_set("corner", Set { nodes: vec![label(n, n, n)], ..Set::default() }).unwrap();
+        model.add_material("Mat", Material { elastic: Some(Elastic::Isotropic { young: 1000.0, poisson: 0.3 }), ..Material::default() }).unwrap();
+        model
+            .add_section(
+                "solid",
+                Section { set: "all".into(), material: "Mat".into(), kind: SectionKind::Solid {}, formulation: Formulation::default() },
+            )
+            .unwrap();
+        let mut step = Step::new("Load", Procedure::Static {});
+        model.add_boundary_condition("fixed", BoundaryCondition::Fixed { target: Target::Set("base".into()) }).unwrap();
+        step.boundary_conditions.insert("fixed".into());
+        if roller {
+            let values = [Some(0.0), None, None, None, None, None];
+            model.add_boundary_condition("roller", BoundaryCondition::Displacement { target: Target::Set("corner".into()), values }).unwrap();
+            step.boundary_conditions.insert("roller".into());
+        }
+        model.add_step(step, None).unwrap();
+        let resolved = model.resolve().unwrap();
+        let step = model.select_step(None, |p| matches!(p, Procedure::Static {}), "static").unwrap();
+        let limits = crate::Limits::default();
+        let mesh = crate::system::Mesh::new(&model, &resolved, limits.max_dofs).unwrap();
+        let (graph, order) = pattern(&mesh);
+        let setup = Setup { model: &model, resolved: &resolved, mesh: &mesh, step };
+        let reduced = reduction(&setup, true, &order, budget(&limits, &mesh, &graph, 1), &mut Vec::new()).unwrap();
+        let [kff] = reduced.reduce([&assemble(&mesh, &graph, None).unwrap().k]).unwrap();
+        kff
+    }
+
+    /// The matrix a solid model's static analysis factors, ordered and constrained, is made of
+    /// uniform blocks when its supports hold whole nodes, and its analysis by blocks is the
+    /// analysis column by column. A node held in one direction alone leaves a block of two, and
+    /// the whole matrix is analysed column by column.
+    #[test]
+    fn a_solid_models_stiffness_is_analysed_by_blocks() {
+        let n = 5;
+        let held = solid_stiffness(n, false);
+        assert_eq!(held.n, BLOCK * n * (n + 1) * (n + 1));
+        let upper = UpperColumns::from_symmetric(&held);
+        let blocks = uniform_blocks(&upper).expect("whole nodes are held");
+        assert_eq!(blocks.n, n * (n + 1) * (n + 1));
+        assert_eq!(symbolic(&upper), symbolic_by_columns(&upper));
+        check_solve(&held, &Factor::new(&upper, usize::MAX).unwrap(), 1e-9);
+        let rolling = solid_stiffness(n, true);
+        assert_eq!(rolling.n, held.n - 1);
+        let upper = UpperColumns::from_symmetric(&rolling);
+        assert!(uniform_blocks(&upper).is_none());
+        assert_eq!(symbolic(&upper), symbolic_by_columns(&upper));
+        check_solve(&rolling, &Factor::new(&upper, usize::MAX).unwrap(), 1e-9);
     }
 
     #[test]
