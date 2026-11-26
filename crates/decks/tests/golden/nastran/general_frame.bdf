@@ -1,0 +1,57 @@
+$ Nastran bulk data written by FieldCraft
+$ units: mm-t-s-N-MPa
+$ in one consistent unit system: millimetre, tonne, second, newton, megapascal, degree Celsius; masses are masses (WTMASS 1.0)
+SOL 101
+CEND
+TITLE = FieldCraft model
+ECHO = NONE
+SUBCASE 1
+  SUBTITLE = Load
+  SPC = 1
+  LOAD = 2
+  DISPLACEMENT = ALL
+  SPCFORCES = ALL
+  STRESS = ALL
+  STRAIN = ALL
+BEGIN BULK
+PARAM       POST      -1
+PARAM    AUTOSPC     YES
+PARAM*            WTMASS              1.
+$ nodes
+GRID*                  1                              0.              0.
+*                     0.
+GRID*                  2                              0.              0.
+*                  1000.
+GRID*                  3                           1000.              0.
+*                  1000.
+$ materials
+$ material Steel: MAT1 1
+MAT1*                  1         210000.                             0.3
+*                7.85E-9
+$ properties
+$ section column: PBEAML 1
+PBEAML*                1               1                               I
+*
+*                   100.             50.             50.              5.
+*                     8.              8.
+$ section girder: PBEAM 2
+PBEAM*                 2               1           1220.1944026.66666667
+*       167541.666666667              0.          20900.
+*                     0.              0.              0.              0.
+*                     0.              0.              0.              0.
+*                   YESA              1.           1220.1944026.66666667
+*       167541.666666667              0.          20900.
+*       .377049180327869.546448087431694
+$ elements
+CBEAM*                 1               1               1               2
+*                 -1000.              0.              0.
+CBEAM*                 2               2               2               3
+*                     0.              0.           1000.
+$ boundary conditions
+$ step Load: SPC 1
+SPC1           1  123456       1
+$ loads
+$ load push: FORCE 2
+FORCE*                 2               3                              1.
+*                     0.            500.          -1000.
+ENDDATA

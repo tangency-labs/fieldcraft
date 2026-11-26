@@ -264,6 +264,39 @@ fn modes() -> Model {
     m
 }
 
+/// An L of two beams in the XZ plane: a column with an I profile and a girder with `girder`,
+/// clamped at the foot and loaded at the girder's free end.
+fn general_frame(girder: BeamProfile) -> Model {
+    let mut m = Model::default();
+    for (l, xyz) in [(1, [0.0, 0.0, 0.0]), (2, [0.0, 0.0, 1000.0]), (3, [1000.0, 0.0, 1000.0])] {
+        m.set_node(l, xyz).unwrap();
+    }
+    m.add_material("Steel", steel()).unwrap();
+    for (e, (name, nodes, profile)) in (1..).zip([("column", [1, 2], frame_i()), ("girder", [2, 3], girder)]) {
+        m.set_element(e, ElementKind::Beam2, nodes.to_vec()).unwrap();
+        m.add_set(name, Set { elements: vec![e], ..Set::default() }).unwrap();
+        let kind = SectionKind::Beam { profile, orientation: [0.0, 1.0, 0.0] };
+        m.add_section(name, Section { set: name.into(), material: "Steel".into(), kind, formulation: Formulation::default() }).unwrap();
+    }
+    m.add_set("foot", Set { nodes: vec![1], ..Set::default() }).unwrap();
+    m.add_set("end", Set { nodes: vec![3], ..Set::default() }).unwrap();
+    m.add_boundary_condition("clamp", BoundaryCondition::Fixed { target: Target::Set("foot".into()) }).unwrap();
+    m.add_load("push", Load::Force { target: Target::Set("end".into()), vector: [0.0, 500.0, -1000.0], distribution: Distribution::Total }).unwrap();
+    m.add_step(static_step("Load", &["clamp"], &["push"]), None).unwrap();
+    m
+}
+
+/// The frame's I profile.
+fn frame_i() -> BeamProfile {
+    BeamProfile::I { height: 100.0, width: 50.0, web: 5.0, flange: 8.0 }
+}
+
+/// A general profile with the section properties of `shape` (in steel, ν 0.3).
+fn general_of(shape: BeamProfile) -> BeamProfile {
+    let p = shape.properties(0.3);
+    BeamProfile::General { area: p.area, iy: p.iy, iz: p.iz, torsion: p.torsion, shear_y: p.shear_y, shear_z: p.shear_z }
+}
+
 fn golden(name: &str, deck: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/nastran").join(format!("{name}.bdf"));
     if std::env::var_os("FIELDCRAFT_BLESS").is_some() {
@@ -285,7 +318,9 @@ fn unsupported(m: &Model) -> String {
 
 #[test]
 fn golden_decks() {
-    for (name, model) in [("cantilever", cantilever()), ("plate", plate()), ("modes", modes())] {
+    for (name, model) in
+        [("cantilever", cantilever()), ("plate", plate()), ("modes", modes()), ("general_frame", general_frame(general_of(frame_i())))]
+    {
         let deck = nastran::write(&model).unwrap();
         assert_eq!(nastran::write(&model).unwrap(), deck, "deterministic");
         golden(name, &deck);
@@ -662,6 +697,46 @@ fn euler_bernoulli_beams_are_bars_without_shear_flexibility() {
     let axis = [2.0, 0.0, 0.0];
     let z = [axis[1] * v[2] - axis[2] * v[1], axis[2] * v[0] - axis[0] * v[2], axis[0] * v[1] - axis[1] * v[0]];
     assert!(z[0] == 0.0 && z[1] == 0.0 && z[2] != 0.0, "element z along the orientation: {z:?}");
+}
+
+/// A general profile is a uniform `PBEAM`: I1 is the model's I_y (plane 1 bends across the
+/// profile's height), K1 and K2 the shear areas along local 2 and local 1 over the area, end B
+/// the same as end A. Its element is the one an I with those properties gets: the same `CBEAM`.
+#[test]
+fn general_profiles_are_pbeam_with_their_section_properties() {
+    let p = frame_i().properties(0.3);
+    let deck = nastran::write(&general_frame(general_of(frame_i()))).unwrap();
+    let r = read(&deck);
+    let pbeam = r.cards("PBEAM").next().unwrap();
+    let reals = |from: usize, to: usize| pbeam[from..to].iter().map(|s| real(s)).collect::<Vec<f64>>();
+    let close = |got: Vec<f64>, want: &[f64]| got.len() == want.len() && got.iter().zip(want).all(|(g, w)| (g - w).abs() <= 1e-10 * w.abs());
+    assert_eq!((int(&pbeam[0]), int(&pbeam[1])), (2, 1), "the girder's property and the steel");
+    assert!(close(reals(2, 7), &[p.area, p.iy, p.iz, 0.0, p.torsion]), "{pbeam:?}");
+    assert_eq!(pbeam[7], "", "no non-structural mass");
+    assert_eq!(reals(8, 16), vec![0.0; 8], "stress recovery at the centroid");
+    assert_eq!((pbeam[16].as_str(), real(&pbeam[17])), ("YESA", 1.0));
+    assert_eq!(reals(18, 23), reals(2, 7), "a uniform beam");
+    assert!(close(reals(24, 26), &[p.shear_z / p.area, p.shear_y / p.area]), "{pbeam:?}");
+    assert!(pbeam[26..].iter().all(String::is_empty), "{pbeam:?}");
+    assert_eq!(r.cards("PBEAML").count(), 1, "the column's I");
+
+    let shape = read(&nastran::write(&general_frame(frame_i())).unwrap());
+    assert_eq!(r.cards("CBEAM").collect::<Vec<_>>(), shape.cards("CBEAM").collect::<Vec<_>>());
+    assert_eq!(r.cards("MAT1").collect::<Vec<_>>(), shape.cards("MAT1").collect::<Vec<_>>());
+
+    // An Euler–Bernoulli general section is a CBAR with a PBAR of the profile's own properties
+    // and blank shear factors, as the shapes' are: the PBAR arm comes before the PBEAM one.
+    let mut m = general_frame(general_of(frame_i()));
+    let mut girder = m.section("girder").unwrap().clone();
+    girder.formulation = Formulation { beam_theory: BeamTheory::EulerBernoulli, ..Formulation::default() };
+    m.replace_section("girder", girder).unwrap();
+    let r = read(&nastran::write(&m).unwrap());
+    assert!(r.cards("PBEAM").next().is_none() && r.cards("CBEAM").count() == 1, "the column stays a CBEAM");
+    let pbar = r.cards("PBAR").next().unwrap();
+    assert!(close(pbar[2..6].iter().map(|s| real(s)).collect(), &[p.area, p.iy, p.iz, p.torsion]), "{pbar:?}");
+    assert!(pbar[6..].iter().all(|f| f.is_empty()), "no K1 or K2: {pbar:?}");
+    let cbar = r.cards("CBAR").next().unwrap();
+    assert_eq!((int(&cbar[0]), int(&cbar[1])), (2, int(&pbar[0])), "{cbar:?}");
 }
 
 #[test]
