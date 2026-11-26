@@ -495,4 +495,22 @@ mod tests {
         assert!(rod.pressure_load(pressure).is_err() && rod.forces(&u, [0.0; 3], Some(pressure)).is_err());
         assert!(beam.pressure_load(PipePressure { internal: 1e308, external: -1e308 }).is_err());
     }
+
+    /// A general profile given a shape's section properties is the same element as the shape:
+    /// the same stiffness, consistent and lumped mass and section forces, bit for bit.
+    #[test]
+    fn a_general_profile_with_a_shapes_properties_is_that_shapes_element() {
+        let xyz = [[1.0, 2.0, 3.0], [41.0, 32.0, 3.0]];
+        for shape in [BeamProfile::Rectangle { width: 3.0, height: 5.0 }, BeamProfile::I { height: 10.0, width: 6.0, web: 1.0, flange: 1.5 }] {
+            let p = shape.properties(0.3);
+            let general = BeamProfile::General { area: p.area, iy: p.iy, iz: p.iz, torsion: p.torsion, shear_y: p.shear_y, shear_z: p.shear_z };
+            let [a, b] = [shape, general]
+                .map(|profile| Beam::new(&xyz, [0.0, 0.0, 1.0], BeamSection::new(&profile, &STEEL, BeamTheory::Timoshenko).unwrap()).unwrap());
+            assert_eq!(a.stiffness(), b.stiffness(), "{shape:?}");
+            assert_eq!(a.mass(7.8e-9), b.mass(7.8e-9));
+            assert_eq!(a.lumped_mass(7.8e-9), b.lumped_mass(7.8e-9));
+            let u: Vec<f64> = (0..12).map(|i| 1e-3 * f64::from(i) - 4e-3).collect();
+            assert_eq!(a.forces(&u, [0.0, 0.0, -9.81], None).unwrap(), b.forces(&u, [0.0, 0.0, -9.81], None).unwrap());
+        }
+    }
 }

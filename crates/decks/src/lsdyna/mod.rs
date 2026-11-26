@@ -9,14 +9,14 @@
 //!   ([`elements`]); `*HOURGLASS` where a reduced-integration formulation needs it;
 //! - beams as Belytschko–Schwer resultant beams (ELFORM 2) whose `*SECTION_BEAM` gives the
 //!   profile's area, second moments, Saint-Venant torsion constant and shear area, the numbers
-//!   FieldCraft's own beam uses ([`fieldcraft_model::BeamProfile::properties`]), so the deck has
-//!   the same axial, bending, torsional and shear stiffness. The local axes match the model's:
-//!   r runs from node 1 to node 2, s is the section's orientation vector (written per element on
-//!   `*ELEMENT_BEAM_ORIENTATION`, no orientation node) made normal to r, the profile's local 1
-//!   (its width), and t = r × s its local 2 (its height); so ISS = ∫ t² dA is the model's I_y
-//!   and ITT = ∫ s² dA its I_z. Resultant beams take one shear area: an I or box profile whose
-//!   shear areas differ by direction is reported, as are beams of plastic or orthotropic
-//!   materials;
+//!   FieldCraft's own beam uses ([`fieldcraft_model::BeamProfile::properties`]; a `general`
+//!   profile's are its own), so the deck has the same axial, bending, torsional and shear
+//!   stiffness. The local axes match the model's: r runs from node 1 to node 2, s is the
+//!   section's orientation vector (written per element on `*ELEMENT_BEAM_ORIENTATION`, no
+//!   orientation node) made normal to r, the profile's local 1 (its width), and t = r × s its
+//!   local 2 (its height); so ISS = ∫ t² dA is the model's I_y and ITT = ∫ s² dA its I_z.
+//!   Resultant beams take one shear area: an I, box or general profile whose shear areas differ
+//!   by direction is reported, as are beams of plastic or orthotropic materials;
 //! - `*MAT_ELASTIC` for isotropic and `*MAT_ORTHOTROPIC_ELASTIC` (global material axes) for
 //!   orthotropic materials; von Mises plasticity as `*MAT_PLASTIC_KINEMATIC` (bilinear: the
 //!   tangent modulus E·H/(E + H) of the uniaxial curve, β = 1 isotropic or 0 kinematic, the

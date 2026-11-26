@@ -250,6 +250,31 @@ fn beams_of_a_2d_model_are_planar_beams_held_in_plane_or_refused_by_name() {
     }
 }
 
+/// The stiffened plate with its rib given as a general profile of the rectangle's properties.
+fn general_rib() -> Model {
+    let mut m = stiffened(Formulation::default());
+    let mut rib = m.section("rib").unwrap().clone();
+    let p = BeamProfile::Rectangle { width: 2.0, height: 4.0 }.properties(0.3);
+    let profile = BeamProfile::General { area: p.area, iy: p.iy, iz: p.iz, torsion: p.torsion, shear_y: p.shear_y, shear_z: p.shear_z };
+    rib.kind = SectionKind::Beam { profile, orientation: [0.0, 0.0, 1.0] };
+    m.replace_section("rib", rib).unwrap();
+    m
+}
+
+#[test]
+fn general_beams_of_a_2d_model_are_planar_beams_or_refused_by_name() {
+    // LS-DYNA: its 2D analyses take no beam, whatever the profile.
+    let mut m = general_rib();
+    let red = Formulation { integration: Integration::Reduced, ..Formulation::default() };
+    let mut plate = m.section("plate").unwrap().clone();
+    plate.formulation = red;
+    m.replace_section("plate", plate).unwrap();
+    match lsdyna::write(&m) {
+        Err(Error::Unsupported { what, .. }) => assert!(what.contains("section `rib`: beams in a 2D model"), "{what}"),
+        other => panic!("{other:?}"),
+    }
+}
+
 #[test]
 fn edge_pressures_are_the_consistent_nodal_forces() {
     // Pressure 5 on the right edge (x = 3, length 1): plane stress t = 2 gives −5 per node in X;

@@ -338,6 +338,36 @@ fn beam_sections_carry_the_profile_properties_in_lsdyna_axes() {
     assert!((girder_si[1] / (girder[1] * 1e-12) - 1.0).abs() < 1e-12, "{girder_si:?}");
 }
 
+/// `m` with every beam section's profile replaced by a general profile of its properties.
+fn with_general_profiles(m: &Model) -> Model {
+    let mut out = m.clone();
+    for (name, s) in m.sections() {
+        let SectionKind::Beam { profile, orientation } = s.kind else { continue };
+        let p = profile.properties(0.3);
+        let general = BeamProfile::General { area: p.area, iy: p.iy, iz: p.iz, torsion: p.torsion, shear_y: p.shear_y, shear_z: p.shear_z };
+        out.replace_section(name, Section { kind: SectionKind::Beam { profile: general, orientation }, ..s.clone() }).unwrap();
+    }
+    out
+}
+
+/// A general profile is written as the resultant beam of the shape whose properties it carries:
+/// in SI, where writing changes no number, the frame of general profiles is the frame's deck byte
+/// for byte; in millimetres its properties pass through SI storage, and agree to rounding.
+#[test]
+fn general_profiles_give_the_shapes_resultant_beams() {
+    let shapes = common::si(&frame());
+    assert_eq!(lsdyna::write_si(&with_general_profiles(&shapes)).unwrap(), lsdyna::write_si(&shapes).unwrap());
+    let general = read(&lsdyna::write(&with_general_profiles(&frame())).unwrap().text);
+    let shape = read(&lsdyna::write(&frame()).unwrap().text);
+    assert_eq!(general.beam_sections.len(), 4);
+    for (name, (elform, card)) in &shape.beam_sections {
+        let (g_elform, g_card) = &general.beam_sections[name];
+        assert_eq!(g_elform, elform, "{name}");
+        assert!(card.iter().zip(g_card).all(|(a, b)| (a - b).abs() <= 1e-12 * a.abs()), "{name}: {card:?} {g_card:?}");
+    }
+    assert_eq!((general.elements, general.orientations), (shape.elements, shape.orientations));
+}
+
 // ---------------------------------------------------------------------------------------------
 // A minimal reader of our own output: nodes, elements and node sets.
 
@@ -745,6 +775,10 @@ fn what_lsdyna_cannot_take_is_named() {
     for (profile, what) in [
         (BeamProfile::I { height: 100.0, width: 50.0, web: 5.0, flange: 8.0 }, "its `i` profile's shear areas differ by direction"),
         (BeamProfile::Box { width: 40.0, height: 60.0, thickness: 3.0 }, "its `box` profile's shear areas differ by direction"),
+        (
+            BeamProfile::General { area: 100.0, iy: 1e4, iz: 2e4, torsion: 5e3, shear_y: 80.0, shear_z: 70.0 },
+            "its `general` profile's shear areas differ by direction",
+        ),
     ] {
         let mut m = frame();
         m.replace_section(
@@ -759,6 +793,12 @@ fn what_lsdyna_cannot_take_is_named() {
     let shear_rigid = Formulation { beam_theory: BeamTheory::EulerBernoulli, ..Formulation::default() };
     let girder = beam(BeamProfile::Rectangle { width: 20.0, height: 60.0 });
     m.replace_section("girder", Section { set: "girder".into(), material: "Steel".into(), kind: girder, formulation: shear_rigid }).unwrap();
+    unsupported(&m, "section `girder`: the Euler–Bernoulli beam theory has no LS-DYNA counterpart");
+    // Nor of a general profile: its properties give the shear areas the resultant beam takes.
+    let mut m = frame();
+    let p = BeamProfile::Rectangle { width: 20.0, height: 60.0 }.properties(0.3);
+    let general = BeamProfile::General { area: p.area, iy: p.iy, iz: p.iz, torsion: p.torsion, shear_y: p.shear_y, shear_z: p.shear_z };
+    m.replace_section("girder", Section { set: "girder".into(), material: "Steel".into(), kind: beam(general), formulation: shear_rigid }).unwrap();
     unsupported(&m, "section `girder`: the Euler–Bernoulli beam theory has no LS-DYNA counterpart");
     let mut m = frame();
     let bilinear = Plastic::Bilinear { yield_stress: 250.0, hardening_modulus: 1000.0, hardening: Hardening::Isotropic };

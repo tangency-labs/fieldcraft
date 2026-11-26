@@ -3771,6 +3771,45 @@ pub(crate) mod tests {
         assert!(err.to_string().contains("pipe profile that has a bore"), "{err}");
     }
 
+    /// A beam section given as a general profile with a rectangle's section properties, typed in
+    /// the display units (mm), is stored in SI and solves like the rectangle.
+    #[test]
+    fn a_general_beam_profile_from_commands_solves_like_its_shape() {
+        let p = fieldcraft_model::BeamProfile::Rectangle { width: 1.0, height: 2.0 }.properties(0.3);
+        let general =
+            json!({"type": "general", "area": p.area, "iy": p.iy, "iz": p.iz, "torsion": p.torsion, "shear_y": p.shear_y, "shear_z": p.shear_z});
+        let tip = |profile: Value| {
+            let mut s = Session::default();
+            s.run_script(&json!([
+                {"command": "mesh.node.add", "params": {"label": 1, "xyz": [0, 0, 0]}},
+                {"command": "mesh.node.add", "params": {"label": 2, "xyz": [0, 0, 100]}},
+                {"command": "mesh.element.add", "params": {"label": 1, "kind": "beam2", "nodes": [1, 2]}},
+                {"command": "model.set.create", "params": {"name": "post", "elements": [1]}},
+                {"command": "model.set.create", "params": {"name": "foot", "nodes": [1]}},
+                {"command": "model.set.create", "params": {"name": "top", "nodes": [2]}},
+                {"command": "model.material.create", "params": {"name": "Steel", "elastic": {"type": "isotropic", "young": 210000, "poisson": 0.3}}},
+                {"command": "model.section.create", "params": {"name": "post", "set": "post", "material": "Steel", "kind": {"type": "beam", "profile": profile, "orientation": [1, 0, 0]}}},
+                {"command": "model.boundary_condition.create", "params": {"name": "clamp", "type": "fixed", "target": {"set": "foot"}}},
+                {"command": "model.load.create", "params": {"name": "push", "type": "force", "target": {"set": "top"}, "vector": [1, 2, -3]}},
+                {"command": "model.step.create", "params": {"name": "Bend", "procedure": {"type": "static"}, "boundary_conditions": ["clamp"], "loads": ["push"]}},
+            ]))
+            .unwrap();
+            s.execute("solve.static", &json!({"step": "Bend"})).unwrap();
+            let probe = s.execute("solve.probe", &json!({"step": "Bend", "nodes": [2]})).unwrap();
+            let u: Vec<f64> = probe["nodes"][0]["displacement"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+            (s, u)
+        };
+        let (s, got) = tip(general);
+        let (_, want) = tip(json!({"type": "rectangle", "width": 1, "height": 2}));
+        assert!(got.iter().zip(&want).all(|(g, w)| (g - w).abs() <= 1e-12 * w.abs()), "{got:?} {want:?}");
+        let Some(fieldcraft_model::SectionKind::Beam { profile: fieldcraft_model::BeamProfile::General { area, iy, .. }, .. }) =
+            s.model.section("post").map(|x| x.kind)
+        else {
+            panic!("a general profile")
+        };
+        assert!((area / 2e-6 - 1.0).abs() < 1e-12 && (iy / (p.iy * 1e-12) - 1.0).abs() < 1e-12, "stored in SI: {area} {iy}");
+    }
+
     /// A heat balance per load: the convection `Air` carries away what the heater's prescribed
     /// temperature supplies (#362).
     #[test]

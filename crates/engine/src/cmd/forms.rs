@@ -399,9 +399,25 @@ const PROFILE: Field = variants(
                 positive("thickness", "Wall", D::Length).help("Wall thickness of the box.").req(),
             ],
         ),
+        variant(
+            "general",
+            "General",
+            &[
+                above_zero("area", "Area", D::Area).help("Cross-sectional area.").req(),
+                above_zero("iy", "I_y", D::Of(Quantity::SecondMomentOfArea))
+                    .help("Second moment of area about the section's first axis (∫ z² dA: bending across the height).")
+                    .req(),
+                above_zero("iz", "I_z", D::Of(Quantity::SecondMomentOfArea))
+                    .help("Second moment of area about the section's second axis (∫ y² dA: bending across the width).")
+                    .req(),
+                above_zero("torsion", "J", D::Of(Quantity::SecondMomentOfArea)).help("Saint-Venant torsion constant (at most I_y + I_z).").req(),
+                above_zero("shear_y", "Shear area y", D::Area).help("Shear area for shear along the section's first axis (at most the area).").req(),
+                above_zero("shear_z", "Shear area z", D::Area).help("Shear area for shear along the section's second axis (at most the area).").req(),
+            ],
+        ),
     ],
 )
-.help("The beam's cross-section shape.")
+.help("The beam's cross-section: a shape, or its section properties (general).")
 .req()
 .def(r#"{"type": "rectangle"}"#);
 

@@ -15,8 +15,9 @@ use crate::{Error, Model, Result, context, finite, insert_new, positive, remove_
 /// Most integration points through a shell's thickness.
 pub const MAX_SHELL_POINTS: u32 = 15;
 
-/// A beam's cross-section shape. Dimensions are in the section's local axes: `width` along the
-/// beam's orientation vector (local 1), `height` across it (local 2).
+/// A beam's cross-section: a shape, or its section properties given directly (`general`).
+/// Dimensions are in the section's local axes: `width` along the beam's orientation vector
+/// (local 1), `height` across it (local 2).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BeamProfile {
@@ -45,10 +46,70 @@ pub enum BeamProfile {
         height: f64,
         thickness: f64,
     },
+    /// Any section by its properties in the local axes, as section tables give them: area,
+    /// second moments `iy` = ∫ z² dA (about local 1) and `iz` = ∫ y² dA (about local 2), the
+    /// Saint-Venant torsion constant and the shear areas for shear along local 1 and local 2
+    /// (the meanings of [`BeamProperties`]). The local axes must be the principal axes (no
+    /// product of inertia) through the centroid, which is also the shear centre.
+    General {
+        area: f64,
+        iy: f64,
+        iz: f64,
+        torsion: f64,
+        shear_y: f64,
+        shear_z: f64,
+    },
+}
+
+/// Roundings in the largest bound expression of [`general_bounds`]: the disc's A²/2π takes two
+/// (A·A, then the division by 2π) and the polar moment I_y + I_z one more (the sum).
+const BOUND_ROUNDINGS: f64 = 3.0;
+
+/// The relative slack of [`general_bounds`]: rounding in the arithmetic only. A disc meets two of
+/// the bounds with equality (J = I_y + I_z = A²/2π) and a tube one (J = I_y + I_z), and their
+/// properties computed in floating point, or converted to SI, may miss the bound by rounding.
+/// Each rounding is a relative error of at most `f64::EPSILON` (twice the unit roundoff), so
+/// the slack is `BOUND_ROUNDINGS` of them.
+const GENERAL_BOUND_SLACK: f64 = BOUND_ROUNDINGS * f64::EPSILON;
+
+/// Bounds every cross-section's properties obey, refused by name when a general profile breaks
+/// them:
+/// - a shear area is at most the area: with A_s = V² / ∫ τ² dA, the energy-equivalent shear
+///   area, and ∫ τ dA = V, Cauchy–Schwarz gives ∫ τ² dA ≥ V² / A, so the shear coefficient
+///   A_s / A is at most 1 (Cowper 1966, "The shear coefficient in Timoshenko's beam theory",
+///   J. Appl. Mech. 33, finds it below 1 for every shape he treats);
+/// - the torsion constant is at most the polar moment I_y + I_z: Saint-Venant's J is I_p less
+///   the integral of the squared warping gradient, so equal only for a section that does not
+///   warp, a circle or a tube (Timoshenko & Goodier 1970, Theory of Elasticity, ch. 10);
+/// - the polar moment I_y + I_z is at least A²/2π, a disc's of the same area: moving any part of
+///   the area to a radius nearer the centroid lowers ∫ r² dA, and the disc has all of it nearest
+///   (Pólya & Szegő 1951, Isoperimetric Inequalities in Mathematical Physics).
+fn general_bounds(area: f64, iy: f64, iz: f64, torsion: f64, shear_y: f64, shear_z: f64) -> Result<()> {
+    let above = |v: f64, bound: f64| v > bound * (1.0 + GENERAL_BOUND_SLACK);
+    for (what, along, shear) in [("shear_y", 1, shear_y), ("shear_z", 2, shear_z)] {
+        if above(shear, area) {
+            return Err(Error::Invalid(format!(
+                "a general profile's shear area along local {along} ({what} = {shear}) exceeds its area ({area}): no section has a shear coefficient A_s/A above 1"
+            )));
+        }
+    }
+    let polar = iy + iz;
+    if above(torsion, polar) {
+        return Err(Error::Invalid(format!(
+            "a general profile's torsion constant ({torsion}) exceeds its polar moment iy + iz ({polar}): no section is stiffer in torsion than a circle or a tube of the same polar moment"
+        )));
+    }
+    let disc = area * area / (2.0 * std::f64::consts::PI);
+    if above(disc, polar) {
+        return Err(Error::Invalid(format!(
+            "a general profile's polar moment iy + iz ({polar}) is below A²/2π ({disc}), a disc's of the same area ({area}), the least any section has"
+        )));
+    }
+    Ok(())
 }
 
 impl BeamProfile {
-    /// `rectangle`, `circle`, `pipe`, `i` or `box` (the `type` it is written with).
+    /// `rectangle`, `circle`, `pipe`, `i`, `box` or `general` (the `type` it is written with).
     pub fn name(&self) -> &'static str {
         match self {
             BeamProfile::Rectangle { .. } => "rectangle",
@@ -56,6 +117,7 @@ impl BeamProfile {
             BeamProfile::Pipe { .. } => "pipe",
             BeamProfile::I { .. } => "i",
             BeamProfile::Box { .. } => "box",
+            BeamProfile::General { .. } => "general",
         }
     }
 
@@ -93,6 +155,12 @@ impl BeamProfile {
                     return Err(Error::Invalid("a box's walls must be thinner than half its width and height".into()));
                 }
             }
+            BeamProfile::General { area, iy, iz, torsion, shear_y, shear_z } => {
+                for (what, v) in [("area", area), ("iy", iy), ("iz", iz), ("torsion", torsion), ("shear_y", shear_y), ("shear_z", shear_z)] {
+                    positive(what, v)?;
+                }
+                general_bounds(area, iy, iz, torsion, shear_y, shear_z)?;
+            }
         }
         Ok(())
     }
@@ -105,6 +173,7 @@ impl BeamProfile {
             BeamProfile::Pipe { radius, thickness } => std::f64::consts::PI * (radius * radius - (radius - thickness).powi(2)),
             BeamProfile::I { height, width, web, flange } => 2.0 * width * flange + (height - 2.0 * flange) * web,
             BeamProfile::Box { width, height, thickness } => width * height - (width - 2.0 * thickness) * (height - 2.0 * thickness),
+            BeamProfile::General { area, .. } => area,
         }
     }
 
@@ -117,7 +186,8 @@ impl BeamProfile {
         (inner > 0.0 && radius * radius - inner * inner > 0.0).then_some((inner, radius))
     }
 
-    /// The section properties ([`BeamProperties`]); `poisson` enters the shear coefficients.
+    /// The section properties ([`BeamProperties`]); `poisson` enters the shear coefficients of
+    /// the shapes (a `general` profile's are its own).
     pub fn properties(&self, poisson: f64) -> BeamProperties {
         let pi = std::f64::consts::PI;
         let area = self.area();
@@ -168,6 +238,7 @@ impl BeamProfile {
                     shear_z: 2.0 * hm * t,
                 }
             }
+            BeamProfile::General { area, iy, iz, torsion, shear_y, shear_z } => BeamProperties { area, iy, iz, torsion, shear_y, shear_z },
         }
     }
 }
@@ -582,6 +653,89 @@ mod tests {
         assert!((b.iy - i.iy).abs() < 1e-9 && (b.area - i.area).abs() < 1e-12);
         let circle = BeamProfile::Circle { radius: 2.0 }.properties(0.3);
         assert!((circle.torsion - std::f64::consts::PI * 8.0).abs() < 1e-12);
+    }
+
+    /// A general profile is its section properties: given a shape's, it is that shape to every
+    /// consumer of [`BeamProfile::properties`] (the beam element and the deck writers).
+    #[test]
+    fn a_general_profile_is_the_shape_whose_properties_it_carries() {
+        for shape in [
+            BeamProfile::Rectangle { width: 20.0, height: 60.0 },
+            BeamProfile::Pipe { radius: 20.0, thickness: 2.0 },
+            BeamProfile::I { height: 100.0, width: 50.0, web: 5.0, flange: 8.0 },
+        ] {
+            let p = shape.properties(0.3);
+            let general = BeamProfile::General { area: p.area, iy: p.iy, iz: p.iz, torsion: p.torsion, shear_y: p.shear_y, shear_z: p.shear_z };
+            general.validate().unwrap();
+            assert_eq!(general.properties(0.3), p, "{shape:?}");
+            assert_eq!(general.properties(0.0), p, "its own shear areas, whatever the Poisson's ratio");
+            assert_eq!(general.area(), shape.area());
+        }
+        let json = serde_json::json!({"type": "general", "area": 1.0, "iy": 2.0, "iz": 3.0, "torsion": 4.0, "shear_y": 0.5, "shear_z": 0.6});
+        let parsed: BeamProfile = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(parsed, BeamProfile::General { area: 1.0, iy: 2.0, iz: 3.0, torsion: 4.0, shear_y: 0.5, shear_z: 0.6 });
+        assert_eq!((parsed.name(), serde_json::to_value(parsed).unwrap()), ("general", json));
+        assert!(serde_json::from_value::<BeamProfile>(serde_json::json!({"type": "general", "area": 1.0, "iy": 2.0})).is_err(), "every property");
+        let good = [1.0, 2.0, 3.0, 4.0, 0.5, 0.6];
+        for (i, bad) in [0.0, -1.0, f64::NAN, f64::INFINITY].into_iter().flat_map(|v| (0..6).map(move |i| (i, v))) {
+            let mut v = good;
+            v[i] = bad;
+            let [area, iy, iz, torsion, shear_y, shear_z] = v;
+            assert!(BeamProfile::General { area, iy, iz, torsion, shear_y, shear_z }.validate().is_err(), "{v:?}");
+        }
+    }
+
+    /// The bounds every section obeys: a shear area at most the area, a torsion constant at most
+    /// the polar moment, a polar moment at least a disc's. The shapes meet them, a disc and a
+    /// tube with equality; numbers that break one are refused, naming it.
+    #[test]
+    fn a_general_profile_no_section_could_have_is_refused() {
+        let shapes = [
+            BeamProfile::Rectangle { width: 20.0, height: 60.0 },
+            BeamProfile::Rectangle { width: 1.0, height: 1.0 },
+            BeamProfile::Circle { radius: 3.0 },
+            BeamProfile::Circle { radius: 0.0123 },
+            BeamProfile::Pipe { radius: 20.0, thickness: 2.0 },
+            BeamProfile::Pipe { radius: 0.05, thickness: 0.05 },
+            BeamProfile::I { height: 100.0, width: 50.0, web: 5.0, flange: 8.0 },
+            BeamProfile::Box { width: 40.0, height: 80.0, thickness: 3.0 },
+        ];
+        for shape in shapes {
+            for nu in [0.0, 0.3, 0.5] {
+                let p = shape.properties(nu);
+                let general = BeamProfile::General { area: p.area, iy: p.iy, iz: p.iz, torsion: p.torsion, shear_y: p.shear_y, shear_z: p.shear_z };
+                assert!(general.validate().is_ok(), "{shape:?} ν = {nu}: {:?}", general.validate());
+            }
+        }
+        let p = BeamProfile::Rectangle { width: 20.0, height: 60.0 }.properties(0.3);
+        let with = |f: &dyn Fn(&mut [f64; 6])| {
+            let mut v = [p.area, p.iy, p.iz, p.torsion, p.shear_y, p.shear_z];
+            f(&mut v);
+            let [area, iy, iz, torsion, shear_y, shear_z] = v;
+            BeamProfile::General { area, iy, iz, torsion, shear_y, shear_z }.validate().map_err(|e| e.to_string())
+        };
+        // The reviewer's case: shear_y = 10 A, which would have written K2 = 10.
+        let err = with(&|v| v[4] = 10.0 * v[0]).unwrap_err();
+        assert!(err.contains("shear area along local 1") && err.contains("shear_y"), "{err}");
+        let err = with(&|v| v[5] = 1.001 * v[0]).unwrap_err();
+        assert!(err.contains("shear area along local 2") && err.contains("shear_z"), "{err}");
+        assert!(with(&|v| v[4] = v[0]).is_ok(), "a shear coefficient of 1, the bound itself");
+        let err = with(&|v| v[3] = 1.001 * (v[1] + v[2])).unwrap_err();
+        assert!(err.contains("torsion constant") && err.contains("polar moment"), "{err}");
+        let err = with(&|v| {
+            v[1] = 0.999 * v[0] * v[0] / (4.0 * std::f64::consts::PI);
+            v[2] = v[1];
+            v[3] = v[1];
+        })
+        .unwrap_err();
+        assert!(err.contains("below A²/2π"), "{err}");
+        // A disc's own numbers sit on two bounds; a hair over either is refused.
+        let disc = BeamProfile::Circle { radius: 1.0 }.properties(0.3);
+        let general =
+            |torsion: f64, i: f64| BeamProfile::General { area: disc.area, iy: i, iz: i, torsion, shear_y: disc.shear_y, shear_z: disc.shear_z };
+        assert!(general(disc.torsion, disc.iy).validate().is_ok());
+        assert!(general(disc.torsion * 1.000_001, disc.iy).validate().is_err());
+        assert!(general(disc.torsion * 0.5, disc.iy * 0.999_999).validate().is_err());
     }
 
     #[test]

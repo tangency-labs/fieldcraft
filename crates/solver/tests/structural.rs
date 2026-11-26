@@ -378,6 +378,28 @@ fn cantilever_beam_deflection_is_exact() {
     }
 }
 
+/// A general profile given the I's section properties solves to the same tip deflection, root
+/// section forces and natural frequencies as the I itself, bit for bit.
+#[test]
+fn a_general_profile_solves_like_the_shape_it_describes() {
+    let shape = BeamProfile::I { height: 200.0, width: 100.0, web: 6.0, flange: 10.0 };
+    let p = shape.properties(0.3);
+    let general = BeamProfile::General { area: p.area, iy: p.iy, iz: p.iz, torsion: p.torsion, shear_y: p.shear_y, shear_z: p.shear_z };
+    let statics = |profile| {
+        let (mut b, y, z) = cantilever(4, 1000.0, profile, Procedure::Static {});
+        b.force("tip", vec![5], [0, 1, 2].map(|k| 1000.0 * (y[k] + 2.0 * z[k])));
+        let r = b.solve();
+        (r.displacement[at(&r, 5)], r.beams[0].forces.ends)
+    };
+    assert_eq!(statics(shape), statics(general));
+    let modes = |profile| {
+        let (b, _, _) = cantilever(8, 1000.0, profile, Procedure::Frequency { modes: 6, min_hz: None, max_hz: None });
+        let r = solve_frequency(&b.model, None, &FrequencyOptions::default(), &Limits::default()).unwrap();
+        r.modes.iter().map(|m| m.frequency).collect::<Vec<f64>>()
+    };
+    assert_eq!(modes(shape), modes(general));
+}
+
 #[test]
 fn cantilever_beam_frequencies() {
     // A slender pipe, L/r = 1000 (shear and rotary inertia below 10⁻⁴ in the third mode):
