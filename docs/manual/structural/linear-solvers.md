@@ -247,8 +247,8 @@ The same entry budget guards two more stores:
 4. **Symbolic.** Elimination tree, postorder, column counts (from the blocks' matrix where the
    matrix is made of blocks of three unknowns), supernodes; the entry count against
    `max_factor_entries` (refused before allocation).
-5. **Allocate** the supernodes' values (`try_reserve_exact`; a failure is the out-of-memory
-   error).
+5. **Allocate** the supernodes' values, each taken and zeroed by a task (`try_reserve_exact`; a
+   failure of any is the out-of-memory error).
 6. **Numeric.** Subtrees in parallel, supernodes left-looking, dense panels and tiles; the run is
    cancellable between supernodes. A non-positive pivot (Cholesky) or a supernode without an
    acceptable pivot (LDLᵀ) stops with the column, which the solver turns into the node and
