@@ -111,10 +111,11 @@ impl NodeGraph {
                 }
             }
         }
-        for row in &mut adjacency {
+        // Each row on its own: in parallel, with the same result.
+        fieldcraft_parallel::for_each_mut(&mut adjacency, |_, row| {
             row.sort_unstable();
             row.dedup();
-        }
+        });
         NodeGraph { adjacency }
     }
 
