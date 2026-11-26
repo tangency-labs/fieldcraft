@@ -10,8 +10,9 @@ mod common;
 use common::{abaqus, lsdyna, nastran};
 use fieldcraft_decks::Error;
 use fieldcraft_model::{
-    BeamProfile, BeamTheory, BoundaryCondition, Coupling, CouplingKind, Distribution, Dofs, Elastic, ElementFace, ElementKind, Formulation,
-    Integration, Load, Material, Model, OutputVariable, Procedure, ReferencePoint, Section, SectionKind, Set, Step, Symmetry, Target,
+    BeamProfile, BeamTheory, BoundaryCondition, Coupling, CouplingKind, Direction, Distribution, Dofs, Elastic, ElementFace, ElementKind,
+    Formulation, Integration, Load, Mass, Material, Model, OutputVariable, PointMass, Procedure, ReferencePoint, Section, SectionKind, Set, Spring,
+    Step, Symmetry, Target,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -124,6 +125,50 @@ fn frequency() -> Model {
     m
 }
 
+/// An L of two beams in the XZ plane: a column with an I profile and a girder with `girder`,
+/// clamped at the foot and loaded at the girder's free end.
+fn general_frame(girder: BeamProfile) -> Model {
+    let mut m = Model::default();
+    for (l, xyz) in [(1, [0.0, 0.0, 0.0]), (2, [0.0, 0.0, 1000.0]), (3, [1000.0, 0.0, 1000.0])] {
+        m.set_node(l, xyz).unwrap();
+    }
+    m.add_material("Steel", steel()).unwrap();
+    for (e, (name, nodes, profile)) in (1..).zip([("column", [1, 2], frame_i()), ("girder", [2, 3], girder)]) {
+        m.set_element(e, ElementKind::Beam2, nodes.to_vec()).unwrap();
+        m.add_set(name, elements([e])).unwrap();
+        let kind = SectionKind::Beam { profile, orientation: [0.0, 1.0, 0.0] };
+        m.add_section(name, Section { set: name.into(), material: "Steel".into(), kind, formulation: Formulation::default() }).unwrap();
+    }
+    m.add_set("foot", Set { nodes: vec![1], ..Set::default() }).unwrap();
+    m.add_set("end", Set { nodes: vec![3], ..Set::default() }).unwrap();
+    m.add_boundary_condition("clamp", BoundaryCondition::Fixed { target: Target::Set("foot".into()) }).unwrap();
+    m.add_load("push", Load::Force { target: Target::Set("end".into()), vector: [0.0, 500.0, -1000.0], distribution: Distribution::Total }).unwrap();
+    m.add_step(step("Load", Procedure::Static {}, &["clamp"], &["push"]), None).unwrap();
+    m
+}
+
+/// The general frame with a spring and a dashpot to the ground and a point mass at the girder's
+/// end: the discrete sets beside the per-section output requests.
+fn general_frame_spring() -> Model {
+    let mut m = general_frame(general_of(frame_i()));
+    let end = Target::Set("end".into());
+    m.add_spring("prop", Spring::Spring { first: end.clone(), second: None, direction: Direction::Dof(3), stiffness: 50.0 }).unwrap();
+    m.add_spring("damper", Spring::Dashpot { first: end.clone(), second: None, direction: Direction::Dof(2), coefficient: 0.5 }).unwrap();
+    m.add_mass("load", PointMass { target: end, mass: Some(Mass::Isotropic(0.002)), inertia: None }).unwrap();
+    m
+}
+
+/// The frame's I profile.
+fn frame_i() -> BeamProfile {
+    BeamProfile::I { height: 100.0, width: 50.0, web: 5.0, flange: 8.0 }
+}
+
+/// A general profile with the section properties of `shape` (in steel, ν 0.3).
+fn general_of(shape: BeamProfile) -> BeamProfile {
+    let p = shape.properties(0.3);
+    BeamProfile::General { area: p.area, iy: p.iy, iz: p.iz, torsion: p.torsion, shear_y: p.shear_y, shear_z: p.shear_z }
+}
+
 // ---------------------------------------------------------------------------------------------
 // A minimal reader of what the writer emits (full deck readers are a later milestone)
 
@@ -203,7 +248,13 @@ fn assert_lines_fit(deck: &str) {
 
 #[test]
 fn golden_decks() {
-    for (name, model) in [("cantilever", cantilever()), ("plate", plate()), ("frequency", frequency())] {
+    for (name, model) in [
+        ("cantilever", cantilever()),
+        ("plate", plate()),
+        ("frequency", frequency()),
+        ("general_frame", general_frame(general_of(frame_i()))),
+        ("general_frame_spring", general_frame_spring()),
+    ] {
         let deck = abaqus::write(&model).unwrap();
         assert_lines_fit(&deck);
         golden(name, &deck);
@@ -846,6 +897,62 @@ fn pipes_under_pressure_are_pipe_elements_with_closed_end_pressures() {
             other => panic!("{format}: expected unsupported, got {other:?}"),
         }
     }
+}
+
+/// A general profile is a general beam section: its area, I11 (the model's I_y), I22 (its I_z)
+/// and J, the orientation, the material's E and G, and the shear stiffness of its shear areas.
+/// The element is the one an I with those properties gets: the same B31 on the same nodes.
+#[test]
+fn general_profiles_are_general_beam_sections() {
+    let p = frame_i().properties(0.3);
+    let deck = abaqus::write(&general_frame(general_of(frame_i()))).unwrap();
+    let lines: Vec<&str> = deck.lines().skip_while(|l| !l.starts_with("*BEAM GENERAL SECTION")).take(6).collect();
+    assert_eq!(lines[0], format!("*BEAM GENERAL SECTION, SECTION=GENERAL, ELSET=girder, DENSITY={}, POISSON=0.3", abaqus::number(7.85e-9).unwrap()));
+    let numbers = |line: &str| line.split(", ").map(|v| v.parse::<f64>().unwrap()).collect::<Vec<f64>>();
+    let close = |got: Vec<f64>, want: &[f64]| got.len() == want.len() && got.iter().zip(want).all(|(g, w)| (g - w).abs() <= 1e-12 * w.abs());
+    let g = 210_000.0 / 2.6;
+    assert!(close(numbers(lines[1]), &[p.area, p.iy, 0.0, p.iz, p.torsion]), "{}", lines[1]);
+    assert_eq!((lines[2], lines[3]), ("0.0, 1.0, 0.0", format!("210000.0, {}", abaqus::number(g).unwrap()).as_str()));
+    assert_eq!(lines[4], "*TRANSVERSE SHEAR STIFFNESS");
+    assert!(close(numbers(lines[5]), &[g * p.shear_z, g * p.shear_y]), "K23 along local 2, K13 along local 1: {}", lines[5]);
+    assert!(deck.contains("*BEAM SECTION, SECTION=I, ELSET=column, MATERIAL=Steel\n"), "the shape beside it");
+    let shape = abaqus::write(&general_frame(frame_i())).unwrap();
+    // Abaqus/Standard gives a general section's stress and strain only at section points, which
+    // its properties do not place: its set asks for section forces and strains, the I beside it
+    // for S and E, and a model without a general section keeps one request for all elements.
+    assert!(deck.contains("*ELEMENT OUTPUT, ELSET=column\nS, E\n*ELEMENT OUTPUT, ELSET=girder\nSF, SE\n"), "{deck}");
+    assert!(shape.contains("*ELEMENT OUTPUT\nS, E\n") && !shape.contains("ELSET=girder\nSF"), "{shape}");
+    assert_eq!(read(&deck).elements, read(&shape).elements);
+    assert_eq!(read(&deck).elsets, read(&shape).elsets);
+
+    // An Euler–Bernoulli general section is a B33 with the same properties, and no transverse
+    // shear stiffness: the cubic beam has no shear deformation to take it.
+    let mut m = general_frame(general_of(frame_i()));
+    let mut girder = m.section("girder").unwrap().clone();
+    girder.formulation = Formulation { beam_theory: BeamTheory::EulerBernoulli, ..Formulation::default() };
+    m.replace_section("girder", girder).unwrap();
+    let eb = abaqus::write(&m).unwrap();
+    assert!(eb.contains("*ELEMENT, TYPE=B33\n2, 2, 3\n") && eb.contains("*ELEMENT, TYPE=B31\n1, 1, 2\n"), "{eb}");
+    let general: Vec<&str> = eb.lines().skip_while(|l| !l.starts_with("*BEAM GENERAL SECTION")).take(5).collect();
+    assert_eq!(&general[..4], &lines[..4], "{eb}");
+    assert!(general[4].starts_with('*') && !eb.contains("*TRANSVERSE SHEAR STIFFNESS"), "{eb}");
+
+    // A general section takes E and G: an orthotropic material is refused, and so is a plastic
+    // one in a deck with nonlinear steps (the general section is linear elastic).
+    let mut m = general_frame(general_of(frame_i()));
+    let ply = Elastic::EngineeringConstants { young: [140e3, 10e3, 10e3], poisson: [0.3, 0.3, 0.4], shear: [5e3, 5e3, 3.8e3] };
+    m.replace_material("Steel", Material { elastic: Some(ply), ..steel() }).unwrap();
+    assert!(unsupported(&m).contains("section `girder`: a general beam profile of material `Steel`, which has no isotropic elastic constants"));
+    let mut m = general_frame(general_of(frame_i()));
+    let bilinear =
+        fieldcraft_model::Plastic::Bilinear { yield_stress: 250.0, hardening_modulus: 1000.0, hardening: fieldcraft_model::Hardening::Isotropic };
+    m.replace_material("Steel", Material { plastic: Some(bilinear), ..steel() }).unwrap();
+    abaqus::write(&m).unwrap();
+    m.replace_step(step("Load", Procedure::NonlinearStatic(fieldcraft_model::NonlinearStatic::default()), &["clamp"], &["push"])).unwrap();
+    assert!(
+        unsupported(&m)
+            .contains("section `girder`: a general beam profile of plastic or hyperelastic material `Steel` in a deck with nonlinear steps")
+    );
 }
 
 #[test]

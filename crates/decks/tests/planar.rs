@@ -263,6 +263,27 @@ fn general_rib() -> Model {
 
 #[test]
 fn general_beams_of_a_2d_model_are_planar_beams_or_refused_by_name() {
+    // Abaqus: the planar beam B21 with a general section, its first section axis (0, 0, −1) out
+    // of the plane like the rectangle's, and the rectangle's I11 = ∫ x₂² dA in the plane.
+    let p = BeamProfile::Rectangle { width: 2.0, height: 4.0 }.properties(0.3);
+    let deck = abaqus::write(&general_rib()).unwrap();
+    assert!(deck.contains("*ELEMENT, TYPE=B21\n10, 1, 2\n11, 2, 3\n") && !deck.contains("B31"), "{deck}");
+    let lines: Vec<&str> = deck.lines().skip_while(|l| !l.starts_with("*BEAM GENERAL SECTION, SECTION=GENERAL, ELSET=rib")).take(5).collect();
+    let numbers = |line: &str| line.split(", ").map(|v| v.parse::<f64>().unwrap()).collect::<Vec<f64>>();
+    let want = [p.area, p.iy, 0.0, p.iz, p.torsion];
+    let got = numbers(lines[1]);
+    assert!(got.len() == 5 && got.iter().zip(want).all(|(g, w)| (g - w).abs() <= 1e-12 * w.abs()), "{deck}");
+    assert_eq!(lines[2], "0.0, 0.0, -1.0", "{deck}");
+    assert_eq!(lines[4], "*TRANSVERSE SHEAR STIFFNESS", "{deck}");
+    // An Euler–Bernoulli general beam in a 2D model is refused before any deck is written, as
+    // the shapes are.
+    let mut eb = general_rib();
+    let mut rib = eb.section("rib").unwrap().clone();
+    rib.formulation = Formulation { beam_theory: BeamTheory::EulerBernoulli, ..Formulation::default() };
+    eb.replace_section("rib", rib).unwrap();
+    let e = abaqus::write(&eb).unwrap_err().to_string();
+    assert!(e.contains("section `rib`: an Euler-Bernoulli beam is not supported in a 2D model"), "{e}");
+
     // LS-DYNA: its 2D analyses take no beam, whatever the profile.
     let mut m = general_rib();
     let red = Formulation { integration: Integration::Reduced, ..Formulation::default() };

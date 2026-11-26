@@ -107,6 +107,17 @@
 //! Abaqus's closed-end condition, which is the model's. Pressures of several loads on an
 //! element are summed. Other pipe sections stay `B31` with `SECTION=PIPE`.
 //!
+//! A beam section is `*BEAM SECTION` with its profile's shape, or for a general profile (section
+//! properties given directly) `*BEAM GENERAL SECTION` with its properties, the material's
+//! elastic constants and `*TRANSVERSE SHEAR STIFFNESS` from its shear areas
+//! (`Deck::general_beam_section`); its first section axis is (0, 0, −1) in a 2D model, as for the
+//! shapes, and an Euler–Bernoulli section (B33, no transverse shear deformation) takes no shear
+//! stiffness. Abaqus/Standard gives a general section's integration-point
+//! output only at section points (`*SECTION POINTS`), which its properties alone do not place: its
+//! elements get section forces `SF` and section strains `SE` where a step asks for stress and
+//! strain, every other section's elements `S` and `E`, and so do springs and dashpots, whose `S`
+//! and `E` are their force and relative displacement (`Deck::output`).
+//!
 //! Point masses, springs and dashpots are elements numbered after the mesh's, one per resolved
 //! copy, in an element set per definition (`<name>-mass`, `<name>-inertia`, `<name>-spring`, made
 //! unique against the model's sets): `MASS` with `*MASS` (one mass for every direction),
@@ -171,7 +182,7 @@ use std::fmt::Write as _;
 
 use fieldcraft_model::{
     BeamProfile, BeamTheory, BoundaryCondition, ContactSurfaces, CouplingKind, Elastic, Element, ElementKind, Hardening, Hyperelastic,
-    InitialPenetration, Integration, Load, Model, OutputVariable, Plastic, Procedure, Resolved, Section, SectionKind, Step, Target,
+    InitialPenetration, Integration, Load, Material, Model, OutputVariable, Plastic, Procedure, Resolved, Section, SectionKind, Step, Target,
 };
 
 use fieldcraft_model::units::Preset;
@@ -224,7 +235,7 @@ pub fn write_resolved(model: &Model, r: &Resolved, units: Preset) -> Result<Stri
     d.contacts(model, r)?;
     d.ties(model)?;
     d.equations(model, r)?;
-    d.steps(model, r)?;
+    d.steps(model, r, &discrete)?;
     Ok(d.out)
 }
 
@@ -335,6 +346,28 @@ fn element_bores(model: &Model, r: &Resolved) -> BTreeMap<u32, (f64, f64)> {
     bores
 }
 
+/// Why a general beam section has no material to take E and G from.
+enum GeneralMaterial {
+    /// The section names a material the model does not have.
+    Missing,
+    /// The material is not isotropic elastic: the refusal, naming the section.
+    NotIsotropic(String),
+}
+
+/// The material of a general beam section, which carries its E and G itself: one isotropic
+/// elastic material. [`check_expressible`] refuses the others by name, and the writer reads the
+/// constants through the same test, so the two cannot disagree. Its Young's modulus and Poisson's ratio come with it.
+fn general_section_material<'m>(model: &'m Model, name: &str, section: &Section) -> std::result::Result<(&'m Material, f64, f64), GeneralMaterial> {
+    let m = model.material(&section.material).ok_or(GeneralMaterial::Missing)?;
+    match m.elastic {
+        Some(Elastic::Isotropic { young, poisson }) => Ok((m, young, poisson)),
+        _ => Err(GeneralMaterial::NotIsotropic(format!(
+            "section `{name}`: a general beam profile of material `{}`, which has no isotropic elastic constants (the general beam section takes E and G)",
+            section.material
+        ))),
+    }
+}
+
 /// Every element, grouped by element type (from its section, pipes under pressure as `PIPE31`)
 /// and sorted by label.
 fn elements_by_type<'m>(model: &'m Model, r: &Resolved, pressurised: &BTreeSet<&str>) -> Result<BTreeMap<String, Vec<(u32, &'m Element)>>> {
@@ -412,8 +445,20 @@ fn check_expressible(model: &Model) -> Result<()> {
         }
     }
     for (name, section) in model.sections() {
-        if matches!(section.kind, SectionKind::Beam { profile: BeamProfile::General { .. }, .. }) {
-            bad.insert(format!("section `{name}`: general beam profiles (not written yet)"));
+        let SectionKind::Beam { profile: BeamProfile::General { .. }, .. } = section.kind else { continue };
+        match general_section_material(model, name, section) {
+            // A material that does not exist is the model check's to name.
+            Err(GeneralMaterial::Missing) => {}
+            Err(GeneralMaterial::NotIsotropic(why)) => {
+                bad.insert(why);
+            }
+            Ok((m, ..)) if has_nonlinear_step(model) && (m.plastic.is_some() || m.hyperelastic.is_some()) => {
+                bad.insert(format!(
+                    "section `{name}`: a general beam profile of plastic or hyperelastic material `{}` in a deck with nonlinear steps (Abaqus's general beam section is linear elastic)",
+                    section.material
+                ));
+            }
+            Ok(_) => {}
         }
     }
     for step in model.steps().iter().filter(|s| matches!(s.procedure, Procedure::ExplicitDynamic(_))) {
@@ -1099,6 +1144,9 @@ impl Deck {
                     let _ = writeln!(self.out, ", {points}");
                 }
                 SectionKind::Beam { profile, orientation } => {
+                    // A planar beam's first section axis is (0, 0, −1) in Abaqus; the model's is
+                    // along Z either way, the same section (its local axes are principal).
+                    let axis = if r.is_planar() { [0.0, 0.0, -1.0] } else { orientation };
                     // Abaqus profiles: RECT a, b; CIRC r; PIPE and THICK PIPE r, t (the thick
                     // one for pipes under pressure: its wall stresses vary through it); I l, h,
                     // b1, b2, t1, t2, t3 (l: from the section origin to the bottom; centred
@@ -1110,21 +1158,46 @@ impl Deck {
                         BeamProfile::Pipe { radius, thickness } => ("PIPE", vec![radius, thickness]),
                         BeamProfile::I { height, width, web, flange } => ("I", vec![height / 2.0, height, width, width, flange, flange, web]),
                         BeamProfile::Box { width, height, thickness } => ("BOX", vec![width, height, thickness, thickness, thickness, thickness]),
-                        BeamProfile::General { .. } => {
-                            return Err(Error::Unsupported {
-                                format: FORMAT,
-                                what: format!("section `{name}`: general beam profiles (not written yet)"),
-                            });
+                        BeamProfile::General { area, iy, iz, torsion, shear_y, shear_z } => {
+                            self.general_beam_section(model, name, s, [area, iy, iz, torsion, shear_y, shear_z], axis)?;
+                            continue;
                         }
                     };
                     self.line(&format!("*BEAM SECTION, SECTION={shape}, ELSET={set}, MATERIAL={material}"));
                     self.numbers_line("", &dims)?;
-                    // A planar beam's first section axis is (0, 0, −1) in Abaqus; the model's is
-                    // along Z either way, the same doubly symmetric section.
-                    let axis = if r.is_planar() { [0.0, 0.0, -1.0] } else { orientation };
                     self.numbers_line("", &axis)?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// A general profile as `*BEAM GENERAL SECTION, SECTION=GENERAL`: A, I11, I12, I22, J (I11 =
+    /// ∫ x₂² dA is the model's I_y, I22 its I_z, the principal axes so I12 = 0), the first section
+    /// axis (`axis`: the orientation, or (0, 0, −1) for a planar beam, as for the shapes), then E
+    /// and G of the section's isotropic material, which the section carries in place of a material
+    /// reference (with its density and Poisson's ratio as parameters). A Timoshenko section's
+    /// shear areas follow as `*TRANSVERSE SHEAR STIFFNESS` K23 = G A_s,z and K13 = G A_s,y (shear
+    /// along local 2 and local 1); without it Abaqus would take G A for both. An Euler–Bernoulli
+    /// section is a B33, which has no transverse shear deformation and so takes none.
+    fn general_beam_section(&mut self, model: &Model, name: &str, s: &Section, values: [f64; 6], axis: [f64; 3]) -> Result<()> {
+        let [area, iy, iz, torsion, shear_y, shear_z] = values;
+        let (m, young, poisson) = general_section_material(model, name, s).map_err(|why| match why {
+            GeneralMaterial::Missing => Error::Model(fieldcraft_model::Error::NotFound(format!("material `{}` of section `{name}`", s.material))),
+            GeneralMaterial::NotIsotropic(what) => Error::Unsupported { format: FORMAT, what },
+        })?;
+        let shear = young / (2.0 * (1.0 + poisson));
+        let density = match m.density {
+            Some(rho) => format!(", DENSITY={}", number(rho)?),
+            None => String::new(),
+        };
+        self.line(&format!("*BEAM GENERAL SECTION, SECTION=GENERAL, ELSET={}{density}, POISSON={}", s.set, number(poisson)?));
+        self.numbers_line("", &[area, iy, 0.0, iz, torsion])?;
+        self.numbers_line("", &axis)?;
+        self.numbers_line("", &[young, shear])?;
+        if s.formulation.beam_theory == BeamTheory::Timoshenko {
+            self.line("*TRANSVERSE SHEAR STIFFNESS");
+            self.numbers_line("", &[shear * shear_z, shear * shear_y])?;
         }
         Ok(())
     }
@@ -1468,12 +1541,20 @@ impl Deck {
         Ok(())
     }
 
-    fn output(&mut self, step: &Step) {
+    /// A step's field output. Stress and strain are `S` and `E` for the whole model, or per
+    /// section set once a general beam section is among them: Abaqus/Standard writes its
+    /// integration-point output only at section points, which a general section's properties do
+    /// not place, so its set gets section forces `SF` and section strains `SE` instead. Spring and
+    /// dashpot sets then get `S` and `E` of their own, which for these elements are the force and
+    /// the relative displacement across them (`S11`, `E11`, Abaqus Analysis User's Guide, Spring
+    /// and Dashpot element libraries); masses and rotary inertias have neither.
+    fn output(&mut self, model: &Model, discrete: &[DiscreteGroup], step: &Step) {
         let pick = |names: [(OutputVariable, &'static str); 2]| -> Vec<&'static str> {
             names.into_iter().filter(|(v, _)| step.output.contains(v)).map(|(_, n)| n).collect()
         };
         let node = pick([(OutputVariable::Displacement, "U"), (OutputVariable::ReactionForce, "RF")]);
         let element = pick([(OutputVariable::Stress, "S"), (OutputVariable::Strain, "E")]);
+        let general = |s: &Section| matches!(s.kind, SectionKind::Beam { profile: BeamProfile::General { .. }, .. });
         if node.is_empty() && element.is_empty() {
             self.line("*OUTPUT, FIELD, OP=NEW, FREQUENCY=0");
             return;
@@ -1483,13 +1564,27 @@ impl Deck {
             self.line("*NODE OUTPUT");
             self.line(&node.join(", "));
         }
-        if !element.is_empty() {
+        if element.is_empty() {
+            return;
+        }
+        if !model.sections().values().any(general) {
             self.line("*ELEMENT OUTPUT");
+            self.line(&element.join(", "));
+            return;
+        }
+        let resultants = pick([(OutputVariable::Stress, "SF"), (OutputVariable::Strain, "SE")]);
+        for s in model.sections().values() {
+            self.line(&format!("*ELEMENT OUTPUT, ELSET={}", s.set));
+            let names = if general(s) { &resultants } else { &element };
+            self.line(&names.join(", "));
+        }
+        for g in discrete.iter().filter(|g| matches!(g.property, DiscreteProperty::Spring { .. })) {
+            self.line(&format!("*ELEMENT OUTPUT, ELSET={}", g.elset));
             self.line(&element.join(", "));
         }
     }
 
-    fn steps(&mut self, model: &Model, r: &Resolved) -> Result<()> {
+    fn steps(&mut self, model: &Model, r: &Resolved, discrete: &[DiscreteGroup]) -> Result<()> {
         let steps = model.steps();
         // The initial state: zero-valued boundary conditions active in every step.
         let initial: BTreeSet<String> = if steps.is_empty() {
@@ -1624,7 +1719,7 @@ impl Deck {
                     return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: {} steps", step.name, step.procedure.name()) });
                 }
             }
-            self.output(step);
+            self.output(model, discrete, step);
             self.line("*END STEP");
         }
         Ok(())

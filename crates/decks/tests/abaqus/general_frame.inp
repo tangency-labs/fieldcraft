@@ -1,0 +1,63 @@
+*HEADING
+FieldCraft model, units mm-t-s-N-MPa
+** Written by FieldCraft in one consistent unit system: millimetre, tonne, second, newton, megapascal, degree Celsius.
+** Nodes
+*NODE
+1, 0.0, 0.0, 0.0
+2, 0.0, 0.0, 1000.0
+3, 1000.0, 0.0, 1000.0
+** Elements
+*ELEMENT, TYPE=B31
+1, 1, 2
+2, 2, 3
+** Sets
+*NSET, NSET=column
+1, 2
+*ELSET, ELSET=column
+1
+*NSET, NSET=end
+3
+*NSET, NSET=foot
+1
+*NSET, NSET=girder
+2, 3
+*ELSET, ELSET=girder
+2
+** Materials
+*MATERIAL, NAME=Steel
+*ELASTIC, TYPE=ISOTROPIC
+210000.0, 0.3
+*DENSITY
+7.85E-9
+** Sections
+** section column
+*BEAM SECTION, SECTION=I, ELSET=column, MATERIAL=Steel
+50.0, 100.0, 50.0, 50.0, 8.0, 8.0, 5.0
+0.0, 1.0, 0.0
+** section girder
+*BEAM GENERAL SECTION, SECTION=GENERAL, ELSET=girder, DENSITY=7.85E-9, POISSON=0.3
+1220.0, 1944026.666666667, 0.0, 167541.66666666666, 20900.0
+0.0, 1.0, 0.0
+210000.0, 80769.23076923077
+*TRANSVERSE SHEAR STIFFNESS
+37153846.15384615, 53846153.84615385
+** Initial state: boundary conditions active in every step
+*BOUNDARY
+** boundary condition clamp
+foot, ENCASTRE
+** Step Load
+*STEP, NAME=Load, NLGEOM=NO
+*STATIC
+1.0, 1.0
+** boundary conditions: as in the base state
+*CLOAD, OP=NEW
+3, 2, 500.0
+3, 3, -1000.0
+*OUTPUT, FIELD, OP=NEW
+*NODE OUTPUT
+U, RF
+*ELEMENT OUTPUT, ELSET=column
+S, E
+*ELEMENT OUTPUT, ELSET=girder
+SF, SE
+*END STEP
