@@ -713,6 +713,59 @@ pub(crate) mod tests {
         }
     }
 
+    /// A water tank with a velocity inlet on x_min and a pressure outlet on x_max, and a fluid step in it.
+    fn tank_session() -> crate::Session {
+        let mut s = crate::Session::default();
+        let script = json!([
+            {"command": "model.material.create", "params": {"name": "Water", "density": 1e-9, "fluid": {"type": "newtonian", "viscosity": 1e-9}}},
+            {"command": "model.fluid_domain.create", "params": {"name": "Tank", "material": "Water", "min": [0, 0, 0], "max": [10, 4, 4], "spacing": 1,
+                "faces": {"x_min": {"type": "velocity", "velocity": [0.01, 0, 0]}, "x_max": {"type": "pressure", "pressure": 0}}}},
+            {"command": "model.step.create", "params": {"name": "Flow", "procedure": {"type": "fluid", "domain": "Tank", "steps": 10, "frames": 2}}},
+        ]);
+        s.run_script(&script).unwrap();
+        s
+    }
+
+    #[test]
+    fn absorbing_layer_command_sets_and_removes() {
+        let mut s = tank_session();
+        let set = json!({"domain": "Tank", "face": "x_max", "width": 2, "reflection": 0.01, "reference_velocity": [0.01, 0, 0]});
+        assert_eq!(s.execute("model.fluid_domain.absorbing_layer", &set).unwrap(), json!({"domain": "Tank", "face": "x_max"}));
+        let layers = &s.model.fluid_domain("Tank").unwrap().layers;
+        assert_eq!(layers.len(), 1);
+        // the command's lengths and velocities are in the display system (mm, mm/s); the model stores SI
+        assert_eq!(layers[0].face, BoxFace::XMax);
+        assert!((layers[0].width - 0.002).abs() < 1e-12 && layers[0].reflection == 0.01, "{:?}", layers[0]);
+        let v = layers[0].reference_velocity.unwrap_or([f64::NAN; 3]);
+        assert!((v[0] - 1e-5).abs() < 1e-15 && v[1] == 0.0 && v[2] == 0.0, "{v:?}");
+        // a wall face takes no layer, and a bad reflection is refused
+        assert!(
+            s.execute("model.fluid_domain.absorbing_layer", &json!({"domain": "Tank", "face": "y_min", "width": 1, "reflection": 0.01})).is_err()
+        );
+        assert!(
+            s.execute(
+                "model.fluid_domain.absorbing_layer",
+                &json!({"domain": "Tank", "face": "x_max", "width": 2, "reflection": 1, "reference_velocity": [0.01, 0, 0]})
+            )
+            .is_err()
+        );
+        assert_eq!(s.model.fluid_domain("Tank").unwrap().layers.len(), 1);
+        s.execute("model.fluid_domain.absorbing_layer", &json!({"domain": "Tank", "face": "x_max", "remove": true})).unwrap();
+        assert!(s.model.fluid_domain("Tank").unwrap().layers.is_empty());
+    }
+
+    #[test]
+    fn a_fluid_solve_with_an_absorbing_layer_is_refused_not_supported_yet() {
+        let mut s = tank_session();
+        s.execute(
+            "model.fluid_domain.absorbing_layer",
+            &json!({"domain": "Tank", "face": "x_max", "width": 2, "reflection": 0.01, "reference_velocity": [0.01, 0, 0]}),
+        )
+        .unwrap();
+        let e = s.execute("solve.fluid", &json!({})).unwrap_err().to_string();
+        assert!(e.contains("not supported yet") && e.contains("absorbing layers"), "{e}");
+    }
+
     /// Water in a box freezes on a face held at −10 °C, through commands: the phase change is
     /// typed in the display system (mm-t-s: mJ/t and °C) and stored in SI, the solve reports the
     /// share that froze, and a material without a specific heat, a liquidus below the solidus or a

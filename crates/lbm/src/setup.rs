@@ -776,6 +776,9 @@ impl Setup {
         }
         let walls = *walls;
         let domain = domain.clone();
+        if !domain.layers.is_empty() {
+            return Err(Error::Invalid("not supported yet: absorbing layers (`layers`) in the fluid solve; remove them (model.fluid_domain.absorbing_layer with remove) to solve".into()));
+        }
         let (smagorinsky, vreman, spalart_allmaras, turbulent_prandtl, van_driest, wall_model) = match turbulence {
             None => (0.0, 0.0, None, 0.9, None, None),
             Some(t) => {

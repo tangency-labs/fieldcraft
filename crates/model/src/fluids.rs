@@ -752,6 +752,23 @@ pub enum FluidBoundary {
     Surface(GeometryRef),
 }
 
+/// An absorbing layer inside the box next to one open face (a velocity or pressure face): within `width` of the
+/// face the flow is pulled toward the face's target state, so waves leave instead of coming back (Xu & Sagaut,
+/// J. Comput. Phys. 245:14, 2013). The cells inside it are not physical flow.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbsorbingLayer {
+    pub face: BoxFace,
+    /// The layer's thickness from the face into the box: a whole number of spacings.
+    pub width: f64,
+    /// The fraction of a wave's amplitude the layer may send back, above 0 and below 1.
+    pub reflection: f64,
+    /// The velocity the layer pulls toward at a pressure face (the far-field velocity); required there, refused at a
+    /// velocity face, whose layer pulls toward the face's own velocity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_velocity: Option<[f64; 3]>,
+}
+
 /// A fluid domain.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -797,10 +814,24 @@ pub struct FluidDomain {
     /// box full of one fluid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub free_surface: Option<FreeSurface>,
+    /// Absorbing layers next to open faces, at most one per face ([`AbsorbingLayer`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<AbsorbingLayer>,
 }
 
 fn is_zero(v: &[f64; 3]) -> bool {
     v.iter().all(|c| *c == 0.0)
+}
+
+/// An absorbing layer's thickness in whole cells: a whole number of spacings (within the box's tolerance), at least one.
+fn whole_layer_cells(spacing: f64, width: f64) -> Result<u64> {
+    let h = positive("spacing", spacing)?;
+    let cells = finite("the layer's width", width)? / h;
+    let whole = cells.round();
+    if !(whole >= 1.0 && whole <= MAX_CELLS_PER_SIDE as f64) || (cells - whole).abs() > WHOLE_CELLS_TOLERANCE * whole.max(1.0) {
+        return Err(Error::Invalid(format!("the width {width} must be a whole number of spacings {h}, at least one")));
+    }
+    Ok(whole as u64)
 }
 
 fn vector(what: &str, v: [f64; 3]) -> Result<[f64; 3]> {
@@ -811,6 +842,64 @@ fn vector(what: &str, v: [f64; 3]) -> Result<[f64; 3]> {
 }
 
 impl FluidDomain {
+    /// The checks of the absorbing layers: one per face, on a velocity or pressure face, a whole number of spacings
+    /// wide and no wider than the box along the axis together with the opposite face's layer, a reflection between 0
+    /// and 1, and a reference velocity exactly where the face is a pressure face.
+    fn validate_layers(&self) -> Result<()> {
+        let n = self.cells()?;
+        for (i, l) in self.layers.iter().enumerate() {
+            let check = || -> Result<()> {
+                if self.layers.get(..i).is_some_and(|before| before.iter().any(|o| o.face == l.face)) {
+                    return Err(Error::Invalid("a face takes one absorbing layer".into()));
+                }
+                let condition = self.faces.get(l.face);
+                if !matches!(condition, FaceCondition::Velocity { .. } | FaceCondition::Pressure { .. }) {
+                    return Err(Error::Invalid(format!(
+                        "an absorbing layer goes on a velocity or pressure face; {} is {}",
+                        l.face.name(),
+                        condition.name()
+                    )));
+                }
+                let cells = whole_layer_cells(self.spacing, l.width)?;
+                let opposite = match self.layers.iter().find(|o| o.face == l.face.opposite()) {
+                    Some(o) => whole_layer_cells(self.spacing, o.width)?,
+                    None => 0,
+                };
+                let extent = n.get(l.face.axis()).copied().unwrap_or(0);
+                if cells + opposite > extent {
+                    return Err(Error::Invalid(format!(
+                        "the layers on {} and {} are {} cells together, wider than the box's {extent} cells along that axis",
+                        l.face.name(),
+                        l.face.opposite().name(),
+                        cells + opposite
+                    )));
+                }
+                if !(l.reflection > 0.0 && l.reflection < 1.0) {
+                    return Err(Error::Invalid(format!("reflection {} must be above 0 and below 1", l.reflection)));
+                }
+                match (condition, l.reference_velocity) {
+                    (FaceCondition::Pressure { .. }, Some(v)) => {
+                        vector("reference velocity", v)?;
+                    }
+                    (FaceCondition::Pressure { .. }, None) => {
+                        return Err(Error::Invalid(
+                            "a pressure face's layer needs a reference_velocity: the far-field velocity it pulls toward".into(),
+                        ));
+                    }
+                    (_, Some(_)) => {
+                        return Err(Error::Invalid(
+                            "a velocity face's layer pulls toward the face's own velocity; leave out reference_velocity".into(),
+                        ));
+                    }
+                    (_, None) => {}
+                }
+                Ok(())
+            };
+            check().map_err(|e| context("absorbing layer", l.face.name(), e))?;
+        }
+        Ok(())
+    }
+
     /// Whether thin walls divide the domain.
     pub fn has_baffles(&self) -> bool {
         !self.baffles.is_empty()
@@ -998,6 +1087,7 @@ impl FluidDomain {
                 )));
             }
         }
+        self.validate_layers()?;
         if self.baffles.len() > MAX_BAFFLES {
             return Err(Error::Limit(format!("a fluid domain holds at most {MAX_BAFFLES} baffles")));
         }
@@ -1184,6 +1274,29 @@ impl Model {
         remove_existing(&mut self.fluid_domains, "fluid domain", name).map(|_| ())
     }
 
+    /// Set (with `Some`) or remove (with `None`) the absorbing layer on box face `face` of domain `name`.
+    pub fn set_absorbing_layer(&mut self, name: &str, face: BoxFace, layer: Option<AbsorbingLayer>) -> Result<()> {
+        let mut d = self.fluid_domains.get(name).cloned().ok_or_else(|| Error::NotFound(format!("fluid domain `{name}`")))?;
+        if let Some(l) = &layer
+            && l.face != face
+        {
+            return Err(context("fluid domain", name, Error::Invalid(format!("the absorbing layer is on {}, not {}", l.face.name(), face.name()))));
+        }
+        match (d.layers.iter().position(|l| l.face == face), layer) {
+            (Some(i), Some(l)) => {
+                if let Some(slot) = d.layers.get_mut(i) {
+                    *slot = l;
+                }
+            }
+            (Some(i), None) => {
+                d.layers.remove(i);
+            }
+            (None, Some(l)) => d.layers.push(l),
+            (None, None) => {}
+        }
+        self.replace_fluid_domain(name, d)
+    }
+
     /// Set the condition on one boundary of a domain.
     pub fn set_fluid_boundary(&mut self, name: &str, at: FluidBoundary, condition: FaceCondition) -> Result<()> {
         let mut d = self.fluid_domains.get(name).cloned().ok_or_else(|| Error::NotFound(format!("fluid domain `{name}`")))?;
@@ -1229,6 +1342,7 @@ mod tests {
             fans: vec![],
             baffles: vec![],
             free_surface: None,
+            layers: Vec::new(),
         }
     }
 
@@ -2006,5 +2120,112 @@ mod tests {
         let loaded: FluidDomain = serde_json::from_value(saved.clone()).unwrap();
         assert_eq!(loaded, channel());
         assert_eq!(serde_json::to_value(loaded).unwrap(), saved);
+    }
+
+    fn layer(face: BoxFace, width: f64, reflection: f64, reference_velocity: Option<[f64; 3]>) -> AbsorbingLayer {
+        AbsorbingLayer { face, width, reflection, reference_velocity }
+    }
+
+    /// The channel with its material, so the domain is added to a model.
+    fn channel_model() -> Model {
+        let mut m = Model::default();
+        m.add_material("Water", water()).unwrap();
+        m.add_fluid_domain("Flow", channel()).unwrap();
+        m
+    }
+
+    #[test]
+    fn absorbing_layer_is_kept_on_an_open_face() {
+        let mut m = channel_model();
+        let outlet = layer(BoxFace::XMax, 1.0, 0.01, Some([1.0, 0.0, 0.0]));
+        m.set_absorbing_layer("Flow", BoxFace::XMax, Some(outlet.clone())).unwrap();
+        assert_eq!(m.fluid_domain("Flow").unwrap().layers, vec![outlet.clone()]);
+        // the inlet's layer pulls toward the inlet's own velocity: no reference velocity
+        let inlet = layer(BoxFace::XMin, 1.0, 0.01, None);
+        m.set_absorbing_layer("Flow", BoxFace::XMin, Some(inlet.clone())).unwrap();
+        assert_eq!(m.fluid_domain("Flow").unwrap().layers, vec![outlet.clone(), inlet.clone()]);
+        // setting a face again replaces its layer; `None` removes it
+        m.set_absorbing_layer("Flow", BoxFace::XMax, Some(layer(BoxFace::XMax, 2.0, 0.05, Some([1.0, 0.0, 0.0])))).unwrap();
+        assert_eq!(m.fluid_domain("Flow").unwrap().layers.len(), 2);
+        m.set_absorbing_layer("Flow", BoxFace::XMax, None).unwrap();
+        assert_eq!(m.fluid_domain("Flow").unwrap().layers, vec![layer(BoxFace::XMin, 1.0, 0.01, None)]);
+    }
+
+    #[test]
+    fn absorbing_layer_refuses_a_wall_face() {
+        let mut m = channel_model();
+        let e = m.set_absorbing_layer("Flow", BoxFace::YMin, Some(layer(BoxFace::YMin, 1.0, 0.01, None))).unwrap_err().to_string();
+        assert!(e.contains("y_min") && e.contains("velocity or pressure face"), "{e}");
+    }
+
+    #[test]
+    fn absorbing_layer_refuses_a_width_off_the_lattice_and_a_bad_reflection() {
+        let mut m = channel_model();
+        // spacing 0.5: 1.5 spacings is not a whole number of cells
+        assert!(m.set_absorbing_layer("Flow", BoxFace::XMin, Some(layer(BoxFace::XMin, 0.75, 0.01, None))).is_err());
+        assert!(m.set_absorbing_layer("Flow", BoxFace::XMin, Some(layer(BoxFace::XMin, 0.0, 0.01, None))).is_err());
+        assert!(m.set_absorbing_layer("Flow", BoxFace::XMin, Some(layer(BoxFace::XMin, f64::NAN, 0.01, None))).is_err());
+        for r in [0.0, 1.0, -0.1, f64::NAN] {
+            assert!(m.set_absorbing_layer("Flow", BoxFace::XMin, Some(layer(BoxFace::XMin, 1.0, r, None))).is_err(), "reflection {r}");
+        }
+        assert!(m.fluid_domain("Flow").unwrap().layers.is_empty());
+    }
+
+    #[test]
+    fn absorbing_layer_needs_a_reference_velocity_on_a_pressure_face_only() {
+        let mut m = channel_model();
+        let e = m.set_absorbing_layer("Flow", BoxFace::XMax, Some(layer(BoxFace::XMax, 1.0, 0.01, None))).unwrap_err().to_string();
+        assert!(e.contains("reference_velocity"), "{e}");
+        assert!(m.set_absorbing_layer("Flow", BoxFace::XMax, Some(layer(BoxFace::XMax, 1.0, 0.01, Some([f64::INFINITY, 0.0, 0.0])))).is_err());
+        let e = m.set_absorbing_layer("Flow", BoxFace::XMin, Some(layer(BoxFace::XMin, 1.0, 0.01, Some([1.0, 0.0, 0.0])))).unwrap_err().to_string();
+        assert!(e.contains("leave out reference_velocity"), "{e}");
+    }
+
+    #[test]
+    fn absorbing_layers_on_a_face_pair_must_fit_the_box() {
+        let mut m = channel_model();
+        // the box is 10 long: 6 + 5 = 11 is wider than the box along x
+        m.set_absorbing_layer("Flow", BoxFace::XMin, Some(layer(BoxFace::XMin, 6.0, 0.01, None))).unwrap();
+        let e = m.set_absorbing_layer("Flow", BoxFace::XMax, Some(layer(BoxFace::XMax, 5.0, 0.01, Some([1.0, 0.0, 0.0])))).unwrap_err().to_string();
+        assert!(e.contains("wider than the box"), "{e}");
+        m.set_absorbing_layer("Flow", BoxFace::XMax, Some(layer(BoxFace::XMax, 4.0, 0.01, Some([1.0, 0.0, 0.0])))).unwrap();
+    }
+
+    #[test]
+    fn a_face_takes_one_absorbing_layer() {
+        let mut d = channel();
+        let l = layer(BoxFace::XMin, 1.0, 0.01, None);
+        d.layers = vec![l.clone(), l];
+        let e = d.validate().unwrap_err().to_string();
+        assert!(e.contains("one absorbing layer"), "{e}");
+    }
+
+    #[test]
+    fn turning_a_layered_face_into_a_wall_is_refused() {
+        let mut m = channel_model();
+        m.set_absorbing_layer("Flow", BoxFace::XMax, Some(layer(BoxFace::XMax, 1.0, 0.01, Some([1.0, 0.0, 0.0])))).unwrap();
+        let e = m.set_fluid_boundary("Flow", FluidBoundary::Box(BoxFace::XMax), FaceCondition::Wall {}).unwrap_err().to_string();
+        assert!(e.contains("absorbing layer") && e.contains("x_max"), "{e}");
+        assert!(matches!(m.fluid_domain("Flow").unwrap().faces.x_max, FaceCondition::Pressure { .. }));
+    }
+
+    #[test]
+    fn a_set_layer_must_name_its_own_face() {
+        let mut m = channel_model();
+        assert!(m.set_absorbing_layer("Flow", BoxFace::XMax, Some(layer(BoxFace::XMin, 1.0, 0.01, None))).is_err());
+        assert!(m.set_absorbing_layer("Nope", BoxFace::XMin, None).is_err());
+    }
+
+    #[test]
+    fn absorbing_layers_round_trip_through_json() {
+        let mut d = channel();
+        d.layers = vec![layer(BoxFace::XMax, 1.0, 0.01, Some([1.0, 0.0, 0.0])), layer(BoxFace::XMin, 2.0, 0.05, None)];
+        let saved = serde_json::to_value(&d).unwrap();
+        assert_eq!(saved["layers"][0]["face"], "x_max");
+        assert_eq!(serde_json::from_value::<FluidDomain>(saved).unwrap(), d);
+        // a domain without layers writes no key, and one written before layers reads as none
+        let plain = serde_json::to_string(&channel()).unwrap();
+        assert!(!plain.contains("layers"), "{plain}");
+        assert!(serde_json::from_str::<AbsorbingLayer>(r#"{"face": "x_min", "width": 1.0, "reflection": 0.01, "extra": 1}"#).is_err());
     }
 }

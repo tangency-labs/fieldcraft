@@ -4133,6 +4133,7 @@ mod tests {
             fans: vec![],
             baffles: vec![],
             free_surface: None,
+            layers: Vec::new(),
         };
         let mut m = Model::default();
         m.add_material("Fluid", Material { density: Some(1.0), fluid: Some(Fluid::Newtonian { viscosity: 0.1 }), ..Material::default() }).unwrap();
@@ -4227,6 +4228,7 @@ mod tests {
             fans: vec![],
             baffles: vec![],
             free_surface: None,
+            layers: Vec::new(),
         };
         let mut m = Model::default();
         m.add_material("Fluid", Material { density: Some(1.0), fluid: Some(Fluid::Newtonian { viscosity: 0.1 }), ..Material::default() }).unwrap();
