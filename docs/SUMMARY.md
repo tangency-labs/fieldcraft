@@ -45,6 +45,7 @@
   - [GPU backend](manual/fluid/gpu.md)
   - [Fluid results](manual/fluid/fluid-results.md)
   - [OpenFOAM cases](manual/fluid/openfoam.md)
+  - [What works: verified fluid capabilities](manual/fluid/what-works.md)
 
 # Verification
 
@@ -66,6 +67,7 @@
 - [Libraries and licences](adr/0001-libraries.md)
 - [RFC 0001: High-frequency electromagnetics](rfc/0001-electromagnetics.md)
 - [RFC 0002: Port WARP3D's fracture capabilities](rfc/0002-warp3d-fracture.md)
+- [RFC 0003: Lattice Boltzmann LES, where it stands and what comes next](rfc/0003-lbm-les-roadmap.md)
 
 # Literature
 
