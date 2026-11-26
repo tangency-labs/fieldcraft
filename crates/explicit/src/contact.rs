@@ -20,15 +20,60 @@
 //! it — at half the penalty each, so neither side is privileged and no corner of either surface
 //! sinks into the other. Two faces are in contact where they face each other (their normals more
 //! than [`FACING`] from parallel, which keeps the faces of one body that meet at an edge apart)
-//! and the gap is negative but no deeper than half the main face's element is thick (deeper, the
-//! surfaces have passed through each other). Faces of eroded elements leave the contact.
+//! and the gap is negative but no deeper than half the main face's element is thick, undeformed
+//! and as it is now (deeper, the surfaces have passed through each other). Faces of eroded
+//! elements leave the contact.
 //!
-//! **Search.** Every increment: each surface's faces go into a bucket grid with their boxes grown
-//! by their depth limit ([`fieldcraft_fem::contact::Grid`]: D. J. Benson, J. O. Hallquist, *A
-//! single surface contact algorithm for the post-buckling analysis of shell structures*, CMAME
-//! 78:141–163, 1990); each secondary face takes the main faces listed in the cells its box
-//! overlaps. The faces are integrated in parallel, each on its own, and their forces added face by
-//! face in a fixed order, so the result does not depend on how the faces are split among threads.
+//! **Self contact** is general contact on one body's faces: nothing in the search or the
+//! integration asks which body a face belongs to, so a body that folds onto itself meets itself
+//! as two bodies meet (single-surface contact: D. J. Benson, J. O. Hallquist, CMAME 78:141–163,
+//! 1990; T. Belytschko, W. K. Liu, B. Moran, K. I. Elkhodary, *Nonlinear Finite Elements for
+//! Continua and Structures*, 2nd ed., Wiley 2014, ch. 10). Three rules keep a body
+//! from touching itself where it only bends or squeezes, and each holds for a reason:
+//!
+//! 1. *A face never meets a face that shares a node with it* (its neighbours, however sharply the
+//!    surface folds). Two faces with a node in common meet at an edge or a corner of the surface:
+//!    they touch by construction, not because the body closed on itself.
+//! 2. *A face never meets a face of its own element.* A hexahedron's opposite faces share no node,
+//!    so rule 1 does not exclude them. They are the two sides of one piece of material: the
+//!    element's stiffness is what carries a squeeze between them, and a contact force across it
+//!    would count the squeeze twice. The far face could only be passed by turning the element
+//!    inside out (a volume that is not positive), and that is the element's failure, not a
+//!    contact. A contact between two parts always involves two elements, so no genuine contact
+//!    is lost.
+//! 3. *The depth limit is half the smallest of the main face's element's undeformed thickness, its
+//!    current thickness (its volume over the face's area) and its smallest current local
+//!    thickness under the face* (how far behind the face, along its normal at the closest point,
+//!    the element's nodes that are not on it lie; positive values only, and where there is none
+//!    the other two stand). The limit tells a point that has passed through a surface from one
+//!    that rests on it. The far exterior face of a squeezed layer lies behind the element's far
+//!    side, so at least the element's local thickness away from the face (the element's far
+//!    nodes are that far behind it, and the layers between do not bring the far face nearer
+//!    unless an element is turned inside out), and the limit, half of the smallest local
+//!    thickness, cannot reach it without the surfaces crossing. Half the undeformed thickness
+//!    did once the layer was squeezed below half, and half the average thickness did where the
+//!    element is much thinner over one corner than on average: those were the false forces. A
+//!    penetration that the penalty law gives is p/ε, set by the pressure p and the penalty ε, and
+//!    it does not grow when the element is squeezed; the limit shrinks with the element, so it
+//!    can cut a genuine contact only where p/ε passes half of the thinnest part of an element
+//!    crushed under the face (a limit listed in the manual). The limit is never larger than the
+//!    undeformed one, so no point is newly accepted, and a point is newly refused only where it
+//!    lies deeper than half the current thickness of a squeezed element: everywhere else, and
+//!    where the current thickness is even, the accepted points and the results are unchanged.
+//!
+//! Each normal force and its reaction act along the main face's normal through both points, so
+//! the contact keeps linear and angular momentum; the friction force at a node and its reaction
+//! at the point of the face under it are a couple with an arm of the penetration, so with
+//! friction angular momentum changes by at most δ_max μ ∫ F_n dt.
+//!
+//! **Search.** Every increment, from the positions alone (no search state is kept from one
+//! increment to the next, so a run resumed from saved displacements rebuilds it exactly): each
+//! surface's faces go into a bucket grid with their boxes grown by their depth limit
+//! ([`fieldcraft_fem::contact::Grid`]: D. J. Benson, J. O. Hallquist, *A single surface contact
+//! algorithm for the post-buckling analysis of shell structures*, CMAME 78:141–163, 1990); each
+//! secondary face takes the main faces listed in the cells its box overlaps. The faces are
+//! integrated in parallel, each on its own, and their forces added face by face in a fixed order,
+//! so the result does not depend on how the faces are split among threads.
 //!
 //! **Penalty.** The penalty per area comes from the masses and the stable increment Δt:
 //! ε = s γ min_i (m_i / A_i) / Δt², with m_i the lumped mass of node i and A_i the area that
@@ -126,7 +171,8 @@ pub struct Face {
     /// The nodes of the face's element (a node of it is never in contact with the face).
     pub owner: Vec<usize>,
     /// The penetration beyond which a point has passed through: [`DEPTH_FRACTION`] of the
-    /// element's thickness under the face.
+    /// element's thickness under the face, undeformed (the initial-penetration check; during the
+    /// analysis no more than that fraction of its current thickness, `Surface::depths`).
     pub depth: f64,
 }
 
@@ -213,6 +259,54 @@ fn volume(kind: ElementKind, x: &[Vec3]) -> Option<f64> {
         ElementKind::Tet4 => <[Vec3; 4]>::try_from(x).ok().and_then(|a| fieldcraft_fem::uniform::Tet4::tet4(&a).ok()).map(|k| k.volume),
         _ => None,
     }
+}
+
+/// The volume of a solid element of corners `x` as it is now: a tet4's, or a hex8's trilinear
+/// map's by the 2 × 2 × 2 Gauss rule (exact: det J is at most quadratic in each natural
+/// coordinate); no check, so a distorted element gives what it gives (the caller falls back when
+/// it is not positive).
+fn current_volume(x: &[Vec3]) -> f64 {
+    match x {
+        [a, b, c, d] => dot(sub(*b, *a), cross(sub(*c, *a), sub(*d, *a))) / 6.0,
+        _ if x.len() == 8 => {
+            let g = 1.0 / 3f64.sqrt();
+            let mut v = 0.0;
+            for p in fieldcraft_fem::shape::HEX_CORNERS {
+                let s = fieldcraft_fem::shape::hex8(p.map(|c| c * g));
+                let mut j = [[0.0; 3]; 3];
+                for (dn, y) in s.derivatives().iter().zip(x) {
+                    for (row, d) in j.iter_mut().zip(dn) {
+                        for k in 0..3 {
+                            row[k] += d * y[k];
+                        }
+                    }
+                }
+                v += dot(j[0], cross(j[1], j[2]));
+            }
+            v
+        }
+        _ => 0.0,
+    }
+}
+
+/// How closely the local thickness must agree with the average for the average to stand.
+const LOCAL_AGREEMENT: f64 = 1e-9; // unit-factors: relative to the average thickness
+
+/// The smallest current local thickness of `face`'s element under it: the smallest distance
+/// behind the face of the element's nodes that are not on the face, each taken at the closest
+/// point of the face's own (bilinear) surface along the normal there, the same measure the
+/// contact's gap uses, so a warped face or a sheared element is measured as it is. Only positive,
+/// finite distances count (`None` when there are none: an element turned inside out). `x` are
+/// the face's corners now. For a tetrahedron it is the opposite node's height, three times V/A;
+/// for a hexahedron squeezed evenly it is V/A.
+fn local_thickness(face: &Face, x: &[Vec3], xyz: &[Vec3], u: &[f64]) -> Option<f64> {
+    face.owner
+        .iter()
+        .filter(|node| !face.corners().contains(node))
+        .filter_map(|node| closest_point(x, position(xyz, u, *node)))
+        .map(|p| -p.gap)
+        .filter(|h| *h > 0.0 && h.is_finite())
+        .min_by(f64::total_cmp)
 }
 
 /// A face's area vector (its outward normal times its area, flat or bilinear).
@@ -313,6 +407,38 @@ impl Surface {
         self.faces.iter().map(|f| f.corners().iter().map(|n| position(xyz, u, *n)).collect()).collect()
     }
 
+    /// Each face's depth limit at displacements `u` (corners at `positions`): [`DEPTH_FRACTION`]
+    /// of the smallest of its element's undeformed thickness, its current thickness V/A (where it
+    /// has a positive volume now) and its smallest current local thickness under the face
+    /// ([`local_thickness`]). A body squeezed through its thickness brings the far side of its own
+    /// layers of elements nearer than half an undeformed element without anything passing
+    /// through; the far side stays at least the main face's element's local thickness away, even
+    /// where the element is much thinner than it is on average, and the element's own opposite
+    /// face is never a candidate (see [`integrate_face`]).
+    fn depths(&self, xyz: &[Vec3], u: &[f64], positions: &[Vec<Vec3>]) -> Vec<f64> {
+        self.faces
+            .iter()
+            .zip(positions)
+            .map(|(f, x)| {
+                let area = norm(area_vector(x));
+                let corners: Vec<Vec3> = f.owner.iter().map(|n| position(xyz, u, *n)).collect();
+                let average = current_volume(&corners) / area;
+                let mut depth = f.depth;
+                if average > 0.0 && average.is_finite() {
+                    depth = depth.min(DEPTH_FRACTION * average);
+                }
+                if let Some(local) = local_thickness(f, x, xyz, u) {
+                    // Where the two agree to rounding (an element squeezed evenly) the average
+                    // stands, so that the accepted points do not move with the last bit.
+                    if local < average * (1.0 - LOCAL_AGREEMENT) || !(average > 0.0 && average.is_finite()) {
+                        depth = depth.min(DEPTH_FRACTION * local);
+                    }
+                }
+                depth
+            })
+            .collect()
+    }
+
     /// The nodes' outward normals (the sum of their faces' area vectors; not normalised).
     fn node_normals(&self, faces: &[Vec<Vec3>]) -> Vec<Vec3> {
         self.node_faces
@@ -330,9 +456,10 @@ impl Surface {
     }
 }
 
-/// The faces' grid for the global search at positions `positions`.
-fn grid(surface: &Surface, positions: &[Vec<Vec3>]) -> Grid {
-    let boxes: Vec<Aabb> = surface.faces.iter().zip(positions).map(|(f, x)| bounds(x, f.depth)).collect();
+/// The faces' grid for the global search at positions `positions`, each face's box grown by its
+/// depth limit in `depths`.
+fn grid(positions: &[Vec<Vec3>], depths: &[f64]) -> Grid {
+    let boxes: Vec<Aabb> = positions.iter().zip(depths).map(|(x, d)| bounds(x, *d)).collect();
     Grid::new(&boxes, 4 * boxes.len() + 64)
 }
 
@@ -421,17 +548,20 @@ struct FaceInfo {
     length: f64,
     /// The lateral offset beyond which a point is past the face's edge.
     edge: f64,
+    /// The penetration beyond which a point has passed through it (see [`Surface::depths`]).
+    depth: f64,
     alive: bool,
 }
 
-fn face_info(surface: &Surface, positions: &[Vec<Vec3>], alive: &dyn Fn(&Face) -> bool) -> Vec<FaceInfo> {
+fn face_info(surface: &Surface, positions: &[Vec<Vec3>], depths: &[f64], alive: &dyn Fn(&Face) -> bool) -> Vec<FaceInfo> {
     surface
         .faces
         .iter()
         .zip(positions)
-        .map(|(f, x)| {
+        .zip(depths)
+        .map(|((f, x), depth)| {
             let area = area_vector(x);
-            FaceInfo { area, length: norm(area), edge: EDGE_TOLERANCE * size(x), alive: alive(f) }
+            FaceInfo { area, length: norm(area), edge: EDGE_TOLERANCE * size(x), depth: *depth, alive: alive(f) }
         })
         .collect()
 }
@@ -496,7 +626,9 @@ fn integrate_face(
     for &c in found.iter() {
         let c = c as usize;
         let (Some(m), Some(x), Some(mi)) = (main.faces.get(c), mx.get(c), info.get(c)) else { continue };
-        if !mi.alive || m.corners().iter().any(|k| f.corners().contains(k)) {
+        // Never a face of the same element (a hexahedron's opposite faces share no node), nor
+        // one that shares a node with this face.
+        if !mi.alive || m.index == f.index || m.corners().iter().any(|k| f.corners().contains(k)) {
             continue;
         }
         if !(mi.length > 0.0) || dot(mi.area, normal) >= -FACING * mi.length {
@@ -524,7 +656,7 @@ fn integrate_face(
                         let gap = dot(sub(qs.point, qm.point), qm.normal);
                         // Over the main face (its foot not clamped to an edge), behind it, within
                         // its depth.
-                        if !(gap < 0.0 && -gap <= m.depth && qm.lateral <= mi.edge) {
+                        if !(gap < 0.0 && -gap <= mi.depth && qm.lateral <= mi.edge) {
                             continue;
                         }
                         let push = eps * (-gap) * weight * tri_area;
@@ -609,7 +741,8 @@ impl Interface {
         for pass in &self.passes {
             let (Some(nodes), Some(faces)) = (self.surfaces.get(pass.secondary), self.surfaces.get(pass.main)) else { continue };
             let positions = faces.positions(xyz, &zero);
-            let grid = grid(faces, &positions);
+            let undeformed: Vec<f64> = faces.faces.iter().map(|f| f.depth).collect();
+            let grid = grid(&positions, &undeformed);
             let own = nodes.positions(xyz, &zero);
             let normals = nodes.node_normals(&own);
             // Each move is decided on the positions before any move of this pass.
@@ -684,20 +817,24 @@ impl Interface {
             return e;
         }
         let alive = |f: &Face| state.elements.get(f.index).is_none_or(|s| s.failed.is_none());
+        // Everything the search needs is rebuilt from the positions every increment: no search
+        // state carries from one increment to the next.
         let positions: Vec<Vec<Vec<Vec3>>> = self.surfaces.iter().map(|s| s.positions(xyz, u)).collect();
-        let grids: Vec<Grid> = self.surfaces.iter().zip(&positions).map(|(s, p)| grid(s, p)).collect();
+        let depths: Vec<Vec<f64>> = self.surfaces.iter().zip(&positions).map(|(s, p)| s.depths(xyz, u, p)).collect();
+        let grids: Vec<Grid> = positions.iter().zip(&depths).map(|(p, d)| grid(p, d)).collect();
         let friction = self.friction;
         for pass in &mut self.passes {
-            let (Some(secondary), Some(main), Some(sx), Some(mx), Some(grid)) = (
+            let (Some(secondary), Some(main), Some(sx), Some(mx), Some(md), Some(grid)) = (
                 self.surfaces.get(pass.secondary),
                 self.surfaces.get(pass.main),
                 positions.get(pass.secondary),
                 positions.get(pass.main),
+                depths.get(pass.main),
                 grids.get(pass.main),
             ) else {
                 continue;
             };
-            let info = face_info(main, mx, &alive);
+            let info = face_info(main, mx, md, &alive);
             let blocks = fieldcraft_parallel::map_grained(secondary.faces.len().div_ceil(BLOCK), 1, |b| {
                 let mut found = Vec::new();
                 (b * BLOCK..((b + 1) * BLOCK).min(secondary.faces.len()))
