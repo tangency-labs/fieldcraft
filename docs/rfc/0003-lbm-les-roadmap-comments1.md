@@ -165,3 +165,20 @@ flows and measure the channel stress balance before changing its near-wall model
    I would use its study design when specifying the two runs and set the acceptance bands
    from experimental measurements.
    [Suss & Mary, AIAA 2026-3485](https://doi.org/10.2514/6.2026-3485)
+
+## Suggested issues
+
+Each draft can be filed as a follow-up on its linked tracking issue. Start with the ramp
+comparison and wake probes. The interface test depends on the first two-level CPU stepper.
+The established-flow initializer is conditional on what the ramp investigation finds.
+
+- [Compare quiescent and stream-function starts in the ramped cylinder test](0003-issue-drafts/01-cylinder-startup.md)
+- [Measure cylinder shedding independently of the lift spectrum](0003-issue-drafts/02-cylinder-wake-probes.md)
+- [Close the force budget over the matched-wall GPU averaging window](0003-issue-drafts/03-matched-wall-force.md)
+- [Specify the matched Spalding wall’s sampling distance in grid rows](0003-issue-drafts/04-matching-height.md)
+- [Measure the shear-stress partition across the matched-wall sampling row](0003-issue-drafts/05-channel-stress-profile.md)
+- [Measure the pressure pulse from a vortex crossing one CPU refinement interface](0003-issue-drafts/06-refinement-vortex.md)
+- [Isolate triangulation error in interpolated-wall Stokes drag](0003-issue-drafts/07-interpolated-sphere.md)
+- [Measure D3Q19 HRR shear-wave damping on a moving stream](0003-issue-drafts/08-oblique-shear.md)
+- [Test consistent population initialization on a decaying Taylor–Green vortex](0003-issue-drafts/09-consistent-initialization.md)
+- [Specify the D/40 evidence and D/80 budget for cylinder acceptance](0003-issue-drafts/10-cylinder-refinement-protocol.md)
