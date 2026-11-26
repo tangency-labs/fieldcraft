@@ -2024,6 +2024,7 @@ dependencies = [
  "fieldcraft-lbm",
  "fieldcraft-mesh",
  "fieldcraft-model",
+ "libm",
  "log",
  "pollster 1.0.3",
  "serde_json",

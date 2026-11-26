@@ -8,6 +8,7 @@ mod common;
 #[path = "support/wall_balance.rs"]
 mod wall_balance;
 
+use common::lee_moser::{LM_1000_CHANNEL, LeeMoserChannel};
 use common::*;
 use fieldcraft_lbm::{Error, Flow, Limits, Setup, run};
 use fieldcraft_model::{Collision, FaceCondition, FluidThermal, Procedure, ThermalCondition, Turbulence, WallModel};
@@ -936,48 +937,6 @@ const MATCHED_BLOCK: f64 = 1.0;
 const MATCHED_BAR: f64 = 0.05;
 /// The lattice sound speed, 1/√3 (c_s² = 1/3).
 const LATTICE_SOUND_SPEED: f64 = 0.577_350_269_189_625_8;
-
-/// Lee & Moser's mean profile at Re_τ 1000 (M. Lee, R. D. Moser, *Direct numerical simulation of turbulent
-/// channel flow up to Re_τ ≈ 5200*, J. Fluid Mech. 774:395–415, 2015, doi:10.1017/jfm.2015.268; sampled from
-/// turbulence.oden.utexas.edu `LM_Channel_1000_mean_prof.dat`, the same 16 points as the #664 study in
-/// `crates/lbm-gpu/tests/verification.rs`): U⁺ at y/δ, and the bulk U_b⁺ = 1/u_τ (the file's U_mean = 1).
-struct LeeMoserChannel {
-    bulk: f64,
-    profile: [(f64, f64); 16],
-}
-
-const LM_1000_CHANNEL: LeeMoserChannel = LeeMoserChannel {
-    bulk: 1.0 / 5.00256e-2,
-    profile: [
-        (0.01, 8.437),
-        (0.02, 11.968),
-        (0.03, 13.455),
-        (0.05, 14.839),
-        (0.07, 15.624),
-        (0.1, 16.456),
-        (0.15, 17.450),
-        (0.2, 18.200),
-        (0.3, 19.320),
-        (0.4, 20.168),
-        (0.5, 20.858),
-        (0.6, 21.434),
-        (0.7, 21.909),
-        (0.8, 22.272),
-        (0.9, 22.509),
-        (1.0, 22.593),
-    ],
-};
-
-impl LeeMoserChannel {
-    /// U⁺ at `y` (over δ, in (0, 1]), interpolated linearly in ln y.
-    fn at(&self, y: f64) -> f64 {
-        let p = &self.profile;
-        let i = p.windows(2).position(|w| y <= w[1].0).unwrap_or(p.len() - 2);
-        let ((y0, u0), (y1, u1)) = (p[i], p[i + 1]);
-        let t = (y.max(y0).ln() - y0.ln()) / (y1.ln() - y0.ln());
-        u0 + t.clamp(0.0, 1.0) * (u1 - u0)
-    }
-}
 
 /// One grid of the matched-wall study: the time-averaged profile, its bulk speed and the stop.
 struct MatchedRun {
