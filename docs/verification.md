@@ -150,6 +150,13 @@ falls 3.7e-4 short of `ρ_b U A`. A sponge or PML layer (Xu & Sagaut 2013; Najaf
 was not built. Below τ⁺ = 0.505, reachable only with a turbulence model, none of these holds at
 this Mach number (literature C3.3c, C1.5).
 
+## Fluid capabilities at a glance
+
+The fluid capabilities verified against theory, benchmarks or experiment, with their numbers and proposed
+showcase examples, are listed in [What works](manual/fluid/what-works.md). Large-eddy simulation is not among
+them: its measured errors, what blocks published accuracy and the options are in
+[RFC 0003](rfc/0003-lbm-les-roadmap.md) (the LBM-LES work is parked as of 2026-11-26).
+
 ## Long studies
 
 Some studies take hours and run in no CI job; the heavy job (`cargo xtask test --heavy`, 60
