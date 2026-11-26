@@ -71,6 +71,10 @@ const BATCH_BYTES: usize = 32 << 20;
 /// Dense work (multiply–adds) from which a kernel's tiles run in parallel.
 const PARALLEL_WORK: usize = 1 << 21;
 
+/// Columns of the matrix that one task copies ([`UpperColumns::from_symmetric`]) or whose rows
+/// it sorts ([`Pattern::new`]).
+const SORTED: usize = 1024;
+
 // Runs of the parallel branches on this thread, counted for the tests (the branch is decided on
 // the thread that calls it, and the tests read the count there).
 #[cfg(test)]
@@ -101,20 +105,36 @@ impl<T: Scalar> UpperColumns<T> {
     /// From a symmetric matrix stored by full rows (row k's entries with column ≤ k are column k
     /// of the upper triangle).
     pub fn from_symmetric(a: &crate::sparse::Csr<T>) -> UpperColumns<T> {
+        // Every row's share is counted, then the rows are copied by the thousand, in parallel:
+        // each task writes its own part of the columns.
+        let counts = parallel::map_grained(a.n, SORTED, |k| a.row(k).0.iter().filter(|c| **c <= k).count());
         let mut ptr = Vec::with_capacity(a.n + 1);
-        ptr.push(0);
-        let mut idx = Vec::new();
-        let mut val = Vec::new();
-        for k in 0..a.n {
-            let (cols, vals) = a.row(k);
-            for (c, v) in cols.iter().zip(vals) {
-                if *c <= k {
-                    idx.push(*c);
-                    val.push(*v);
+        ptr.push(0usize);
+        for count in &counts {
+            ptr.push(ptr.last().copied().unwrap_or(0) + count);
+        }
+        let total = ptr.last().copied().unwrap_or(0);
+        let (mut idx, mut val) = (vec![0usize; total], vec![T::ZERO; total]);
+        let mut pieces: Vec<(std::ops::Range<usize>, &mut [usize], &mut [T])> = Vec::new();
+        let (mut rest_idx, mut rest_val) = (idx.as_mut_slice(), val.as_mut_slice());
+        for rows in parallel::blocks(a.n, SORTED) {
+            let entries = ptr.get(rows.end).copied().unwrap_or(0).saturating_sub(ptr.get(rows.start).copied().unwrap_or(0));
+            let entries = entries.min(rest_idx.len()).min(rest_val.len());
+            let (own_idx, tail_idx) = std::mem::take(&mut rest_idx).split_at_mut(entries);
+            let (own_val, tail_val) = std::mem::take(&mut rest_val).split_at_mut(entries);
+            pieces.push((rows, own_idx, own_val));
+            (rest_idx, rest_val) = (tail_idx, tail_val);
+        }
+        parallel::for_each_mut(&mut pieces, |_, (rows, own_idx, own_val)| {
+            let mut slots = own_idx.iter_mut().zip(own_val.iter_mut());
+            for k in rows.clone() {
+                let (cols, vals) = a.row(k);
+                for ((c, v), (i, x)) in cols.iter().zip(vals).filter(|(c, _)| **c <= k).zip(&mut slots) {
+                    (*i, *x) = (*c, *v);
                 }
             }
-            ptr.push(idx.len());
-        }
+        });
+        drop(pieces);
         UpperColumns { n: a.n, ptr, idx, val }
     }
 }
@@ -707,12 +727,27 @@ impl Pattern {
                 }
             }
         }
-        for j in 0..n {
-            let (s, e) = (ptr.get(j).copied().unwrap_or(0), ptr.get(j + 1).copied().unwrap_or(0));
-            if let Some(col) = entries.get_mut(s..e) {
-                col.sort_by_key(|p| p.0);
-            }
+        // Every column's rows in order: columns by the thousand, in parallel.
+        let mut pieces: Vec<(std::ops::Range<usize>, &mut [(usize, usize)])> = Vec::new();
+        let mut rest = entries.as_mut_slice();
+        for columns in parallel::blocks(n, SORTED) {
+            let (s, e) = (ptr.get(columns.start).copied().unwrap_or(0), ptr.get(columns.end).copied().unwrap_or(0));
+            let entries = e.saturating_sub(s).min(rest.len());
+            let (piece, tail) = std::mem::take(&mut rest).split_at_mut(entries);
+            pieces.push((columns, piece));
+            rest = tail;
         }
+        parallel::for_each_mut(&mut pieces, |_, (columns, piece)| {
+            let mut rest = std::mem::take(piece);
+            for j in columns.clone() {
+                let (s, e) = (ptr.get(j).copied().unwrap_or(0), ptr.get(j + 1).copied().unwrap_or(0));
+                let len = e.saturating_sub(s).min(rest.len());
+                let (column, tail) = std::mem::take(&mut rest).split_at_mut(len);
+                column.sort_by_key(|p| p.0);
+                rest = tail;
+            }
+        });
+        drop(pieces);
         let mut slot = vec![0usize; a.idx.len()];
         for (pos, &(_, e)) in entries.iter().enumerate() {
             if let Some(x) = slot.get_mut(e) {
@@ -2009,6 +2044,59 @@ mod tests {
         assert!(uniform_blocks(&upper).is_none());
         assert_eq!(symbolic(&upper), symbolic_by_columns(&upper));
         check_solve(&rolling, &Factor::new(&upper, usize::MAX).unwrap(), 1e-9);
+    }
+
+    /// The matrix in another order keeps every column's rows sorted and every value, and its
+    /// upper triangle by columns is the rows' entries up to the diagonal, however many columns
+    /// a task takes.
+    #[test]
+    fn the_matrix_is_copied_and_reordered_whole() {
+        let n = 3 * SORTED + 17;
+        let mut seed = 99u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize
+        };
+        // A band with a few entries far off it, by full rows.
+        let mut rows: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
+        for i in 0..n {
+            rows[i].push((i, 10.0 + i as f64));
+            for j in [i.saturating_sub(1), i.saturating_sub(7), next() % (i + 1)] {
+                if j < i && !rows[i].iter().any(|(c, _)| *c == j) {
+                    let v = 1.0 + (next() % 100) as f64 / 100.0;
+                    rows[i].push((j, v));
+                    rows[j].push((i, v));
+                }
+            }
+        }
+        let (mut ptr, mut idx, mut val) = (vec![0], Vec::new(), Vec::new());
+        for row in &mut rows {
+            row.sort_by_key(|(c, _)| *c);
+            idx.extend(row.iter().map(|(c, _)| *c));
+            val.extend(row.iter().map(|(_, v)| *v));
+            ptr.push(idx.len());
+        }
+        let upper = UpperColumns::from_symmetric(&Csr { n, ptr, idx, val });
+        for k in 0..n {
+            let expected: Vec<(usize, f64)> = rows[k].iter().copied().filter(|(c, _)| *c <= k).collect();
+            let (r, v) = upper.column(k);
+            assert_eq!(r.iter().copied().zip(v.iter().copied()).collect::<Vec<_>>(), expected, "column {k}");
+        }
+        // Reversed: column j of the lower triangle is the old column n − 1 − j, its rows turned,
+        // and every entry of the upper columns is found where its row and column say.
+        let inverse: Vec<usize> = (0..n).map(|i| n - 1 - i).collect();
+        let pattern = Pattern::new(&upper, &inverse);
+        for j in 0..n {
+            let r = pattern.rows(j);
+            assert!(r.windows(2).all(|w| w[0] < w[1]) && r.first() == Some(&j), "column {j}: {r:?}");
+            let mut expected: Vec<usize> = rows[n - 1 - j].iter().filter(|(c, _)| *c <= n - 1 - j).map(|(c, _)| n - 1 - c).collect();
+            expected.sort_unstable();
+            assert_eq!(r, expected.as_slice(), "column {j}");
+        }
+        for (entry, &(row, column)) in pattern.coords.iter().enumerate() {
+            let at = pattern.slot[entry];
+            assert!(pattern.range(column).contains(&at) && pattern.idx[at] == row, "entry {entry}");
+        }
     }
 
     #[test]
