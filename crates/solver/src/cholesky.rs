@@ -359,6 +359,15 @@ pub(crate) fn times_d<T: Scalar>(row: &mut [T], l: &Panel<T>, k0: usize, pivots:
     }
 }
 
+/// `len` times `zero`, or [`FactorError::OutOfMemory`] (with the entries asked for) where a
+/// `vec!` would abort the program: the workspace of the dense kernels is taken through this.
+fn zeros<T: Clone>(len: usize, zero: T) -> std::result::Result<Vec<T>, FactorError> {
+    let mut values = Vec::new();
+    values.try_reserve_exact(len).map_err(|_| FactorError::OutOfMemory { entries: len })?;
+    values.resize(len, zero);
+    Ok(values)
+}
+
 /// S(i, c) = Σ_k L(p + i, k) Y(p + c, k) over the columns k in `cols` of a trapezoid, for rows i
 /// in 0..mu and columns c in 0..wu (meaningful for i ≥ c), each sum in column order. Y is L
 /// (Cholesky), or L D with D the block diagonal the trapezoid holds when `pivots` (of the
@@ -371,10 +380,10 @@ pub(crate) fn products<T: Scalar>(
     mu: usize,
     wu: usize,
     pivots: Option<&[Pivot]>,
-) -> Vec<Vec<T>> {
+) -> std::result::Result<Vec<Vec<T>>, FactorError> {
     let (k0, kw) = (cols.start, cols.len());
     // Rows p..p+wu of the columns, transposed so that column c's coefficients are contiguous.
-    let mut yt = vec![T::ZERO; wu * kw];
+    let mut yt = zeros(wu.saturating_mul(kw), T::ZERO)?;
     for k in 0..kw {
         for (c, y) in l.column(k0 + k, p, wu).iter().enumerate() {
             if let Some(slot) = yt.get_mut(c * kw + k) {
@@ -388,7 +397,7 @@ pub(crate) fn products<T: Scalar>(
         }
     }
     // Y by blocks of NR columns, k-major (zero past wu): what a micro-tile reads at each k.
-    let mut yp = vec![[T::ZERO; NR]; wu.div_ceil(NR) * kw];
+    let mut yp = zeros(wu.div_ceil(NR).saturating_mul(kw), [T::ZERO; NR])?;
     for (c, row) in yt.chunks(kw.max(1)).enumerate().take(wu) {
         for (k, y) in row.iter().enumerate() {
             if let Some(slot) = yp.get_mut((c / NR) * kw + k).and_then(|b| b.get_mut(c % NR)) {
@@ -397,11 +406,11 @@ pub(crate) fn products<T: Scalar>(
         }
     }
     let tiles = mu.div_ceil(TILE);
-    let tile = |t: usize| -> Vec<T> {
+    let tile = |t: usize| -> std::result::Result<Vec<T>, FactorError> {
         let i0 = t * TILE;
         let h = TILE.min(mu - i0);
         // The tile's rows of every column by blocks of MR rows, k-major, padded to TILE rows.
-        let mut xp = vec![[T::ZERO; MR]; TILE / MR * kw];
+        let mut xp = zeros((TILE / MR).saturating_mul(kw), [T::ZERO; MR])?;
         for k in 0..kw {
             for (i, x) in l.column(k0 + k, p + i0, h).iter().enumerate() {
                 if let Some(slot) = xp.get_mut((i / MR) * kw + k).and_then(|b| b.get_mut(i % MR)) {
@@ -410,7 +419,7 @@ pub(crate) fn products<T: Scalar>(
             }
         }
         let cols = wu.min(i0 + h);
-        let mut out = vec![T::ZERO; cols * TILE];
+        let mut out = zeros(cols.saturating_mul(TILE), T::ZERO)?;
         // Micro-tiles of MR rows and NR columns: each S(i, c) is summed in a register over k in
         // order from 0, the same operations as one column at a time, with each X and Y value
         // loaded once per micro-tile.
@@ -434,9 +443,13 @@ pub(crate) fn products<T: Scalar>(
                 }
             }
         }
-        out
+        Ok(out)
     };
-    if mu.saturating_mul(wu).saturating_mul(kw) >= PARALLEL_WORK { parallel::map(tiles, tile) } else { (0..tiles).map(tile).collect() }
+    if mu.saturating_mul(wu).saturating_mul(kw) >= PARALLEL_WORK {
+        parallel::map(tiles, tile).into_iter().collect()
+    } else {
+        (0..tiles).map(tile).collect()
+    }
 }
 
 /// own(rel(i), rel(c)) −= S(i, c) for i ≥ c, with S in the tiles of [`products`].
@@ -839,7 +852,7 @@ impl<T: Scalar> Context<'_, T> {
                 }
                 relative.push(at);
             }
-            let tiles = products(&Panel { m: kr.len(), data: lk }, 0..kw, u.p1, mu, wu, done_k.pivots());
+            let tiles = products(&Panel { m: kr.len(), data: lk }, 0..kw, u.p1, mu, wu, done_k.pivots())?;
             subtract(own, m, &tiles, mu, wu, |i| relative.get(i).copied().unwrap_or(0));
         }
         Ok(())
@@ -861,7 +874,7 @@ impl Context<'_, f64> {
             let pw = c1 - c0;
             if c0 > 0 {
                 // The panel minus its products with the columns before it.
-                let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None);
+                let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None)?;
                 subtract(own, m, &tiles, m - c0, pw, |i| c0 + i);
             }
             // The diagonal block, column by column.
@@ -1162,6 +1175,12 @@ impl Symbolic {
         supernode: impl Fn(&Context<T>, usize, &[S], usize, &mut S) -> std::result::Result<(), FactorError> + Sync,
     ) -> std::result::Result<(), FactorError> {
         let context = Context { a, pattern: &self.pattern, s: &self.structure, updates: &self.updates };
+        // The workspace of the dense kernels is asked for without aborting; what is missing is
+        // reported as the factorization's.
+        let whole = |e: FactorError| match e {
+            FactorError::OutOfMemory { .. } => FactorError::OutOfMemory { entries: self.entries },
+            e => e,
+        };
         // The tasks run in parallel, each through its supernodes in order.
         let mut pieces: Vec<(std::ops::Range<usize>, &mut [S], Option<FactorError>)> = Vec::with_capacity(self.tasks.len());
         let mut rest: &mut [S] = values;
@@ -1203,7 +1222,7 @@ impl Symbolic {
             }
         });
         if let Some(e) = broken.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner) {
-            return Err(e);
+            return Err(whole(e));
         }
         // The first failing column in postorder is the one a pass in order would meet first:
         // the supernodes above the tasks run up to it.
@@ -1222,7 +1241,7 @@ impl Symbolic {
             }
             let (done, own) = values.split_at_mut(j);
             let Some(own) = own.first_mut() else { break };
-            supernode(&context, j, done, 0, own).map_err(named)?;
+            supernode(&context, j, done, 0, own).map_err(|e| whole(named(e)))?;
         }
         match earliest {
             Some(e) => Err(named(e)),
@@ -1350,7 +1369,7 @@ mod tests {
                 })
                 .collect();
             for piv in [None, Some(&pivots[..])] {
-                let got = products(&l, k0..k0 + kw, p, mu, wu, piv);
+                let got = products(&l, k0..k0 + kw, p, mu, wu, piv).unwrap();
                 let expected = products_by_columns(&l, k0..k0 + kw, p, mu, wu, piv);
                 let bits = |t: &Vec<Vec<f64>>| t.iter().map(|v| v.iter().map(|x| x.to_bits()).collect::<Vec<u64>>()).collect::<Vec<_>>();
                 assert_eq!(bits(&got), bits(&expected), "m {m}, cols {k0}..{}, p {p}, mu {mu}, wu {wu}, pivots {}", k0 + kw, piv.is_some());
@@ -1531,6 +1550,24 @@ mod tests {
             let other = parallel::with_threads(threads, || Factor::new(&upper, usize::MAX)).unwrap();
             assert!(one.values.iter().flatten().zip(other.values.iter().flatten()).all(|(a, b)| a.to_bits() == b.to_bits()), "{threads} threads");
         }
+    }
+
+    /// The dense kernels ask for their workspace without aborting, and a factorization reports
+    /// what a kernel could not have as its own lack of memory.
+    #[test]
+    fn a_kernel_without_memory_is_an_error() {
+        assert_eq!(zeros(3, 1.5), Ok(vec![1.5; 3]));
+        assert_eq!(zeros(usize::MAX, 0.0), Err(FactorError::OutOfMemory { entries: usize::MAX }));
+        // More columns than any memory holds: refused before a value is read.
+        let refused = products(&Panel { m: 1, data: &[1.0] }, 0..1, 0, 1, usize::MAX / 16, None);
+        assert!(matches!(refused, Err(FactorError::OutOfMemory { .. })), "{refused:?}");
+        let dense = vec![vec![4.0, 1.0, 0.0], vec![1.0, 4.0, 1.0], vec![0.0, 1.0, 4.0]];
+        let upper = UpperColumns::from_symmetric(&dense_to_csr(&dense));
+        let symbolic = Symbolic::new(&upper, usize::MAX).unwrap();
+        let lower = symbolic.numeric(&upper).unwrap();
+        let mut values: Vec<Vec<f64>> = symbolic.allocate().unwrap();
+        let failed = symbolic.factor(&lower, &mut values, |_, _, _, _, _| Err(FactorError::OutOfMemory { entries: 1 }));
+        assert_eq!(failed, Err(FactorError::OutOfMemory { entries: symbolic.entries }));
     }
 
     #[test]

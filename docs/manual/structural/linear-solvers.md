@@ -180,6 +180,13 @@ max_factor_entries)". An allocation that fails is "not enough memory for the fac
 entries)". 32-bit builds remain limited by addressable allocation sizes. The ceiling is defined
 once, as `FACTOR_ENTRY_CEILING` in `crates/engine/src/cmd/solve.rs`.
 
+**Workspace.** Beyond the factor's values, the numeric factorization takes memory for its dense
+kernels: the product of an update until it is subtracted (no more than about the rows times the
+columns of the supernode that receives it) and packed copies of the columns it is computed from.
+This memory is not counted in `max_factor_entries`. It is asked for without aborting: where it
+cannot be had, the solve stops with the same "not enough memory for the factorization (N
+entries)".
+
 The same entry budget guards two more stores:
 
 - **Constraint reduction** (`constraints::Budget`, 8 × `max_factor_entries` bytes over the matrices
@@ -295,6 +302,7 @@ lets it through.
 |---|---|---|
 | Sparse SPD factor and solve; cap refused before allocation; singular matrix located; cancellation; empty and 1 × 1 matrices | exact solution, located errors | `cholesky::tests::factor_and_solve_a_sparse_spd_matrix` |
 | Supernodes wider than two panels, 1, 2 and 7 threads | residual < 10⁻¹², factor bit-identical on every thread count | `supernodes_panels_and_threads` |
+| Workspace of a dense kernel that cannot be had | the out-of-memory error with the factor's entries, no abort | `a_kernel_without_memory_is_an_error` |
 | Indefinite shifted systems | inertia equals the eigenvalue count below σ; residual < 10⁻¹⁰; on an SPD matrix the same fill as Cholesky and no negative pivot | `ldlt::tests::indefinite_systems_solve_with_their_inertia` |
 | Saddle points with zero diagonals | 2 × 2 pivots; inertia (K's size, the constraints') | `two_by_two_pivots_for_zero_diagonals` |
 | Singular Laplacian, NaN, caps | located `Singular` errors; cap before the numeric factorization | `singular_and_hostile_matrices_are_located_errors` |
