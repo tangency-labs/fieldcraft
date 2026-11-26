@@ -1010,6 +1010,17 @@ pub const FLUID_DOMAIN: &[Field] = &[
     )
     .help("Zero-thickness no-slip sheets across the whole box; with heat they conduct through their thickness and each side's temperature and heat flux are reported. For now: closed boxes, clear of obstacles, laminar, no phase change or free surface, CPU only."),
     FREE_SURFACE,
+    rows_up_to(
+        "refinement",
+        "Refinement boxes",
+        &[
+            int("level", "Level", 1, fieldcraft_model::MAX_REFINEMENT_LEVELS as i64).help("1 for half the cell size, 2 for a quarter, and so on.").req(),
+            xyz("min", "Box min", D::Length).help("The box's corner with the smallest coordinates.").req(),
+            xyz("max", "Box max", D::Length).help("The box's corner with the largest coordinates.").req(),
+        ],
+        fieldcraft_model::MAX_REFINEMENT_LEVELS,
+    )
+    .help("Boxes of finer cells, one per level, each inside the level above; see model.fluid_domain.refine."),
 ];
 
 pub const FLUID_BOUNDARY: &[Field] = &[
@@ -1036,6 +1047,17 @@ pub const FLUID_COMPONENT_LIMIT: &[Field] = &[
     num("limit", "Temperature limit", D::Temperature)
         .help("The highest temperature it may reach (a junction or case limit); empty for none.")
         .hint("none"),
+];
+
+pub const FLUID_REFINE: &[Field] = &[
+    reference("domain", "Domain", C::FluidDomain).help("The fluid domain to refine.").req(),
+    int("level", "Level", 1, fieldcraft_model::MAX_REFINEMENT_LEVELS as i64)
+        .help("1 for half the domain's cell size, 2 for a quarter, and so on; each box sits inside the one above.")
+        .req(),
+    xyz("min", "Box min", D::Length).help("The box's corner with the smallest coordinates, on cell faces of the level above."),
+    xyz("max", "Box max", D::Length)
+        .help("The box's corner with the largest coordinates; each face sits on the domain's face or inside the level above."),
+    flag("remove", "Remove").help("Removes this level's box; the corners are then left out."),
 ];
 
 const PROCEDURE: Field = variants(

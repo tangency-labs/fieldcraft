@@ -627,7 +627,7 @@ pub static CATALOGUE: &[Capability] = &[
         Loads,
         "Flow",
         "The box of fluid cells, its fluid, and the obstacle bodies voxelised from their face-tagged surfaces",
-        &["model.fluid_domain.edit", "model.fluid_domain.delete"],
+        &["model.fluid_domain.edit", "model.fluid_domain.delete", "model.fluid_domain.refine"],
     ),
     ready_more(
         "model.fluid_domain.boundary",

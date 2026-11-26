@@ -208,6 +208,7 @@ fn probe_series(sigma: Option<f64>) -> Result<Vec<f64>> {
         fans: vec![],
         baffles: vec![],
         free_surface: None,
+        refinement: Vec::new(),
     };
     let mut model = Model::default();
     let fluid = Material { density: Some(1.0), fluid: Some(Fluid::Newtonian { viscosity: (TAU - 0.5) / 3.0 }), ..Material::default() };

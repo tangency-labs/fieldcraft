@@ -876,6 +876,49 @@ pub(crate) mod tests {
     /// whole power through commands: the half reports half the power generated with
     /// `power_share` ½, and its `whole_model` gives the power entered back and the whole tank's
     /// heat to the water. An obstacle the plane cuts off its middle is warned about.
+    /// The refinement command sets, replaces and removes a level's box; the whole-domain edit keeps the boxes
+    /// it is given. Lengths are in the default display units; the box is read back on its parent lattice.
+    #[test]
+    fn refine_command_sets_replaces_and_removes_a_level() {
+        let mut s = crate::Session::default();
+        s.run_script(&json!([
+            {"command": "model.material.create", "params": {"name": "Water", "density": 1e-9, "fluid": {"type": "newtonian", "viscosity": 1e-7}}},
+            {"command": "model.fluid_domain.create", "params": {"name": "Tank", "material": "Water", "min": [0, 0, 0], "max": [10, 2, 1], "spacing": 0.5,
+                "faces": {"x_min": {"type": "velocity", "velocity": [1, 0, 0]}, "x_max": {"type": "pressure", "pressure": 0},
+                    "z_min": {"type": "periodic"}, "z_max": {"type": "periodic"}}}},
+        ]))
+        .unwrap();
+        let refine = |s: &mut crate::Session, level: u32, min: [f64; 3], max: [f64; 3]| {
+            s.execute("model.fluid_domain.refine", &json!({"domain": "Tank", "level": level, "min": min, "max": max}))
+        };
+        refine(&mut s, 1, [2.0, 0.0, 0.0], [5.0, 1.0, 1.0]).unwrap();
+        let boxes = s.model.fluid_domain("Tank").unwrap().refinement_boxes().unwrap();
+        assert_eq!(boxes.len(), 1);
+        assert_eq!((boxes[0].lo, boxes[0].hi), ([4, 0, 0], [10, 2, 2]));
+        // a second box replaces nothing; the same level again replaces its box
+        refine(&mut s, 2, [2.5, 0.0, 0.0], [2.75, 0.25, 0.5]).unwrap();
+        refine(&mut s, 2, [2.5, 0.0, 0.0], [2.75, 0.25, 0.25]).unwrap();
+        assert_eq!(s.model.fluid_domain("Tank").unwrap().refinement.len(), 2);
+        // level 1 cannot go while level 2 sits inside it
+        assert!(s.execute("model.fluid_domain.refine", &json!({"domain": "Tank", "level": 1, "remove": true})).is_err());
+        s.execute("model.fluid_domain.refine", &json!({"domain": "Tank", "level": 2, "remove": true})).unwrap();
+        s.execute("model.fluid_domain.refine", &json!({"domain": "Tank", "level": 1, "remove": true})).unwrap();
+        assert!(s.model.fluid_domain("Tank").unwrap().refinement.is_empty());
+        // the whole-domain edit keeps a refinement given in its JSON
+        s.execute(
+            "model.fluid_domain.edit",
+            &json!({"name": "Tank", "material": "Water", "min": [0, 0, 0], "max": [10, 2, 1], "spacing": 0.5,
+                "faces": {"x_min": {"type": "velocity", "velocity": [1, 0, 0]}, "x_max": {"type": "pressure", "pressure": 0},
+                    "z_min": {"type": "periodic"}, "z_max": {"type": "periodic"}},
+                "refinement": [{"level": 1, "min": [2, 0, 0], "max": [5, 1, 1]}]}),
+        )
+        .unwrap();
+        assert_eq!(s.model.fluid_domain("Tank").unwrap().refinement.len(), 1);
+        // a level beyond the cap is refused by the form's bounds, and a box off the lattice by the model
+        assert!(refine(&mut s, 9, [2.0, 0.0, 0.0], [5.0, 1.0, 1.0]).is_err());
+        assert!(refine(&mut s, 1, [2.25, 0.0, 0.0], [5.0, 1.0, 1.0]).is_err());
+    }
+
     #[test]
     fn a_half_tank_gives_back_the_power_entered() {
         let mut s = plate_in_a_tank();

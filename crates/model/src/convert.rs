@@ -294,10 +294,15 @@ impl Quantities for FluidDomain {
             fans,
             baffles,
             free_surface,
+            refinement,
         } = self;
         each(min, Q::Length, f);
         each(max, Q::Length, f);
         f(Q::Length, spacing);
+        for Refinement { level: _, min, max } in refinement {
+            each(min, Q::Length, f);
+            each(max, Q::Length, f);
+        }
         let BoxFaces { x_min, x_max, y_min, y_max, z_min, z_max } = faces;
         for c in [x_min, x_max, y_min, y_max, z_min, z_max] {
             face_condition(c, f);

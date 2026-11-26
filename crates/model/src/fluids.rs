@@ -797,6 +797,60 @@ pub struct FluidDomain {
     /// box full of one fluid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub free_surface: Option<FreeSurface>,
+    /// Refinement boxes, by level: entry k is level k + 1.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refinement: Vec<Refinement>,
+}
+
+/// Most refinement levels in one domain (published runs use up to five: Spinelli et al. 2023).
+pub const MAX_REFINEMENT_LEVELS: usize = 8;
+
+/// The parent cells between a face of a refinement box and the face of its parent box, where the two do not both
+/// lie on the domain box's face: the ring of parent cells next to the box holds the finer level's two ghost layers
+/// (Qi, Klimach & Roller 2019, §2.2), and the interpolation that fills them reads one parent cell further out.
+pub const REFINEMENT_MARGIN: u64 = 2;
+
+/// The ghost cells a refinement box's grid adds along one side: two layers on each of its two faces (Qi, Klimach &
+/// Roller 2019, §2.2).
+const GHOST_CELLS_PER_SIDE: u64 = 4;
+
+fn nesting_message(face: &str, level: u32) -> String {
+    format!("its {face} face must lie on the domain box's face or at least {REFINEMENT_MARGIN} cells of level {level} inside the level above it")
+}
+
+/// The largest lattice index a refinement face may take on its level's lattice: a box inside the domain's cell
+/// cap, one level finer than the cap.
+const MAX_REFINEMENT_FACE: f64 = (MAX_CELLS_PER_SIDE << MAX_REFINEMENT_LEVELS) as f64;
+
+/// A refinement box: inside it the cells are `spacing / 2^level` on a side (ratio 2 per level, the time step
+/// halved with the spacing). One box per level, level 1 inside the domain box, level L + 1 inside level L.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Refinement {
+    /// 1 for half the domain's spacing, 2 for a quarter, ….
+    pub level: u32,
+    /// The box's lower and upper corners, on cell faces of the level above it (`level − 1`).
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+}
+
+/// A refinement box on its parent level's lattice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RefinementBox {
+    pub level: u32,
+    /// The box spans parent cells `lo..hi` along each axis: cells of side `spacing / 2^(level − 1)`, counted from
+    /// the domain's `min`.
+    pub lo: [u64; 3],
+    pub hi: [u64; 3],
+}
+
+/// The lattice index of a face at `value` on a lattice of `spacing` counted from `origin`, when the face lies on a
+/// cell face (within the tolerance [`FluidDomain::cells`] uses) and inside the cap.
+fn lattice_face(value: f64, origin: f64, spacing: f64) -> Option<u64> {
+    let cells = (value - origin) / spacing;
+    let whole = cells.round();
+    let on_face = (cells - whole).abs() <= WHOLE_CELLS_TOLERANCE * whole.max(1.0);
+    (on_face && (0.0..=MAX_REFINEMENT_FACE).contains(&whole)).then_some(whole as u64)
 }
 
 fn is_zero(v: &[f64; 3]) -> bool {
@@ -1054,7 +1108,80 @@ impl FluidDomain {
             let inlet = BoxFace::ALL.iter().any(|f| matches!(self.faces.get(*f), FaceCondition::Velocity { .. }));
             fs.validate(inlet).map_err(|e| context("free surface", "settings", e))?;
         }
+        self.refinement_boxes()?;
         Ok(())
+    }
+
+    /// The refinement boxes on their parent lattices, checked: the levels are contiguous from 1, each box lies on
+    /// cell faces of the level above it, inside that level's box with [`REFINEMENT_MARGIN`] parent cells to spare
+    /// unless it lies on the domain's face, and its ghost-layered grid stays within [`MAX_CELLS_PER_SIDE`].
+    pub fn refinement_boxes(&self) -> Result<Vec<RefinementBox>> {
+        if self.refinement.len() > MAX_REFINEMENT_LEVELS {
+            return Err(Error::Limit(format!("a fluid domain holds at most {MAX_REFINEMENT_LEVELS} refinement levels")));
+        }
+        for (k, r) in self.refinement.iter().enumerate() {
+            if r.level as usize != k + 1 {
+                return Err(Error::Invalid(format!("levels are 1, 2, … with one box each: entry {k} must be level {}, not {}", k + 1, r.level)));
+            }
+        }
+        if self.refinement.is_empty() {
+            return Ok(Vec::new());
+        }
+        let cells = self.cells()?;
+        let mut boxes: Vec<RefinementBox> = Vec::new();
+        for r in &self.refinement {
+            let parent = boxes.last().copied();
+            let b = self.refinement_box(r, cells, parent).map_err(|e| context("refinement level", &r.level.to_string(), e))?;
+            boxes.push(b);
+        }
+        Ok(boxes)
+    }
+
+    /// One refinement box on its parent lattice, given the parent box (`None` for level 1, which sits in the
+    /// domain). Its level is already checked to be `parent level + 1`.
+    fn refinement_box(&self, r: &Refinement, cells: [u64; 3], parent: Option<RefinementBox>) -> Result<RefinementBox> {
+        vector("min", r.min)?;
+        vector("max", r.max)?;
+        let level = r.level;
+        let shift = level.saturating_sub(1);
+        let hp = self.spacing / f64::from(1u32 << shift);
+        let mut lo = [0u64; 3];
+        let mut hi = [0u64; 3];
+        for a in 0..3 {
+            let name = ["x", "y", "z"][a];
+            let face = |max: bool| BoxFace::of(a, max).name();
+            let lo_a = lattice_face(r.min[a], self.min[a], hp).ok_or_else(|| {
+                Error::Invalid(format!("its {} face at {} is not on a cell face of level {} (spacing {hp})", face(false), r.min[a], shift))
+            })?;
+            let hi_a = lattice_face(r.max[a], self.min[a], hp).ok_or_else(|| {
+                Error::Invalid(format!("its {} face at {} is not on a cell face of level {} (spacing {hp})", face(true), r.max[a], shift))
+            })?;
+            if hi_a <= lo_a {
+                return Err(Error::Invalid(format!("its {name} range is empty")));
+            }
+            // The parent box, and the domain box, in the parent's cells.
+            let (plo, phi) = match parent {
+                None => (0, cells[a]),
+                Some(p) => (p.lo[a].saturating_mul(2), p.hi[a].saturating_mul(2)),
+            };
+            let n = cells[a].saturating_mul(1u64 << shift);
+            let margin = REFINEMENT_MARGIN;
+            let lower_ok = lo_a >= plo && (lo_a == 0 || lo_a >= plo.saturating_add(margin));
+            let upper_ok = hi_a <= phi && (hi_a == n || hi_a.saturating_add(margin) <= phi);
+            if !lower_ok {
+                return Err(Error::Invalid(nesting_message(face(false), shift)));
+            }
+            if !upper_ok {
+                return Err(Error::Invalid(nesting_message(face(true), shift)));
+            }
+            let side = hi_a.saturating_sub(lo_a).saturating_mul(2).saturating_add(GHOST_CELLS_PER_SIDE);
+            if side > MAX_CELLS_PER_SIDE {
+                return Err(Error::Invalid(format!("its {name} side would be {side} cells, above the cap of {MAX_CELLS_PER_SIDE}")));
+            }
+            lo[a] = lo_a;
+            hi[a] = hi_a;
+        }
+        Ok(RefinementBox { level, lo, hi })
     }
 
     /// Set one boundary's thermal condition (an adiabatic obstacle face removes its entry,
@@ -1139,6 +1266,30 @@ impl Model {
             }
         }
         Ok(())
+    }
+
+    /// Set (with `Some((min, max))`) or remove (with `None`) the refinement box of `level` in domain `name`. A new
+    /// level is added after the last one; removing a level that has finer ones is refused by the domain's validation.
+    pub fn set_fluid_refinement(&mut self, name: &str, level: u32, region: Option<([f64; 3], [f64; 3])>) -> Result<()> {
+        let mut d = self.fluid_domains.get(name).cloned().ok_or_else(|| Error::NotFound(format!("fluid domain `{name}`")))?;
+        match region {
+            Some((min, max)) => match d.refinement.iter_mut().find(|r| r.level == level) {
+                Some(r) => {
+                    r.min = min;
+                    r.max = max;
+                }
+                None => d.refinement.push(Refinement { level, min, max }),
+            },
+            None => {
+                let k = d
+                    .refinement
+                    .iter()
+                    .position(|r| r.level == level)
+                    .ok_or_else(|| Error::NotFound(format!("fluid domain `{name}`: refinement level {level}")))?;
+                d.refinement.remove(k);
+            }
+        }
+        self.replace_fluid_domain(name, d)
     }
 
     /// Set the thermal condition on one boundary of a domain.
@@ -1229,6 +1380,7 @@ mod tests {
             fans: vec![],
             baffles: vec![],
             free_surface: None,
+            refinement: vec![],
         }
     }
 
@@ -2006,5 +2158,114 @@ mod tests {
         let loaded: FluidDomain = serde_json::from_value(saved.clone()).unwrap();
         assert_eq!(loaded, channel());
         assert_eq!(serde_json::to_value(loaded).unwrap(), saved);
+    }
+
+    fn refined_channel() -> Model {
+        let mut m = Model::default();
+        m.add_material("Water", water()).unwrap();
+        m.add_fluid_domain("Flow", channel()).unwrap();
+        m
+    }
+
+    /// Level 1 of the channel: x 2..5 on the 0.5 parent lattice (cells 4..10), the full y and z extent but
+    /// for the parent cells beside it.
+    fn level_one() -> Refinement {
+        Refinement { level: 1, min: [2.0, 0.0, 0.0], max: [5.0, 1.0, 1.0] }
+    }
+
+    #[test]
+    fn a_refinement_box_is_kept_and_read_back_on_its_parent_lattice() {
+        let mut d = channel();
+        d.refinement = vec![level_one()];
+        d.validate().unwrap();
+        let boxes = d.refinement_boxes().unwrap();
+        assert_eq!(boxes, vec![RefinementBox { level: 1, lo: [4, 0, 0], hi: [10, 2, 2] }]);
+    }
+
+    #[test]
+    fn refinement_levels_are_contiguous_from_one() {
+        let mut lone = channel();
+        lone.refinement = vec![Refinement { level: 2, ..level_one() }];
+        let e = lone.validate().unwrap_err().to_string();
+        assert!(e.contains("entry 0 must be level 1, not 2"), "{e}");
+        let mut two = channel();
+        two.refinement = vec![level_one(), Refinement { min: [6.0, 0.0, 0.0], max: [8.0, 1.0, 1.0], ..level_one() }];
+        let e = two.validate().unwrap_err().to_string();
+        assert!(e.contains("entry 1 must be level 2, not 1"), "{e}");
+    }
+
+    #[test]
+    fn a_refinement_box_off_the_parent_lattice_is_refused() {
+        let mut d = channel();
+        d.refinement = vec![Refinement { min: [2.25, 0.0, 0.0], ..level_one() }];
+        let e = d.validate().unwrap_err().to_string();
+        assert!(e.contains("x_min face at 2.25 is not on a cell face of level 0"), "{e}");
+    }
+
+    #[test]
+    fn a_refinement_box_needs_two_parent_cells_to_the_level_above() {
+        let mut d = channel();
+        d.refinement = vec![Refinement { min: [0.5, 0.0, 0.0], ..level_one() }];
+        let e = d.validate().unwrap_err().to_string();
+        assert!(e.contains("x_min face must lie on the domain box's face"), "{e}");
+
+        // Level 2 one level-1 cell inside level 1 is refused; two cells inside is accepted.
+        let level_two = |min_x: f64| Refinement { level: 2, min: [min_x, 0.0, 0.0], max: [min_x + 0.25, 0.25, 0.5] };
+        let mut inside = channel();
+        inside.refinement = vec![level_one(), level_two(2.25)];
+        assert!(inside.validate().is_err());
+        inside.refinement = vec![level_one(), level_two(2.5)];
+        inside.validate().unwrap();
+    }
+
+    #[test]
+    fn an_empty_refinement_box_is_refused() {
+        let mut d = channel();
+        d.refinement = vec![Refinement { min: [5.0, 0.0, 0.0], max: [2.0, 1.0, 1.0], ..level_one() }];
+        let e = d.validate().unwrap_err().to_string();
+        assert!(e.contains("its x range is empty"), "{e}");
+    }
+
+    #[test]
+    fn non_finite_refinement_corners_are_refused() {
+        let mut d = channel();
+        d.refinement = vec![Refinement { min: [f64::NAN, 0.0, 0.0], ..level_one() }];
+        assert!(d.validate().is_err());
+        d.refinement = vec![Refinement { max: [5.0, f64::INFINITY, 1.0], ..level_one() }];
+        assert!(d.validate().is_err());
+    }
+
+    #[test]
+    fn more_than_the_cap_of_levels_is_refused() {
+        let mut d = channel();
+        d.refinement = (1..=MAX_REFINEMENT_LEVELS + 1).map(|l| Refinement { level: l as u32, min: [0.0; 3], max: [1.0; 3] }).collect();
+        let e = d.validate().unwrap_err().to_string();
+        assert!(e.contains("at most 8 refinement levels"), "{e}");
+    }
+
+    #[test]
+    fn removing_a_level_with_a_finer_one_is_refused() {
+        let mut m = refined_channel();
+        m.set_fluid_refinement("Flow", 1, Some(([2.0, 0.0, 0.0], [5.0, 1.0, 1.0]))).unwrap();
+        m.set_fluid_refinement("Flow", 2, Some(([2.5, 0.0, 0.0], [2.75, 0.25, 0.5]))).unwrap();
+        assert!(m.set_fluid_refinement("Flow", 1, None).is_err(), "level 2 sits inside level 1");
+        assert_eq!(m.fluid_domain("Flow").unwrap().refinement.len(), 2, "a refused removal changes nothing");
+        m.set_fluid_refinement("Flow", 2, None).unwrap();
+        m.set_fluid_refinement("Flow", 1, None).unwrap();
+        assert!(m.fluid_domain("Flow").unwrap().refinement.is_empty());
+        let e = m.set_fluid_refinement("Flow", 1, None).unwrap_err().to_string();
+        assert!(e.contains("refinement level 1"), "{e}");
+    }
+
+    #[test]
+    fn refinement_round_trips_through_json() {
+        let saved = serde_json::to_value(channel()).unwrap();
+        assert!(saved.get("refinement").is_none(), "a domain without boxes writes no key");
+        let mut d = channel();
+        d.refinement = vec![level_one()];
+        let json = serde_json::to_value(&d).unwrap();
+        assert_eq!(json["refinement"][0]["level"], 1);
+        let loaded: FluidDomain = serde_json::from_value(json).unwrap();
+        assert_eq!(loaded, d);
     }
 }

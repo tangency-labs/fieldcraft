@@ -99,7 +99,7 @@ pub use flow::{Flow, Group, Interpolation, Link, OpenCell, Rule, Target, Thermal
 pub use memory::{DeviceBuffer, Memory};
 pub use ports::{FaceMean, Port, PortProperties, Stream};
 pub use setup::{ContactSetup, PhaseSetup, SolidSetup, SurfaceSetup, ThermalSetup};
-pub use setup::{Obstacle, SaSetup, Setup, ZoneKind, ZoneSetup, fluid_step};
+pub use setup::{GHOST_LAYERS, LevelSetup, Obstacle, SaSetup, Setup, ZoneKind, ZoneSetup, fluid_step};
 pub use solve::{
     ComponentCheck, FluidResult, FluidStats, ForceHistory, Frame, FreeSurfaceStats, HeatHistory, Peak, ShearDependentTau, SolidResult,
     SurfaceHistory, ZoneHistory, run, solve_fluid, solve_fluid_on,

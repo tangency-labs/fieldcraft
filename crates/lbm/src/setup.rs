@@ -34,8 +34,8 @@ use fieldcraft_mesh::surface::BoundarySurface;
 use fieldcraft_model::fluid_zones::DEFAULT_FAN_RELAXATION;
 use fieldcraft_model::units::kelvin_above;
 use fieldcraft_model::{
-    BoxFace, Collision, Directional, FaceCondition, FluidDomain, HrrSigma, Model, Outflow, Procedure, Resistance, SurfaceCondition,
-    TemperatureDependent, ThermalCondition, Turbulence, WallModel, WallTreatment,
+    BoxFace, Collision, Directional, FaceCondition, FluidDomain, HrrSigma, Model, Outflow, Procedure, REFINEMENT_MARGIN, RefinementBox, Resistance,
+    SurfaceCondition, TemperatureDependent, ThermalCondition, Turbulence, WallModel, WallTreatment,
 };
 
 use crate::rheology::{Rheology, ViscosityTable, shear_rate_at_stress};
@@ -324,12 +324,283 @@ pub struct Setup {
     /// With one: τ⁺ at the flow's characteristic shear rate, before `tau_plus` holds it within
     /// the cells' range, and that range.
     pub shear_dependent_tau: Option<crate::solve::ShearDependentTau>,
+    /// The level's place in a refined run ([`Setup::levels`]); `None` for a run on one grid.
+    pub level: Option<LevelSetup>,
     pub warnings: Vec<String>,
     /// The run's work caps, for what is built after the setup (the wall distance's transform).
     pub limits: Limits,
 }
 
-/// The Spalart–Allmaras model's settings ([`crate::sa`]).
+/// The ghost layers a finer level keeps inside each interface face of its grid: two, one per fine step of a coarse
+/// step. Both are filled at the synchronous step; after the first fine step the outer one is spent and the inner one
+/// still gives the second fine step its neighbours (Qi, Klimach & Roller 2019, §2.2).
+pub const GHOST_LAYERS: usize = 2;
+
+/// A level's place in a refined run ([`Setup::levels`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LevelSetup {
+    /// 0 for the coarsest level (the domain's own spacing).
+    pub index: u32,
+    /// The faces of this level's grid that are refinement interfaces, by [`BoxFace::index`]: the level above
+    /// continues beyond them, and the [`GHOST_LAYERS`] cell layers inside each are ghost cells. The condition
+    /// `domain.faces` holds for such a face is not read.
+    pub interface: [bool; 6],
+    /// The cells of this grid the next finer level's box covers (without that level's ghost layers), `lo..=hi`
+    /// along each axis; `None` on the finest level.
+    pub covered: Option<([usize; 3], [usize; 3])>,
+}
+
+/// `2^level` as a float: exact for the levels a domain holds (at most [`fieldcraft_model::MAX_REFINEMENT_LEVELS`]).
+fn scale_of(level: u32) -> f64 {
+    f64::from(1u32 << level)
+}
+
+/// The faces of a level's box that touch the domain's own faces: the other faces are interfaces. The box is in its
+/// parent level's cells.
+fn touching_faces(base: &Setup, b: &RefinementBox) -> [bool; 6] {
+    let scale = 1u64 << (b.level - 1);
+    let mut touches = [false; 6];
+    for face in BoxFace::ALL {
+        let a = face.axis();
+        let n = (base.grid.cells[a] as u64).saturating_mul(scale);
+        touches[face.index()] = if face.is_max() { b.hi[a] == n } else { b.lo[a] == 0 };
+    }
+    touches
+}
+
+/// The features a refined domain does not yet support, refused by name in the order they are checked.
+fn refuse_refined_features(base: &Setup) -> Result<()> {
+    let refuse = |what: &str| Err(Error::Invalid(format!("not supported yet: {what} on a refined domain (`refinement`)")));
+    if base.thermal.is_some() {
+        return refuse("heat");
+    }
+    if base.surface.is_some() {
+        return refuse("a free surface");
+    }
+    if base.domain.has_baffles() {
+        return refuse("thin walls");
+    }
+    if !base.zones.is_empty() {
+        return refuse("fans and porous zones");
+    }
+    if base.rheology.is_some() {
+        return refuse("a shear-dependent viscosity");
+    }
+    if base.collision == Collision::Mrt {
+        return refuse("the MRT collision");
+    }
+    if base.spalart_allmaras.is_some() {
+        return refuse("the Spalart–Allmaras model");
+    }
+    if base.wall_model.is_some() {
+        return refuse("a wall model");
+    }
+    if base.van_driest.is_some() {
+        return refuse("Van Driest's damping");
+    }
+    Ok(())
+}
+
+/// The domain's conditions on the faces a box touches: walls and symmetry are kept on every level, open faces stay
+/// on the coarsest level, and a periodic face needs its opposite face touched too.
+fn check_touching_faces(base: &Setup, touches: &[bool; 6], level: u32) -> Result<()> {
+    for face in BoxFace::ALL {
+        if !touches[face.index()] {
+            continue;
+        }
+        match base.domain.faces.get(face) {
+            FaceCondition::Wall {} | FaceCondition::MovingWall { .. } | FaceCondition::Slip {} | FaceCondition::Symmetry {} => {}
+            FaceCondition::Velocity { .. } | FaceCondition::Pressure { .. } => {
+                return Err(Error::Invalid(format!(
+                    "not supported yet: refinement level {level} on the open face `{}`: inlets and outlets stay on the coarsest level; keep the box at least {REFINEMENT_MARGIN} cells of level {} away from it",
+                    face.name(),
+                    level - 1
+                )));
+            }
+            FaceCondition::Periodic {} => {
+                if !touches[face.opposite().index()] {
+                    return Err(Error::Invalid(format!(
+                        "not supported yet: refinement level {level} touches the periodic face `{}` without spanning the box along {}",
+                        face.name(),
+                        ["x", "y", "z"][face.axis()]
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The corners of level `l`'s box (`l ≥ 1`) in model units, on the parent level's lattice.
+fn box_corners(base: &Setup, boxes: &[RefinementBox], l: usize) -> ([f64; 3], [f64; 3]) {
+    let parent = base.grid.spacing / scale_of(l as u32 - 1);
+    let b = &boxes[l - 1];
+    let min = std::array::from_fn(|a| base.domain.min[a] + b.lo[a] as f64 * parent);
+    let max = std::array::from_fn(|a| base.domain.min[a] + b.hi[a] as f64 * parent);
+    (min, max)
+}
+
+/// Refuse an obstacle that crosses an interface: its extent must sit inside the finest box it reaches, clear of
+/// that box's ghost layers, or lie outside the next box with the margin of parent cells.
+fn check_obstacles(base: &Setup, boxes: &[RefinementBox], touches: &[[bool; 6]], obstacles: &[Obstacle]) -> Result<()> {
+    let k = boxes.len();
+    let h = |l: usize| base.grid.spacing / scale_of(l as u32);
+    for o in &base.obstacles {
+        let Some(obstacle) = obstacles.get(o.index) else {
+            return Err(Error::Invalid(format!("obstacle index {} is not in the caller's obstacle list", o.index)));
+        };
+        let extents: [(f64, f64); 3] = std::array::from_fn(|a| extent(obstacle, a));
+        // Level L's box holds the obstacle (level 0 always does) with its ghost layers clear.
+        let inside = |l: usize| -> bool {
+            if l == 0 {
+                return true;
+            }
+            let (bmin, bmax) = box_corners(base, boxes, l);
+            let t = &touches[l - 1];
+            let clear = GHOST_LAYERS as f64 * h(l);
+            (0..3).all(|a| {
+                let lower_ok = t[BoxFace::of(a, false).index()] || extents[a].0 >= bmin[a] + clear;
+                let upper_ok = t[BoxFace::of(a, true).index()] || extents[a].1 <= bmax[a] - clear;
+                lower_ok && upper_ok
+            })
+        };
+        // The parent cells beside the box must be fluid: the obstacle lies outside level `l`'s box by the margin.
+        let outside = |l: usize| -> bool {
+            let (bmin, bmax) = box_corners(base, boxes, l);
+            let t = &touches[l - 1];
+            let margin = REFINEMENT_MARGIN as f64 * h(l - 1);
+            (0..3).any(|a| {
+                (!t[BoxFace::of(a, false).index()] && extents[a].1 <= bmin[a] - margin)
+                    || (!t[BoxFace::of(a, true).index()] && extents[a].0 >= bmax[a] + margin)
+            })
+        };
+        let finest_inside = (0..=k).filter(|&l| inside(l)).max().unwrap_or(0);
+        if finest_inside < k && !outside(finest_inside + 1) {
+            return Err(Error::Invalid(format!(
+                "obstacle `{}` crosses the interface of refinement level {}: it must lie inside that box with {} clear of its inner faces, or at least {} outside it; grow or move the box",
+                obstacle.body,
+                finest_inside + 1,
+                GHOST_LAYERS as f64 * h(finest_inside + 1),
+                REFINEMENT_MARGIN as f64 * h(finest_inside)
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Level `l`'s setup: level 0 is the base grid; a finer level is its box with ghost layers on the interface faces,
+/// at spacing and time step halved per level, the same model-unit viscosity and the Qi et al. τ scaling.
+fn level_setup(base: &Setup, boxes: &[RefinementBox], touches: &[[bool; 6]], l: usize) -> Result<Setup> {
+    let scale = scale_of(l as u32);
+    let h = base.grid.spacing / scale;
+    let dt = base.time_step / scale;
+    let interface: [bool; 6] = if l == 0 { [false; 6] } else { touches[l - 1].map(|t| !t) };
+    let ghost = |a: usize, max: bool| if interface[BoxFace::of(a, max).index()] { GHOST_LAYERS as u64 } else { 0 };
+    // The grid in this level's cells: the box in the parent's cells doubled, widened by the ghost layers. `offset`
+    // is the first cell's index on this level counted from the domain's minimum (0 on level 0).
+    let (cells, offset) = if l == 0 {
+        (base.grid.cells, [0u64; 3])
+    } else {
+        let b = &boxes[l - 1];
+        let mut cells = [0usize; 3];
+        let mut offset = [0u64; 3];
+        for a in 0..3 {
+            let (g_lo, g_hi) = (ghost(a, false), ghost(a, true));
+            offset[a] = (2 * b.lo[a]).saturating_sub(g_lo);
+            cells[a] = cell_count(2 * (b.hi[a] - b.lo[a]) + g_lo + g_hi)?;
+        }
+        (cells, offset)
+    };
+    let origin: [f64; 3] = std::array::from_fn(|a| base.domain.min[a] + offset[a] as f64 * h);
+    let mut s = base.clone();
+    s.grid = Grid { origin, spacing: h, cells };
+    s.domain.min = origin;
+    s.domain.max = std::array::from_fn(|a| origin[a] + cells[a] as f64 * h);
+    s.domain.spacing = h;
+    s.domain.refinement = Vec::new();
+    for face in BoxFace::ALL {
+        if interface[face.index()] {
+            *s.domain.faces.get_mut(face) = FaceCondition::Wall {};
+        }
+    }
+    s.time_step = dt;
+    s.steps = base.steps.checked_mul(1u64 << l).ok_or_else(|| Error::Limit(format!("the {} time steps of level {l} overflow", base.steps)))?;
+    // The same expressions as level 0's: the lattice viscosity is 2^l times level 0's (Qi et al. eq. 8), and the
+    // model-unit viscosity is the same on every level (Schornbaum & Rüde eq. 2.6).
+    let nu = base.viscosity * dt / (h * h);
+    s.tau_plus = 3.0 * nu + 0.5;
+    s.tau_minus = 0.5 + base.magic / (s.tau_plus - 0.5);
+    s.acceleration = base.domain.acceleration.map(|c| c * dt * dt / h);
+    s.initial_velocity = base.domain.initial_velocity.map(|c| c * dt / h);
+    if l > 0 {
+        s.inlet_ramp_steps = 0;
+        s.steady = None;
+        s.warnings = Vec::new();
+    }
+    let covered = match boxes.get(l) {
+        None => None,
+        Some(next) => {
+            let mut lo = [0usize; 3];
+            let mut hi = [0usize; 3];
+            for a in 0..3 {
+                let below = |v: u64| v.checked_sub(offset[a]).ok_or_else(|| Error::Invalid("a refinement box lies outside its parent level".into()));
+                lo[a] = cell_count(below(next.lo[a])?)?;
+                hi[a] = cell_count(below(next.hi[a])?.checked_sub(1).ok_or_else(|| Error::Invalid("a refinement box is empty".into()))?)?;
+            }
+            Some((lo, hi))
+        }
+    };
+    s.level = Some(LevelSetup { index: l as u32, interface, covered });
+    Ok(s)
+}
+
+/// A cell index or count as `usize`, refused when it does not fit.
+fn cell_count(n: u64) -> Result<usize> {
+    usize::try_from(n).map_err(|_| Error::Limit("the grid is too large".into()))
+}
+
+/// The caps over every level together: the cells, the cell updates over their steps, and (with raised caps) the
+/// flow state's memory.
+fn check_level_caps(levels: &[Setup], limits: &Limits) -> Result<()> {
+    let count = levels.len().saturating_sub(1);
+    let mut total: u64 = 0;
+    let mut updates: u64 = 0;
+    for s in levels {
+        let cells = s.grid.len() as u64;
+        total = total.saturating_add(cells);
+        updates = updates.saturating_add(cells.saturating_mul(s.steps));
+    }
+    if total > limits.max_cells {
+        return Err(Error::Limit(format!(
+            "the domain and its {count} refinement levels have {total} cells, above the cap of {}: coarsen the spacing or shrink the refinement boxes{}",
+            limits.max_cells,
+            limits.raise("max_cells", total, limits.max_cells_ceiling())
+        )));
+    }
+    if updates > limits.max_cell_updates {
+        return Err(Error::Limit(format!(
+            "the domain and its {count} refinement levels take {updates:e} cell updates, above the cap of {:e}: coarsen the spacing or shorten the step{}",
+            limits.max_cell_updates as f64,
+            limits.raise("max_cell_updates", updates, limits.max_cell_updates_ceiling())
+        )));
+    }
+    if limits.raised() {
+        let mut bytes: u64 = 0;
+        for s in levels {
+            bytes = bytes.saturating_add(crate::memory::Memory::of(s, crate::backend::Choice::Cpu)?.flow_bytes());
+        }
+        if bytes > limits.max_memory {
+            return Err(Error::Limit(format!(
+                "the refined run needs {} of flow state over its {} levels, above this machine's bound of {} for runs with raised caps: coarsen the spacing or shrink the refinement boxes",
+                crate::memory::megabytes(bytes),
+                levels.len(),
+                crate::memory::megabytes(limits.max_memory)
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SaSetup {
     /// ν̃/ν at inflows and in the initial field.
@@ -736,8 +1007,41 @@ fn shear_dependent_floor(rheology: &Rheology, domain: &FluidDomain, initial_kelv
 }
 
 impl Setup {
-    /// Convert a fluid step, checking it against the stability limits and `limits`.
+    /// Convert a fluid step, checking it against the stability limits and `limits`. A refined domain is refused
+    /// until the fluid solve runs its levels; [`Setup::levels`] builds them.
     pub fn new(model: &Model, step: Option<&str>, obstacles: &[Obstacle], limits: &Limits) -> Result<Setup> {
+        let setup = Setup::build(model, step, obstacles, limits)?;
+        if !setup.domain.refinement.is_empty() {
+            return Err(Error::Invalid(
+                "not supported yet: a refined fluid domain (`refinement`) in the fluid solve; remove its refinement boxes (model.fluid_domain.refine with remove) to solve".into(),
+            ));
+        }
+        Ok(setup)
+    }
+
+    /// The setups of a fluid step on each level of its refined domain, level 0 first. A domain without refinement
+    /// gives one setup, with no `level`, the same as [`Setup::new`] (which refuses a refined domain).
+    pub fn levels(model: &Model, step: Option<&str>, obstacles: &[Obstacle], limits: &Limits) -> Result<Vec<Setup>> {
+        let base = Setup::build(model, step, obstacles, limits)?;
+        let boxes = base.domain.refinement_boxes()?;
+        if boxes.is_empty() {
+            return Ok(vec![base]);
+        }
+        refuse_refined_features(&base)?;
+        let touches: Vec<[bool; 6]> = boxes.iter().map(|b| touching_faces(&base, b)).collect();
+        for (k, t) in touches.iter().enumerate() {
+            check_touching_faces(&base, t, k as u32 + 1)?;
+        }
+        check_obstacles(&base, &boxes, &touches, obstacles)?;
+        let mut levels = Vec::with_capacity(boxes.len() + 1);
+        for l in 0..=boxes.len() {
+            levels.push(level_setup(&base, &boxes, &touches, l)?);
+        }
+        check_level_caps(&levels, limits)?;
+        Ok(levels)
+    }
+
+    fn build(model: &Model, step: Option<&str>, obstacles: &[Obstacle], limits: &Limits) -> Result<Setup> {
         // The model checked the domain and its material when they were defined.
         let (s, domain) = fluid_step(model, step)?;
         let Procedure::Fluid { end_time, steps, time_step, frames, magic, sigma, collision, turbulence, steady, walls, inlet_ramp, .. } =
@@ -1023,7 +1327,9 @@ impl Setup {
         // The time step and the number of steps.
         // Sized at the thinnest viscosity, whose τ⁺ is the smallest, so a step the solver chose
         // never puts a cell below the floor.
-        let diffusive = (AUTO_TAU_MAX - 0.5) * h * h / (3.0 * thinnest.unwrap_or(viscosity));
+        // On the finest level the lattice viscosity is 2^K times level 0's (Qi, Klimach & Roller 2019, eq. 8).
+        let finest_scale = (0..domain.refinement.len()).fold(1.0, |scale, _| 2.0 * scale);
+        let diffusive = (AUTO_TAU_MAX - 0.5) * h * h / (3.0 * thinnest.unwrap_or(viscosity)) / finest_scale;
         let auto = if u_char > 0.0 { (TARGET_LATTICE_VELOCITY * h / u_char).min(diffusive) } else { diffusive };
         let (dt, n) = match (*time_step, *end_time, *steps) {
             (Some(dt), Some(t), _) => {
@@ -1468,6 +1774,7 @@ impl Setup {
             warnings,
             domain,
             limits: *limits,
+            level: None,
         })
     }
 
