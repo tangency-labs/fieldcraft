@@ -34,7 +34,7 @@ threads with the same result as on one.
 | `max_iterations` | 1 to 3000 | 3000 | frequency and buckling: cap on the Lanczos vectors; may only be lowered |
 | `threads` | 1 to 256 | the session's (`FIELDCRAFT_THREADS` or the cores) | changes the time, never the result |
 
-Internal constants (`crates/solver/src/cholesky.rs`, `ldlt.rs`, `ordering.rs`):
+Internal constants (`crates/solver/src/cholesky.rs`, `scalar.rs`, `ldlt.rs`, `ordering.rs`):
 
 | Constant | Value | Role |
 |---|---|---|
@@ -42,11 +42,20 @@ Internal constants (`crates/solver/src/cholesky.rs`, `ldlt.rs`, `ordering.rs`):
 | `PANEL` | 64 | columns per panel of a supernode's dense factorization |
 | `TILE` | 64 | rows per tile of the dense kernels |
 | `PARALLEL_WORK` | 2²¹ multiply–adds | dense work from which a kernel's tiles run in parallel |
+| `PACKED_KEPT` | 2¹⁴ packed rows (1 MB real, 2 MB complex) | most packed rows a thread keeps from one tile to the next; a larger buffer is given back when its tile is done |
 | `SUBTREE_SHARE` | 256 | subtrees are handed to threads in pieces of about 1/256 of the total work |
 | `ALPHA` | (1 + √17)/8 | Bunch–Kaufman growth bound |
 | `ROOK_STEPS` | 64 | most steps of one rook search |
 | `LEAF` | 16 | parts this small are ordered as they come |
 | `PERIPHERAL_SEARCHES` | 8 | searches for a pseudo-peripheral node per part |
+
+`PANEL` and `TILE` are part of every entry's sequence of operations. The constants below
+only divide the work and its memory; the factor is the same bit for bit at any value of them.
+Where their values come from:
+
+- `PACKED_KEPT`: 2¹⁴ packed rows serve a tile over 2048 columns and are 1 MB of real values, the
+  order of a core's second-level cache. A larger buffer would not stay in the cache, and taking
+  it anew costs 1/wu of the work of a tile over wu columns.
 
 ## Theory
 
@@ -185,7 +194,9 @@ kernels: the product of an update until it is subtracted (no more than about the
 columns of the supernode that receives it) and packed copies of the columns it is computed from.
 This memory is not counted in `max_factor_entries`. It is asked for without aborting: where it
 cannot be had, the solve stops with the same "not enough memory for the factorization (N
-entries)".
+entries)". Each thread keeps its buffer of packed rows from one tile to the next, up to
+`PACKED_KEPT` rows (1 MB of real values, 2 MB of complex ones); a larger one is given back when
+its tile is done.
 
 The same entry budget guards two more stores:
 
@@ -303,6 +314,7 @@ lets it through.
 | Sparse SPD factor and solve; cap refused before allocation; singular matrix located; cancellation; empty and 1 × 1 matrices | exact solution, located errors | `cholesky::tests::factor_and_solve_a_sparse_spd_matrix` |
 | Supernodes wider than two panels, 1, 2 and 7 threads | residual < 10⁻¹², factor bit-identical on every thread count | `supernodes_panels_and_threads` |
 | Workspace of a dense kernel that cannot be had | the out-of-memory error with the factor's entries, no abort | `a_kernel_without_memory_is_an_error` |
+| Packed rows of a thread | as many as asked for; kept up to `PACKED_KEPT` and given back beyond; in use or without memory is an error | `scalar::tests::a_thread_keeps_its_packed_rows_up_to_a_bound` |
 | Indefinite shifted systems | inertia equals the eigenvalue count below σ; residual < 10⁻¹⁰; on an SPD matrix the same fill as Cholesky and no negative pivot | `ldlt::tests::indefinite_systems_solve_with_their_inertia` |
 | Saddle points with zero diagonals | 2 × 2 pivots; inertia (K's size, the constraints') | `two_by_two_pivots_for_zero_diagonals` |
 | Singular Laplacian, NaN, caps | located `Singular` errors; cap before the numeric factorization | `singular_and_hostile_matrices_are_located_errors` |
@@ -337,6 +349,7 @@ CI on any change of a frozen result beyond its band (10⁻⁹ of the value).
 | `crates/solver/src/sparse.rs` | `Csr`, `NodeGraph`, `add_block`, `add_scalar`, `add_diagonal` |
 | `crates/solver/src/ordering.rs` | `nested_dissection`, `graph_dissection`, `fill_reducing_order`, `fill` |
 | `crates/solver/src/cholesky.rs` | `UpperColumns`, `Symbolic`, `Factor`, `FactorError`, `PIVOT_TOLERANCE`, `PANEL`, `TILE` |
+| `crates/solver/src/scalar.rs` | `Scalar` (`with_packed`), `PACKED_ROWS`, `PACKED_KEPT` |
 | `crates/solver/src/ldlt.rs` | `LdltFactor`, `Inertia`, `Kind`, `Symmetric` (`new`, `solve`, `solve_refined`, `inertia`) |
 | `crates/solver/src/constraints.rs` | `Reduction`, `Budget` |
 | `crates/solver/src/analysis.rs` | `pattern`, `factor_raw`, `factor_symmetric`, `factor_error`, `budget`, `lanczos_basis` |

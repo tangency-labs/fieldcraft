@@ -36,7 +36,7 @@
 
 use fieldcraft_parallel as parallel;
 
-use crate::scalar::Scalar;
+use crate::scalar::{PackedError, Scalar};
 use crate::{Error, Result};
 
 /// Relative pivot size below which the matrix counts as singular.
@@ -49,9 +49,10 @@ pub const TILE: usize = 64;
 pub const PANEL: usize = 64;
 
 /// Rows of a micro-tile of [`products`] (a multiple dividing [`TILE`]).
-const MR: usize = 8;
+const MR: usize = crate::scalar::PACKED_ROWS;
 
-/// Columns of a micro-tile of [`products`]: MR × NR sums stay in registers.
+/// Columns of a micro-tile of [`products`], an even number: they are summed two at a time, so
+/// 2 MR sums stay in the sixteen registers every processor has.
 const NR: usize = 4;
 
 /// Dense work (multiply–adds) from which a kernel's tiles run in parallel.
@@ -409,40 +410,62 @@ pub(crate) fn products<T: Scalar>(
     let tile = |t: usize| -> std::result::Result<Vec<T>, FactorError> {
         let i0 = t * TILE;
         let h = TILE.min(mu - i0);
-        // The tile's rows of every column by blocks of MR rows, k-major, padded to TILE rows.
-        let mut xp = zeros((TILE / MR).saturating_mul(kw), [T::ZERO; MR])?;
-        for k in 0..kw {
-            for (i, x) in l.column(k0 + k, p + i0, h).iter().enumerate() {
-                if let Some(slot) = xp.get_mut((i / MR) * kw + k).and_then(|b| b.get_mut(i % MR)) {
-                    *slot = *x;
-                }
-            }
-        }
         let cols = wu.min(i0 + h);
         let mut out = zeros(cols.saturating_mul(TILE), T::ZERO)?;
-        // Micro-tiles of MR rows and NR columns: each S(i, c) is summed in a register over k in
-        // order from 0, the same operations as one column at a time, with each X and Y value
-        // loaded once per micro-tile.
-        for (b, ys) in yp.chunks(kw.max(1)).enumerate().take(cols.div_ceil(NR)) {
-            for (r, xs) in xp.chunks(kw.max(1)).enumerate() {
-                let mut acc = [[T::ZERO; MR]; NR];
-                for (x, y) in xs.iter().zip(ys) {
-                    for (a, yj) in acc.iter_mut().zip(y) {
-                        for (ai, xi) in a.iter_mut().zip(x) {
-                            *ai += *xi * *yj;
+        // The tile's rows of every column by blocks of MR rows, k-major, padded to TILE rows:
+        // in the buffer the thread keeps ([`Scalar::with_packed`]), so a tile takes no memory
+        // of its own for them, which is as much again as it reads.
+        let packed = (TILE / MR).saturating_mul(kw);
+        T::with_packed(packed, |xp| -> std::result::Result<(), FactorError> {
+            if h < TILE {
+                xp.fill([T::ZERO; MR]);
+            }
+            for k in 0..kw {
+                // A column the panel does not hold (a range past its end) is an error: the rows
+                // the thread keeps hold values of an earlier tile, which must not be multiplied.
+                let column = l.column(k0 + k, p + i0, h);
+                if column.len() != h {
+                    return Err(internal("a tile's column outside its panel"));
+                }
+                for (r, rows) in column.chunks(MR).enumerate() {
+                    if let Some(slot) = xp.get_mut(r * kw + k).and_then(|block| block.get_mut(..rows.len())) {
+                        slot.copy_from_slice(rows);
+                    }
+                }
+            }
+            // Micro-tiles of MR rows and NR columns, two columns a pass (their 2 MR sums stay
+            // in registers): each S(i, c) is summed over k in order from 0, the same operations
+            // as one column at a time.
+            for (b, ys) in yp.chunks(kw.max(1)).enumerate().take(cols.div_ceil(NR)) {
+                for (r, xs) in xp.chunks(kw.max(1)).enumerate() {
+                    for pair in 0..NR / 2 {
+                        let (mut first, mut second) = ([T::ZERO; MR], [T::ZERO; MR]);
+                        for (x, y) in xs.iter().zip(ys) {
+                            let (x, y0, y1) = (*x, y[2 * pair], y[2 * pair + 1]);
+                            for i in 0..MR {
+                                first[i] += x[i] * y0;
+                            }
+                            for i in 0..MR {
+                                second[i] += x[i] * y1;
+                            }
+                        }
+                        for (j, a) in [first, second].iter().enumerate() {
+                            let c = b * NR + 2 * pair + j;
+                            if c < cols
+                                && let Some(dst) = out.get_mut(c * TILE + r * MR..c * TILE + (r + 1) * MR)
+                            {
+                                dst.copy_from_slice(a);
+                            }
                         }
                     }
                 }
-                for (j, a) in acc.iter().enumerate() {
-                    let c = b * NR + j;
-                    if c < cols
-                        && let Some(dst) = out.get_mut(c * TILE + r * MR..c * TILE + (r + 1) * MR)
-                    {
-                        dst.copy_from_slice(a);
-                    }
-                }
             }
-        }
+            Ok(())
+        })
+        .map_err(|e| match e {
+            PackedError::OutOfMemory => FactorError::OutOfMemory { entries: packed.saturating_mul(MR) },
+            PackedError::InUse => internal("the packed rows of a tile are in use"),
+        })??;
         Ok(out)
     };
     if mu.saturating_mul(wu).saturating_mul(kw) >= PARALLEL_WORK {
@@ -1550,6 +1573,19 @@ mod tests {
             let other = parallel::with_threads(threads, || Factor::new(&upper, usize::MAX)).unwrap();
             assert!(one.values.iter().flatten().zip(other.values.iter().flatten()).all(|(a, b)| a.to_bits() == b.to_bits()), "{threads} threads");
         }
+    }
+
+    /// A tile whose column the panel does not hold is an internal error, even when the thread's
+    /// packed rows hold values from an earlier tile: they are not multiplied in its place. The
+    /// first product fills the thread's rows with 1.5; the second asks for rows past the panel's
+    /// end, in a full tile and in a partial one.
+    #[test]
+    fn a_tile_past_its_panel_is_an_error() {
+        let data = vec![1.5f64; 64];
+        let panel = Panel { m: 64, data: &data };
+        assert!(products(&panel, 0..1, 0, 64, 1, None).is_ok());
+        assert!(matches!(products(&panel, 0..1, 0, 128, 1, None), Err(FactorError::Internal(_))));
+        assert!(matches!(products(&panel, 0..1, 0, 100, 1, None), Err(FactorError::Internal(_))));
     }
 
     /// The dense kernels ask for their workspace without aborting, and a factorization reports
