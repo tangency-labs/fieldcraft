@@ -95,14 +95,14 @@ fn a_later_release_saves_the_same_design() {
     assert!(fresh >= 1 && resaved >= 1, "saved copies: {fresh} fresh, {resaved} re-saved");
 }
 
-/// SolidCraft 0.42.0 saves design format 57; this FieldCraft reads it.
-const _: () = assert!(DESIGN_FORMAT >= 57);
+/// SolidCraft 0.50.0 saves design format 69; this FieldCraft reads it (and up to 70).
+const _: () = assert!(DESIGN_FORMAT >= 69);
 
 /// The hollow box with a post as each release saved it: one body, `Case`, of 14 faces (the
 /// post's side is one face from SolidCraft 0.40, which no longer splits a cylinder in halves).
 #[test]
 fn reads_every_release_s_designs() {
-    for release in ["0.16.2", "0.17.0", "0.18.1", "0.18.2", "0.30.1", "0.40.0-rc.3", "0.40.0-rc.4", "0.41.0", "0.42.0"] {
+    for release in ["0.16.2", "0.17.0", "0.18.1", "0.18.2", "0.30.1", "0.40.0-rc.3", "0.40.0-rc.4", "0.41.0", "0.42.0", "0.50.0"] {
         let path = designs().join(format!("solidcraft-{release}/hollow-box-post.solidcraft"));
         let design = open(&path);
         let [body] = design.bodies.as_slice() else { panic!("{release}: {:?}", summary(&design)) };
