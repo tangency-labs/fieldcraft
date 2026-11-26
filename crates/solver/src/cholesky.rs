@@ -75,11 +75,16 @@ const PARALLEL_WORK: usize = 1 << 21;
 /// it sorts ([`Pattern::new`]).
 const SORTED: usize = 1024;
 
+/// Entries of an update from which its subtraction runs in parallel, column by column
+/// ([`subtract`]).
+const PARALLEL_ENTRIES: usize = 1 << 16;
+
 // Runs of the parallel branches on this thread, counted for the tests (the branch is decided on
 // the thread that calls it, and the tests read the count there).
 #[cfg(test)]
 thread_local! {
     static PARALLEL_BATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PARALLEL_SUBTRACTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Counts one run of a parallel branch (see [`PARALLEL_BATCHES`]).
@@ -624,21 +629,60 @@ pub(crate) fn products<T: Scalar>(
     }
 }
 
-/// own(rel(i), rel(c)) −= S(i, c) for i ≥ c, with S in the tiles of [`products`].
-pub(crate) fn subtract<T: Scalar>(own: &mut [T], m: usize, tiles: &[Vec<T>], mu: usize, wu: usize, rel: impl Fn(usize) -> usize) {
-    for (t, tile) in tiles.iter().enumerate() {
-        let i0 = t * TILE;
-        let h = TILE.min(mu - i0);
-        for c in 0..wu.min(i0 + h) {
-            let cc = rel(c);
+/// own(rel(i), rel(c)) −= S(i, c) for i ≥ c, with S in the tiles of [`products`]; `rel` rises
+/// with its argument. Every entry takes one subtraction, so a large update is subtracted column
+/// by column in parallel: the columns of `own` are apart in memory. An error when a column of
+/// the update is not in `own` after the one before it (a broken structure).
+pub(crate) fn subtract<T: Scalar>(
+    own: &mut [T],
+    m: usize,
+    tiles: &[Vec<T>],
+    mu: usize,
+    wu: usize,
+    rel: impl Fn(usize) -> usize + Sync,
+) -> std::result::Result<(), FactorError> {
+    // Column c of the update into its column of `own`, which starts at the row rel(c).
+    let column = |c: usize, target: &mut [T]| {
+        let cc = rel(c);
+        for (t, tile) in tiles.iter().enumerate().skip(c / TILE) {
+            let i0 = t * TILE;
+            let h = TILE.min(mu.saturating_sub(i0));
             for i in i0.max(c)..i0 + h {
-                let rr = rel(i);
-                if let (Some(x), Some(s)) = (own.get_mut(offset(m, cc) + rr - cc), tile.get(c * TILE + i - i0)) {
+                if let (Some(x), Some(s)) = (target.get_mut(rel(i).wrapping_sub(cc)), tile.get(c * TILE + i - i0)) {
                     *x -= *s;
                 }
             }
         }
+    };
+    // The columns the update reaches, each a slice of `own`: they rise with c. A small update
+    // is subtracted as they are found.
+    let together = mu.saturating_mul(wu) >= PARALLEL_ENTRIES;
+    let mut columns: Vec<&mut [T]> = Vec::new();
+    if together {
+        columns.try_reserve_exact(wu.min(mu)).map_err(|_| FactorError::OutOfMemory { entries: wu.min(mu) })?;
     }
+    let (mut rest, mut at) = (own, 0usize);
+    for c in 0..wu.min(mu) {
+        let cc = rel(c);
+        let start = offset(m, cc);
+        let outside = || internal("a column of an update outside its supernode");
+        let ahead = start.checked_sub(at).filter(|_| cc < m).ok_or_else(outside)?;
+        let (_, tail) = std::mem::take(&mut rest).split_at_mut_checked(ahead).ok_or_else(outside)?;
+        let (target, tail) = tail.split_at_mut_checked(m - cc).ok_or_else(outside)?;
+        if together {
+            columns.push(target);
+        } else {
+            column(c, target);
+        }
+        rest = tail;
+        at = start + m - cc;
+    }
+    if together {
+        #[cfg(test)]
+        count_run(&PARALLEL_SUBTRACTIONS);
+    }
+    parallel::for_each_mut(&mut columns, |c, target| column(c, target));
+    Ok(())
 }
 
 /// Rows c1..m of the panel c0..c1 solved against its factored diagonal block, by tiles of
@@ -1049,7 +1093,7 @@ impl<T: Scalar> Context<'_, T> {
             Ok((tiles, relative))
         };
         let mut take = |u: &Update, (tiles, relative): (Vec<Vec<T>>, Vec<usize>)| {
-            subtract(own, m, &tiles, relative.len(), u.p2 - u.p1, |i| relative.get(i).copied().unwrap_or(0));
+            subtract(own, m, &tiles, relative.len(), u.p2 - u.p1, |i| relative.get(i).copied().unwrap_or(0))
         };
         let size = |u: &Update| self.s.rows(u.k).len().saturating_sub(u.p1).saturating_mul(u.p2 - u.p1);
         // What a product holds while it waits: its whole tiles, far more than its entries when
@@ -1067,12 +1111,12 @@ impl<T: Scalar> Context<'_, T> {
                 count_run(&PARALLEL_BATCHES);
                 let found = parallel::map(several.len(), |i| several.get(i).map_or_else(|| Err(internal("an update is missing")), product));
                 for (u, result) in several.iter().zip(found) {
-                    take(u, result?);
+                    take(u, result?)?;
                 }
             } else {
                 // One after another: each product is subtracted while it is in the cache.
                 for u in several {
-                    take(u, product(u)?);
+                    take(u, product(u)?)?;
                 }
             }
             from = to;
@@ -1097,7 +1141,7 @@ impl Context<'_, f64> {
             if c0 > 0 {
                 // The panel minus its products with the columns before it.
                 let tiles = products(&Panel { m, data: own }, 0..c0, c0, m - c0, pw, None)?;
-                subtract(own, m, &tiles, m - c0, pw, |i| c0 + i);
+                subtract(own, m, &tiles, m - c0, pw, |i| c0 + i)?;
             }
             // The diagonal block, column by column.
             for c in c0..c1 {
@@ -1860,6 +1904,44 @@ mod tests {
         }
     }
 
+    /// A large update (over PARALLEL_ENTRIES entries) is subtracted column by column in parallel,
+    /// and each entry takes the one subtraction the naive loop gives, bit for bit on any number
+    /// of threads; a small one takes the serial branch.
+    #[test]
+    fn a_large_update_is_subtracted_in_parallel_bit_for_bit() {
+        let (m, w) = (400, 300);
+        let (mu, wu) = (400, 300);
+        assert!(mu * wu >= PARALLEL_ENTRIES);
+        let tiles: Vec<Vec<f64>> = (0..mu.div_ceil(TILE)).map(|t| (0..wu * TILE).map(|x| ((t * 7919 + x) as f64 * 1e-3).sin()).collect()).collect();
+        let start: Vec<f64> = (0..trapezoid(m, w)).map(|x| (x as f64 * 0.5).cos()).collect();
+        let mut naive = start.clone();
+        for c in 0..wu {
+            for i in c..mu {
+                naive[offset(m, c) + i - c] -= tiles[i / TILE][c * TILE + i % TILE];
+            }
+        }
+        let expected: Vec<u64> = naive.iter().map(|v| v.to_bits()).collect();
+        for threads in [1, 5] {
+            let (bits, runs) = parallel::with_threads(threads, || {
+                PARALLEL_SUBTRACTIONS.with(|c| c.set(0));
+                let mut own = start.clone();
+                subtract(&mut own, m, &tiles, mu, wu, |i| i).unwrap();
+                (own.iter().map(|v| v.to_bits()).collect::<Vec<_>>(), PARALLEL_SUBTRACTIONS.with(std::cell::Cell::get))
+            });
+            assert_eq!(bits, expected, "{threads} threads");
+            assert_eq!(runs, 1, "the parallel branch ran on {threads} threads");
+        }
+        // Below PARALLEL_ENTRIES the subtraction is serial.
+        let small = vec![vec![1.0; TILE * 2]];
+        let runs = parallel::with_threads(5, || {
+            PARALLEL_SUBTRACTIONS.with(|c| c.set(0));
+            let mut own = vec![0.0; trapezoid(4, 2)];
+            subtract(&mut own, 4, &small, 4, 2, |i| i).unwrap();
+            PARALLEL_SUBTRACTIONS.with(std::cell::Cell::get)
+        });
+        assert_eq!(runs, 0);
+    }
+
     /// A tile whose column the panel does not hold is an internal error, even when the thread's
     /// packed rows hold values from an earlier tile: they are not multiplied in its place. The
     /// first product fills the thread's rows with 1.5; the second asks for rows past the panel's
@@ -1889,6 +1971,22 @@ mod tests {
         let mut values: Vec<Vec<f64>> = symbolic.allocate().unwrap();
         let failed = symbolic.factor(&lower, &mut values, |_, _, _, _, _| Err(FactorError::OutOfMemory { entries: 1 }));
         assert_eq!(failed, Err(FactorError::OutOfMemory { entries: symbolic.entries }));
+    }
+
+    /// An update whose columns are not in its supernode, one after another, is an error: the
+    /// subtraction does not stop short and leave a wrong factor.
+    #[test]
+    fn an_update_outside_its_supernode_is_an_error() {
+        let (m, w) = (4, 2);
+        let tiles = vec![vec![1.0; 2 * TILE]];
+        let mut own = vec![0.0; trapezoid(m, w)];
+        assert_eq!(subtract(&mut own, m, &tiles, 2, 2, |i| i), Ok(()));
+        assert_eq!(own.iter().filter(|x| **x == -1.0).count(), 3);
+        for rel in [(|i| 1 - i.min(1)) as fn(usize) -> usize, |i| 4 + i, |i| i + 2] {
+            let mut own = vec![0.0; trapezoid(m, w)];
+            let failed = subtract(&mut own, m, &tiles, 2, 2, rel);
+            assert!(matches!(failed, Err(FactorError::Internal(_))), "{failed:?}");
+        }
     }
 
     /// A batch counts what its products take, whole tiles: updates of one row are not held by
