@@ -80,15 +80,15 @@ const KAPPA: f64 = 0.4;
 const B: f64 = 5.5;
 
 /// Han, Ooka and Kikumoto's constants of Spalding's law in their wall-function bounce.
-pub(crate) const BOUNCE_KAPPA: f64 = 0.41;
-pub(crate) const BOUNCE_B: f64 = 5.5;
+pub const BOUNCE_KAPPA: f64 = 0.41;
+pub const BOUNCE_B: f64 = 5.5;
 
 /// The most times the spreading may lower each cell's distance on average before it is stopped.
 const MAX_UPDATES_PER_CELL: usize = 64;
 
 /// Newton steps (each guarded by bisection) that solve Spalding's law for u⁺: bisection alone
 /// narrows the bracket to the last bit in about 60.
-const SPALDING_ITERATIONS: usize = 100;
+pub const SPALDING_ITERATIONS: usize = 100;
 
 /// Past this y⁺/A⁺, `1 − exp(−y⁺/A⁺)` rounds to 1 in double precision (from about 37.4).
 const UNDAMPED: f64 = 40.0;
@@ -111,8 +111,8 @@ const NEIGHBOURS: [[i64; 3]; 26] = {
 
 /// The von Kármán constant and Van Driest's A⁺ of the wall cell's mixing-length eddy viscosity
 /// in the wall model (the values Malaspinas and Sagaut use).
-pub(crate) const MIXING_KAPPA: f64 = 0.384;
-pub(crate) const MIXING_A_PLUS: f64 = 26.0;
+pub const MIXING_KAPPA: f64 = 0.384;
+pub const MIXING_A_PLUS: f64 = 26.0;
 
 /// A fluid cell next to a no-slip wall.
 #[derive(Debug, Clone, Copy, PartialEq)]

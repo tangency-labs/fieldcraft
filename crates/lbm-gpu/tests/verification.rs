@@ -1137,22 +1137,61 @@ fn thin_walls_are_refused_clearly() {
     assert!(e.as_deref().is_some_and(|e| e.contains("baffles") && e.contains("CPU")), "{e:?}");
 }
 
-/// The matched on-node wall (`spalding_bounce_matched`) is CPU only for now: refused before a device is opened.
-#[test]
-fn the_matched_wall_is_refused_clearly() {
-    let mut d = domain([0.0; 3], [2.0, 9.0, 2.0], 1.0);
-    for f in [&mut d.faces.x_min, &mut d.faces.x_max, &mut d.faces.z_min, &mut d.faces.z_max] {
-        *f = PERIODIC;
+/// The subgrid model the matched on-node wall is checked with: Smagorinsky's or Vreman's, never with Van
+/// Driest's damping (the CPU refuses the two together: the rows below the matching height carry their own).
+fn matched_on_node_turbulence(vreman: bool) -> Turbulence {
+    let wall_model = Some(fieldcraft_model::WallModel::SpaldingBounceMatched);
+    if vreman {
+        Turbulence::Vreman { constant: 0.18, prandtl: 0.9, wall_model }
+    } else {
+        Turbulence::Smagorinsky { constant: 0.1, prandtl: 0.9, van_driest: None, wall_model }
     }
-    let t = Turbulence::Smagorinsky {
-        constant: 0.1,
-        prandtl: 0.9,
-        van_driest: None,
-        wall_model: Some(fieldcraft_model::WallModel::SpaldingBounceMatched),
-    };
-    let (_, flow) = prepare(&model(1.0, 0.1, d, les(None, Some(t))(collide(10.0, 1.0, None, Collision::Regularized))), &[]);
-    let e = GpuFlow::with_options(&flow, Policy::from_env().expect("FIELDCRAFT_GPU names a policy"), Options::default()).err().map(|e| e.to_string());
-    assert!(e.as_deref().is_some_and(|e| e.contains("spalding_bounce_matched") && e.contains("GPU")), "{e:?}");
+}
+
+/// The matched on-node wall (`spalding_bounce_matched`: the law read at MATCHING_ROWS = 4 cells,
+/// the rows between relaxed by the mixing length) in the coarse channel of [`on_node_channel`],
+/// 150 steps on the regularised, hybrid and TRT collisions, both layouts: the fields, the walls'
+/// drag and the sampled stresses at [`check_on_node`]'s tolerances.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_matched_on_node_wall_follows_the_cpu() {
+    for (collision, sigma) in ON_NODE_COLLISIONS {
+        for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+            let (setup, flow) = on_node_channel(matched_on_node_turbulence(false), collision, sigma, 150.0);
+            let Some(r) = on_node_difference(flow, setup.steps, streaming) else { return };
+            check_on_node(&format!("matched wall, {collision:?}, {streaming:?}"), &r);
+        }
+    }
+}
+
+/// The friction Reynolds number of the MRT cases. MRT is refused below a lattice viscosity of 1.1801e-3
+/// (its stability bound), and the Re_τ 180 channel's is 2.12e-4; the viscosity scales as 1 / Re_τ, so
+/// Re_τ 20 gives 1.9e-3, about 1.6 times the bound.
+const MRT_RE_TAU: f64 = 20.0;
+
+/// The matched on-node wall with Vreman's model on TRT, and with MRT (Smagorinsky's and Vreman's) at
+/// [`MRT_RE_TAU`], both layouts, the same tolerances: the layer cells' rate through every collision the GPU
+/// runs with it.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_matched_on_node_wall_follows_the_cpu_with_vreman_and_mrt() {
+    for (vreman, collision, re_tau) in [(true, Collision::Trt, 180.0), (false, Collision::Mrt, MRT_RE_TAU), (true, Collision::Mrt, MRT_RE_TAU)] {
+        for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+            let (setup, flow) = on_node_channel_at(matched_on_node_turbulence(vreman), collision, None, 150.0, re_tau);
+            let Some(r) = on_node_difference(flow, setup.steps, streaming) else { return };
+            let model = if vreman { "Vreman" } else { "Smagorinsky" };
+            check_on_node(&format!("matched wall, {model}, {collision:?}, {streaming:?}"), &r);
+        }
+    }
+}
+
+/// The trunk gate's representative of [`the_matched_on_node_wall_follows_the_cpu`]: the TRT collision
+/// in one layout, the same channel and tolerances.
+#[test]
+fn the_matched_on_node_wall_follows_the_cpu_on_trt() {
+    let (setup, flow) = on_node_channel(matched_on_node_turbulence(false), Collision::Trt, None, 150.0);
+    let Some(r) = on_node_difference(flow, setup.steps, Streaming::InPlace) else { return };
+    check_on_node("matched wall, Trt, InPlace", &r);
 }
 
 /// A body force changed while the flow runs (`Backend::set_acceleration`, for a flow held at a
@@ -1389,8 +1428,13 @@ const ON_NODE_COLLISIONS: [(Collision, Option<HrrSigma>); 3] =
 /// outermost cells' centres are 2δ apart, started from a perturbed blunt profile, driven by a body
 /// force, `steps` steps.
 fn on_node_channel(turbulence: Turbulence, collision: Collision, sigma: Option<HrrSigma>, steps: f64) -> (Setup, Flow) {
+    on_node_channel_at(turbulence, collision, sigma, steps, 180.0)
+}
+
+/// [`on_node_channel`] at a friction Reynolds number `re_tau`: the lattice viscosity is ∝ 1 / re_tau.
+fn on_node_channel_at(turbulence: Turbulence, collision: Collision, sigma: Option<HrrSigma>, steps: f64, re_tau: f64) -> (Setup, Flow) {
     use std::f64::consts::PI;
-    let (n, re_tau, ub) = (6usize, 180.0, 15.7);
+    let (n, ub) = (6usize, 15.7);
     let dx = 1.0 / n as f64;
     let (lx, lz) = ((2.0 * PI * n as f64).round() * dx, (PI * n as f64).round() * dx);
     let mut d = domain([0.0; 3], [lx, 2.0 + dx, lz], dx);

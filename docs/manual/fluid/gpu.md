@@ -118,6 +118,7 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | The halfway wall-function bounce (`wall_model: "spalding_bounce_halfway"`) | yes |
 | Han et al.'s on-node wall-function bounce (`wall_model: "spalding_bounce"`, their eq. 14) | yes |
 | The Spalart–Allmaras model's own wall law on the on-node wall (`wall_model: "spalart_allmaras_bounce"`) | yes |
+| Han et al.'s matched on-node wall (`wall_model: "spalding_bounce_matched"`: the law four cells from the wall, the mixing-length layer), with Smagorinsky's or Vreman's model and TRT, regularised, hybrid or MRT | yes (on an NVIDIA GB10 against the CPU in the coarse channel: peak velocity within 2.0e-6, density 1.3e-7, wall drag 9.6e-7, sampled stress 8.0e-7) |
 
 ## Algorithm
 
