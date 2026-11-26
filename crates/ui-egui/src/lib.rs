@@ -51,6 +51,7 @@ pub mod menu;
 pub mod navigation;
 pub mod node_move;
 pub mod palette;
+pub mod panels;
 pub mod path_panel;
 pub mod privacy;
 pub mod reply;

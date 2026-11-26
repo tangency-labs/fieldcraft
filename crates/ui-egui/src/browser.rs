@@ -1030,8 +1030,8 @@ fn json_name<T: serde::Serialize>(v: &T) -> String {
 /// The browser card's default width (Settings keeps the one the user drags it to).
 pub const WIDTH: f32 = 250.0;
 /// How narrow and how wide the card may be dragged (the viewport keeps the rest).
-const MIN_WIDTH: f32 = 170.0;
-const MAX_WIDTH: f32 = 620.0;
+pub(crate) const MIN_WIDTH: f32 = 170.0;
+pub(crate) const MAX_WIDTH: f32 = 620.0;
 /// The card's inner margin: the header's hover tint sits this far from the card's top, left and
 /// right edges, so its corners are concentric with the card's.
 const CARD_INSET: f32 = 4.0;

@@ -23,6 +23,7 @@ solidcraft-theme = { workspace = true }
 solidcraft-look = { workspace = true }
 solidcraft-ui-registry = { workspace = true }
 solidcraft-ui-text = { workspace = true }
+solidcraft-panel-layout = { workspace = true }
 egui-wgpu = { workspace = true }
 fieldcraft-gpu = { workspace = true }
 serde = { workspace = true }
