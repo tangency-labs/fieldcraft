@@ -102,9 +102,35 @@ as a choked nozzle. Every value is required; no gas is assumed.
 | other `pressure` faces | a non-reflecting outlet at that pressure |
 | `velocity` face | `U` fixed, `T` at `temperature` |
 | walls, obstacle faces | no-slip and adiabatic |
-| time step | adapts to `max_courant`: ¼ unless given, at most ½ (Kurganov and Tadmor's central scheme, Theorem 5.1, on OpenFOAM's Courant number summed over the axes) |
+| time step | adapts to `max_courant`: 0.2 unless given, at most ½ (see below) |
 
 A turbulence model is refused in a compressible case: it is laminar.
+
+### The time-step limit
+
+The Courant number of a cell is C = Σ over the axes i of (|u_i| + c) Δt / Δx_i, the sum of the
+wave speeds crossing each cell face's axis, as OpenFOAM's `CourantNo` sums it. The case adapts
+the step to `max_courant`.
+
+The case writes the central-upwind flux of Kurganov, Noelle and Petrova (2001, *SIAM J. Sci.
+Comput.* 23), which the solver applies in semi-discrete form.
+
+The default is 0.2: the CFL number at which Greenshields, Weller, Gasparini and Reese (2010, *Int. J.
+Numer. Meth. Fluids* 63, §4.1 and §4.2) ran their central-scheme cases, a shock tube and a forward
+step, and their figures 2 and 3 use it too.
+
+The ceiling ½ is the stability limit of the central schemes that the same paper states in §4.1
+("below the stability limit of 0.5 of the central schemes"). The paper states it and does not derive
+it, and this document does not prove it. `max_courant` may not pass it.
+
+### Specific heats and γ
+
+γ = c_p / (c_p − R) is derived from the material's c_p and the gas constant, not given. An ideal gas
+has c_v ≥ 3R/2 (equipartition over the three translational quadratic terms; Kittel and Kroemer,
+*Thermal Physics*, 2nd ed., ch. 3), so γ ≤ 5/3, with equality for a monatomic gas. A γ above 5/3
+means the data are not an ideal gas's. The case is still written, with a note on the case naming γ:
+data rounded to four figures can sit just above 5/3 for a monatomic gas (argon, with c_p = 520.3 and
+R = 208.13, is 0.0032 % above it).
 
 Reading a compressible case back gives each cell's gauge pressure (the absolute pressure less
 `ambient`), its temperature, and its density ρ = p/(R T). A cell whose temperature or pressure is

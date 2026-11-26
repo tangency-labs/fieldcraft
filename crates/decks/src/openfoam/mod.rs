@@ -298,7 +298,14 @@ pub fn write_case(model: &Model, step: Option<&str>, obstacles: &[ObstacleSurfac
         Some(conditions) => {
             refuse_turbulence_with_gas(turbulence.as_ref())?;
             notes.push("compressible: an ideal gas from the material's specific heat, viscosity and conductivity; its density is not used".into());
-            Some(Gas::of(model, domain, conditions)?)
+            let gas = Gas::of(model, domain, conditions)?;
+            if gas.gamma() > gas::MAX_IDEAL_GAMMA {
+                notes.push(format!(
+                    "the gas's ratio of specific heats γ = {:.4} is above 5/3, which an ideal gas does not reach (c_v >= 3R/2): the case is written from the data as given",
+                    gas.gamma()
+                ));
+            }
+            Some(gas)
         }
         None => None,
     };
