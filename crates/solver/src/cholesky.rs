@@ -25,9 +25,11 @@
 //! operations fixed by the matrix and the constants [`TILE`] and [`PANEL`]: sums over a
 //! supernode's columns run in column order from zero, and updates are subtracted in supernode
 //! order. Disjoint subtrees of the supernodal tree are factored concurrently (a supernode reads
-//! only its descendants), and the dense work of a large supernode is split into row tiles;
-//! neither changes any entry's sequence of operations, so the factor is the same bit for bit on
-//! any number of threads and on every platform (multiplications and additions are never fused).
+//! only its descendants), the dense work of a large supernode is split into row tiles, and the
+//! products of the updates a supernode receives are computed several at a time and subtracted
+//! in supernode order; none of this changes any entry's sequence of operations, so the factor
+//! is the same bit for bit on any number of threads and on every platform (multiplications and
+//! additions are never fused).
 //!
 //! A pivot at or below `PIVOT_TOLERANCE` times the matrix's own diagonal entry means the matrix
 //! is singular to working precision (an unconstrained rigid-body motion, a disconnected part, a
@@ -55,8 +57,29 @@ const MR: usize = crate::scalar::PACKED_ROWS;
 /// 2 MR sums stay in the sixteen registers every processor has.
 const NR: usize = 4;
 
+/// Bytes that the products of a supernode's updates take while a batch holds them
+/// ([`Context::assemble`]): each product's whole tiles ([`product_entries`]), its coefficients
+/// and its row positions ([`product_held`]), which a parallel batch holds all at once. Only the
+/// supernodes above the subtree tasks hold a batch, and they are factored one after another
+/// ([`Symbolic::factor`]). Beyond this, the batches take only the thread's packed rows
+/// ([`Scalar::with_packed`]); whatever the number of threads and whatever the scalar.
+const BATCH_BYTES: usize = 32 << 20;
+
 /// Dense work (multiply–adds) from which a kernel's tiles run in parallel.
 const PARALLEL_WORK: usize = 1 << 21;
+
+// Runs of the parallel branches on this thread, counted for the tests (the branch is decided on
+// the thread that calls it, and the tests read the count there).
+#[cfg(test)]
+thread_local! {
+    static PARALLEL_BATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts one run of a parallel branch (see [`PARALLEL_BATCHES`]).
+#[cfg(test)]
+fn count_run(counter: &'static std::thread::LocalKey<std::cell::Cell<usize>>) {
+    counter.with(|c| c.set(c.get() + 1));
+}
 
 /// Subtrees are handed to threads in pieces of about this fraction of the total work.
 const SUBTREE_SHARE: usize = 256;
@@ -369,6 +392,40 @@ fn zeros<T: Clone>(len: usize, zero: T) -> std::result::Result<Vec<T>, FactorErr
     Ok(values)
 }
 
+/// Entries of the tiles [`products`] returns for `mu` rows and `wu` columns: a tile holds
+/// [`TILE`] rows of each of its columns whatever its height, so one row of one column takes
+/// [`TILE`] entries.
+fn product_entries(mu: usize, wu: usize) -> usize {
+    (0..mu.div_ceil(TILE)).fold(0, |sum: usize, t| {
+        let end = mu.min((t + 1).saturating_mul(TILE));
+        sum.saturating_add(wu.min(end).saturating_mul(TILE))
+    })
+}
+
+/// Entries a product holds while a batch keeps it: its tiles ([`product_entries`]), the
+/// coefficients [`products`] builds them from (Y transposed, wu·kw, and its k-major blocks,
+/// ⌈wu/NR⌉·kw·NR, all in memory at once for the products of a parallel batch) and the positions
+/// of its rows in J's structure (one entry each).
+fn product_held(mu: usize, wu: usize, kw: usize) -> usize {
+    let coefficients = wu.saturating_mul(kw).saturating_add(wu.div_ceil(NR).saturating_mul(kw).saturating_mul(NR));
+    product_entries(mu, wu).saturating_add(coefficients).saturating_add(mu)
+}
+
+/// The end of the batch of updates that starts at `from`, of `len` updates: as many as hold
+/// `limit` entries together (`entries(i)` of update i), and always one.
+fn batch_end(from: usize, len: usize, limit: usize, entries: impl Fn(usize) -> usize) -> usize {
+    let (mut to, mut held) = (from, 0usize);
+    while to < len {
+        let more = entries(to);
+        if to > from && held.saturating_add(more) > limit {
+            break;
+        }
+        held = held.saturating_add(more);
+        to += 1;
+    }
+    to
+}
+
 /// S(i, c) = Σ_k L(p + i, k) Y(p + c, k) over the columns k in `cols` of a trapezoid, for rows i
 /// in 0..mu and columns c in 0..wu (meaningful for i ≥ c), each sum in column order. Y is L
 /// (Cholesky), or L D with D the block diagonal the trapezoid holds when `pivots` (of the
@@ -620,6 +677,9 @@ pub(crate) struct Context<'a, T> {
     pattern: &'a Pattern,
     pub(crate) s: &'a Structure,
     updates: &'a [Vec<Update>],
+    /// Entries of update products computed and held at once (always one update's; 0 for one
+    /// update at a time): the result does not depend on it.
+    batch: usize,
 }
 
 /// What the numeric factorization of one kind keeps per supernode.
@@ -855,16 +915,19 @@ impl<T: Scalar> Context<'_, T> {
                 }
             }
         }
-        // The descendants' updates, in supernode order.
-        let mut relative = Vec::new();
-        for u in self.updates.get(j).map(Vec::as_slice).unwrap_or_default() {
+        // The descendants' updates, subtracted in supernode order. Their products are computed
+        // several at a time, as many as hold `self.batch` entries together: each is a sum over
+        // one descendant's own columns, the same whichever thread computes it and whenever.
+        let list = self.updates.get(j).map(Vec::as_slice).unwrap_or_default();
+        // An update's product by tiles, and where its rows are in J's structure.
+        let product = |u: &Update| -> std::result::Result<(Vec<Vec<T>>, Vec<usize>), FactorError> {
             let done_k = done.get(u.k.wrapping_sub(base)).ok_or_else(|| internal("an update from outside the subtree"))?;
-            let lk = done_k.values();
             let (kr, kw) = (self.s.rows(u.k), self.s.cols(u.k).len());
             let below = kr.get(u.p1..).unwrap_or_default();
             let (mu, wu) = (below.len(), u.p2 - u.p1);
             // Positions of K's rows in J's structure (both sorted).
-            relative.clear();
+            let mut relative = Vec::new();
+            relative.try_reserve_exact(mu).map_err(|_| FactorError::OutOfMemory { entries: mu })?;
             let mut at = 0;
             for r in below {
                 while rows.get(at).is_some_and(|x| x < r) {
@@ -875,8 +938,37 @@ impl<T: Scalar> Context<'_, T> {
                 }
                 relative.push(at);
             }
-            let tiles = products(&Panel { m: kr.len(), data: lk }, 0..kw, u.p1, mu, wu, done_k.pivots())?;
-            subtract(own, m, &tiles, mu, wu, |i| relative.get(i).copied().unwrap_or(0));
+            let tiles = products(&Panel { m: kr.len(), data: done_k.values() }, 0..kw, u.p1, mu, wu, done_k.pivots())?;
+            Ok((tiles, relative))
+        };
+        let mut take = |u: &Update, (tiles, relative): (Vec<Vec<T>>, Vec<usize>)| {
+            subtract(own, m, &tiles, relative.len(), u.p2 - u.p1, |i| relative.get(i).copied().unwrap_or(0));
+        };
+        let size = |u: &Update| self.s.rows(u.k).len().saturating_sub(u.p1).saturating_mul(u.p2 - u.p1);
+        // What a product holds while it waits: its whole tiles, far more than its entries when
+        // the update has few rows.
+        let held =
+            |i: usize| list.get(i).map_or(0, |u| product_held(self.s.rows(u.k).len().saturating_sub(u.p1), u.p2 - u.p1, self.s.cols(u.k).len()));
+        let mut from = 0;
+        while from < list.len() {
+            let to = batch_end(from, list.len(), self.batch, held);
+            let several = list.get(from..to).unwrap_or_default();
+            // Little work is done here, by the thread that has it.
+            let work = several.iter().fold(0usize, |sum, u| sum.saturating_add(size(u).saturating_mul(self.s.cols(u.k).len())));
+            if several.len() > 1 && work >= PARALLEL_WORK {
+                #[cfg(test)]
+                count_run(&PARALLEL_BATCHES);
+                let found = parallel::map(several.len(), |i| several.get(i).map_or_else(|| Err(internal("an update is missing")), product));
+                for (u, result) in several.iter().zip(found) {
+                    take(u, result?);
+                }
+            } else {
+                // One after another: each product is subtracted while it is in the cache.
+                for u in several {
+                    take(u, product(u)?);
+                }
+            }
+            from = to;
         }
         Ok(())
     }
@@ -1197,7 +1289,14 @@ impl Symbolic {
         values: &mut [S],
         supernode: impl Fn(&Context<T>, usize, &[S], usize, &mut S) -> std::result::Result<(), FactorError> + Sync,
     ) -> std::result::Result<(), FactorError> {
-        let context = Context { a, pattern: &self.pattern, s: &self.structure, updates: &self.updates };
+        // A supernode above the tasks has the threads to itself and computes the products of
+        // its updates in batches of [`BATCH_BYTES`]. Inside a task the other threads have
+        // subtrees of their own, and the products are computed and subtracted one at a time: no
+        // task holds a batch, so the batches take [`BATCH_BYTES`] in all. One thread has nothing
+        // to compute at the same time: it subtracts each product while it is in the cache.
+        let batch = if parallel::current_threads() > 1 { BATCH_BYTES / std::mem::size_of::<T>().max(1) } else { 0 };
+        let context = Context { a, pattern: &self.pattern, s: &self.structure, updates: &self.updates, batch };
+        let within = Context { batch: 0, ..context };
         // The workspace of the dense kernels is asked for without aborting; what is missing is
         // reported as the factorization's.
         let whole = |e: FactorError| match e {
@@ -1229,7 +1328,7 @@ impl Symbolic {
                 }
                 let (done, own) = piece.split_at_mut(j - range.start);
                 let Some(own) = own.first_mut() else { break };
-                match supernode(&context, j, done, range.start, own) {
+                match supernode(&within, j, done, range.start, own) {
                     Ok(()) => {}
                     Err(e) if e.column().is_some() => {
                         *failed = Some(e);
@@ -1317,7 +1416,9 @@ impl Factor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ldlt::LdltFactor;
     use crate::sparse::Csr;
+    use num_complex::Complex64;
 
     /// [`products`] one output column at a time, its sum over k in order: the reference the
     /// micro-tiles reorganise.
@@ -1573,6 +1674,77 @@ mod tests {
             let other = parallel::with_threads(threads, || Factor::new(&upper, usize::MAX)).unwrap();
             assert!(one.values.iter().flatten().zip(other.values.iter().flatten()).all(|(a, b)| a.to_bits() == b.to_bits()), "{threads} threads");
         }
+        // The products of a supernode's updates one at a time, a few at a time or all at once:
+        // they are subtracted in the same order, so the factor is the same.
+        let symbolic = Symbolic::new(&upper, usize::MAX).unwrap();
+        assert!(symbolic.updates.iter().any(|list| list.len() > 8), "a supernode with many updates");
+        let lower = symbolic.numeric(&upper).unwrap();
+        for batch in [0, 4096, usize::MAX] {
+            let mut values = symbolic.allocate().unwrap();
+            let runs = parallel::with_threads(5, || {
+                PARALLEL_BATCHES.with(|c| c.set(0));
+                symbolic
+                    .factor(&lower, &mut values, |context, j, done, base, own| Context { batch, ..*context }.supernode(j, done, base, own))
+                    .unwrap();
+                PARALLEL_BATCHES.with(std::cell::Cell::get)
+            });
+            // Only an unlimited batch runs the parallel branch, which the test must reach.
+            assert_eq!(runs > 0, batch == usize::MAX, "parallel batches of {batch}");
+            assert!(one.values.iter().flatten().zip(values.iter().flatten()).all(|(a, b)| a.to_bits() == b.to_bits()), "batches of {batch}");
+        }
+        // The same structure in Complex64, a symmetric matrix (not Hermitian) factored by LDLᵀ
+        // on one thread and on five: the same solution bit for bit, and the parallel batches
+        // run on five threads only.
+        let complex = Csr { n, ptr: csr.ptr.clone(), idx: csr.idx.clone(), val: csr.val.iter().map(|v| Complex64::new(*v, 0.5 * v)).collect() };
+        let complex_upper = UpperColumns::from_symmetric(&complex);
+        let rhs: Vec<Complex64> = (0..n).map(|i| Complex64::new((i as f64 * 0.7).sin(), (i as f64 * 0.3).cos())).collect();
+        let solve_with = |threads: usize| {
+            parallel::with_threads(threads, || {
+                PARALLEL_BATCHES.with(|c| c.set(0));
+                let factor = LdltFactor::<Complex64>::new(&complex_upper, usize::MAX).unwrap();
+                let mut x = rhs.clone();
+                factor.solve(&mut x).unwrap();
+                (x, PARALLEL_BATCHES.with(std::cell::Cell::get))
+            })
+        };
+        let (x_one, runs_one) = solve_with(1);
+        let (x_five, runs_five) = solve_with(5);
+        assert_eq!(runs_one, 0);
+        assert!(runs_five > 0, "the complex factor runs a parallel batch");
+        assert!(x_one.iter().zip(&x_five).all(|(a, b)| a.re.to_bits() == b.re.to_bits() && a.im.to_bits() == b.im.to_bits()));
+        let residual = (0..n)
+            .map(|i| {
+                let row = csr.ptr[i]..csr.ptr[i + 1];
+                let ax: Complex64 = row.map(|k| complex.val[k] * x_one[complex.idx[k]]).sum();
+                (ax - rhs[i]).norm()
+            })
+            .fold(0.0, f64::max);
+        assert!(residual < 1e-10, "complex residual {residual}");
+        // A batch is held only by the supernodes above the subtree tasks, which are factored one
+        // after another: the batches take BATCH_BYTES in all, whatever the number of threads.
+        // One thread holds none.
+        assert!(!symbolic.tasks.is_empty() && !symbolic.top.is_empty());
+        for threads in [5, 1] {
+            let seen = std::sync::Mutex::new(Vec::new());
+            let mut values = symbolic.allocate().unwrap();
+            let several = parallel::with_threads(threads, || {
+                symbolic
+                    .factor(&lower, &mut values, |context, j, done, base, own| {
+                        seen.lock().unwrap().push((j, context.batch));
+                        context.supernode(j, done, base, own)
+                    })
+                    .unwrap();
+                parallel::current_threads() > 1
+            });
+            assert!(threads > 1 || !several);
+            let seen = seen.into_inner().unwrap();
+            assert_eq!(seen.len(), symbolic.supernodes());
+            for (j, batch) in seen {
+                let above = several && symbolic.top.contains(&j);
+                assert_eq!(batch, if above { BATCH_BYTES / std::mem::size_of::<f64>() } else { 0 }, "supernode {j}, {threads} threads");
+            }
+            assert!(one.values.iter().flatten().zip(values.iter().flatten()).all(|(a, b)| a.to_bits() == b.to_bits()), "{threads} threads");
+        }
     }
 
     /// A tile whose column the panel does not hold is an internal error, even when the thread's
@@ -1604,6 +1776,32 @@ mod tests {
         let mut values: Vec<Vec<f64>> = symbolic.allocate().unwrap();
         let failed = symbolic.factor(&lower, &mut values, |_, _, _, _, _| Err(FactorError::OutOfMemory { entries: 1 }));
         assert_eq!(failed, Err(FactorError::OutOfMemory { entries: symbolic.entries }));
+    }
+
+    /// A batch counts what its products take, whole tiles: updates of one row are not held by
+    /// the million because each has one entry.
+    #[test]
+    fn a_batch_counts_the_tiles_of_its_products() {
+        for (mu, wu) in [(1, 1), (2, 1), (33, 5), (64, 64), (65, 3), (136, 6), (200, 130), (260, 50)] {
+            // A trapezoid of one column above the rows of the product.
+            let data = vec![0.0; trapezoid(1 + mu, 1)];
+            let tiles = products(&Panel { m: 1 + mu, data: &data }, 0..1, 1, mu, wu, None).unwrap();
+            assert_eq!(tiles.iter().map(Vec::len).sum::<usize>(), product_entries(mu, wu), "{mu} rows, {wu} columns");
+        }
+        assert_eq!(product_entries(1, 1), TILE);
+        assert_eq!(product_entries(0, 0), 0);
+        // 100 rows and 5 columns of a 3-column block: tiles 320 + 320, coefficients 5 · 3 + 2 · 3 · 4,
+        // and 100 row positions.
+        assert_eq!(product_held(100, 5, 3), 640 + 39 + 100);
+        assert_eq!(product_held(0, 0, 3), 0);
+        // 4096 entries hold 64 updates of one row and one column, not 4096 of them.
+        assert_eq!(batch_end(0, 10_000, 4096, |_| product_entries(1, 1)), 4096 / TILE);
+        assert_eq!(batch_end(128, 10_000, 4096, |_| product_entries(1, 1)), 128 + 4096 / TILE);
+        // An update larger than the limit goes alone; the list's end ends the batch.
+        assert_eq!(batch_end(3, 10, 10, |_| 1000), 4);
+        assert_eq!(batch_end(3, 10, 0, |_| 1000), 4);
+        assert_eq!(batch_end(3, 10, usize::MAX, |_| usize::MAX), 10);
+        assert_eq!(batch_end(10, 10, 4096, |_| 1), 10);
     }
 
     #[test]

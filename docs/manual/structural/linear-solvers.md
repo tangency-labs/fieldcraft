@@ -42,6 +42,7 @@ Internal constants (`crates/solver/src/cholesky.rs`, `scalar.rs`, `ldlt.rs`, `or
 | `PANEL` | 64 | columns per panel of a supernode's dense factorization |
 | `TILE` | 64 | rows per tile of the dense kernels |
 | `PARALLEL_WORK` | 2²¹ multiply–adds | dense work from which a kernel's tiles run in parallel |
+| `BATCH_BYTES` | 32 MB | products of updates that the supernodes above the subtree tasks compute and hold at once: in all, on any number of threads, real and complex alike |
 | `PACKED_KEPT` | 2¹⁴ packed rows (1 MB real, 2 MB complex) | most packed rows a thread keeps from one tile to the next; a larger buffer is given back when its tile is done |
 | `SUBTREE_SHARE` | 256 | subtrees are handed to threads in pieces of about 1/256 of the total work |
 | `ALPHA` | (1 + √17)/8 | Bunch–Kaufman growth bound |
@@ -53,6 +54,14 @@ Internal constants (`crates/solver/src/cholesky.rs`, `scalar.rs`, `ldlt.rs`, `or
 only divide the work and its memory; the factor is the same bit for bit at any value of them.
 Where their values come from:
 
+- `BATCH_BYTES`: measured on the whole `solve.static` of eight solid models of 57 000 to 918 000
+  unknowns, on the 24 threads of an i7-13700KF. Against one update at a time, batches of 8 MB
+  take 7 to 15 % less time; 32 MB takes 3 to 9 % less than 8 MB; 128 MB takes from 1 % more to
+  7 % less than 32 MB. Each fourfold step gains about half of the one before, and 32 MB is small
+  beside the factor (285 MB for the smallest of these models). One thread has nothing to compute
+  at the same time, and a product it holds leaves the cache before it is subtracted: it holds no
+  batch. With one, the block of tet10 of `tests/speed.rs` takes 7.31 s on one thread against
+  6.79 s without, and the block of hex20 13.39 s against 13.21 s.
 - `PACKED_KEPT`: 2¹⁴ packed rows serve a tile over 2048 columns and are 1 MB of real values, the
   order of a core's second-level cache. A larger buffer would not stay in the cache, and taking
   it anew costs 1/wu of the work of a tile over wu columns.
@@ -109,8 +118,10 @@ and the rows below are solved against that block.
 **Threads and determinism.** Each entry of L is computed by one task, by a sequence of operations
 fixed by the matrix and the constants `TILE` and `PANEL`: sums over a supernode's columns run in
 column order from zero, and updates are subtracted in supernode order. Disjoint subtrees of the
-supernodal tree are factored concurrently (a supernode reads only its descendants), and the dense
-work of a large supernode is split into row tiles; neither changes any entry's sequence of
+supernodal tree are factored concurrently (a supernode reads only its descendants), the dense
+work of a large supernode is split into row tiles, and a supernode above the subtree tasks
+computes the products of the updates it receives several at a time (as many as `BATCH_BYTES`
+holds) and subtracts them in supernode order; none of this changes any entry's sequence of
 operations, and multiplications and additions are never fused, so the factor is the same bit for
 bit on any number of threads and on every platform.
 
@@ -196,7 +207,9 @@ This memory is not counted in `max_factor_entries`. It is asked for without abor
 cannot be had, the solve stops with the same "not enough memory for the factorization (N
 entries)". Each thread keeps its buffer of packed rows from one tile to the next, up to
 `PACKED_KEPT` rows (1 MB of real values, 2 MB of complex ones); a larger one is given back when
-its tile is done.
+its tile is done. The supernodes above the subtree tasks are factored one at a time and hold the
+products of several updates at once, `BATCH_BYTES` (32 MB) in all on any number of threads; an
+update whose product is larger is held alone, as every update is inside a task and on one thread.
 
 The same entry budget guards two more stores:
 
@@ -312,7 +325,8 @@ lets it through.
 | Case | Check | Test |
 |---|---|---|
 | Sparse SPD factor and solve; cap refused before allocation; singular matrix located; cancellation; empty and 1 × 1 matrices | exact solution, located errors | `cholesky::tests::factor_and_solve_a_sparse_spd_matrix` |
-| Supernodes wider than two panels, 1, 2 and 7 threads | residual < 10⁻¹², factor bit-identical on every thread count | `supernodes_panels_and_threads` |
+| Supernodes wider than two panels, 1, 2 and 7 threads; the products of updates one at a time, a few at a time and all at once | residual < 10⁻¹², factor bit-identical on every thread count and batch size; only the supernodes above the subtree tasks hold a batch, and none on one thread | `supernodes_panels_and_threads` |
+| Size of a batch | counts what its products take, whole tiles; an update over the limit goes alone | `a_batch_counts_the_tiles_of_its_products` |
 | Workspace of a dense kernel that cannot be had | the out-of-memory error with the factor's entries, no abort | `a_kernel_without_memory_is_an_error` |
 | Packed rows of a thread | as many as asked for; kept up to `PACKED_KEPT` and given back beyond; in use or without memory is an error | `scalar::tests::a_thread_keeps_its_packed_rows_up_to_a_bound` |
 | Indefinite shifted systems | inertia equals the eigenvalue count below σ; residual < 10⁻¹⁰; on an SPD matrix the same fill as Cholesky and no negative pivot | `ldlt::tests::indefinite_systems_solve_with_their_inertia` |
