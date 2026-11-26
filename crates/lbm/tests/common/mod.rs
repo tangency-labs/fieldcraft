@@ -4,6 +4,7 @@
 
 pub mod curved_cht;
 pub mod inlet;
+pub mod lee_moser;
 pub mod pressure_zone;
 pub mod ramp_tube;
 
