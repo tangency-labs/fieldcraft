@@ -13,7 +13,7 @@ memory is committed.
 | **Commands** | the `max_factor_entries`, `max_dofs`, `max_iterations` and `threads` parameters of `solve.static`, `solve.heat`, `solve.frequency`, `solve.buckle`, `solve.nonlinear` |
 | **Step procedure** | `static`, `coupled_temperature_displacement`, `heat_transfer`, `frequency`, `buckle`, `nonlinear_static` |
 | **Solver** | `crates/solver` (CPU, f64): `ordering`, `cholesky`, `ldlt`, `constraints`, `sparse` |
-| **Method** | nested dissection (George 1973; Simon 1991; George & Liu 1978); elimination tree and supernodes (Liu 1990; Liu, Ng & Peyton 1993); left-looking supernodal Cholesky (Ng & Peyton 1993; Rothberg & Gupta 1994); bounded Bunch–Kaufman pivoting (Ashcraft, Grimes & Lewis 1998) within supernodes (Schenk & Gärtner 2006) |
+| **Method** | nested dissection (George 1973; Simon 1991; George & Liu 1978); elimination tree and supernodes (Liu 1990; Liu, Ng & Peyton 1993), on the compressed matrix of a solid model's blocks (Ashcraft 1995); left-looking supernodal Cholesky (Ng & Peyton 1993; Rothberg & Gupta 1994); bounded Bunch–Kaufman pivoting (Ashcraft, Grimes & Lewis 1998) within supernodes (Schenk & Gärtner 2006) |
 | **Verified by** | `cholesky::tests`, `ldlt::tests`, `ordering::tests`, `constraints::tests`, `sparse::tests`; every solver test and oracle case runs on them |
 
 ## Synopsis
@@ -44,6 +44,7 @@ Internal constants (`crates/solver/src/cholesky.rs`, `scalar.rs`, `ldlt.rs`, `or
 | `PARALLEL_WORK` | 2²¹ multiply–adds | dense work from which a kernel's tiles run in parallel |
 | `BATCH_BYTES` | 32 MB | products of updates that the supernodes above the subtree tasks compute and hold at once: in all, on any number of threads, real and complex alike |
 | `PACKED_KEPT` | 2¹⁴ packed rows (1 MB real, 2 MB complex) | most packed rows a thread keeps from one tile to the next; a larger buffer is given back when its tile is done |
+| `BLOCK` | 3 | unknowns of a block in the symbolic analysis by blocks (a node's displacements) |
 | `SUBTREE_SHARE` | 256 | subtrees are handed to threads in pieces of about 1/256 of the total work |
 | `ALPHA` | (1 + √17)/8 | Bunch–Kaufman growth bound |
 | `ROOK_STEPS` | 64 | most steps of one rook search |
@@ -65,6 +66,7 @@ Where their values come from:
 - `PACKED_KEPT`: 2¹⁴ packed rows serve a tile over 2048 columns and are 1 MB of real values, the
   order of a core's second-level cache. A larger buffer would not stay in the cache, and taking
   it anew costs 1/wu of the work of a tile over wu columns.
+- `BLOCK`: the three displacements of a solid's node, the only block the analysis looks for.
 
 ## Theory
 
@@ -108,6 +110,16 @@ the tree (an equivalent ordering with the same fill), so every subtree is a cont
 columns, and consecutive columns with nested structures merge into fundamental supernodes (Liu,
 Ng & Peyton 1993): a supernode's columns share one row structure and are stored as one dense
 lower trapezoid, so the factor holds exactly the entries of L.
+
+Where the matrix is made of blocks of three consecutive unknowns that are indistinguishable (each
+couples with the whole of every block it couples with, its own included: a solid model whose
+nodes keep all three displacements), the tree and the counts come from the compressed matrix of
+the blocks (Ashcraft 1995), which has a ninth of the entries: within a block each unknown's
+parent is the next one, the last one's parent is the first unknown of the block's parent, and
+unknown c of a block whose column of blocks has `count` blocks has 3 · count − c entries. The
+result is the same as column by column. One block that is not whole (a node with a roller or a
+symmetry condition, a shell's rotations, a coupling row) sends the whole matrix to the analysis
+column by column.
 
 **Numeric** (left-looking supernodal; Ng & Peyton 1993; Rothberg & Gupta 1994). A supernode
 starts as its columns of A, receives the update L_K L_Kᵀ of every descendant supernode K whose
@@ -232,7 +244,8 @@ The same entry budget guards two more stores:
    with the smaller symbolic fill kept.
 3. **Reduce.** `constraints::Reduction` eliminates prescribed values and constraint rows in that
    order (free unknowns numbered by the node order), within its memory budget.
-4. **Symbolic.** Elimination tree, postorder, column counts, supernodes; the entry count against
+4. **Symbolic.** Elimination tree, postorder, column counts (from the blocks' matrix where the
+   matrix is made of blocks of three unknowns), supernodes; the entry count against
    `max_factor_entries` (refused before allocation).
 5. **Allocate** the supernodes' values (`try_reserve_exact`; a failure is the out-of-memory
    error).
@@ -327,6 +340,7 @@ lets it through.
 | Sparse SPD factor and solve; cap refused before allocation; singular matrix located; cancellation; empty and 1 × 1 matrices | exact solution, located errors | `cholesky::tests::factor_and_solve_a_sparse_spd_matrix` |
 | Supernodes wider than two panels, 1, 2 and 7 threads; the products of updates one at a time, a few at a time and all at once | residual < 10⁻¹², factor bit-identical on every thread count and batch size; only the supernodes above the subtree tasks hold a batch, and none on one thread | `supernodes_panels_and_threads` |
 | Size of a batch | counts what its products take, whole tiles; an update over the limit goes alone | `a_batch_counts_the_tiles_of_its_products` |
+| Symbolic analysis by blocks | the tree and the counts of the analysis column by column, on a matrix of blocks and on the ordered, constrained stiffness of a hex8 model held at its base; a ragged or shorter block, or one node held in one direction, is analysed column by column | `the_structure_of_uniform_blocks_is_the_structure_by_columns`, `a_solid_models_stiffness_is_analysed_by_blocks` |
 | Workspace of a dense kernel that cannot be had | the out-of-memory error with the factor's entries, no abort | `a_kernel_without_memory_is_an_error` |
 | Packed rows of a thread | as many as asked for; kept up to `PACKED_KEPT` and given back beyond; in use or without memory is an error | `scalar::tests::a_thread_keeps_its_packed_rows_up_to_a_bound` |
 | Indefinite shifted systems | inertia equals the eigenvalue count below σ; residual < 10⁻¹⁰; on an SPD matrix the same fill as Cholesky and no negative pivot | `ldlt::tests::indefinite_systems_solve_with_their_inertia` |
@@ -353,6 +367,9 @@ CI on any change of a frozen result beyond its band (10⁻⁹ of the value).
   diagonal couples only to rows of a later supernode would stop as singular. No FieldCraft system
   has one: hybrid pressures are condensed per element.
 - A zero eigenvalue is never counted in the inertia: a zero pivot is a located error.
+- The symbolic analysis by blocks is all or nothing: it needs every block of three unknowns
+  whole. Detecting any run of indistinguishable unknowns (the general compressed graph of
+  Ashcraft 1995) is not implemented.
 - Unsymmetric matrices are not factored: the skew part of a follower pressure's load stiffness and
   of friction is left out of the tangent ([Nonlinear static](nonlinear-static.md)).
 
@@ -380,6 +397,7 @@ CI on any change of a frozen result beyond its band (10⁻⁹ of the value).
 - J. W. H. Liu. *The role of elimination trees in sparse factorization.* SIAM J. Matrix Anal. Appl. 11(1):134–172, 1990.
 - J. W. H. Liu, E. G. Ng, B. W. Peyton. *On finding supernodes for sparse matrix computations.* SIAM J. Matrix Anal. Appl. 14(1):242–252, 1993.
 - T. A. Davis. *Direct Methods for Sparse Linear Systems.* SIAM, 2006.
+- C. Ashcraft. *Compressed graphs and the minimum degree algorithm.* SIAM J. Sci. Comput. 16(6):1404–1411, 1995.
 - E. Ng, B. W. Peyton. *Block sparse Cholesky algorithms on advanced uniprocessor computers.* SIAM J. Sci. Comput. 14(5):1034–1056, 1993.
 - E. Rothberg, A. Gupta. *An efficient block-oriented approach to parallel sparse Cholesky factorization.* SIAM J. Sci. Comput. 15(6):1413–1439, 1994.
 - J. R. Bunch, L. Kaufman. *Some stable methods for calculating inertia and solving symmetric linear systems.* Math. Comp. 31(137):163–179, 1977.

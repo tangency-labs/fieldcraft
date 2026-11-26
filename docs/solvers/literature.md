@@ -1382,7 +1382,9 @@ the module docs):
   in Engineering 2:135–148, 1991.
 - Sparse Cholesky: T. A. Davis, *Direct Methods for Sparse Linear Systems*, SIAM 2006; J. W. H.
   Liu, SIAM J. Matrix Anal. Appl. 11(1):134–172, 1990; supernodes: J. W. H. Liu, E. G. Ng, B. W.
-  Peyton, SIAM J. Matrix Anal. Appl. 14(1):242–252, 1993; left-looking supernodal factorization:
+  Peyton, SIAM J. Matrix Anal. Appl. 14(1):242–252, 1993; the compressed graph of indistinguishable
+  unknowns (the symbolic analysis by blocks of three): C. Ashcraft, SIAM J. Sci. Comput.
+  16(6):1404–1411, 1995; left-looking supernodal factorization:
   E. Ng, B. W. Peyton, SIAM J. Sci. Comput. 14(5):1034–1056, 1993; parallel block factorization:
   E. Rothberg, A. Gupta, SIAM J. Sci. Comput. 15(6):1413–1439, 1994.
 - Eigenvalues: T. Ericsson, A. Ruhe, Math. Comp. 35(152):1251–1268, 1980; R. G. Grimes, J. G.
