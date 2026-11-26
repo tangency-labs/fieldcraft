@@ -14,9 +14,10 @@
 //!   fundamental mode's residual in `docs/manual/fluid/boundary-conditions.md`).
 //!
 //! Every run starts at rest on the body (a divergence-free field that stops at the body's surface), with interpolated
-//! walls, the velocity faces raised from that field by the ramp. Printed per run: C_d with its 8-block 95 % interval,
+//! walls and the inlet ramped up from zero, so the inlet starts at 0 while the field starts at U (an inconsistent start,
+//! #1153). Printed per run: C_d with its 8-block 95 % interval,
 //! C_l rms, the lift spectrum's peaks (St in cycles per D/U), the density range over the fluid cells, the recirculation
-//! length behind the body, and the wall time. Skipped without a GPU adapter unless `FIELDCRAFT_REQUIRE_GPU=1`.
+//! length behind the body, and the wall time. Ignored by default: without a GPU adapter the run fails.
 #[path = "../../lbm/tests/common/mod.rs"]
 mod common;
 
@@ -55,6 +56,8 @@ struct Case {
     start: f64,
     end: f64,
     ramp: f64,
+    vreman: bool,
+    dump: bool,
 }
 
 impl Case {
@@ -74,6 +77,8 @@ impl Case {
             start: 100.0,
             end: 240.0,
             ramp: 2.5,
+            vreman: true,
+            dump: false,
         };
         for kv in rest.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             let (k, v) = kv.split_once('=').ok_or_else(|| format!("expected key=value, got {kv}"))?;
@@ -104,6 +109,14 @@ impl Case {
                 "start" => c.start = num()?,
                 "end" => c.end = num()?,
                 "ramp" => c.ramp = num()?,
+                "sgs" => {
+                    c.vreman = match v.trim() {
+                        "vreman" => true,
+                        "smagorinsky" => false,
+                        other => return Err(format!("sgs {other}")),
+                    }
+                }
+                "dump" => c.dump = num()? != 0.0,
                 other => return Err(format!("unknown key {other}")),
             }
         }
@@ -128,6 +141,12 @@ impl Derived {
         let dt = LATTICE_SPEED * dx;
         Derived { dx, span: nz as f64 * dx, nz, dt, per_time: (n / LATTICE_SPEED).round() as u64 }
     }
+}
+
+/// The inlet ramp's duration in time units: m T₀ with T₀ = 4 L / c_s, L the box's length in cells.
+fn inlet_ramp_time(c: &Case, d: &Derived) -> f64 {
+    let nx = (c.length * c.n as f64).round();
+    c.ramp * 4.0 * nx / SOUND_SPEED * d.dt
 }
 
 /// Hann-windowed amplitude spectrum of `x` sampled every `dt`: the three largest peaks (frequency, power).
@@ -193,9 +212,8 @@ fn run(c: &Case) -> Result<(), String> {
     } else {
         obstacle("Body", cylinder([xc, yc], 0.5, -d.dx, d.span + d.dx, 1024), &["side", "bottom", "top"])
     };
-    // The inlet rises over m fundamental periods of the box, T₀ = 4 L / c_s with L the box's length in cells.
-    let nx = (c.length * n).round();
-    let ramp_time = c.ramp * 4.0 * nx / SOUND_SPEED * d.dt;
+    // The inlet rises over m fundamental periods of the box.
+    let ramp_time = inlet_ramp_time(c, &d);
     let procedure = Procedure::Fluid {
         domain: "Flow".into(),
         end_time: Some(c.end),
@@ -205,10 +223,14 @@ fn run(c: &Case) -> Result<(), String> {
         magic: None,
         sigma: Some(c.sigma),
         collision: Some(Collision::Hrr),
-        turbulence: Some(Turbulence::Vreman { constant: c.cs, prandtl: 0.9, wall_model: None }),
+        turbulence: Some(if c.vreman {
+            Turbulence::Vreman { constant: c.cs, prandtl: 0.9, wall_model: None }
+        } else {
+            Turbulence::Smagorinsky { constant: c.cs, prandtl: 0.9, van_driest: None, wall_model: None }
+        }),
         steady: None,
         walls: WallTreatment::Interpolated,
-        inlet_ramp: Some(ramp_time),
+        inlet_ramp: (c.ramp > 0.0).then_some(ramp_time),
         trace_bulk_one: false,
     };
     let m = model(1.0, 1.0 / c.re, dom, procedure);
@@ -251,7 +273,7 @@ fn run(c: &Case) -> Result<(), String> {
     let start = (c.start * per_time as f64).round() as u64;
     let coefficient = 2.0 / (LATTICE_SPEED * LATTICE_SPEED * n * d.nz as f64);
     let (mut cd, mut cl) = (Vec::new(), Vec::new());
-    let mut rho_mean = vec![0.0f64; nxc * nyc];
+    let mut series: Vec<(f64, f64)> = Vec::new();
     let mut u_mean = vec![0.0f64; nxc * nyc];
     let mut samples = 0usize;
     let (mut rho_lo, mut rho_hi) = (f64::INFINITY, f64::NEG_INFINITY);
@@ -275,6 +297,9 @@ fn run(c: &Case) -> Result<(), String> {
             cd.push(0.5 * (ox + ex) * coefficient);
             cl.push(0.5 * (oy + ey) * coefficient);
         }
+        if c.dump {
+            series.push((0.5 * (ox + ex) * coefficient, 0.5 * (oy + ey) * coefficient));
+        }
         if k.is_multiple_of(FIELD_STRIDE) {
             let fields = gpu.fields().map_err(|e| format!("{e}"))?;
             for (cell, &r) in fields.density.iter().enumerate() {
@@ -286,12 +311,18 @@ fn run(c: &Case) -> Result<(), String> {
             if k >= start {
                 for cell in 0..grid.len() {
                     let [i, j, _] = grid.coords(cell);
-                    rho_mean[i + nxc * j] += fields.density[cell];
                     u_mean[i + nxc * j] += fields.velocity[cell][0];
                 }
                 samples += 1;
             }
         }
+    }
+    if c.dump {
+        // Every force sample of the run (one per FORCE_STRIDE steps): the lift and drag history for offline spectra.
+        let cl_all: Vec<String> = series.iter().map(|s| format!("{:.5}", s.1)).collect();
+        let cd_all: Vec<String> = series.iter().map(|s| format!("{:.5}", s.0)).collect();
+        println!("SERIES {} dt_du {:.6} cd {}", c.id, FORCE_STRIDE as f64 / per_time as f64, cd_all.join(" "));
+        println!("SERIES {} dt_du {:.6} cl {}", c.id, FORCE_STRIDE as f64 / per_time as f64, cl_all.join(" "));
     }
     let wall = clock.elapsed().as_secs_f64();
     if cd.len() < BLOCKS * 2 {
@@ -383,7 +414,7 @@ fn a_case_spec_sets_the_reference_defaults_and_the_square_re() {
 fn the_inlet_ramp_is_m_fundamental_periods_of_the_box() {
     // T₀ = 4 L / c_s steps: for a box of 384 cells, m · 4 · 384 · √3 steps at m = 2.5 (the default).
     let c = Case::parse("cyl").expect("a case");
-    let nx = (c.length * c.n as f64).round();
-    let steps = c.ramp * 4.0 * nx / SOUND_SPEED;
+    let d = Derived::of(&c);
+    let steps = inlet_ramp_time(&c, &d) / d.dt;
     assert!((steps - 2.5 * 4.0 * 384.0 * 3f64.sqrt()).abs() < 1e-9);
 }
