@@ -30,7 +30,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session, StepResult};
 pub const READ: CommandSpec = CommandSpec {
     id: "results.openfoam",
     label: "Read OpenFOAM Results",
-    params: r#"{"path": "case_dir", "spacing"?: 0.4, "max_cells"?: 16000000, "every"?: 1, "from"?: 0, "to"?: 1} — reads the results of a case `deck.openfoam` wrote and OpenFOAM ran (ASCII; reconstructed, or else straight from its processor directories) as the fluid results of its step, for viewing: the written times from `from` to `to` (input units, inclusive), every `every`-th of them and always the last, each a frame sampled at the centres of a lattice over the step's domain box (its spacing, or `spacing` in the input units) from the nearest OpenFOAM cell; the obstacles' cells are solid. Velocity, and the gauge pressure (OpenFOAM's kinematic pressure times the density the case was written with). A compressible case (rhoCentralFoam): the gauge pressure (the absolute pressure less the ambient the case was written with), the temperature above the case's temperature, each cell's density p/(R T) from the gas the case was written with, and `max_mach`, the largest Mach number of the frames read. A pressure or temperature that is not positive is an error naming its cell. A lattice cell no OpenFOAM cell is near is an error, never a zero. Replaces the step's results; the model is unchanged"#,
+    params: r#"{"path": "case_dir", "spacing"?: 0.4, "max_cells"?: 16000000, "every"?: 1, "from"?: 0, "to"?: 1} — reads the results of a case `deck.openfoam` wrote and OpenFOAM ran (ASCII; reconstructed, or else straight from its processor directories) as the fluid results of its step, for viewing: the written times from `from` to `to` (input units, inclusive), every `every`-th of them and always the last, each a frame sampled at the centres of a lattice over the step's domain box (its spacing, or `spacing` in the input units) from the nearest OpenFOAM cell; the obstacles' cells are solid. Velocity, and the gauge pressure (OpenFOAM's kinematic pressure times the density the case was written with). A compressible case (rhoCentralFoam): the gauge pressure (the absolute pressure less the ambient the case was written with), the temperature above the case's temperature, each cell's density p/(R T) from the gas the case was written with, and `max_mach`, the largest Mach number of the frames read (`mach_basis`: `physical U/c`, the cell's speed over its local speed of sound). A pressure or temperature that is not positive is an error naming its cell. A lattice cell no OpenFOAM cell is near is an error, never a zero. Replaces the step's results; the model is unchanged"#,
     form: Some(crate::cmd::forms::RESULTS_OPENFOAM),
     kind: CommandKind::Session,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -493,6 +493,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         "openfoam_cells": centres.len(), "max_speed": max_speed});
     if gas.is_some() {
         reply["max_mach"] = json!(max_mach);
+        reply["mach_basis"] = json!("physical U/c");
     }
     Ok(reply)
 }

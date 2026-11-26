@@ -143,6 +143,7 @@ fn a_compressible_case_reads_back_pressure_temperature_and_density() {
     let gamma = CP / (CP - R_S);
     let mach = SPEED / (gamma * R_S * T_OUTLET).sqrt();
     assert!(close(r["max_mach"].as_f64().unwrap(), mach), "the largest Mach number is on the cooler outlet side: {r}");
+    assert_eq!(r["mach_basis"], "physical U/c", "the Mach number of an OpenFOAM case is physical, not lattice: {r}");
 
     let (min, max) = (c.min.clone(), c.max.clone());
     let s = &mut c.s;

@@ -188,9 +188,12 @@ pub struct FluidStats {
     /// results encoding skips it (none when read back), so results saved before it read unchanged.
     #[serde(skip)]
     pub shear_dependent_tau: Option<ShearDependentTau>,
-    /// The characteristic velocity (model units), its lattice value and its lattice Mach number.
+    /// The characteristic velocity (model units) and its lattice value.
     pub velocity: f64,
     pub lattice_velocity: f64,
+    /// A Mach number, and which one it is. A lattice run holds its characteristic velocity's
+    /// lattice Mach number (an estimate). A case read back from OpenFOAM has no lattice, so it holds
+    /// the largest physical Mach number U/c over the cells read (c the local speed of sound).
     pub mach: f64,
     /// Fluid cells times steps.
     pub cell_updates: u64,
