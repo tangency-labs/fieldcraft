@@ -448,6 +448,41 @@ reproducible from what is published. A40 was not run.
 > The remaining error is resolution: 16–24 cells per diameter leave the separating shear layers on one or two cells.
 > Density stays within 0.84–1.18 (square) and 0.93–1.08 (cylinder) of the reference, local Mach numbers up to 0.28.
 
+### Bluff-body LES noise, 2 × 2 (#1110): all four runs diverge
+
+> Runs of 2026-11-25 on the NVIDIA GB10 (aarch64, GPU, f32), `crates/lbm-gpu/tests/bluff_noise.rs`
+> (`cargo test --release -p fieldcraft-lbm-gpu --test bluff_noise -- --ignored --nocapture`). Cylinder at Re 3900,
+> Hrr collision with Smagorinsky C 0.1, halfway walls, box 24 D × 12 D, one cell of span, convective outlet. **Start:**
+> at rest on the body (the divergence-free stream function of #1106), with the inlet raised from rest over 2.5 T₀
+> (T₀ = 4 L / c_s, the manual's `inlet_ramp`; 20.8 D/U at lattice speed 0.05, 41.6 D/U at 0.10). The ramp is outside
+> the statistics. τ⁺ = ½ + 3 U_lat · cells per D / Re.
+
+| cells per D | U_lat (Mach) | τ⁺ | outcome | divergence (step; D/U) | lattice speed at divergence | |ρ − 1| before it (peak; wake rms) |
+|---|---|---|---|---|---|---|
+| 16 | 0.05 (0.087) | 0.50062 | unstable | 23 232; 72.6 | 0.54 | 5 to 23 %; 0.7 to 10 % (72 D/U) |
+| 16 | 0.10 (0.173) | 0.50123 | unstable | 10 624; 66.4 | 0.54 | 10 to 100 %; 0.07 to 21 % (66 D/U) |
+| 32 | 0.05 (0.087) | 0.50123 | unstable | 25 728; 40.2 | 15 503 | 6 to 16 %; 0.6 to 10 % (40 D/U) |
+| 32 | 0.10 (0.173) | 0.50246 | unstable | 3 841; 12.0 | 0.504 (during the ramp) | 16 to 78 %; 0.07 to 28 % (12 D/U) |
+
+No design point gives a noise statistic: the window from 60 D/U was reached only at 16 cells per D and 0.05, and it
+closed at 72 D/U. The
+impulsive start of the earlier attempt diverged the same way (not kept as a row: the start is the one the product does
+not use for bluff bodies).
+
+Against the expert's linear rates (`lbm-dd/notes/expert-regularized-bound.md`, section 2, Hrr, the largest over the 14
+directions): at 16 cells per D and 0.05 the map has no growing wave at τ⁺ 0.5005 and 0.501; at 0.10 the rate is about
+4 × 10⁻⁵ per step; at 32 cells per D and 0.05 it is below 6 × 10⁻⁷; at 32 and 0.10 about 3 × 10⁻⁵ or less. Taking
+ln(100) e-folds from a 10⁻² departure gives about 1.5 × 10⁵ steps at 3 × 10⁻⁵ per step. The runs diverged in 3 800 to
+25 700 steps. **Inferred, not tested:** the blow-ups are nonlinear and start-up driven (the stream-function start has
+lattice speeds above the inlet's near the body; the 32-cell, 0.10 run failed during its ramp), not the linear
+regularised or hybrid mode. So the expert's rates cannot account for these divergences, and these runs do not measure
+the noise the issue asks about.
+
+What this leaves for #785 step 6 (warn or refuse): the evidence is that the present Hrr/Smagorinsky set-up does not run
+the bluff-body LES cases at these τ⁺ and lattice speeds with this start; it neither confirms nor refutes the noise
+being the linear mode's. A run that separates the two needs the start or the outlet changed first, which is the
+owner's call.
+
 ### Wall-modelled channel at Re_τ 1000 on the regularised collision (#785)
 
 > Probe runs of 2026-11-23/24 on develop 655d92fe: 2πδ × 2δ × πδ, constant force u_τ²/δ, Smagorinsky C 0.1, the
