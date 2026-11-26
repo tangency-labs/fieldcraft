@@ -44,6 +44,7 @@ Internal constants (`crates/solver/src/cholesky.rs`, `scalar.rs`, `ldlt.rs`, `or
 | `PARALLEL_WORK` | 2²¹ multiply–adds | dense work from which a kernel's tiles run in parallel |
 | `BATCH_BYTES` | 32 MB | products of updates that the supernodes above the subtree tasks compute and hold at once: in all, on any number of threads, real and complex alike |
 | `PACKED_KEPT` | 2¹⁴ packed rows (1 MB real, 2 MB complex) | most packed rows a thread keeps from one tile to the next; a larger buffer is given back when its tile is done |
+| `SORTED` | 1024 | columns of the matrix that one task copies or sorts |
 | `BLOCK` | 3 | unknowns of a block in the symbolic analysis by blocks (a node's displacements) |
 | `SUBTREE_SHARE` | 256 | subtrees are handed to threads in pieces of about 1/256 of the total work |
 | `ALPHA` | (1 + √17)/8 | Bunch–Kaufman growth bound |
@@ -66,6 +67,9 @@ Where their values come from:
 - `PACKED_KEPT`: 2¹⁴ packed rows serve a tile over 2048 columns and are 1 MB of real values, the
   order of a core's second-level cache. A larger buffer would not stay in the cache, and taking
   it anew costs 1/wu of the work of a tile over wu columns.
+- `SORTED`: a task must be long beside the cost of handing it out, and a large matrix must
+  still give many more tasks than threads. On the same models and machine, 256, 1024 and 4096
+  columns take the same time within the 1 % that two runs differ by; 1024 is the middle one.
 - `BLOCK`: the three displacements of a solid's node, the only block the analysis looks for.
 
 ## Theory
@@ -341,6 +345,7 @@ lets it through.
 | Supernodes wider than two panels, 1, 2 and 7 threads; the products of updates one at a time, a few at a time and all at once | residual < 10⁻¹², factor bit-identical on every thread count and batch size; only the supernodes above the subtree tasks hold a batch, and none on one thread | `supernodes_panels_and_threads` |
 | Size of a batch | counts what its products take, whole tiles; an update over the limit goes alone | `a_batch_counts_the_tiles_of_its_products` |
 | Symbolic analysis by blocks | the tree and the counts of the analysis column by column, on a matrix of blocks and on the ordered, constrained stiffness of a hex8 model held at its base; a ragged or shorter block, or one node held in one direction, is analysed column by column | `the_structure_of_uniform_blocks_is_the_structure_by_columns`, `a_solid_models_stiffness_is_analysed_by_blocks` |
+| The matrix's upper triangle copied and its columns sorted by tasks of `SORTED` columns, on more than three tasks | every column's rows sorted, every value kept | `the_matrix_is_copied_and_reordered_whole` |
 | Workspace of a dense kernel that cannot be had | the out-of-memory error with the factor's entries, no abort | `a_kernel_without_memory_is_an_error` |
 | Packed rows of a thread | as many as asked for; kept up to `PACKED_KEPT` and given back beyond; in use or without memory is an error | `scalar::tests::a_thread_keeps_its_packed_rows_up_to_a_bound` |
 | Indefinite shifted systems | inertia equals the eigenvalue count below σ; residual < 10⁻¹⁰; on an SPD matrix the same fill as Cholesky and no negative pivot | `ldlt::tests::indefinite_systems_solve_with_their_inertia` |
