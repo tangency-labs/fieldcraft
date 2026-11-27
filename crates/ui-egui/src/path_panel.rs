@@ -62,10 +62,7 @@ impl Editor {
             points: Vec::new(),
             samples: 101,
             frame: pick.frame.filter(|k| *k < stored_frames(result, field)),
-            mode: match result.kind() {
-                Kind::Frequency(f) => Some(if (1..=f.modes.len()).contains(&pick.mode) { pick.mode } else { 1 }),
-                _ => None,
-            },
+            mode: result.kind().modes().map(|n| if (1..=n).contains(&pick.mode) { pick.mode } else { 1 }),
             picking: false,
             selected: None,
         }
@@ -223,7 +220,7 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
                     if ui.selectable_label(editor.step == step, step).clicked() {
                         editor.step = step.to_owned();
                         editor.frame = None;
-                        editor.mode = app.session.result(step).filter(|r| matches!(r.kind(), Kind::Frequency(_))).map(|_| 1);
+                        editor.mode = app.session.result(step).and_then(|r| r.kind().modes()).map(|_| 1);
                     }
                 }
             })
@@ -285,12 +282,12 @@ pub fn controls(app: &mut ModelApp, view: &crate::results::Plot, ui: &mut egui::
             kit::status_line(ui, "Show this step before picking its surface", kit::StatusTone::Dim);
         }
         kit::row(ui, "Samples", |ui| kit::whole_number_field(ui, &mut editor.samples, 2..=fieldcraft_engine::path::MAX_SAMPLES, ""));
-        match result.kind() {
-            Kind::Frequency(f) => {
+        match result.kind().modes() {
+            Some(n) => {
                 let mode = editor.mode.get_or_insert(1);
-                kit::row(ui, "Mode", |ui| kit::whole_number_field(ui, mode, 1..=f.modes.len().max(1), ""));
+                kit::row(ui, "Mode", |ui| kit::whole_number_field(ui, mode, 1..=n.max(1), ""));
             }
-            _ => {
+            None => {
                 let frames = stored_frames(result, editor.field);
                 if frames > 0 {
                     let mut chosen = editor.frame.is_some();
