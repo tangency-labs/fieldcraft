@@ -21,7 +21,7 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # SolidCraft (its kernel, the solidcore kernel it vendors, its UI kit and its patched egui-wgpu and
-# winit), pinned by rev in Cargo.toml.
+# winit), pinned by tag in Cargo.toml.
 allow-git = ["https://github.com/tangency-labs/solidcraft"]
 
 # What FieldCraft may ship: permissive licences only (no copyleft). A crate offering

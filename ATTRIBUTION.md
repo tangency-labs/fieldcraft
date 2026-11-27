@@ -305,7 +305,7 @@ alone.
 
 | Crate | Source | Licence | Permission |
 |---|---|---|---|
-| solidcraft-ui-kit, solidcraft-theme, solidcraft-look | https://github.com/tangency-labs/solidcraft (`crates/ui-kit`, `crates/theme`, `crates/look`), pinned by rev in Cargo.toml | SolidCraft Brand and Interface Licence (each crate's `LICENSE`; `LicenseRef-SolidCraft-Brand` in deny.toml) | §3a/§3b written permission to link and distribute them as part of FieldCraft: requested by jyviko on 2026-11-10, approved by SolidCraft's maintainer bherbruck in https://github.com/tangency-labs/fieldcraft/pull/872 (docs/adr/0001-libraries.md) |
+| solidcraft-ui-kit, solidcraft-theme, solidcraft-look | https://github.com/tangency-labs/solidcraft (`crates/ui-kit`, `crates/theme`, `crates/look`), pinned by tag in Cargo.toml | SolidCraft Brand and Interface Licence (each crate's `LICENSE`; `LicenseRef-SolidCraft-Brand` in deny.toml) | §3a/§3b written permission to link and distribute them as part of FieldCraft: requested by jyviko on 2026-11-10, approved by SolidCraft's maintainer bherbruck in https://github.com/tangency-labs/fieldcraft/pull/872 (docs/adr/0001-libraries.md) |
 
 The interface's icons, fonts and themes that are not FieldCraft's own come from `solidcraft-look`
 under this permission: SolidCraft's icon artwork (FieldCraft's ids that alias it are listed in

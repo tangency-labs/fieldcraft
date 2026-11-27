@@ -41,7 +41,7 @@ crates in strictly lower layers.
 
 Rules beyond the layer order:
 - Nothing below L7 uses egui, eframe, winit, wgpu or rfd.
-- Only `fieldcraft-geometry` uses `solidcraft-*` and `solidcore*`, pinned by rev in the workspace `Cargo.toml`
+- Only `fieldcraft-geometry` uses `solidcraft-*` and `solidcore*`, pinned by tag in the workspace `Cargo.toml`
   ("SolidCraft pin" below). One exception (owner decision, 2026-11-10): `fieldcraft-ui-egui` uses
   SolidCraft's UI kit and look, `solidcraft-ui-kit`, `solidcraft-theme` and `solidcraft-look`, with
   the kit's widget registry `solidcraft-ui-registry` and message catalogues `solidcraft-ui-text`, and
@@ -60,19 +60,24 @@ A native open runs on the same background job as opening a SolidCraft design.
 ### SolidCraft pin
 
 `solidcraft-*` come from https://github.com/tangency-labs/solidcraft (formerly
-bherbruck/solidcraft, which redirects there), pinned in the workspace `Cargo.toml` to the commit
-of a SolidCraft release tag or, when FieldCraft needs a change not yet released, a commit on
-SolidCraft's main branch (now the v0.42.0 tag, 1b1e940, 2026-11-14). From v0.40 SolidCraft's
+bherbruck/solidcraft, which redirects there), pinned in the workspace `Cargo.toml` by
+`tag = "v0.42.0"` (the commit 1b1e940, 2026-11-14) on every SolidCraft git line: the `solidcraft-*`
+and `solidcore-*` crates and the two patches. They must all name the same tag, so they resolve to
+one commit; `Cargo.lock` records that commit. FieldCraft pins a SolidCraft tag, either a release
+or a nightly (#1152 takes tonight's nightly). A bare commit needs an explicit owner exception,
+recorded beside the pin. The tag lines of `Cargo.toml` hold the version; this paragraph and the
+comments there name it too, so a repin changes them together (docs/releasing.md, "Repinning
+SolidCraft"). From v0.40 SolidCraft's
 modelling kernel is solidcore (Apache-2.0, a Rust port of NVIDIA's SMLib), which replaced the
 truck crates; SolidCraft vendors it in its repository (`solidcore/`). SolidCraft's API takes and
 gives solidcore's records (`Vec3`, `Plane`, `Region2`, …), so `fieldcraft-geometry` also depends
-on `solidcore-record`, from SolidCraft's repository at the same rev: bump both together, or the
+on `solidcore-record`, from SolidCraft's repository at the same tag: bump both together, or the
 build carries two copies of it whose types do not match. The desktop UI draws with SolidCraft's UI
-kit (`solidcraft-ui-kit`, and the `solidcraft-theme` tokens it draws from) at the same rev, so
+kit (`solidcraft-ui-kit`, and the `solidcraft-theme` tokens it draws from) at the same tag, so
 FieldCraft is on SolidCraft's egui line (0.37) and moves with it. SolidCraft's `[patch.crates-io]`
 does not reach dependents; the workspace repeats the patches its desktop app needs (`egui-wgpu`:
 MSAA clamped to what the device supports, 1x on OpenGL adapters, so the 4x never fails pipeline
-validation at start; `winit`) from the same rev. `solidcraft-engine` comes without its default
+validation at start; `winit`) from the same tag. `solidcraft-engine` comes without its default
 `plugins` feature (from v0.42, a sandboxed WebAssembly plugin host on wasmtime): FieldCraft runs
 command scripts and loads no plugin.
 

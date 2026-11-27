@@ -56,7 +56,7 @@
 
       cargoToml = nixpkgs.lib.importTOML ./Cargo.toml;
       appId = "io.github.tangencylabs.fieldcraft";
-      # SolidCraft checkout at the rev Cargo.lock pins (the same fetch importCargoLock makes).
+      # SolidCraft checkout at the commit Cargo.lock pins for its tag (the same fetch importCargoLock makes).
       solidcraftSrc =
         let
           pkg = nixpkgs.lib.findFirst (
@@ -182,7 +182,7 @@
 
             cargoLock = {
               lockFile = ./Cargo.lock;
-              # SolidCraft, truck, egui-wgpu, winit: git dependencies pinned by rev in Cargo.toml.
+              # SolidCraft, truck, egui-wgpu, winit: git dependencies pinned by tag in Cargo.toml.
               allowBuiltinFetchGit = true;
             };
 
