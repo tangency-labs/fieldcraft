@@ -59,6 +59,44 @@ pub const PAGES: &[Page<ModelApp>] = &[
     }),
 ];
 
+/// Pre-edit History placement baseline recorded before Settings mutates `history_dock`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct HistoryBaseline {
+    pub(crate) dock: HistoryDock,
+    pub(crate) placement: Option<crate::panels::HistoryPlacement>,
+}
+
+/// Which Settings-owned `UiState` fields were edited while Preferences is open, storing each
+/// field's pre-edit baseline so Reset Layout can reset the baseline and Cancel restores back to
+/// the post-reset state rather than undoing the reset.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Edited {
+    pub(crate) history_dock: Option<HistoryBaseline>,
+    pub(crate) browser_float: Option<bool>,
+    pub(crate) browser_eye_left: Option<bool>,
+    pub(crate) status_bar: Option<bool>,
+}
+
+fn record_history_dock_baseline(app: &mut ModelApp) {
+    if app.settings_edited.history_dock.is_none() {
+        let dock = app.ui.history_dock;
+        let placement = app.panels.as_ref().and_then(crate::panels::PanelHost::history_placement_snapshot);
+        app.settings_edited.history_dock = Some(HistoryBaseline { dock, placement });
+    }
+}
+
+fn restore_history_dock_baseline(app: &mut ModelApp, base: HistoryBaseline) {
+    app.ui.history_dock = base.dock;
+    if let Some(placement) = base.placement {
+        let restored = app.with_panels(|_, panels| panels.restore_history_placement(&placement));
+        if matches!(restored, Some(Err(_))) {
+            app.set_history_dock(base.dock);
+        }
+    } else {
+        app.set_history_dock(base.dock);
+    }
+}
+
 /// Everything the pages change, as Cancel puts it back (and `ui.settings` reports it).
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Snapshot {
@@ -99,10 +137,19 @@ impl Snapshot {
         if app.prefs.language != self.language {
             app.set_language(self.language.clone());
         }
-        app.ui.history_dock = self.history_dock;
-        app.ui.browser_float = self.browser_float;
-        app.ui.browser_eye_left = self.browser_eye_left;
-        app.ui.status_bar = self.status_bar;
+        let edited = std::mem::take(&mut app.settings_edited);
+        if let Some(base) = edited.history_dock {
+            restore_history_dock_baseline(app, base);
+        }
+        if let Some(on) = edited.browser_float {
+            app.ui.browser_float = on;
+        }
+        if let Some(on) = edited.browser_eye_left {
+            app.ui.browser_eye_left = on;
+        }
+        if let Some(on) = edited.status_bar {
+            app.ui.status_bar = on;
+        }
         if (app.prefs.usage_sharing, app.prefs.usage_automation) != (self.usage_sharing, self.usage_automation) {
             app.put_usage(self.usage_sharing, self.usage_automation);
         }
@@ -129,7 +176,19 @@ impl Host for ModelApp {
     }
 
     fn matches(&self, snapshot: &Snapshot) -> bool {
-        Snapshot::of(self) == *snapshot
+        let now = Snapshot::of(self);
+        now.units == snapshot.units
+            && now.language == snapshot.language
+            && self.settings_edited.history_dock.as_ref().is_none_or(|base| {
+                now.history_dock == base.dock && self.panels.as_ref().and_then(crate::panels::PanelHost::history_placement_snapshot) == base.placement
+            })
+            && self.settings_edited.browser_float.is_none_or(|base| now.browser_float == base)
+            && self.settings_edited.browser_eye_left.is_none_or(|base| now.browser_eye_left == base)
+            && self.settings_edited.status_bar.is_none_or(|base| now.status_bar == base)
+            && now.usage_sharing == snapshot.usage_sharing
+            && now.usage_automation == snapshot.usage_automation
+            && now.update_check == snapshot.update_check
+            && now.update_skip == snapshot.update_skip
     }
 
     fn restore(&mut self, snapshot: &Snapshot) -> Result<(), String> {
@@ -139,8 +198,13 @@ impl Host for ModelApp {
 
     /// Every change is kept as it is made; Apply makes sure the window's own preferences are too.
     fn apply(&mut self) -> Result<(), String> {
+        self.settings_edited = Edited::default();
         self.save_prefs();
         Ok(())
+    }
+
+    fn closed(&mut self) {
+        self.settings_edited = Edited::default();
     }
 }
 
@@ -288,16 +352,23 @@ fn change_to(app: &mut ModelApp, c: Change) {
         app.set_language(language);
     }
     if let Some(dock) = c.history_dock {
-        app.ui.history_dock = dock;
+        record_history_dock_baseline(app);
+        app.set_history_dock(dock);
     }
     if let Some(on) = c.browser_float {
+        let prev = app.ui.browser_float;
         app.ui.browser_float = on;
+        app.settings_edited.browser_float.get_or_insert(prev);
     }
     if let Some(on) = c.browser_eye_left {
+        let prev = app.ui.browser_eye_left;
         app.ui.browser_eye_left = on;
+        app.settings_edited.browser_eye_left.get_or_insert(prev);
     }
     if let Some(on) = c.status_bar {
+        let prev = app.ui.status_bar;
         app.ui.status_bar = on;
+        app.settings_edited.status_bar.get_or_insert(prev);
     }
     // Only an explicit `usage_sharing` answers the first run's question; changing what is counted
     // leaves the question as it stands.
@@ -344,7 +415,9 @@ fn general(ui: &mut egui::Ui, app: &mut ModelApp) {
             let label = tr("settings.history_dock");
             let changed = kit::row(ui, label, |ui| kit::settings_segments(ui, label, &mut selected, &options));
             if changed && let Some(dock) = DOCKS.get(selected) {
-                app.ui.history_dock = *dock;
+                record_history_dock_baseline(app);
+                app.set_history_dock(*dock);
+                app.save_prefs();
             }
             note(ui, "settings.history_dock_hint");
         });
@@ -363,9 +436,27 @@ fn general(ui: &mut egui::Ui, app: &mut ModelApp) {
             }
         });
         kit::settings_section(ui, "window", tr("settings.window"), |ui| {
-            check(ui, "settings.browser_float", "settings.browser_float_hint", &mut app.ui.browser_float);
-            check(ui, "settings.browser_eye_left", "settings.browser_eye_left_hint", &mut app.ui.browser_eye_left);
-            check(ui, "settings.status_bar", "settings.status_bar_hint", &mut app.ui.status_bar);
+            let prev_float = app.ui.browser_float;
+            if check(ui, "settings.browser_float", "settings.browser_float_hint", &mut app.ui.browser_float) {
+                app.settings_edited.browser_float.get_or_insert(prev_float);
+                app.save_prefs();
+            }
+            let prev_eye_left = app.ui.browser_eye_left;
+            if check(ui, "settings.browser_eye_left", "settings.browser_eye_left_hint", &mut app.ui.browser_eye_left) {
+                app.settings_edited.browser_eye_left.get_or_insert(prev_eye_left);
+                app.save_prefs();
+            }
+            let prev_status = app.ui.status_bar;
+            if check(ui, "settings.status_bar", "settings.status_bar_hint", &mut app.ui.status_bar) {
+                app.settings_edited.status_bar.get_or_insert(prev_status);
+                app.save_prefs();
+            }
+            let reset = kit::row(ui, tr("settings.reset_layout"), |ui| {
+                kit::button(ui, tr("settings.reset_layout"), kit::Button::Normal).backing_on_hover_text(tr("settings.reset_layout_hint"))
+            });
+            if reset.clicked() {
+                app.reset_panel_layout();
+            }
         });
     });
 }
@@ -378,10 +469,25 @@ fn general_defaults(app: &mut ModelApp) {
     if app.prefs.language != d.language {
         app.set_language(d.language);
     }
-    app.ui.history_dock = d.history_dock;
-    app.ui.browser_float = d.browser_float;
-    app.ui.browser_eye_left = d.browser_eye_left;
-    app.ui.status_bar = d.status_bar;
+    if app.ui.history_dock != d.history_dock {
+        record_history_dock_baseline(app);
+        app.set_history_dock(d.history_dock);
+    }
+    if app.ui.browser_float != d.browser_float {
+        let prev = app.ui.browser_float;
+        app.ui.browser_float = d.browser_float;
+        app.settings_edited.browser_float.get_or_insert(prev);
+    }
+    if app.ui.browser_eye_left != d.browser_eye_left {
+        let prev = app.ui.browser_eye_left;
+        app.ui.browser_eye_left = d.browser_eye_left;
+        app.settings_edited.browser_eye_left.get_or_insert(prev);
+    }
+    if app.ui.status_bar != d.status_bar {
+        let prev = app.ui.status_bar;
+        app.ui.status_bar = d.status_bar;
+        app.settings_edited.status_bar.get_or_insert(prev);
+    }
     app.save_prefs();
 }
 

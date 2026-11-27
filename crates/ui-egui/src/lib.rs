@@ -526,6 +526,7 @@ pub struct ModelApp {
     /// Settings (the kit's Preferences window, [`settings`]): open, the page shown, its search and
     /// the snapshot Cancel puts back.
     pub(crate) settings: solidcraft_ui_kit::prefs_window::State<settings::Snapshot>,
+    pub(crate) settings_edited: settings::Edited,
     /// Checking for and installing updates, when this run may ([`updates`]).
     updates: Option<updates::State>,
     /// The web app: a new deployment is out, and this reloads the page into it.
@@ -629,9 +630,7 @@ impl ModelApp {
             forms_opened: 0,
             viewport: Viewport::default(),
             shell: shell::State::default(),
-            panels: panels::PanelHost::from_prefs(&files::Prefs::default(), false)
-                .map_err(|e| log::warn!("panel host init failed: {e}"))
-                .ok(),
+            panels: panels::PanelHost::from_prefs(&files::Prefs::default(), false).map_err(|e| log::warn!("panel host init failed: {e}")).ok(),
             toolbar_rects: Vec::new(),
             gpu_info: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -677,6 +676,7 @@ impl ModelApp {
             usage: None,
             consent_asked: false,
             settings: Default::default(),
+            settings_edited: Default::default(),
             updates: None,
             reload: None,
             setup: (None, std::sync::Arc::default()),
@@ -729,9 +729,7 @@ impl ModelApp {
         self.ui.browser_eye_left = self.prefs.browser_eye_left;
         self.ui.status_bar = self.prefs.status_bar;
         self.ui.history_dock = self.prefs.history_dock;
-        self.panels = panels::PanelHost::from_prefs(&self.prefs, false)
-            .map_err(|e| log::warn!("panel host hydrate failed: {e}"))
-            .ok();
+        self.panels = panels::PanelHost::from_prefs(&self.prefs, false).map_err(|e| log::warn!("panel host hydrate failed: {e}")).ok();
         if let Some(panels) = &self.panels {
             self.ui.browser_width = panels.browser_width();
             self.ui.browser_collapsed = panels.browser_collapsed();
@@ -2536,6 +2534,8 @@ impl ModelApp {
         self.ui.show_timeline = true;
         self.ui.browser_width = browser::WIDTH;
         self.ui.browser_collapsed = false;
+        self.settings_edited.history_dock = None;
+        self.settings_edited.browser_float = None;
         let _ = self.with_panels(|app, panels| {
             if let Err(err) = panels.reset_layout() {
                 log::warn!("reset panel layout failed: {err}");

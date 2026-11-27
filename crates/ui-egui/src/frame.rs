@@ -313,12 +313,21 @@ mod tests {
             concat!("egui::Side", "Panel"),
             concat!("egui::TopBottom", "Panel"),
         ];
-        let mut bad = Vec::new();
-        for e in std::fs::read_dir(&dir).unwrap() {
-            let p = e.unwrap().path();
-            if p.extension().is_none_or(|x| x != "rs") {
-                continue;
+        fn collect_rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap() {
+                let p = e.unwrap().path();
+                if p.is_dir() {
+                    collect_rs_files(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
             }
+        }
+        let mut files = Vec::new();
+        collect_rs_files(&dir, &mut files);
+        files.sort();
+        let mut bad = Vec::new();
+        for p in files {
             let text = std::fs::read_to_string(&p).unwrap();
             // The app's code, not the tests that name what they look for.
             let code = text.split("#[cfg(test)]").next().unwrap_or_default();

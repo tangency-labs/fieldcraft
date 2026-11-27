@@ -234,6 +234,10 @@ fn display_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
     crate::frame::menu_separator(ui);
     toggle_row(ui, "Browser", &mut app.ui.show_tree);
     toggle_row(ui, "Timeline", &mut app.ui.show_timeline);
+    if crate::frame::menu_row(ui, "reset_layout", solidcraft_ui_text::tr("menu.view.reset_layout"), None, true).clicked() {
+        app.reset_panel_layout();
+        app.ui.menu = None;
+    }
     crate::frame::menu_separator(ui);
     crate::frame::menu_heading(ui, "Navigation");
     kit::scope(ui, |ui| {

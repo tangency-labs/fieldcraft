@@ -139,6 +139,7 @@ impl ModelApp {
             mesh_made: _,
             search,
             panels: _,
+            settings_edited: _,
         } = self;
         ui.document_replaced(tab);
         *dialog = None;

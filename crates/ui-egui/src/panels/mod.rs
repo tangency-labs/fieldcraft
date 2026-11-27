@@ -280,6 +280,15 @@ pub(crate) fn seeded_default_layout(registry: &PanelRegistry, prefs: &Prefs) -> 
     Ok(layout)
 }
 
+/// Saved History placement captured before Settings edits `history_dock`, so Cancel restores a
+/// pre-edit floating position as well as `HistoryDock`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct HistoryPlacement {
+    pub(crate) dock: HistoryDock,
+    pub(crate) section: Option<(SectionId, SectionLocation, Size, bool)>,
+    pub(crate) memory: PlacementMemory,
+}
+
 /// Host wrapper owning `PanelRuntime`, `WorkspacePanelHost`, `FieldCraftLayoutStore`, and
 /// read/write adapters for FieldCraft's window shell.
 pub(crate) struct PanelHost {
@@ -746,6 +755,46 @@ impl PanelHost {
 
     pub(crate) fn history_dock(&self) -> HistoryDock {
         self.history_dock
+    }
+
+    pub(crate) fn history_placement_snapshot(&self) -> Option<HistoryPlacement> {
+        let inst = InstanceId::new(PANEL_HISTORY).ok()?;
+        let layout = self.runtime.layout().layout();
+        let entry = layout.instance(&inst).ok()?;
+        let section = layout.containing(&inst).ok().map(|s| (s.id.clone(), s.location.clone(), s.size, s.collapsed));
+        Some(HistoryPlacement { dock: self.history_dock, section, memory: entry.memory.clone() })
+    }
+
+    pub(crate) fn restore_history_placement(&mut self, saved: &HistoryPlacement) -> PanelResult<()> {
+        self.history_dock = saved.dock;
+        let inst = InstanceId::new(PANEL_HISTORY)?;
+        let mut updated = self.runtime.layout().layout().clone();
+        if let Some(entry) = updated.instances.iter_mut().find(|i| i.id == inst) {
+            entry.memory = saved.memory.clone();
+        }
+        if let Some((sec_id, loc, size, collapsed)) = &saved.section
+            && let Some(idx) = updated.sections.iter().position(|s| s.tabs.contains(&inst))
+            && updated.sections[idx].tabs.len() == 1
+        {
+            let id_conflict = *sec_id != updated.sections[idx].id && updated.sections.iter().any(|s| s.id == *sec_id);
+            let cur_sec = &mut updated.sections[idx];
+            if !id_conflict {
+                cur_sec.id = sec_id.clone();
+            } else if let Some(entry) = updated.instances.iter_mut().find(|i| i.id == inst) {
+                entry.memory.section = cur_sec.id.clone();
+            }
+            cur_sec.location = loc.clone();
+            cur_sec.size = *size;
+            cur_sec.collapsed = *collapsed;
+            cur_sec.column = None;
+        }
+        let models = FieldCraftModels;
+        let mut commands = FieldCraftCommands;
+        let mut services = ContentServices { models: &models, commands: &mut commands, local: &mut self.local };
+        self.runtime.dispatch(LayoutAction::Replace { expected_revision: None, layout: updated.clone() }, &mut self.native, &mut services)?;
+        self.store.replace_live(&updated, self.runtime.layout().registry(), true)?;
+        let _ = self.reconcile_runtime();
+        Ok(())
     }
 
     pub(crate) fn set_history_dock(&mut self, dock: HistoryDock) -> PanelResult<()> {
