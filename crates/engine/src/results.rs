@@ -12,7 +12,7 @@ use fieldcraft_explicit::{ExplicitResult, Frame};
 use fieldcraft_model::Model;
 use fieldcraft_model::units::DisplaySystem;
 pub use fieldcraft_model::units::Quantity;
-use fieldcraft_solver::{FrequencyResult, HeatResult, StaticResult};
+use fieldcraft_solver::{CavityResult, FrequencyResult, HeatResult, StaticResult};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -25,6 +25,22 @@ pub use fieldcraft_solver::system::BALANCE_TOLERANCE;
 /// The largest deformation scale factor.
 pub const MAX_DEFORMATION_SCALE: f64 = 1e12; // unit-factors: a cap on a scale factor
 
+pub mod electromagnetic;
+pub use electromagnetic::ElectricField;
+
+impl From<Field> for &'static str {
+    fn from(f: Field) -> &'static str {
+        f.id()
+    }
+}
+
+impl TryFrom<String> for Field {
+    type Error = String;
+    fn try_from(id: String) -> std::result::Result<Field, String> {
+        Field::parse(&id).ok_or_else(|| format!("unknown results field `{id}`"))
+    }
+}
+
 /// A result by its procedure.
 pub enum Kind<'a> {
     Static(&'a StaticResult),
@@ -33,6 +49,20 @@ pub enum Kind<'a> {
     /// Per cell, not per node: drawn by [`crate::flow`].
     Fluid(&'a fieldcraft_lbm::FluidResult),
     Heat(&'a HeatResult),
+    /// An electromagnetic cavity's modes: their electric fields at the nodes.
+    Cavity(&'a CavityResult),
+}
+
+impl Kind<'_> {
+    /// How many modes it has (frequency and cavity steps, a mode picked from 1); `None` for a
+    /// result of frames or of one state.
+    pub fn modes(&self) -> Option<usize> {
+        match self {
+            Kind::Frequency(f) => Some(f.modes.len()),
+            Kind::Cavity(c) => Some(c.modes.len()),
+            Kind::Static(_) | Kind::Explicit(_) | Kind::Fluid(_) | Kind::Heat(_) => None,
+        }
+    }
 }
 
 impl StepResult {
@@ -41,6 +71,7 @@ impl StepResult {
             StepResult::Implicit(fieldcraft_solver::StepResult::Static(r)) => Kind::Static(r),
             StepResult::Implicit(fieldcraft_solver::StepResult::Frequency(r)) => Kind::Frequency(r),
             StepResult::Implicit(fieldcraft_solver::StepResult::Heat(r)) => Kind::Heat(r),
+            StepResult::Implicit(fieldcraft_solver::StepResult::Cavity(r)) => Kind::Cavity(r),
             StepResult::Explicit(r) => Kind::Explicit(r),
             StepResult::Fluid(r) => Kind::Fluid(r),
         }
@@ -72,9 +103,9 @@ pub fn frame(r: &ExplicitResult, pick: Pick) -> Result<&Frame> {
     r.frames.get(k).ok_or_else(|| EngineError::Params(format!("step `{}` has frames 0 to {last}; there is no frame {k}", r.step)))
 }
 
-/// A nodal quantity drawn as contours.
+/// A nodal quantity drawn as contours, written by its [`Field::id`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(into = "&'static str", try_from = "String")]
 pub enum Field {
     /// Displacement magnitude (a mode's shape magnitude for a frequency step).
     Displacement,
@@ -111,12 +142,14 @@ pub enum Field {
     ContactStatus,
     /// The magnitude of the friction's shear traction (0 off the secondary surfaces).
     ContactShear,
+    /// A cavity mode's electric field ([`electromagnetic`]).
+    Electric(ElectricField),
     /// The magnitude of the frictional slip over the last increment (secondary surfaces' nodes).
     ContactSlip,
 }
 
 impl Field {
-    pub const ALL: [Field; 24] = [
+    pub const ALL: [Field; 28] = [
         Field::Displacement,
         Field::DisplacementX,
         Field::DisplacementY,
@@ -141,6 +174,10 @@ impl Field {
         Field::ContactStatus,
         Field::ContactShear,
         Field::ContactSlip,
+        Field::Electric(ElectricField::Magnitude),
+        Field::Electric(ElectricField::X),
+        Field::Electric(ElectricField::Y),
+        Field::Electric(ElectricField::Z),
     ];
 
     /// The id commands take (`von_mises`…).
@@ -170,6 +207,7 @@ impl Field {
             Field::ContactStatus => "contact_status",
             Field::ContactShear => "contact_shear",
             Field::ContactSlip => "contact_slip",
+            Field::Electric(e) => e.id(),
         }
     }
 
@@ -199,6 +237,7 @@ impl Field {
             Field::ContactStatus => "Contact status (0 open, 1 closed or stick, 2 slip)",
             Field::ContactShear => "Contact shear traction",
             Field::ContactSlip => "Contact slip",
+            Field::Electric(e) => e.label(),
         }
     }
 
@@ -212,7 +251,8 @@ impl Field {
             Field::Pressure => Quantity::Pressure,
             Field::Temperature => Quantity::Temperature,
             Field::HeatFlux | Field::WallHeatFlux => Quantity::HeatFlux,
-            Field::ContactStatus => return None,
+            // A status code; a cavity mode's field, normalised.
+            Field::ContactStatus | Field::Electric(_) => return None,
             Field::ContactPressure
             | Field::ContactShear
             | Field::VonMises
@@ -244,6 +284,10 @@ impl Field {
         if self.is_mode_shape(r) {
             let label = self.label().trim_end_matches(" magnitude");
             return format!("{label} (mode shape, normalised)");
+        }
+        // A cavity mode's field has no scale of its own: its largest |E| is 1.
+        if self.is_electromagnetic() {
+            return format!("{} (normalised)", self.label());
         }
         with_unit(self.label(), self.unit(r, display).as_deref())
     }
@@ -291,6 +335,12 @@ impl Field {
                 | Field::HeatFlux
                 | Field::WallHeatFlux
         ) && !self.is_contact()
+            && !self.is_electromagnetic()
+    }
+
+    /// Whether it is an electromagnetic quantity.
+    pub fn is_electromagnetic(self) -> bool {
+        matches!(self, Field::Electric(_))
     }
 
     /// Whether it is a contact quantity.
@@ -325,6 +375,7 @@ impl Field {
                 return fields.into_iter();
             }
             Kind::Heat(_) => return Field::ALL.into_iter().filter(|f| f.is_thermal()).collect::<Vec<_>>().into_iter(),
+            Kind::Cavity(_) => return Field::ALL.into_iter().filter(|f| f.is_electromagnetic()).collect::<Vec<_>>().into_iter(),
         };
         Field::ALL
             .into_iter()
@@ -335,6 +386,7 @@ impl Field {
                 Field::Temperature => temperature,
                 Field::HeatFlux => flux,
                 f if f.is_contact() => contact,
+                f if f.is_electromagnetic() => false,
                 f => stress || !f.is_stress(),
             })
             .collect::<Vec<_>>()
@@ -382,7 +434,7 @@ pub fn deformation_unit(r: &StepResult, display: &DisplaySystem) -> f64 {
     match r.kind() {
         Kind::Frequency(f) if f.buckling.is_none() => mode_scale(r, display).1,
         Kind::Frequency(_) => display.unit_ref(Quantity::Length).factor(),
-        Kind::Static(_) | Kind::Explicit(_) | Kind::Fluid(_) | Kind::Heat(_) => 1.0,
+        Kind::Static(_) | Kind::Explicit(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Cavity(_) => 1.0,
     }
 }
 
@@ -452,12 +504,15 @@ impl ResultsView {
     /// velocity magnitude on a slice, the obstacles and streamlines ([`crate::flow::FlowView`]).
     pub fn for_result(r: &StepResult, model: &fieldcraft_model::Model) -> ResultsView {
         let heat = matches!(r.kind(), Kind::Heat(_));
+        let cavity = matches!(r.kind(), Kind::Cavity(_));
         let flow = match r.kind() {
             Kind::Fluid(f) => Some(crate::flow::FlowView::for_result(f, crate::flow::symmetry_faces(model, f))),
             _ => None,
         };
         let contour = if heat {
             Field::Temperature
+        } else if cavity {
+            Field::Electric(ElectricField::Magnitude)
         } else if flow.is_some() {
             Field::Velocity
         } else if Field::available(r).any(|f| f == Field::VonMises) {
@@ -503,7 +558,7 @@ pub fn true_scale(r: &StepResult) -> bool {
     match r.kind() {
         Kind::Explicit(_) => true,
         Kind::Static(s) => s.nonlinear.is_some(),
-        Kind::Frequency(_) | Kind::Fluid(_) | Kind::Heat(_) => false,
+        Kind::Frequency(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Cavity(_) => false,
     }
 }
 
@@ -543,6 +598,7 @@ pub fn displacements(r: &StepResult, pick: Pick) -> Result<&[[f64; 3]]> {
         }
         Kind::Fluid(f) => Err(EngineError::Params(format!("step `{}` is a fluid step: its fields are per cell (solve.probe)", f.step))),
         Kind::Heat(h) => Err(EngineError::Params(format!("step `{}` is heat transfer and has no displacements", h.step))),
+        Kind::Cavity(c) => Err(EngineError::Params(format!("step `{}` is a cavity and has no displacements", c.step))),
     }
 }
 
@@ -579,7 +635,7 @@ pub fn field_values(model: &Model, r: &StepResult, field: Field, pick: Pick) -> 
     let stresses = || -> Result<std::borrow::Cow<'_, [[f64; 6]]>> {
         match r.kind() {
             Kind::Static(s) => Ok(std::borrow::Cow::Borrowed(frame_fields.map_or(s.stress.as_slice(), |f| f.stress.as_slice()))),
-            Kind::Frequency(_) | Kind::Fluid(_) | Kind::Heat(_) => Err(unavailable()),
+            Kind::Frequency(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Cavity(_) => Err(unavailable()),
             Kind::Explicit(e) => {
                 let f = frame(e, pick)?;
                 if f.stress.is_empty() {
@@ -601,7 +657,7 @@ pub fn field_values(model: &Model, r: &StepResult, field: Field, pick: Pick) -> 
                 let f = frame(e, pick)?;
                 if f.velocity.is_empty() { Err(unavailable()) } else { Ok(f.velocity.iter().map(|v| magnitude(*v)).collect()) }
             }
-            Kind::Static(_) | Kind::Frequency(_) | Kind::Fluid(_) | Kind::Heat(_) => Err(unavailable()),
+            Kind::Static(_) | Kind::Frequency(_) | Kind::Fluid(_) | Kind::Heat(_) | Kind::Cavity(_) => Err(unavailable()),
         },
         // Per cell (crate::flow::cell_values), not per node.
         Field::Pressure | Field::WallHeatFlux => Err(unavailable()),
@@ -616,6 +672,10 @@ pub fn field_values(model: &Model, r: &StepResult, field: Field, pick: Pick) -> 
         },
         Field::ContactPressure | Field::ContactGap | Field::ContactStatus | Field::ContactShear | Field::ContactSlip => match r.kind() {
             Kind::Static(s) if !s.contacts.is_empty() => Ok(contact_values(&s.nodes, frame_fields.map_or(&s.contacts, |f| &f.contacts), field)),
+            _ => Err(unavailable()),
+        },
+        Field::Electric(e) => match r.kind() {
+            Kind::Cavity(c) => e.values(c, pick),
             _ => Err(unavailable()),
         },
         Field::VonMises => each(&fieldcraft_fem::von_mises),
@@ -748,6 +808,14 @@ impl Session {
         }
         let time = |t: f64| shown(Quantity::Time, t, display);
         match r.kind() {
+            Kind::Cavity(c) => {
+                out["modes"] = c
+                    .modes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, m)| json!({"mode": i + 1, "frequency": shown(Quantity::Frequency, m.frequency, display)}))
+                    .collect();
+            }
             Kind::Frequency(fr) => {
                 out["modes"] = fr
                     .modes
@@ -1069,7 +1137,11 @@ mod tests {
         }
         let (modes, _) = s.latest_result("Modes").unwrap();
         assert_eq!(Field::available(modes).count(), 4);
-        assert_eq!(Field::available(bend).count(), Field::ALL.len() - 10, "all but velocity, pressure, the thermal and the contact fields");
+        assert_eq!(
+            Field::available(bend).count(),
+            Field::ALL.len() - 14,
+            "all but velocity, pressure, the thermal, the contact and the electric fields"
+        );
         assert!(field_values(&s.model, modes, Field::VonMises, Pick { mode: 1, frame: None }).is_err());
         assert!(field_values(&s.model, modes, Field::Displacement, Pick { mode: 9, frame: None }).is_err());
         assert_eq!(field_values(&s.model, modes, Field::Displacement, Pick { mode: 2, frame: None }).unwrap().len(), modes.nodes().len());
@@ -1135,6 +1207,18 @@ mod tests {
         // A natural mode is mass-normalised: in tonnes it is √1000 times its value in kilograms.
         assert_eq!(mode_scale(modes, mm).0, 1000f64.sqrt());
         assert_eq!(mode_scale(bend, mm), (1.0, 1.0));
+    }
+
+    /// A field is written as its id, as the derived form wrote every field before the electric
+    /// ones were nested: saved views read back the same.
+    #[test]
+    fn fields_are_written_as_their_ids() {
+        for f in Field::ALL {
+            assert_eq!(serde_json::to_value(f).unwrap(), serde_json::json!(f.id()));
+            assert_eq!(serde_json::from_value::<Field>(serde_json::json!(f.id())).unwrap(), f);
+        }
+        assert_eq!(serde_json::to_value(Field::MaxPrincipal).unwrap(), serde_json::json!("max_principal"));
+        assert!(serde_json::from_value::<Field>(serde_json::json!("electric")).is_err());
     }
 
     #[test]

@@ -78,7 +78,8 @@ pub struct Plot {
     pub step: String,
     pub field: Field,
     pub pick: Pick,
-    /// Original query mode, None for non-frequency results even after the step is replaced.
+    /// Original query mode, None for a result without modes (not a frequency or cavity step),
+    /// even after the step is replaced.
     pub mode: Option<usize>,
     pub points: Vec<[f64; 3]>,
     pub distance: Vec<f64>,
@@ -411,7 +412,7 @@ impl Index {
             step: result.step().into(),
             field,
             pick,
-            mode: matches!(result.kind(), crate::results::Kind::Frequency(_)).then_some(pick.mode),
+            mode: result.kind().modes().map(|_| pick.mode),
             points,
             distance,
             values: Vec::with_capacity(samples),

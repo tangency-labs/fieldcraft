@@ -507,6 +507,7 @@ pub const REPLIES: &[(&str, &[(&str, Dim)])] = &[
             ("/heat_flows/imbalance", Dim::Power),
         ],
     ),
+    ("solve.cavity", &[("/modes/*/frequency", Dim::Hertz)]),
     (
         "solve.frequency",
         &[

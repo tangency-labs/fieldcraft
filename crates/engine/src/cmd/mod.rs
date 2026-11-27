@@ -234,6 +234,7 @@ pub static ALL: &[CommandSpec] = &[
     solve::STATIC,
     solve::NONLINEAR,
     solve::FREQUENCY,
+    solve::CAVITY,
     solve::BUCKLE,
     solve::HEAT,
     solve::EXPLICIT,
