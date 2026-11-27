@@ -299,6 +299,7 @@ is committed and listed here with its exports.
 | .github/workflows/arch-check.yml (the riscv64 cross build) | SolidCraft `.github/workflows/ci.yml` (`riscv64-gates`) | MIT OR Apache-2.0 |
 | .github/workflows/claim.yml, .github/workflows/triage.yml, scripts/claim/, scripts/triage/ (the claim and triage bots and their tests) | SolidCraft `.github/workflows/claim.yml`, `triage.yml`, `scripts/claim/`, `scripts/triage/` | MIT OR Apache-2.0 |
 | crates/fem/src/nedelec.rs (the Nédélec tetrahedron `EdgeTet`: its basis as barycentric terms, the exact integration of their products, the curls, the tests) | EMCraft `crates/fem/src/nedelec.rs` and `crates/fem/src/poly.rs` (https://github.com/jijinbei/emcraft, by the same author; porting it was approved in #971) | MIT OR Apache-2.0 |
+| crates/ui-egui/src/panels/native.rs, apps/fieldcraft/src/main.rs (desktop native panel viewport coordination, drag-out drop preview bridge, and winit monitor probing) | SolidCraft `crates/ui-egui/src/panel_runtime/app.rs`, `apps/solidcraft/src/main.rs` | MIT OR Apache-2.0 |
 
 ## Dependencies under permission
 
