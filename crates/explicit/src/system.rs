@@ -600,8 +600,7 @@ impl System {
             for &label in resolved.target_nodes(bc.target()) {
                 let Some(node) = self.node(label) else { continue };
                 for kind in self.layout.kinds(node).iter() {
-                    let dof = kind.number();
-                    let Some(value) = bc.value(dof) else { continue };
+                    let Some((dof, value)) = kind.number().and_then(|dof| Some((dof, bc.value(dof)?))) else { continue };
                     let velocity = value / end_time;
                     if !velocity.is_finite() {
                         return Err(invalid(format!("boundary condition `{name}`: the velocity {value} / {end_time} is not finite")));

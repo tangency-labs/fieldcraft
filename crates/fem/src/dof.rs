@@ -79,19 +79,19 @@ impl DofKind {
     }
 
     /// The model's and decks' 1-based number: 1–3 translations, 4–6 rotations, 8 pressure,
-    /// 11 temperature; 0 for the unknowns of edges and faces, which have none.
-    pub fn number(self) -> u8 {
+    /// 11 temperature; `None` for the unknowns of edges and faces, which have none.
+    pub fn number(self) -> Option<u8> {
         match self {
-            DofKind::T => 11,
-            DofKind::P => 8,
-            DofKind::E1 | DofKind::E2 => 0,
-            k => k.index() as u8 + 1,
+            DofKind::T => Some(11),
+            DofKind::P => Some(8),
+            DofKind::E1 | DofKind::E2 => None,
+            k => Some(k.index() as u8 + 1),
         }
     }
 
     /// The kind of a model degree of freedom number ([`DofKind::number`]).
     pub fn from_number(number: u8) -> Option<DofKind> {
-        DofKind::ALL.into_iter().find(|k| number != 0 && k.number() == number)
+        DofKind::ALL.into_iter().find(|k| k.number() == Some(number))
     }
 
     /// What it is, in the user's terms.
@@ -499,8 +499,10 @@ mod tests {
 
     #[test]
     fn kinds_numbers_and_sets() {
-        for k in DofKind::ALL.into_iter().filter(|k| k.number() != 0) {
-            assert_eq!(DofKind::from_number(k.number()), Some(k));
+        for k in DofKind::ALL {
+            if let Some(number) = k.number() {
+                assert_eq!(DofKind::from_number(number), Some(k));
+            }
         }
         assert_eq!(DofKind::from_number(1), Some(DofKind::Ux));
         assert_eq!(DofKind::from_number(6), Some(DofKind::Rz));
@@ -519,7 +521,8 @@ mod tests {
         assert_eq!(DofSet::TRANSLATIONS.union(DofSet::ROTATIONS), DofSet::STRUCTURAL);
         assert_eq!(DofSet::PLANE_FRAME.iter().collect::<Vec<_>>(), vec![DofKind::Ux, DofKind::Uy, DofKind::Rz]);
         // The edge and face unknowns have no model number, and number 0 is none.
-        assert_eq!((DofKind::E1.number(), DofKind::E2.number()), (0, 0));
+        assert_eq!((DofKind::E1.number(), DofKind::E2.number()), (None, None));
+        assert_eq!(DofKind::from_number(0), None);
         assert_eq!(DofSet::FIELDS.iter().collect::<Vec<_>>(), vec![DofKind::E1, DofKind::E2]);
         assert_eq!(DofSet::STRUCTURAL.union(DofSet::FIELDS).position(DofKind::E2), Some(7));
         assert_eq!(ElementDofs::SOLID.total(8), 24);
