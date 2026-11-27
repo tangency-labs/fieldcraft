@@ -93,9 +93,11 @@ Every unknown is a pair (node, `DofKind`):
 | `Rx`, `Ry`, `Rz` | rotations about X, Y, Z | 4, 5, 6 |
 | `P` | pressure (mixed u–p elements) | 8 |
 | `T` | temperature | 11 |
+| `E1`, `E2` | the field unknowns of an edge element's edges and faces (`fieldcraft_fem::nedelec`) | none |
 
-The enum order (Ux, Uy, Uz, Rx, Ry, Rz, T, P) is the numbering order within a node.
-`DofKind::from_number` / `number` convert to the 1-based numbers boundary conditions use;
+The enum order (Ux, Uy, Uz, Rx, Ry, Rz, T, P, E1, E2) is the numbering order within a slot.
+`DofKind::from_number` / `number` convert to the 1-based numbers boundary conditions use
+(`number` is `None` for E1 and E2);
 `from_direction` / `direction` to the structural directions 0–5.
 
 An element declares its unknowns as `ElementDofs { node: DofSet, internal: Internal }`: the
@@ -110,12 +112,16 @@ Element matrices are ordered node by node, the node's kinds in `DofKind` order (
 
 **Numbering** (`DofLayout`). `DofLayout::builder()` collects what every node needs
 (`element(labels, dofs)`; `node(label, kinds)` for constraints and boundary conditions that need
-a kind no element gives; `point(label, kinds)` for reference points), then `build()`. A node
-carries the union of what was asked for. Unknowns are numbered mesh nodes in label order, each
-node's kinds in `DofKind` order, then the points in the order added; a slot's unknowns are
-contiguous, so a node pair is one dense block in the assembled matrix, and the same model always
-gives the same numbering. Lookups: `node(label)` / `slot(label)` (mesh nodes `0..nodes()`,
-points `point_slot(k)`), `dof(slot, kind)`, `range(slot)`, `kinds(slot)`,
+a kind no element gives; `edge([a, b], kinds)` and `face([a, b, c], kinds)` for the unknowns of
+mesh edges and faces, which edge elements declare; `point(label, kinds)` for reference points),
+then `build()`. A node, edge or face carries the union of what was asked for. Unknowns are
+numbered mesh nodes in label order, then the edges and the faces that carry unknowns, each in the
+order of their sorted labels, then the points in the order added; within a slot its kinds are in
+`DofKind` order and its unknowns are contiguous, so a node pair is one dense block in the
+assembled matrix, and the same model always gives the same numbering. Lookups: `node(label)` /
+`slot(label)` (mesh nodes `0..nodes()`), `edge([a, b])` and `face([a, b, c])` (either order;
+`None` for one without unknowns or with a repeated node), `point_slot(k)`, `dof(slot, kind)`,
+`range(slot)`, `kinds(slot)`,
 `locate(dof) -> (slot, kind)`, `element_dofs(slots, kinds)`, `describe(dof)`, `stride()`
 (uniform layouts).
 

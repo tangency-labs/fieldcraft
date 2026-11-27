@@ -852,7 +852,7 @@ pub fn prescribed(
         }
         for slot in resolved.target_nodes(bc.target()).iter().filter_map(|l| mesh.layout.slot(*l)) {
             for kind in mesh.layout.kinds(slot).iter() {
-                let Some(v) = bc.value(kind.number()) else { continue };
+                let Some(v) = kind.number().and_then(|dof| bc.value(dof)) else { continue };
                 let index = mesh.dof(slot, kind)?;
                 if !active.get(index).copied().unwrap_or(false) {
                     continue;
