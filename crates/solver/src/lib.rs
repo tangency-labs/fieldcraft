@@ -29,6 +29,7 @@
 
 pub mod analysis;
 pub mod buckle;
+pub mod cavity;
 pub mod cholesky;
 pub mod constraints;
 pub mod contact;
@@ -48,6 +49,7 @@ pub use analysis::{
     solve_static,
 };
 pub use buckle::{Buckling, solve_buckle};
+pub use cavity::{CavityMode, CavityResult, solve_cavity};
 pub use heat::{HeatResult, solve_heat};
 pub use nonlinear::solve_nonlinear;
 
