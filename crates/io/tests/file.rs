@@ -366,6 +366,25 @@ fn with_results(f: &ModelFile, results: &[(&str, fieldcraft_io::results::StoredR
     fieldcraft_io::write_with(&f.model, &f.geometry, &f.journal, &f.journal_header, &f.view, &extras).unwrap()
 }
 
+fn unchecked_heat_results_part(name: &str, definition: [u8; 32], valid: &fieldcraft_solver::HeatResult, payload: &[u8]) -> Vec<u8> {
+    use fieldcraft_io::results::{self, SolvedRef, StoredRef};
+    let result = fieldcraft_solver::StepResult::Heat(valid.clone());
+    let mut bytes = results::encode(&[(name, StoredRef { definition, result: SolvedRef::Implicit(&result) })]).unwrap();
+    let valid_payload = fieldcraft_io::codec::encode(valid).unwrap();
+    let payload_at = bytes.len() - valid_payload.len();
+    bytes.truncate(payload_at - 8);
+    bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
+fn assert_encode_refused(step: &str, result: fieldcraft_io::results::SolvedRef<'_>, reason: &str) {
+    let error = fieldcraft_io::results::encode(&[(step, fieldcraft_io::results::StoredRef { definition: [7; 32], result })]).unwrap_err();
+    let Error::Invalid(message) = error else { panic!("expected an invalid result, got {error}") };
+    assert!(message.contains(&format!("the result of step `{step}`")), "{message}");
+    assert!(message.contains(reason), "{message}");
+}
+
 /// The results part: kept bit for bit with its definition hash, listed in the manifest, checked
 /// as hostile input; one of another results encoding leaves the file openable without it.
 #[test]
@@ -432,13 +451,84 @@ fn results_round_trip_and_hostile_results_are_refused() {
     let mut renamed = wrong.clone();
     renamed[20..25].copy_from_slice(b"Otxer");
     assert!(refused(renamed, "renamed").contains("step `Other`'s"));
-    let unsorted = fieldcraft_solver::StepResult::Heat(fieldcraft_solver::HeatResult { nodes: vec![3, 2, 1], ..heat_result() });
-    let b = results::encode(&[("Heat", StoredRef { definition: hash, result: SolvedRef::Implicit(&unsorted) })]).unwrap();
+    let unsorted = fieldcraft_solver::HeatResult { nodes: vec![3, 2, 1], ..heat_result() };
+    let payload = fieldcraft_io::codec::encode(&unsorted).unwrap();
+    let valid_heat = heat_result();
+    let b = unchecked_heat_results_part("Heat", hash, &valid_heat, &payload);
     assert!(refused(b, "unsorted").contains("do not ascend"));
-    let short = fieldcraft_solver::StepResult::Heat(fieldcraft_solver::HeatResult { frames: vec![vec![1.0; 3], vec![1.0; 2]], ..heat_result() });
-    let b = results::encode(&[("Heat", StoredRef { definition: hash, result: SolvedRef::Implicit(&short) })]).unwrap();
+    let short = fieldcraft_solver::HeatResult { frames: vec![vec![1.0; 3], vec![1.0; 2]], ..heat_result() };
+    let payload = fieldcraft_io::codec::encode(&short).unwrap();
+    let b = unchecked_heat_results_part("Heat", hash, &valid_heat, &payload);
     assert!(refused(b, "a frame too short").contains("2 values for 3"));
-    assert!(results::encode(&[("Heat", StoredRef { definition: hash, result: SolvedRef::Implicit(&other) })]).is_err(), "listed under another name");
+    let short = fieldcraft_solver::StepResult::Heat(short);
+    assert_encode_refused("Heat", SolvedRef::Implicit(&short), "a temperature frame has 2 values for 3");
+    let explicit = fieldcraft_explicit::ExplicitResult {
+        step: "Explicit".into(),
+        nodes: vec![2, 1],
+        elements: Vec::new(),
+        frames: Vec::new(),
+        history: Default::default(),
+        controlling: Vec::new(),
+        initial_increment: 0.0,
+        increments: 0,
+        time: 0.0,
+        completed: true,
+        total_mass: 0.0,
+        energy: Default::default(),
+        initial_kinetic: 0.0,
+        eroded: Vec::new(),
+        contacts: Vec::new(),
+        mass_scaling: None,
+        warnings: Vec::new(),
+    };
+    assert_encode_refused("Explicit", SolvedRef::Explicit(&explicit), "node or element labels do not ascend");
+    assert_encode_refused("Heat", SolvedRef::Implicit(&other), "step `Heat` is step `Other`'s");
+
+    let static_result = fieldcraft_solver::StaticResult {
+        step: "Static".into(),
+        nodes: vec![1],
+        displacement: Vec::new(),
+        rotation: Vec::new(),
+        reaction: Vec::new(),
+        reaction_moment: Vec::new(),
+        stress: Vec::new(),
+        von_mises: Vec::new(),
+        elements: Vec::new(),
+        shells: Vec::new(),
+        beams: Vec::new(),
+        reference_points: Vec::new(),
+        applied_total: [0.0; 3],
+        reaction_total: [0.0; 3],
+        stats: Default::default(),
+        warnings: Vec::new(),
+        table_ranges: Vec::new(),
+        temperature: None,
+        nonlinear: None,
+        contacts: Vec::new(),
+    };
+    let static_step = fieldcraft_solver::StepResult::Static(static_result);
+    assert_encode_refused("Static", SolvedRef::Implicit(&static_step), "the displacement has 0 values for 1");
+
+    let frequency_result = fieldcraft_solver::FrequencyResult {
+        step: "Frequency".into(),
+        nodes: vec![1],
+        reference_points: Vec::new(),
+        modes: vec![fieldcraft_solver::Mode {
+            eigenvalue: 1.0,
+            frequency: 1.0,
+            shape: Vec::new(),
+            rotation: Vec::new(),
+            participation: [0.0; 3],
+            effective_mass: [0.0; 3],
+            point_shape: Vec::new(),
+        }],
+        total_mass: 1.0,
+        stats: Default::default(),
+        warnings: Vec::new(),
+        buckling: None,
+    };
+    let frequency_step = fieldcraft_solver::StepResult::Frequency(frequency_result);
+    assert_encode_refused("Frequency", SolvedRef::Implicit(&frequency_step), "a mode's shape has 0 values for 1");
     let twice = [("Heat", StoredRef { definition: hash, result: SolvedRef::Implicit(&heat) }); 2];
     assert!(results::encode(&twice).is_err());
 
