@@ -106,6 +106,10 @@ enum PickerAction {
         extension: &'static str,
         alternatives: &'static [&'static str],
     },
+    /// Fill the active VOL form and leave its region and boundary selection intact.
+    VolPath {
+        opening: u64,
+    },
     /// File › Run Script…: run the chosen JSON script.
     Script,
 }
@@ -729,7 +733,7 @@ impl ModelApp {
         self.services.pick_file.is_some() || self.services.pick_open.is_some()
     }
 
-    fn has_save_picker(&self) -> bool {
+    pub(crate) fn has_save_picker(&self) -> bool {
         self.services.pick_file.is_some() || self.services.pick_save.is_some()
     }
 
@@ -806,6 +810,15 @@ impl ModelApp {
                 false
             }
             PickerAction::Script => self.run_script_file(&path).is_ok(),
+            PickerAction::VolPath { opening } => {
+                let Some(d) = self.dialog.as_mut().filter(|d| d.opening == opening && d.command == "mesh.export.vol") else { return false };
+                let Ok(mut params) = serde_json::from_str::<Value>(&d.text) else { return false };
+                params["path"] = json!(with_extension(path, "vol"));
+                d.text = params.to_string();
+                d.error = None;
+                d.refused = None;
+                true
+            }
             PickerAction::Save { mut params, next } => {
                 params["path"] = json!(with_extension(path, "fieldcraft"));
                 let saved = self.run("file.save_as", params).is_ok();
@@ -1312,6 +1325,14 @@ impl ModelApp {
             FilePicker::Save { name: format!("{}.fieldcraft", self.model_name()), filters: vec![model()] },
             PickerAction::Save { params, next },
         )
+    }
+
+    /// Choose the filename without submitting the remaining export options.
+    pub(crate) fn browse_vol_path(&mut self) {
+        let Some(d) = self.dialog.as_ref().filter(|d| d.command == "mesh.export.vol") else { return };
+        let params = serde_json::from_str::<Value>(&d.text).unwrap_or(Value::Null);
+        let name = params["path"].as_str().filter(|p| !p.is_empty()).map(str::to_owned).unwrap_or_else(|| format!("{}.vol", self.model_name()));
+        self.pick_file(FilePicker::Save { name, filters: vec![Filter::new("Netgen mesh", &["vol"])] }, PickerAction::VolPath { opening: d.opening });
     }
 
     /// Write Deck: pick where to write the model as a `format` deck. Without a picker the
@@ -2684,6 +2705,35 @@ pub(crate) mod tests {
         assert!(app.session.design.is_some() && app.session.model.elements().is_empty());
         assert_eq!(app.ui.workspace, Workspace::Prepare);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vol_picker_edits_the_current_form_without_exporting() {
+        let dir = temp("vol-picker");
+        let mut app = ModelApp::new(Session::default());
+        app.session.path = Some(dir.join("plate study.fieldcraft").to_string_lossy().into_owned());
+        app.open_form("mesh.export.vol", json!({"boundaries": ["inlet"]}));
+        let suggested = dir.join("plate study.vol").to_string_lossy().into_owned();
+        let target = dir.join("chosen mesh");
+        let picked = target.to_string_lossy().into_owned();
+        app.services.pick_save = Some(Box::new(move |name, filters| {
+            assert_eq!(name, suggested);
+            assert_eq!(filters, &[Filter::new("Netgen mesh", &["vol"])]);
+            Some(picked.clone())
+        }));
+        app.browse_vol_path();
+        let selected: Value = serde_json::from_str(&app.dialog.as_ref().unwrap().text).unwrap();
+        assert_eq!(selected["path"], json!(target.with_extension("vol")));
+        assert_eq!(selected["boundaries"], json!(["inlet"]));
+        assert!(!target.with_extension("vol").exists());
+        app.services.pick_save = Some(Box::new(|_, _| None));
+        app.browse_vol_path();
+        assert_eq!(serde_json::from_str::<Value>(&app.dialog.as_ref().unwrap().text).unwrap(), selected);
+        let old_opening = app.dialog.as_ref().unwrap().opening;
+        app.open_form("mesh.export.vol", json!({"path": "custom.vol"}));
+        assert!(!app.picked_file(PickerAction::VolPath { opening: old_opening }, "stale.vol".into()));
+        assert_eq!(serde_json::from_str::<Value>(&app.dialog.as_ref().unwrap().text).unwrap()["path"], "custom.vol");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

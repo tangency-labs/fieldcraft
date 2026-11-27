@@ -1,0 +1,14 @@
+[
+  {"command":"model.units","params":{"system":"m-kg-s-N-Pa"}},
+  {"command":"mesh.block","params":{"body":"air","corners":[[{"unit":"m","value":0.0},{"unit":"m","value":0.0},{"unit":"m","value":0.0}],[{"unit":"m","value":0.00004},{"unit":"m","value":0.0},{"unit":"m","value":0.0}],[{"unit":"m","value":0.00004},{"unit":"m","value":5E-7},{"unit":"m","value":0.0}],[{"unit":"m","value":0.0},{"unit":"m","value":5E-7},{"unit":"m","value":0.0}]],"divisions":[80,1],"edges":[{"corners":[1,2],"name":"side0"},{"corners":[2,3],"name":"side1"},{"corners":[3,4],"name":"side2"},{"corners":[4,1],"name":"side3"}],"kind":"tri3","merge":{"unit":"m","value":0.0}}},
+  {"command":"mesh.block","params":{"body":"beam","corners":[[{"unit":"m","value":0.0},{"unit":"m","value":5E-7},{"unit":"m","value":0.0}],[{"unit":"m","value":0.00004},{"unit":"m","value":5E-7},{"unit":"m","value":0.0}],[{"unit":"m","value":0.00004},{"unit":"m","value":0.0000025},{"unit":"m","value":0.0}],[{"unit":"m","value":0.0},{"unit":"m","value":0.0000025},{"unit":"m","value":0.0}]],"divisions":[80,4],"edges":[{"corners":[1,2],"name":"side0"},{"corners":[2,3],"name":"side1"},{"corners":[3,4],"name":"side2"},{"corners":[4,1],"name":"side3"}],"kind":"tri3","merge":{"unit":"m","value":0.0}}},
+  {"command":"model.set.create","params":{"geometry":[{"body":"air","edge":"side0"}],"name":"ground"}},
+  {"command":"model.set.create","params":{"geometry":[{"body":"air","edge":"side1"},{"body":"air","edge":"side3"}],"name":"outer"}},
+  {"command":"model.set.create","params":{"geometry":[{"body":"air","edge":"side2"},{"body":"beam","edge":"side0"}],"name":"beam_electrode"}},
+  {"command":"model.set.create","params":{"geometry":[{"body":"beam","edge":"side1"}],"name":"tip"}},
+  {"command":"model.set.create","params":{"geometry":[{"body":"beam","edge":"side2"}],"name":"beam_top"}},
+  {"command":"model.set.create","params":{"geometry":[{"body":"beam","edge":"side3"}],"name":"clamp"}},
+  {"command":"model.set.create","params":{"geometry":[{"body":"air","face":"area"}],"name":"air"}},
+  {"command":"model.set.create","params":{"geometry":[{"body":"beam","face":"area"}],"name":"beam"}},
+  {"command":"mesh.export.vol","params":{"path":"pull-in.vol","materials":["air","beam"],"boundaries":["ground","outer","beam_electrode","tip","beam_top","clamp"]}}
+]

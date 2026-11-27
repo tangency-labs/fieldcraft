@@ -112,6 +112,7 @@ The same part also meshes all-hex automatically with the octree mesher (`mesh.he
   erosion and rigid walls; D3Q19 lattice Boltzmann flow with forces on the part's faces. Results
   never depend on the thread count.
 - **Decks:** Abaqus, Nastran and LS-DYNA writers, each refusing by name what it cannot express.
+- **Mesh exchange:** [Netgen VOL export](docs/recipes/netgen-mesh-export.md) for linear 2D and 3D meshes with named materials and boundaries.
 - **Results:** contours of stress, strain and displacement with a legend, deformed shapes, mode
   shapes, explicit and nonlinear frames, probes and reaction sums; supports, loads, reference
   points and couplings drawn in the viewport.

@@ -928,6 +928,14 @@ impl ModelApp {
             let mut params = spec.form.map_or(params.clone(), |form| fieldcraft_engine::schema::prefill(form, &params));
             // A required reference with one obvious candidate starts picked.
             if let (Some(form), Some(obj)) = (spec.form, params.as_object_mut()) {
+                if spec.id == "mesh.export.vol" && !obj.contains_key("path") {
+                    let source = self.session.path.as_deref().or_else(|| self.session.sources.design.as_ref().map(|d| d.path()));
+                    let target = source
+                        .map(std::path::Path::new)
+                        .map(|p| p.with_extension("vol"))
+                        .unwrap_or_else(|| std::path::PathBuf::from(format!("{}.vol", self.model_name())));
+                    obj.insert("path".into(), json!(target));
+                }
                 let selected = self.selected.clone();
                 let session = &self.session;
                 // A section is assigned to elements: a set of faces, edges or nodes is never its

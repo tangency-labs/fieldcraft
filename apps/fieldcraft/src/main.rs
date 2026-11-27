@@ -162,7 +162,14 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                 };
                 let dialog = filters.iter().fold(dialog, |d, f| d.add_filter(f.name, f.extensions.as_slice()));
                 let file = match name {
-                    Some(name) => dialog.set_file_name(name).save_file().await,
+                    Some(name) => {
+                        let path = std::path::Path::new(&name);
+                        let dialog = match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                            Some(dir) => dialog.set_directory(dir),
+                            None => dialog,
+                        };
+                        dialog.set_file_name(path.file_name().and_then(|n| n.to_str()).unwrap_or(&name)).save_file().await
+                    }
                     None => dialog.pick_file().await,
                 };
                 file.map(|f| f.path().to_string_lossy().into_owned())
