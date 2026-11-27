@@ -191,7 +191,7 @@ impl FramePanelContent for FieldCraftFrameContent<'_> {
         let t = Tokens::get(self.app.ui.dark);
         match context.instance.0.as_str() {
             PANEL_BROWSER => {
-                if !context.preview_geometry {
+                if !context.preview_geometry && context.native_host.is_none() {
                     self.app.place("browser", outer);
                 }
                 ui.push_id("fc_panel_browser", |ui| {
@@ -199,7 +199,7 @@ impl FramePanelContent for FieldCraftFrameContent<'_> {
                 });
             }
             PANEL_HISTORY => {
-                if !context.preview_geometry {
+                if !context.preview_geometry && context.native_host.is_none() {
                     self.app.place("timeline", outer);
                 }
                 let floating = slot != ContentSlot::Inline;
@@ -208,7 +208,7 @@ impl FramePanelContent for FieldCraftFrameContent<'_> {
                 });
             }
             PANEL_RESULTS => {
-                if !context.preview_geometry {
+                if !context.preview_geometry && context.native_host.is_none() {
                     self.app.place("context:results", outer);
                 }
                 ui.push_id("fc_panel_results", |ui| {
@@ -217,6 +217,7 @@ impl FramePanelContent for FieldCraftFrameContent<'_> {
             }
             PANEL_INSPECTOR => {
                 if !context.preview_geometry
+                    && context.native_host.is_none()
                     && let Some(key) = crate::context::inspector_region_key(self.app)
                 {
                     self.app.place(key, outer);
@@ -231,8 +232,8 @@ impl FramePanelContent for FieldCraftFrameContent<'_> {
     }
 }
 
-/// Format an OS window title for the popped-out Inspector panel (used in PR 4b).
-#[allow(dead_code)]
+/// Format an OS window title for the popped-out Inspector panel.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn inspector_window_title(app: &ModelApp) -> String {
     match crate::context::inspector_heading(app) {
         Some((_, title)) => format!("{} — {title}", tr("panel.inspector")),

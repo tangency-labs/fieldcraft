@@ -397,6 +397,52 @@ mod tests {
         assert!(!app.panels.as_ref().unwrap().is_dirty());
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn offscreen_capture_omits_popped_out_native_panels_and_preserves_live_state() {
+        let mut app = ModelApp::new(Session::default());
+        app.run("file.sample", serde_json::json!({"name": "cantilever"})).unwrap();
+        app.panels = Some(crate::panels::PanelHost::from_prefs(&crate::files::Prefs::default(), true).unwrap());
+        app.refresh_panel_monitors(
+            || {
+                vec![crate::NativeMonitor {
+                    name: Some("Primary".into()),
+                    bounds: Rect::from_min_size(Pos2::ZERO, egui::vec2(1920.0, 1080.0)),
+                    scale: 1.0,
+                    primary: true,
+                }]
+            },
+            true,
+        );
+        let image_docked = app.capture(size(900.0, 600.0)).unwrap();
+
+        app.with_panels(|_, panels| {
+            crate::panels::native::pop_out_panel(panels, crate::panels::PANEL_BROWSER, solidcraft_panel_layout::Point { x: 200.0, y: 150.0 })
+                .unwrap();
+        });
+        app.save_prefs();
+
+        let prefs_before = app.prefs.panel_layout.clone();
+        let inspect_before = app.panels.as_ref().unwrap().inspect_panels(&app);
+        let browser_inspect = inspect_before.iter().find(|p| p["id"] == "browser").unwrap();
+        assert_eq!(browser_inspect["host"], "native");
+        assert_eq!(browser_inspect["native_supported"], true);
+
+        let snapshot = app.panels.as_ref().unwrap().headless_snapshot(&app.prefs).unwrap();
+        assert!(!snapshot.is_open(crate::panels::PANEL_BROWSER));
+
+        let image = app.capture(size(900.0, 600.0)).unwrap();
+        assert_eq!(image.size, [900, 600]);
+        assert_ne!(image.pixels, image_docked.pixels, "offscreen capture must omit popped-out Browser");
+        assert!(!app.capturing);
+        // Live native host and Prefs remain untouched after capture.
+        assert_eq!(app.prefs.panel_layout, prefs_before);
+        let inspect_after = app.panels.as_ref().unwrap().inspect_panels(&app);
+        assert_eq!(inspect_after, inspect_before);
+        // Offscreen capture omitted popped-out browser: main window's layout has no browser rect.
+        assert!(!app.layout.contains_key("browser"));
+    }
+
     #[test]
     fn hostile_capture_sizes_are_refused() {
         let mut app = ModelApp::new(Session::default());

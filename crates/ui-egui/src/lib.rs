@@ -87,7 +87,11 @@ use serde_json::{Value, json};
 
 pub use control::ControlRequest;
 pub use files::{FilePicker, Filter, Services};
+#[cfg(not(target_arch = "wasm32"))]
+pub use panels::native::canonicalize_monitors;
 pub use scene::Style;
+#[cfg(not(target_arch = "wasm32"))]
+pub use solidcraft_ui_kit::panel_runtime::NativeMonitor;
 
 /// The viewport height symbols are sized for before the viewport is first drawn (points).
 const DEFAULT_VIEW_HEIGHT: f64 = 800.0;
@@ -2374,7 +2378,7 @@ impl ModelApp {
     /// Undo (Ctrl/Cmd+Z), redo (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y), open (Ctrl/Cmd+O), save
     /// (Ctrl/Cmd+S), save as (Ctrl/Cmd+Shift+S) and delete the browser's selection (Delete),
     /// unless a text field has the keyboard (it undoes its own typing).
-    fn shortcuts(&mut self, ctx: &egui::Context) {
+    pub(crate) fn shortcuts(&mut self, ctx: &egui::Context) {
         if ctx.memory(|m| m.focused().is_some()) {
             return;
         }
@@ -2427,14 +2431,17 @@ impl ModelApp {
         let shortcut = |modifiers, key| egui::KeyboardShortcut::new(modifiers, key);
         let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
         // Shift first: the plain shortcut matches it too.
-        let (redo, undo) = ctx.input_mut(|i| {
-            let redo = i.consume_shortcut(&shortcut(shift, egui::Key::Z)) || i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Y));
-            (redo, i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Z)))
-        });
-        if redo {
-            let _ = self.run("edit.redo", json!({}));
-        } else if undo {
-            let _ = self.run("edit.undo", json!({}));
+        if self.prompt.is_none() {
+            let (redo, undo) = ctx.input_mut(|i| {
+                let redo =
+                    i.consume_shortcut(&shortcut(shift, egui::Key::Z)) || i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Y));
+                (redo, i.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Z)))
+            });
+            if redo {
+                let _ = self.run("edit.redo", json!({}));
+            } else if undo {
+                let _ = self.run("edit.undo", json!({}));
+            }
         }
         // Delete (or Backspace) deletes the definition selected in the browser, after asking.
         if self.prompt.is_none()
@@ -2492,6 +2499,10 @@ impl ModelApp {
         solidcraft_ui_registry::clear_handles();
         self.show_gpu_errors();
         self.layout.clear();
+        #[cfg(not(target_arch = "wasm32"))]
+        let had_dialog = self.dialog.is_some();
+        #[cfg(not(target_arch = "wasm32"))]
+        let had_refused = self.refused.is_some();
         appbar::app_bar(self, ui);
         status_bar::show(self, ui);
         // The start page takes the workspace's place while it is up.
@@ -2505,6 +2516,19 @@ impl ModelApp {
         privacy::show(self, ui.ctx());
         settings::show(self, ui.ctx());
         updates::show(self, ui.ctx());
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.capturing {
+            self.with_panels(|app, panels| panels.show_desktop_windows(app, ui.ctx()));
+        }
+        let native_commands = self.with_panels(|_, panels| panels.drain_commands()).unwrap_or_default();
+        let had_native_commands = !native_commands.is_empty();
+        if had_native_commands {
+            panels::content::execute_commands(self, native_commands);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.capturing {
+            self.with_panels(|app, panels| panels.finish_cross_viewport_sync(app, ui.ctx(), had_dialog, had_refused, had_native_commands));
+        }
         if self.custom_titlebar {
             titlebar::resize_zones(ui);
         }
@@ -2513,6 +2537,22 @@ impl ModelApp {
         if self.picker.is_some() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }
+    }
+
+    /// Push desktop monitor topology and global-coordinate capability from the desktop binary.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn refresh_panel_monitors(&mut self, monitors: impl FnOnce() -> Vec<NativeMonitor>, global_coords_available: bool) {
+        let prefs = self.prefs.clone();
+        self.with_panels(|_, panels| {
+            panels.sync_desktop_monitors(&prefs, monitors, global_coords_available);
+        });
+    }
+
+    /// Signal that the desktop application is exiting so pending child-close layout writes do not
+    /// overwrite saved multi-monitor placements.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn mark_exiting(&mut self) {
+        self.with_panels(|_, panels| panels.mark_exiting());
     }
 
     /// Borrow `self.panels` alongside `&mut self`, always restoring it on return or unwind.

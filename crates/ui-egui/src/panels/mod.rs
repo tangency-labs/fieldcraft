@@ -5,6 +5,8 @@
 //! `HistoryDock::Top` strip fallback, and `browser_float` translucency scoping.
 
 pub mod content;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native;
 pub mod store;
 
 use std::cell::RefCell;
@@ -21,8 +23,8 @@ use solidcraft_panel_layout::{
 };
 use solidcraft_ui_kit as kit;
 use solidcraft_ui_kit::panel_runtime::{
-    ContentServices, ControllerBinding, HostEvent, HostOptions, HostPointerTarget, HostResizeEdge, InAppNativeAdapter, Motion, Ownership,
-    PanelRuntime, RuntimeEnvironment, WorkspacePanelHost,
+    ContentServices, ControllerBinding, HostEvent, HostOptions, HostPointerTarget, HostResizeEdge, InAppNativeAdapter, Motion, NativeHostAdapter,
+    Ownership, PanelRuntime, RuntimeEnvironment, WorkspacePanelHost,
 };
 use solidcraft_ui_text::tr;
 
@@ -289,12 +291,19 @@ pub(crate) struct HistoryPlacement {
     pub(crate) memory: PlacementMemory,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+type ActiveNativeAdapter = native::NativeAdapter;
+#[cfg(target_arch = "wasm32")]
+type ActiveNativeAdapter = InAppNativeAdapter;
+
 /// Host wrapper owning `PanelRuntime`, `WorkspacePanelHost`, `FieldCraftLayoutStore`, and
 /// read/write adapters for FieldCraft's window shell.
 pub(crate) struct PanelHost {
     runtime: PanelRuntime,
     host: WorkspacePanelHost,
-    native: InAppNativeAdapter,
+    native: ActiveNativeAdapter,
+    #[cfg(not(target_arch = "wasm32"))]
+    coordinator: native::NativeViewportCoordinator,
     store: FieldCraftLayoutStore,
     shared: Rc<RefCell<PanelSharedState>>,
     local: FieldCraftLocal,
@@ -304,6 +313,7 @@ pub(crate) struct PanelHost {
     pending_browser_width: Option<f32>,
     pending_browser_collapsed: Option<bool>,
     surface_alpha: kit::blur::State,
+    omitted_native: BTreeSet<String>,
 }
 
 impl PanelHost {
@@ -314,38 +324,56 @@ impl PanelHost {
     }
 
     /// Build a fresh read-only in-window host seeded from the live layout snapshot for `ui.capture`.
+    /// Popped-out native OS windows (`Zone::Window`) are omitted from the offscreen capture.
     pub(crate) fn headless_snapshot(&self, prefs: &Prefs) -> PanelResult<Self> {
+        let registry = self.runtime.layout().registry().clone();
+        let mut layout = self.runtime.layout().layout().clone();
+        let mut omitted = BTreeSet::new();
+        for section in &layout.sections {
+            if section.location.zone() == Zone::Window {
+                for id in &section.tabs {
+                    omitted.insert(id.0.clone());
+                }
+            }
+        }
+        layout.sections.retain(|s| s.location.zone() != Zone::Window);
+        for inst in &mut layout.instances {
+            if omitted.contains(&inst.id.0) {
+                inst.requested_open = false;
+                if matches!(inst.memory.location, SectionLocation::Window { .. }) {
+                    inst.memory.location = SectionLocation::Floating { origin: Point { x: 0.0, y: 0.0 } };
+                    inst.memory.column = None;
+                    inst.memory.column_index = 0;
+                    inst.memory.column_width = None;
+                }
+            }
+        }
+        validate(&layout, &registry)?;
         let mut snap = prefs.clone();
-        snap.panel_layout = self.to_prefs_value();
         snap.history_dock = self.history_dock;
-        Self::from_prefs(&snap, false)
+        snap.panel_layout = serde_json::to_string(&solidcraft_panel_layout::LayoutEnvelope::new(layout))
+            .ok()
+            .and_then(|s| crate::files::RawJson::from_json_string(s).ok());
+        let (sanitized, store) = FieldCraftLayoutStore::load_from_prefs(&snap, &registry, false)?;
+        let mut host = Self::from_loaded(sanitized, store, registry, self.history_dock, false)?;
+        host.omitted_native = omitted;
+        Ok(host)
     }
 
-    fn from_loaded(
+    fn build_runtime(
         layout: Layout,
-        store: FieldCraftLayoutStore,
         registry: PanelRegistry,
-        history_dock: HistoryDock,
+        environment: RuntimeEnvironment,
+        shared: &Rc<RefCell<PanelSharedState>>,
+        native: &mut ActiveNativeAdapter,
+        local: &mut FieldCraftLocal,
         native_windows: bool,
-    ) -> PanelResult<Self> {
+    ) -> PanelResult<PanelRuntime> {
         let capabilities = HostCapabilities { persistence: true, native_windows, max_native_hosts: if native_windows { MAX_SECTIONS } else { 0 } };
-        let service = LayoutService::new(registry, layout, capabilities)?;
-        let environment = RuntimeEnvironment {
-            workspace: WorkspaceId::new(WORKSPACE_ID)?,
-            document: Some(DocumentId::new("fieldcraft.active")?),
-            window: HostId::new("main")?,
-            viewport: ViewportId::new("main")?,
-            direction: Direction::Ltr,
-            motion: Motion::Animated,
-        };
-        let mut runtime = PanelRuntime::new(service, environment.clone())?;
-        let shared = Rc::new(RefCell::new(PanelSharedState {
-            history_available: true,
-            results_available: false,
-            inspector_available: false,
-            inspector_heading: None,
-            commands: Default::default(),
-        }));
+        let has_native = layout.sections.iter().any(|s| s.location.zone() == Zone::Window);
+        let initial_layout = if native_windows && has_native { seeded_default_layout(&registry, &Prefs::default())? } else { layout.clone() };
+        let service = LayoutService::new(registry, initial_layout, capabilities)?;
+        let mut runtime = PanelRuntime::new(service, environment)?;
         for id in ALL_PANEL_IDS {
             let shared_ref = shared.clone();
             runtime.register(
@@ -356,26 +384,72 @@ impl PanelHost {
                 },
             )?;
         }
+        if native_windows && has_native {
+            let models = FieldCraftModels;
+            let mut commands = FieldCraftCommands;
+            let mut services = ContentServices { models: &models, commands: &mut commands, local };
+            runtime.dispatch(LayoutAction::Replace { expected_revision: None, layout }, native, &mut services)?;
+        }
+        Ok(runtime)
+    }
+
+    fn from_loaded(
+        layout: Layout,
+        store: FieldCraftLayoutStore,
+        registry: PanelRegistry,
+        history_dock: HistoryDock,
+        native_windows: bool,
+    ) -> PanelResult<Self> {
+        let environment = RuntimeEnvironment {
+            workspace: WorkspaceId::new(WORKSPACE_ID)?,
+            document: Some(DocumentId::new("fieldcraft.active")?),
+            window: HostId::new("main")?,
+            viewport: ViewportId::new("main")?,
+            direction: Direction::Ltr,
+            motion: Motion::Animated,
+        };
+        let shared = Rc::new(RefCell::new(PanelSharedState {
+            history_available: true,
+            results_available: false,
+            inspector_available: false,
+            inspector_heading: None,
+            commands: Default::default(),
+        }));
+        let mut local = FieldCraftLocal::default();
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut native = if native_windows {
+            native::NativeAdapter::Desktop(solidcraft_ui_kit::panel_runtime::DesktopNativeAdapter::default())
+        } else {
+            native::NativeAdapter::InApp(InAppNativeAdapter)
+        };
+        #[cfg(target_arch = "wasm32")]
+        let mut native = InAppNativeAdapter;
+
+        let runtime = Self::build_runtime(layout, registry, environment.clone(), &shared, &mut native, &mut local, native_windows)?;
 
         let mut options = HostOptions { content_header_height: 0.0, ..Default::default() };
         options.geometry.default_opaque = false;
         options.metrics.footer_height = 0.0;
         options.metrics.gap = kit::SHELL_GAP;
-        let host = WorkspacePanelHost::new(options)?;
+        let mut host = WorkspacePanelHost::new(options)?;
+        host.note_native_capabilities(native.capabilities());
 
         let mut this = Self {
             runtime,
             host,
-            native: InAppNativeAdapter,
+            native,
+            #[cfg(not(target_arch = "wasm32"))]
+            coordinator: native::NativeViewportCoordinator::default(),
             store,
             shared,
-            local: FieldCraftLocal::default(),
+            local,
             environment,
             native_windows,
             history_dock,
             pending_browser_width: None,
             pending_browser_collapsed: None,
             surface_alpha: kit::blur::State::default(),
+            omitted_native: BTreeSet::new(),
         };
         let _ = this.reconcile_runtime();
         Ok(this)
@@ -471,7 +545,7 @@ impl PanelHost {
             shared.history_available = true;
             shared.results_available = results_active;
             shared.inspector_available = inspector_active;
-            shared.inspector_heading = inspector_heading;
+            shared.inspector_heading = inspector_heading.clone();
         }
         if let Err(err) = self.reconcile_runtime() {
             log::warn!("panel runtime reconcile failed: {err}");
@@ -479,17 +553,28 @@ impl PanelHost {
         }
 
         // Sync visibility changes initiated outside `panel_runtime` (View menu, `ui.set`).
-        let _ = self.ensure_open(PANEL_BROWSER, show_tree, true);
-        let _ = self.ensure_open(PANEL_HISTORY, show_timeline, true);
-        if results_active && !self.is_open(PANEL_RESULTS) {
+        if !self.omitted_native.contains(PANEL_BROWSER) {
+            let _ = self.ensure_open(PANEL_BROWSER, show_tree, true);
+        }
+        if !self.omitted_native.contains(PANEL_HISTORY) {
+            let _ = self.ensure_open(PANEL_HISTORY, show_timeline, true);
+        }
+        if !self.omitted_native.contains(PANEL_RESULTS) && results_active && !self.is_open(PANEL_RESULTS) {
             let _ = self.ensure_open(PANEL_RESULTS, true, false);
         }
-        if inspector_active && !self.is_open(PANEL_INSPECTOR) {
+        if !self.omitted_native.contains(PANEL_INSPECTOR) && inspector_active && !self.is_open(PANEL_INSPECTOR) {
             let _ = self.ensure_open(PANEL_INSPECTOR, true, false);
         }
 
-        let top_strip = show_timeline && self.history_dock == HistoryDock::Top && self.history_in_bottom_zone();
-        self.shared.borrow_mut().history_available = !top_strip;
+        let top_strip =
+            !self.omitted_native.contains(PANEL_HISTORY) && show_timeline && self.history_dock == HistoryDock::Top && self.history_in_bottom_zone();
+        {
+            let mut shared = self.shared.borrow_mut();
+            shared.history_available = !top_strip && !self.omitted_native.contains(PANEL_HISTORY);
+            shared.results_available = results_active && !self.omitted_native.contains(PANEL_RESULTS);
+            shared.inspector_available = inspector_active && !self.omitted_native.contains(PANEL_INSPECTOR);
+            shared.inspector_heading = inspector_heading;
+        }
 
         let top_rect = if top_strip {
             let cards = app.shell.cards.clone();
@@ -508,6 +593,7 @@ impl PanelHost {
         }
 
         let gap = kit::Container::new(ui.ctx(), kit::Surface::Panel).gap();
+        self.host.note_native_capabilities(self.native.capabilities());
         let _ = self.host.set_requested_opacity(None);
         let _ = self.host.set_gap(gap);
         let float_alpha = app.ui.browser_float.then_some((crate::browser::FLOAT_ALPHA * 255.0).round() as u8);
@@ -640,6 +726,136 @@ impl PanelHost {
 
     pub(crate) fn drain_commands(&mut self) -> Vec<PanelCommand> {
         self.shared.borrow_mut().drain_commands()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn downgrade_to_in_window(&mut self) {
+        let registry = self.runtime.layout().registry().clone();
+        if let Ok(projected) = self.store.project_live_to_floating(self.runtime.layout().layout(), &registry) {
+            let mut next_native = native::NativeAdapter::InApp(InAppNativeAdapter);
+            if let Ok(runtime) =
+                Self::build_runtime(projected, registry, self.environment.clone(), &self.shared, &mut next_native, &mut self.local, false)
+            {
+                self.runtime = runtime;
+                self.native = next_native;
+                self.native_windows = false;
+                self.coordinator.clear_active_state();
+                self.host.note_native_capabilities(self.native.capabilities());
+                let _ = self.reconcile_runtime();
+                log::info!("downgraded panel host to in-window mode");
+            }
+        }
+    }
+
+    /// Update desktop monitor topology and dynamically upgrade/downgrade `native_windows` capability.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn sync_desktop_monitors(
+        &mut self,
+        _prefs: &Prefs,
+        monitors: impl FnOnce() -> Vec<solidcraft_ui_kit::panel_runtime::NativeMonitor>,
+        global_coords_available: bool,
+    ) -> bool {
+        let supported = self.coordinator.update_monitors(self.native.desktop(), monitors, global_coords_available);
+        if supported && !self.native_windows {
+            let registry = self.runtime.layout().registry().clone();
+            let layout = if self.coordinator.has_pending_close_persist() {
+                self.runtime.layout().layout().clone()
+            } else {
+                self.store.take_preserved_native().map(|e| e.layout).unwrap_or_else(|| self.runtime.layout().layout().clone())
+            };
+            let mut next_native = native::NativeAdapter::Desktop(solidcraft_ui_kit::panel_runtime::DesktopNativeAdapter::default());
+            match Self::build_runtime(layout, registry, self.environment.clone(), &self.shared, &mut next_native, &mut self.local, true) {
+                Ok(runtime) => {
+                    if let Some(desktop) = next_native.desktop() {
+                        self.coordinator.push_to_desktop(desktop);
+                    }
+                    self.runtime = runtime;
+                    self.native = next_native;
+                    self.native_windows = true;
+                    self.host.note_native_capabilities(self.native.capabilities());
+                    let _ = self.reconcile_runtime();
+                    log::info!("upgraded panel host to desktop native windows");
+                }
+                Err(err) => {
+                    log::warn!("failed to upgrade panel host to desktop native windows: {err}");
+                }
+            }
+        } else if !supported && self.native_windows {
+            self.downgrade_to_in_window();
+        }
+        self.native_windows
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn mark_exiting(&mut self) {
+        self.coordinator.mark_exiting();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn show_desktop_windows(&mut self, app: &mut ModelApp, ctx: &egui::Context) {
+        let mut driver = native::EguiViewportDriver;
+        if let Err(err) = self.show_desktop_windows_with(&mut driver, app, ctx) {
+            log::warn!("show desktop panel windows failed: {err}");
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn show_desktop_windows_with<D: native::ViewportDriver>(
+        &mut self,
+        driver: &mut D,
+        app: &mut ModelApp,
+        ctx: &egui::Context,
+    ) -> PanelResult<()> {
+        // Keep shared availability/headings current even when Start page is shown.
+        let top_strip = app.ui.show_timeline && self.history_dock == HistoryDock::Top && self.history_in_bottom_zone();
+        let results_active = crate::results::shown(&app.session).is_some();
+        let inspector_active = crate::context::inspector_active(app);
+        let inspector_heading = crate::context::inspector_heading(app);
+        {
+            let mut shared = self.shared.borrow_mut();
+            shared.history_available = !top_strip;
+            shared.results_available = results_active;
+            shared.inspector_available = inspector_active;
+            shared.inspector_heading = inspector_heading;
+        }
+        let _ = self.reconcile_runtime();
+        let mut coordinator = std::mem::take(&mut self.coordinator);
+        let res =
+            coordinator.show_desktop_windows(driver, app, ctx, &mut self.runtime, &mut self.host, &mut self.native, &mut self.store, &mut self.local);
+        self.coordinator = coordinator;
+        if self.coordinator.is_embedded_downgraded() && self.native_windows {
+            self.downgrade_to_in_window();
+        } else {
+            let _ = self.reconcile_runtime();
+        }
+        self.host.note_native_capabilities(self.native.capabilities());
+        res
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn finish_cross_viewport_sync(
+        &mut self,
+        app: &ModelApp,
+        ctx: &egui::Context,
+        had_dialog: bool,
+        had_refused: bool,
+        had_drained_commands: bool,
+    ) {
+        let mut driver = native::EguiViewportDriver;
+        self.finish_cross_viewport_sync_with(&mut driver, app, ctx, had_dialog, had_refused, had_drained_commands);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn finish_cross_viewport_sync_with<D: native::ViewportDriver>(
+        &mut self,
+        driver: &mut D,
+        app: &ModelApp,
+        ctx: &egui::Context,
+        had_dialog: bool,
+        had_refused: bool,
+        had_drained_commands: bool,
+    ) {
+        self.coordinator.sync_post_step7(driver, app, ctx, had_dialog, had_refused, had_drained_commands);
     }
 
     fn sync_read_through_to_app(&mut self, app: &mut ModelApp) {
@@ -869,6 +1085,7 @@ impl PanelHost {
         self.store.encode_prefs_layout(self.runtime.layout().layout(), self.runtime.layout().registry())
     }
 
+    #[cfg(test)]
     pub(crate) fn to_prefs_value(&self) -> Option<crate::files::RawJson> {
         self.store.to_prefs_value(self.runtime.layout().layout(), self.runtime.layout().registry())
     }

@@ -1477,7 +1477,10 @@ impl ModelApp {
         let go = match answer {
             Answer::Save => self.save(),
             Answer::Discard => true,
-            Answer::Cancel => false,
+            Answer::Cancel => {
+                self.quit_requested = false;
+                false
+            }
         };
         if !go {
             return;

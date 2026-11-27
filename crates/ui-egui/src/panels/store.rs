@@ -89,6 +89,43 @@ impl FieldCraftLayoutStore {
         self.dirty = false;
     }
 
+    /// Return and clear any preserved `Zone::Window` envelope when upgrading an unedited
+    /// session from `native_windows == false` to desktop native capability.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn take_preserved_native(&mut self) -> Option<LayoutEnvelope> {
+        if self.dirty || !self.has_projected_native {
+            return None;
+        }
+        self.has_projected_native = false;
+        self.preserved_native_envelope.take()
+    }
+
+    /// Return section reservations from the current layout envelope.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn preparation_reservations(
+        &self,
+        layout: &Layout,
+        registry: &PanelRegistry,
+    ) -> PanelResult<BTreeSet<solidcraft_panel_layout::SectionId>> {
+        let envelope = with_live_layout(&self.envelope, layout.clone(), registry)?;
+        Ok(preparation_context(&envelope)?.sections)
+    }
+
+    /// Snapshot the pre-close `Zone::Window` layout into `preserved_native_envelope`
+    /// while leaving `dirty` untouched so OS shutdown saves cannot overwrite saved placements.
+    /// Retains the first preserved snapshot while one exists so sequential native closes keep all
+    /// windows in `Zone::Window`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn preserve_before_deferred_close(&mut self, pre_close_layout: &Layout, registry: &PanelRegistry) {
+        if self.preserved_native_envelope.is_some() {
+            return;
+        }
+        if let Ok(envelope) = with_live_layout(&self.envelope, pre_close_layout.clone(), registry) {
+            self.preserved_native_envelope = Some(envelope);
+            self.has_projected_native = true;
+        }
+    }
+
     /// Replace the cached envelope with `layout` (for example after `reset_layout`).
     pub(crate) fn replace_live(&mut self, layout: &Layout, registry: &PanelRegistry, dirty: bool) -> PanelResult<()> {
         let next = LayoutEnvelope::new(layout.clone());
@@ -99,6 +136,25 @@ impl FieldCraftLayoutStore {
             self.mark_dirty();
         }
         Ok(())
+    }
+
+    /// Project any live `Zone::Window` placements to in-window `Floating` non-destructively
+    /// while preserving the original `Zone::Window` envelope until an explicit user edit.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn project_live_to_floating(&mut self, runtime_layout: &Layout, registry: &PanelRegistry) -> PanelResult<Layout> {
+        let mut live = runtime_layout.clone();
+        if !self.dirty && !self.has_projected_native && has_window_location(&live) {
+            let envelope = with_live_layout(&self.envelope, live.clone(), registry)?;
+            self.preserved_native_envelope = Some(envelope);
+            self.has_projected_native = true;
+        }
+        if has_window_location(&live) {
+            project_window_to_floating(&mut live, registry)?;
+        }
+        let next_env = LayoutEnvelope::new(live.clone());
+        self.encoded_bytes = encode(&next_env, registry)?;
+        self.envelope = next_env;
+        Ok(live)
     }
 
     /// Serialize the current layout for `Prefs::panel_layout`.
@@ -132,6 +188,7 @@ impl FieldCraftLayoutStore {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn to_prefs_value(&self, runtime_layout: &Layout, registry: &PanelRegistry) -> Option<RawJson> {
         match self.encode_prefs_layout(runtime_layout, registry) {
             EncodedLayout::Ready(raw) => Some(raw),
@@ -316,7 +373,9 @@ mod tests {
     use crate::panels::{PANEL_BROWSER, PANEL_HISTORY, PANEL_INSPECTOR, PANEL_RESULTS, build_registry};
     use crate::shell::HistoryDock;
     use serde_json::json;
-    use solidcraft_panel_layout::{ColumnId, DockReturn, HostId, InstanceId, SectionId, Zone};
+    use solidcraft_panel_layout::{
+        ColumnId, Destination, DockReturn, HostCapabilities, HostId, InstanceId, Mutation, SectionId, Zone, next_section_id,
+    };
 
     #[test]
     fn fresh_load_seeds_default_zones_and_split_weights() {
@@ -459,5 +518,74 @@ mod tests {
         let preserved = store.to_prefs_value(&projected, &reg).unwrap();
         let decoded = decode(preserved.as_bytes(), &reg, &seeded_default_layout(&reg, &Prefs::default()).unwrap()).unwrap();
         assert_eq!(decoded.envelope.layout.containing(&browser_id).unwrap().location.zone(), Zone::Window);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn preserve_before_deferred_close_keeps_first_snapshot_across_sequential_closes() {
+        let reg = build_registry().unwrap();
+        let (seeded, mut store) = FieldCraftLayoutStore::load_from_prefs(&Prefs::default(), &reg, true).unwrap();
+        let caps = HostCapabilities { persistence: true, native_windows: true, max_native_hosts: 8 };
+        let mut service = solidcraft_panel_layout::LayoutService::new(reg.clone(), seeded, caps).unwrap();
+        let browser_id = InstanceId::new(PANEL_BROWSER).unwrap();
+        let history_id = InstanceId::new(PANEL_HISTORY).unwrap();
+
+        let apply_mut = |svc: &mut solidcraft_panel_layout::LayoutService, m: Mutation| {
+            let p = svc.prepare(LayoutAction::Apply { expected_revision: None, mutations: vec![m] }).unwrap();
+            svc.commit(p).unwrap().layout
+        };
+        let pop_mut = |svc: &solidcraft_panel_layout::LayoutService, id: &InstanceId, host_name: &str, x: f32| {
+            let cur_layout = svc.layout();
+            let cur = cur_layout.containing(id).unwrap().clone();
+            let zone = cur.location.zone();
+            let sec_id = next_section_id(cur_layout).unwrap();
+            let return_idx = cur_layout.sections.iter().position(|s| s.id == cur.id).unwrap_or(0);
+            let insert_idx = cur_layout.sections.len().saturating_sub(1);
+            Mutation::Move {
+                instance: id.clone(),
+                destination: Destination::NewSection {
+                    section: sec_id,
+                    index: insert_idx,
+                    location: SectionLocation::Window {
+                        host: HostId::new(host_name).unwrap(),
+                        origin: Point { x, y: 120.0 },
+                        return_to: DockReturn {
+                            zone,
+                            index: return_idx,
+                            size: cur.size,
+                            collapsed: false,
+                            section: Some(cur.id),
+                            column: cur.column,
+                            column_index: 0,
+                            column_width: None,
+                            weight: 1.0,
+                            preferred_extent: None,
+                            extent_priority: 0,
+                            join: None,
+                        },
+                    },
+                    size: cur.size,
+                },
+            }
+        };
+
+        let m1 = pop_mut(&service, &browser_id, "win-browser", 2000.0);
+        let _ = apply_mut(&mut service, m1);
+        let m2 = pop_mut(&service, &history_id, "win-history", 2300.0);
+        let two_windows = apply_mut(&mut service, m2);
+
+        store.preserve_before_deferred_close(&two_windows, &reg);
+
+        // Simulate first window redocked before second closes: second call must NOT overwrite first snapshot.
+        let after_first_close = apply_mut(&mut service, Mutation::NativeClose { host: HostId::new("win-browser").unwrap() });
+        store.preserve_before_deferred_close(&after_first_close, &reg);
+
+        let preserved = store.to_prefs_value(&after_first_close, &reg).unwrap();
+        let decoded = decode(preserved.as_bytes(), &reg, &seeded_default_layout(&reg, &Prefs::default()).unwrap()).unwrap();
+        assert_eq!(decoded.envelope.layout.containing(&browser_id).unwrap().location.zone(), Zone::Window);
+        assert_eq!(decoded.envelope.layout.containing(&history_id).unwrap().location.zone(), Zone::Window);
+
+        store.mark_dirty();
+        assert!(store.take_preserved_native().is_none());
     }
 }
