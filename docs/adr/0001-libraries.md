@@ -9,7 +9,7 @@ algorithms, where the obvious open-source implementations are GPL-family, must c
 
 ## Decision
 
-**Geometry: SolidCraft**, as git dependencies pinned by rev (`solidcraft-kernel`,
+**Geometry: SolidCraft**, as git dependencies pinned by tag (`solidcraft-kernel`,
 `solidcraft-geom`, `solidcraft-doc`, `solidcraft-io`; MIT OR Apache-2.0, built on the Apache-2.0
 truck crates until v0.30 and on solidcore, an Apache-2.0 Rust port of NVIDIA's SMLib, from
 v0.40, with its `solidcore-record` geometry records from the copy SolidCraft vendors). SolidCraft
@@ -19,7 +19,7 @@ exchange files (STEP, which SolidCraft's kernel already reads) can be added as s
 through the same crate. Only `fieldcraft-geometry` may depend on SolidCraft.
 
 **Desktop UI: SolidCraft's UI kit** (`solidcraft-ui-kit` and the `solidcraft-theme` token contract
-it draws from; same pinned rev, under the SolidCraft Brand and Interface Licence, see below).
+it draws from; same pinned tag, under the SolidCraft Brand and Interface Licence, see below).
 *Decided 2026-11-10 (owner):* the desktop UI
 draws its windows, confirmations, menus, form rows, fields and buttons with the kit instead of
 FieldCraft's adapted copies of SolidCraft's widgets, so the two apps share one implementation and
@@ -164,7 +164,7 @@ models that come from ABC, GrabCAD or Siemens NX; HexMe's Gmsh-made models are a
 Thingi10K is not used either (owner decision 2026-10-13: authoring tools unrecorded). **The test
 corpus is our own:** parts built with SolidCraft (scripts or designs authored in SolidCraft,
 committed as their recipes so the geometry is regenerated, not stored) and analytic shapes.
-Recipes are SolidCraft command scripts run through `solidcraft-engine` (same pinned rev), a
+Recipes are SolidCraft command scripts run through `solidcraft-engine` (same pinned tag), a
 dependency of `fieldcraft-geometry` only behind its non-default `scripts` feature, which the test
 tooling (`fieldcraft-testkit`) enables; the shipped library opens designs without it.
 
@@ -179,7 +179,7 @@ docs/verification.md).
 
 - The tet and hex meshers are significant original work; the literature survey decides the
   order and the methods.
-- SolidCraft and FieldCraft move together: bumping the pinned rev bumps `solidcore-record` (from
+- SolidCraft and FieldCraft move together: bumping the pinned tag bumps `solidcore-record` (from
   SolidCraft's repository) and the repeated `[patch.crates-io]` entries in the same commit. The
   pin is a SolidCraft release tag's commit or, when FieldCraft needs a change not yet released, a
   commit on SolidCraft's main branch,
