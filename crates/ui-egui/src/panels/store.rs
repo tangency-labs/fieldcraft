@@ -1,7 +1,5 @@
 //! Panel layout persistence, one-time legacy migration, and hostile-payload validation.
 
-#![allow(dead_code)]
-
 use std::collections::BTreeSet;
 
 use solidcraft_panel_layout::{
@@ -155,6 +153,7 @@ impl PanelLayoutStore for FieldCraftLayoutStore {
         if standalone_header_action(&action) {
             return sink.dispatch(action);
         }
+        let before_rev = sink.inspect().revision;
         let state = sink.inspect();
         let envelope = self.current_envelope(&state, registry)?;
         let preparation = preparation_context(&envelope)?;
@@ -164,6 +163,9 @@ impl PanelLayoutStore for FieldCraftLayoutStore {
         {
             self.envelope = updated;
             self.encoded_bytes = bytes;
+            if reply.revision != before_rev {
+                self.mark_dirty();
+            }
         }
         Ok(reply)
     }

@@ -433,6 +433,8 @@ pub struct ModelApp {
     pub viewport: Viewport,
     /// Where the cards over the viewport were drawn this frame ([`shell`]).
     pub shell: shell::State,
+    /// Shared Craft-family panel layout/host runtime (`panel_runtime`).
+    pub(crate) panels: Option<panels::PanelHost>,
     /// The toolbar's buttons drawn last frame, by catalogue id (for the control channel).
     pub toolbar_rects: Vec<(&'static str, egui::Rect, toolbar::Fit)>,
     /// The GPU adapter, for the status bar and diagnostics.
@@ -515,6 +517,8 @@ pub struct ModelApp {
     pub start_page: start::StartPage,
     /// The user's preferences as last saved.
     prefs: files::Prefs,
+    /// Backoff state when saving preferences transiently fails.
+    prefs_retry: Option<PrefsRetry>,
     /// The host's go-ahead to share usage, when this run may ([`privacy`]).
     usage: Option<privacy::UsageHost>,
     /// The consent question was asked in this run.
@@ -588,6 +592,16 @@ pub struct ModelApp {
     search: Option<(String, std::sync::Arc<Vec<palette::Hit>>)>,
 }
 
+struct PrefsRetry {
+    next_attempt: web_time::Instant,
+    failures: u32,
+}
+
+fn prefs_retry_backoff(failures: u32) -> web_time::Duration {
+    let shift = failures.saturating_sub(1).min(8);
+    web_time::Duration::from_millis(100u64.saturating_mul(1u64 << shift)).min(web_time::Duration::from_secs(30))
+}
+
 /// Register the engine's picture drawer ([`fieldcraft_engine::view::register_drawer`]) for the
 /// pictures commands draw themselves (`results.export.animation`): the viewport's GPU pipeline on
 /// the process's shared headless device under `FIELDCRAFT_GPU`, the CPU rasterizer without one.
@@ -615,6 +629,9 @@ impl ModelApp {
             forms_opened: 0,
             viewport: Viewport::default(),
             shell: shell::State::default(),
+            panels: panels::PanelHost::from_prefs(&files::Prefs::default(), false)
+                .map_err(|e| log::warn!("panel host init failed: {e}"))
+                .ok(),
             toolbar_rects: Vec::new(),
             gpu_info: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -656,6 +673,7 @@ impl ModelApp {
             recent: files::Recent::default(),
             start_page: start::StartPage::default(),
             prefs: files::Prefs::default(),
+            prefs_retry: None,
             usage: None,
             consent_asked: false,
             settings: Default::default(),
@@ -711,6 +729,16 @@ impl ModelApp {
         self.ui.browser_eye_left = self.prefs.browser_eye_left;
         self.ui.status_bar = self.prefs.status_bar;
         self.ui.history_dock = self.prefs.history_dock;
+        self.panels = panels::PanelHost::from_prefs(&self.prefs, false)
+            .map_err(|e| log::warn!("panel host hydrate failed: {e}"))
+            .ok();
+        if let Some(panels) = &self.panels {
+            self.ui.browser_width = panels.browser_width();
+            self.ui.browser_collapsed = panels.browser_collapsed();
+            self.ui.history_dock = panels.history_dock();
+            self.ui.show_tree = panels.is_open(panels::PANEL_BROWSER);
+            self.ui.show_timeline = panels.is_open(panels::PANEL_HISTORY);
+        }
         self.services = services;
         self
     }
@@ -2489,32 +2517,74 @@ impl ModelApp {
         }
     }
 
-    /// The shell as SolidCraft's (`shell`; SolidCraft `lib.rs`, the floating layout of its
-    /// workspace UI): the viewport fills the window below the application bar, and the ribbon,
-    /// History, browser and context cards are drawn over it as kit cards, each recording where in
-    /// [`ModelApp::shell`]. The context cards float at the right, clear of the top cards and
-    /// History ([`context::panel`]).
+    /// Borrow `self.panels` alongside `&mut self`, always restoring it on return or unwind.
+    pub(crate) fn with_panels<R>(&mut self, f: impl FnOnce(&mut Self, &mut panels::PanelHost) -> R) -> Option<R> {
+        let mut panels = self.panels.take()?;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self, &mut panels)));
+        self.panels = Some(panels);
+        match outcome {
+            Ok(value) => Some(value),
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    /// Reset panel layout to defaults, show Browser and History, and persist preferences.
+    pub(crate) fn reset_panel_layout(&mut self) {
+        self.ui.history_dock = shell::HistoryDock::Bottom;
+        self.ui.browser_float = false;
+        self.ui.show_tree = true;
+        self.ui.show_timeline = true;
+        self.ui.browser_width = browser::WIDTH;
+        self.ui.browser_collapsed = false;
+        let _ = self.with_panels(|app, panels| {
+            if let Err(err) = panels.reset_layout() {
+                log::warn!("reset panel layout failed: {err}");
+                return;
+            }
+            app.ui.browser_width = panels.browser_width();
+            app.ui.browser_collapsed = panels.browser_collapsed();
+            app.ui.history_dock = panels.history_dock();
+        });
+        self.save_prefs();
+    }
+
+    /// Update the History dock placement (`Top` or `Bottom`) in both `UiState` and `PanelHost`.
+    pub(crate) fn set_history_dock(&mut self, dock: shell::HistoryDock) {
+        self.ui.history_dock = dock;
+        self.with_panels(|_, panels| {
+            let _ = panels.set_history_dock(dock);
+        });
+    }
+
+    /// The workspace shell in strict 7-step frame order:
+    /// 1. viewport-scoped hover preamble (`context::clear_stale_hover`);
+    /// 2. top cards (`toolbar::toolbar`);
+    /// 3. in-window `PanelHost` pass (populates `shell` zone geometry and queues commands);
+    /// 4. transient right cards (`context::panel`);
+    /// 5. 3D viewport (`viewport::show`);
+    /// 6. native viewport hook (PR 4b);
+    /// 7. drain deferred `PanelCommand`s, persist dirty layout transitions, and paint top corners.
     fn shell(&mut self, ui: &mut egui::Ui) {
+        context::clear_stale_hover(self);
         self.shell.clear(self.ui.history_dock);
-        // The workspace and ribbon cards first, over the whole width below the application bar.
         toolbar::toolbar(self, ui);
         let rest = ui.available_rect_before_wrap();
-        // The cards over the view: History at its dock first, then the browser on the left and
-        // the context cards on the right, clear of the top cards and History.
+        let prepared = self.with_panels(|app, panels| panels.prepare(app, ui, rest)).unwrap_or(false);
         let mut over = ui.new_child(egui::UiBuilder::new().id_salt("fc_shell_cards").max_rect(rest));
-        if self.ui.show_timeline {
-            timeline::timeline(self, &mut over);
-        }
-        // What a docked host left of the view (none once every card floats).
-        let view = over.available_rect_before_wrap();
-        if self.ui.show_tree {
-            browser::browser(self, &mut over);
-        }
         context::panel(self, &mut over);
-        // The view last on the window's own layer: the cards are areas above it, which keep the
-        // pointer over them, and its framing keeps clear of them (`viewport::overlays`).
+        let view = over.available_rect_before_wrap();
         let mut viewport = ui.new_child(egui::UiBuilder::new().id_salt("fc_shell_view").max_rect(view));
         viewport::show(self, &mut viewport);
+        if prepared {
+            let mut host_ui = ui.new_child(egui::UiBuilder::new().id_salt("fc_shell_panels").max_rect(rest));
+            self.with_panels(|app, panels| panels.paint_and_finish(app, &mut host_ui, rest));
+        }
+        // Step 6: native multi-viewport pass (PR 4b; no-op in PR 4a).
+        // Step 7: drain deferred panel commands and paint concave corners.
+        let commands = self.with_panels(|_, panels| panels.drain_commands()).unwrap_or_default();
+        if !commands.is_empty() {
+            panels::content::execute_commands(self, commands);
+        }
         if !self.shell.cards.is_empty() {
             shell::paint_top_corners(ui.painter(), view, solidcraft_theme::Tokens::get().app_bar);
         }
@@ -2551,26 +2621,67 @@ impl ModelApp {
     }
 
     pub(crate) fn save_prefs(&mut self) {
+        self.save_prefs_at(web_time::Instant::now());
+    }
+
+    fn save_prefs_at(&mut self, now: web_time::Instant) {
+        if self.capturing {
+            return;
+        }
+        let panel_dirty = self.panels.as_ref().is_some_and(panels::PanelHost::is_dirty);
         let p = &self.prefs;
         let u = &self.ui;
-        if u.nav_preset != p.nav_preset
+        let ui_changed = u.nav_preset != p.nav_preset
             || u.reverse_zoom != p.reverse_zoom
             || u.browser_width != p.browser_width
             || u.browser_collapsed != p.browser_collapsed
             || u.browser_float != p.browser_float
             || u.browser_eye_left != p.browser_eye_left
             || u.status_bar != p.status_bar
-            || u.history_dock != p.history_dock
-        {
-            self.prefs.nav_preset = self.ui.nav_preset.clone();
-            self.prefs.reverse_zoom = self.ui.reverse_zoom;
-            self.prefs.browser_width = self.ui.browser_width;
-            self.prefs.browser_collapsed = self.ui.browser_collapsed;
-            self.prefs.browser_float = self.ui.browser_float;
-            self.prefs.browser_eye_left = self.ui.browser_eye_left;
-            self.prefs.status_bar = self.ui.status_bar;
-            self.prefs.history_dock = self.ui.history_dock;
-            self.prefs.save(self.services.prefs.as_ref());
+            || u.history_dock != p.history_dock;
+        if !panel_dirty && !ui_changed {
+            self.prefs_retry = None;
+            return;
+        }
+        if self.prefs_retry.as_ref().is_some_and(|r| now < r.next_attempt) {
+            return;
+        }
+        let mut next = self.prefs.clone();
+        next.nav_preset = self.ui.nav_preset.clone();
+        next.reverse_zoom = self.ui.reverse_zoom;
+        next.browser_width = self.ui.browser_width;
+        next.browser_collapsed = self.ui.browser_collapsed;
+        next.browser_float = self.ui.browser_float;
+        next.browser_eye_left = self.ui.browser_eye_left;
+        next.status_bar = self.ui.status_bar;
+        next.history_dock = self.ui.history_dock;
+        if panel_dirty {
+            match self.panels.as_ref().map(panels::PanelHost::encode_prefs_layout) {
+                Some(panels::store::EncodedLayout::Ready(raw)) => next.panel_layout = Some(raw),
+                Some(panels::store::EncodedLayout::ExceedsBudget) => next.panel_layout = None,
+                Some(panels::store::EncodedLayout::Error) | None => {}
+            }
+        }
+        match next.save(self.services.prefs.as_ref()) {
+            files::PrefsSaveOutcome::NoStore | files::PrefsSaveOutcome::Saved => {
+                self.prefs = next;
+                if let Some(panels) = &mut self.panels {
+                    panels.ack_dirty();
+                }
+                self.prefs_retry = None;
+            }
+            files::PrefsSaveOutcome::SavedWithoutLayout => {
+                next.panel_layout = None;
+                self.prefs = next;
+                if let Some(panels) = &mut self.panels {
+                    panels.ack_dirty();
+                }
+                self.prefs_retry = None;
+            }
+            files::PrefsSaveOutcome::Failed => {
+                let failures = self.prefs_retry.as_ref().map_or(1, |r| r.failures.saturating_add(1));
+                self.prefs_retry = Some(PrefsRetry { next_attempt: now + prefs_retry_backoff(failures), failures });
+            }
         }
     }
 
@@ -4461,5 +4572,100 @@ mod tests {
         let mut empty = ModelApp::new(Session::default());
         empty.cam.target = Vec3::new(1.0, 2.0, 3.0);
         assert_eq!(empty.drawn_centre(), Vec3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn with_services_restores_closed_browser_and_history_visibility() {
+        let dir = std::env::temp_dir().join(format!("fc-panel-vis-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("prefs.json");
+        let services = || files::Services { prefs: Some(files::PrefsStore::file(file.clone())), ..Default::default() };
+
+        let mut app = ModelApp::new(Session::default()).with_services(services());
+        app.ui.show_tree = false;
+        app.ui.show_timeline = false;
+        app.with_panels(|_, panels| {
+            panels.set_panel_visible(panels::PANEL_BROWSER, false).unwrap();
+            panels.set_panel_visible(panels::PANEL_HISTORY, false).unwrap();
+        });
+        app.save_prefs();
+
+        let mut reloaded = ModelApp::new(Session::default()).with_services(services());
+        assert!(!reloaded.ui.show_tree);
+        assert!(!reloaded.ui.show_timeline);
+
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let raw =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| reloaded.ui(ui));
+            out.textures_delta.clear();
+        }
+        assert!(!reloaded.ui.show_tree);
+        assert!(!reloaded.ui.show_timeline);
+        assert!(!reloaded.panels.as_ref().unwrap().is_open(panels::PANEL_BROWSER));
+        assert!(!reloaded.panels.as_ref().unwrap().is_open(panels::PANEL_HISTORY));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_prefs_keeps_dirty_and_retries_after_failure_and_acks_budget_omission() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let fail = Rc::new(RefCell::new(true));
+        let writes = Rc::new(RefCell::new(Vec::<Vec<u8>>::new()));
+        let fail_save = fail.clone();
+        let writes_save = writes.clone();
+        let store = files::PrefsStore {
+            load: Box::new(|| None),
+            save: Box::new(move |bytes| {
+                if *fail_save.borrow() {
+                    return Err("disk full".into());
+                }
+                writes_save.borrow_mut().push(bytes.to_vec());
+                Ok(())
+            }),
+        };
+
+        let mut app = ModelApp::new(Session::default()).with_services(files::Services { prefs: Some(store), ..Default::default() });
+        app.ui.reverse_zoom = true;
+        app.with_panels(|_, panels| {
+            panels.set_browser_width(320.0).unwrap();
+        });
+        assert!(app.panels.as_ref().unwrap().is_dirty());
+
+        let t0 = web_time::Instant::now();
+        app.save_prefs_at(t0);
+        assert!(app.panels.as_ref().unwrap().is_dirty(), "dirty flag retained on failed write");
+        assert!(!app.prefs.reverse_zoom, "in-memory prefs unchanged on failed write");
+        assert!(writes.borrow().is_empty());
+
+        // Store recovers, but backoff window has not elapsed yet: write is skipped.
+        *fail.borrow_mut() = false;
+        app.save_prefs_at(t0 + web_time::Duration::from_millis(50));
+        assert!(app.panels.as_ref().unwrap().is_dirty());
+        assert!(writes.borrow().is_empty());
+
+        // Once backoff elapses, retry persists both UI and panel layout and clears dirty.
+        app.save_prefs_at(t0 + web_time::Duration::from_millis(150));
+        assert!(!app.panels.as_ref().unwrap().is_dirty());
+        assert!(app.prefs.reverse_zoom);
+        assert!(app.prefs.panel_layout.is_some());
+        assert_eq!(writes.borrow().len(), 1);
+
+        // Oversized payload triggers SavedWithoutLayout, clears dirty, and does not loop.
+        let huge = format!("\"{}\"", "a".repeat(66_000));
+        app.prefs.panel_layout = Some(files::RawJson::from_json_string(huge).unwrap());
+        app.ui.status_bar = true;
+        app.save_prefs_at(t0 + web_time::Duration::from_millis(200));
+        assert_eq!(writes.borrow().len(), 2);
+        assert!(app.prefs.status_bar);
+        assert_eq!(app.prefs.panel_layout, None);
+        assert!(!app.panels.as_ref().unwrap().is_dirty());
+
+        app.save_prefs_at(t0 + web_time::Duration::from_millis(250));
+        assert_eq!(writes.borrow().len(), 2, "no repeated write after budget omission");
     }
 }

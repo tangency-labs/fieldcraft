@@ -1,21 +1,38 @@
 //! Shared Craft-family panel host (`solidcraft_ui_kit::panel_runtime`).
 //!
-//! Commit 1 establishes the 4-panel registry, seeded default layout, and layout persistence store;
-//! Commit 2 wires `PanelHost` into `ModelApp::shell`.
+//! Owns the 4-panel registry (`browser`, `history`, `results`, `inspector`), `PanelRuntime`,
+//! `WorkspacePanelHost`, `FieldCraftLayoutStore` persistence, read-through `UiState` sync,
+//! `HistoryDock::Top` strip fallback, and `browser_float` translucency scoping.
 
-#![allow(dead_code)]
-
+pub mod content;
 pub mod store;
 
+use std::cell::RefCell;
 use std::collections::BTreeSet;
+use std::rc::Rc;
 
+use egui::{Rect, pos2, vec2};
+use serde_json::{Value, json};
 use solidcraft_panel_layout::{
-    Column, ColumnId, EdgeRule, HeaderActionSpec, InstanceId, Layout, MAX_LOGICAL, PanelFeatures, PanelInstance, PanelKind, PanelRegistry,
-    PanelResult, PanelSpec, PanelSurface, PlacementMemory, Section, SectionId, SectionLocation, SideHeightPolicy, Size, WorkspaceId, Zone,
-    normalize_column_widths, validate,
+    Column, ColumnId, Direction, DocumentId, EdgeRule, HeaderActionSpec, HostCapabilities, HostId, InstanceId, Layout, LayoutAction, LayoutService,
+    LogicalRect, MAX_LOGICAL, MAX_SECTIONS, Mutation, PanelFeatures, PanelInstance, PanelKind, PanelRegistry, PanelResult, PanelSpec, PanelSurface,
+    PlacementMemory, Point, Rule, Section, SectionId, SectionLocation, SideHeightPolicy, Size, ViewportId, WorkspaceId, Zone, column_bounds, error,
+    normalize_column_widths, tab_bounds, validate,
 };
+use solidcraft_ui_kit as kit;
+use solidcraft_ui_kit::panel_runtime::{
+    ContentServices, ControllerBinding, HostEvent, HostOptions, HostPointerTarget, HostResizeEdge, InAppNativeAdapter, Motion, Ownership,
+    PanelRuntime, RuntimeEnvironment, WorkspacePanelHost,
+};
+use solidcraft_ui_text::tr;
 
+use self::content::{
+    FieldCraftCommands, FieldCraftFrameContent, FieldCraftLocal, FieldCraftModels, FieldCraftPanelController, PanelCommand, PanelSharedState,
+};
+use self::store::FieldCraftLayoutStore;
+use crate::ModelApp;
 use crate::files::Prefs;
+use crate::shell::HistoryDock;
 
 pub const WORKSPACE_ID: &str = "fieldcraft.main";
 pub const PANEL_BROWSER: &str = "browser";
@@ -45,6 +62,19 @@ pub(crate) fn panel_kind(id: &str) -> &'static str {
         PANEL_INSPECTOR => KIND_INSPECTOR,
         _ => "",
     }
+}
+
+fn logical_rect(r: Rect) -> LogicalRect {
+    let valid = r.is_finite() && r.width() >= 0.0 && r.height() >= 0.0;
+    if valid {
+        LogicalRect { origin: Point { x: r.left(), y: r.top() }, size: Size { width: r.width().max(1.0), height: r.height().max(1.0) } }
+    } else {
+        LogicalRect { origin: Point { x: 0.0, y: 0.0 }, size: Size { width: 1.0, height: 1.0 } }
+    }
+}
+
+fn to_egui_rect(r: LogicalRect) -> Rect {
+    Rect::from_min_size(pos2(r.origin.x, r.origin.y), vec2(r.size.width, r.size.height))
 }
 
 /// Register FieldCraft's four persistent panels.
@@ -96,14 +126,7 @@ pub(crate) fn build_registry() -> PanelResult<PanelRegistry> {
         max_size: Size { width: MAX_LOGICAL, height: MAX_LOGICAL },
         edge_rule: EdgeRule::None,
         surface: PanelSurface::Opaque,
-        features: PanelFeatures {
-            collapsible: true,
-            closable: true,
-            hot_closable: false,
-            popout: true,
-            tabbable: false,
-            ..Default::default()
-        },
+        features: PanelFeatures { collapsible: true, closable: true, hot_closable: false, popout: true, tabbable: false, ..Default::default() },
         side_height_policy: SideHeightPolicy::Content,
         fixed_bottom_height: Some(crate::timeline::HEIGHT),
         header_actions: history_actions,
@@ -150,7 +173,7 @@ pub(crate) fn build_registry() -> PanelResult<PanelRegistry> {
 }
 
 /// Seed the initial layout from legacy `Prefs` (`browser_width`, `browser_collapsed`).
-/// `history_dock == HistoryDock::Top` is tracked by `FieldCraftLayoutStore` alongside `Zone::Bottom`.
+/// `history_dock == HistoryDock::Top` is tracked alongside `Zone::Bottom` via `PanelHost`.
 pub(crate) fn seeded_default_layout(registry: &PanelRegistry, prefs: &Prefs) -> PanelResult<Layout> {
     let workspace = WorkspaceId::new(WORKSPACE_ID)?;
     let mut layout = Layout::empty(workspace);
@@ -255,4 +278,988 @@ pub(crate) fn seeded_default_layout(registry: &PanelRegistry, prefs: &Prefs) -> 
     normalize_column_widths(&mut layout, registry)?;
     validate(&layout, registry)?;
     Ok(layout)
+}
+
+/// Host wrapper owning `PanelRuntime`, `WorkspacePanelHost`, `FieldCraftLayoutStore`, and
+/// read/write adapters for FieldCraft's window shell.
+pub(crate) struct PanelHost {
+    runtime: PanelRuntime,
+    host: WorkspacePanelHost,
+    native: InAppNativeAdapter,
+    store: FieldCraftLayoutStore,
+    shared: Rc<RefCell<PanelSharedState>>,
+    local: FieldCraftLocal,
+    environment: RuntimeEnvironment,
+    native_windows: bool,
+    history_dock: HistoryDock,
+    pending_browser_width: Option<f32>,
+    pending_browser_collapsed: Option<bool>,
+    surface_alpha: kit::blur::State,
+}
+
+impl PanelHost {
+    pub(crate) fn from_prefs(prefs: &Prefs, native_windows: bool) -> PanelResult<Self> {
+        let registry = build_registry()?;
+        let (layout, store) = FieldCraftLayoutStore::load_from_prefs(prefs, &registry, native_windows)?;
+        Self::from_loaded(layout, store, registry, prefs.history_dock, native_windows)
+    }
+
+    /// Build a fresh read-only in-window host seeded from the live layout snapshot for `ui.capture`.
+    pub(crate) fn headless_snapshot(&self, prefs: &Prefs) -> PanelResult<Self> {
+        let mut snap = prefs.clone();
+        snap.panel_layout = self.to_prefs_value();
+        snap.history_dock = self.history_dock;
+        Self::from_prefs(&snap, false)
+    }
+
+    fn from_loaded(
+        layout: Layout,
+        store: FieldCraftLayoutStore,
+        registry: PanelRegistry,
+        history_dock: HistoryDock,
+        native_windows: bool,
+    ) -> PanelResult<Self> {
+        let capabilities = HostCapabilities { persistence: true, native_windows, max_native_hosts: if native_windows { MAX_SECTIONS } else { 0 } };
+        let service = LayoutService::new(registry, layout, capabilities)?;
+        let environment = RuntimeEnvironment {
+            workspace: WorkspaceId::new(WORKSPACE_ID)?,
+            document: Some(DocumentId::new("fieldcraft.active")?),
+            window: HostId::new("main")?,
+            viewport: ViewportId::new("main")?,
+            direction: Direction::Ltr,
+            motion: Motion::Animated,
+        };
+        let mut runtime = PanelRuntime::new(service, environment.clone())?;
+        let shared = Rc::new(RefCell::new(PanelSharedState {
+            history_available: true,
+            results_available: false,
+            inspector_available: false,
+            inspector_heading: None,
+            commands: Default::default(),
+        }));
+        for id in ALL_PANEL_IDS {
+            let shared_ref = shared.clone();
+            runtime.register(
+                PanelKind::new(panel_kind(id))?,
+                ControllerBinding {
+                    ownership: Ownership::Workspace,
+                    create: Box::new(move |_inst, _owner| Ok(Box::new(FieldCraftPanelController::new(id, shared_ref.clone())))),
+                },
+            )?;
+        }
+
+        let mut options = HostOptions { content_header_height: 0.0, ..Default::default() };
+        options.geometry.default_opaque = false;
+        options.metrics.footer_height = 0.0;
+        options.metrics.gap = kit::SHELL_GAP;
+        let host = WorkspacePanelHost::new(options)?;
+
+        let mut this = Self {
+            runtime,
+            host,
+            native: InAppNativeAdapter,
+            store,
+            shared,
+            local: FieldCraftLocal::default(),
+            environment,
+            native_windows,
+            history_dock,
+            pending_browser_width: None,
+            pending_browser_collapsed: None,
+            surface_alpha: kit::blur::State::default(),
+        };
+        let _ = this.reconcile_runtime();
+        Ok(this)
+    }
+
+    fn reconcile_runtime(&mut self) -> PanelResult<()> {
+        let models = FieldCraftModels;
+        let mut commands = FieldCraftCommands;
+        let mut services = ContentServices { models: &models, commands: &mut commands, local: &mut self.local };
+        self.runtime.reconcile_context(self.environment.clone(), &mut services)
+    }
+
+    pub(crate) fn is_open(&self, id: &str) -> bool {
+        InstanceId::new(id).ok().is_some_and(|inst| self.runtime.layout().layout().instance(&inst).is_ok_and(|p| p.requested_open))
+    }
+
+    fn history_in_bottom_zone(&self) -> bool {
+        InstanceId::new(PANEL_HISTORY)
+            .ok()
+            .is_some_and(|inst| self.runtime.layout().layout().containing(&inst).is_ok_and(|s| s.location.zone() == Zone::Bottom))
+    }
+
+    pub(crate) fn apply_mutations(&mut self, mutations: Vec<Mutation>, mark_dirty: bool) -> PanelResult<()> {
+        if mutations.is_empty() {
+            return Ok(());
+        }
+        let models = FieldCraftModels;
+        let mut commands = FieldCraftCommands;
+        let mut services = ContentServices { models: &models, commands: &mut commands, local: &mut self.local };
+        let action = LayoutAction::Apply { expected_revision: None, mutations };
+        self.runtime.dispatch(action, &mut self.native, &mut services)?;
+        if mark_dirty {
+            self.store.replace_live(self.runtime.layout().layout(), self.runtime.layout().registry(), true)?;
+        }
+        Ok(())
+    }
+
+    fn ensure_open(&mut self, id: &str, open: bool, mark_dirty: bool) -> PanelResult<()> {
+        if self.is_open(id) == open {
+            return Ok(());
+        }
+        let inst = InstanceId::new(id)?;
+        let kind = PanelKind::new(panel_kind(id))?;
+        let mutation = if open { Mutation::Open { kind, instance: inst.clone(), destination: None } } else { Mutation::Close { instance: inst } };
+        self.apply_mutations(vec![mutation], mark_dirty)?;
+        if open && id == PANEL_BROWSER {
+            let inst = InstanceId::new(PANEL_BROWSER)?;
+            if let Some(w) = self.pending_browser_width.take() {
+                const WIDTH_EPSILON_PT: f32 = 1e-3; // unit-factors: logical-point UI width tolerance
+                let needs_width = self.runtime.layout().layout().containing(&inst).ok().is_some_and(|sec| match &sec.column {
+                    Some(col_id) => self
+                        .runtime
+                        .layout()
+                        .layout()
+                        .columns
+                        .iter()
+                        .find(|c| c.id == *col_id)
+                        .is_some_and(|c| (c.width - w).abs() > WIDTH_EPSILON_PT),
+                    None => (sec.size.width - w).abs() > WIDTH_EPSILON_PT,
+                });
+                if needs_width {
+                    self.set_browser_width(w)?;
+                }
+            }
+            if let Some(c) = self.pending_browser_collapsed.take()
+                && self.runtime.layout().layout().containing(&inst).is_ok_and(|sec| sec.collapsed != c)
+            {
+                self.set_browser_collapsed(c)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Synchronize availability, `HistoryDock::Top`, and `browser_float` translucency, prepare
+    /// `WorkspacePanelHost` geometry with `SHELL_GAP` outer insets, and populate `app.shell`
+    /// before `context::panel` and `viewport::show` lay out against it.
+    pub(crate) fn prepare(&mut self, app: &mut ModelApp, ui: &mut egui::Ui, render_domain: Rect) -> bool {
+        if !render_domain.is_finite() || render_domain.width() <= 0.0 || render_domain.height() <= 0.0 {
+            return false;
+        }
+        self.history_dock = app.ui.history_dock;
+        let show_tree = app.ui.show_tree;
+        let show_timeline = app.ui.show_timeline;
+
+        let results_active = crate::results::shown(&app.session).is_some();
+        let inspector_active = crate::context::inspector_active(app);
+        let inspector_heading = crate::context::inspector_heading(app);
+
+        // Publish current content availability before calling `ensure_open`, because
+        // `PanelRuntime` rejects `Open` for a panel whose current availability is `false`.
+        {
+            let mut shared = self.shared.borrow_mut();
+            shared.history_available = true;
+            shared.results_available = results_active;
+            shared.inspector_available = inspector_active;
+            shared.inspector_heading = inspector_heading;
+        }
+        if let Err(err) = self.reconcile_runtime() {
+            log::warn!("panel runtime reconcile failed: {err}");
+            return false;
+        }
+
+        // Sync visibility changes initiated outside `panel_runtime` (View menu, `ui.set`).
+        let _ = self.ensure_open(PANEL_BROWSER, show_tree, true);
+        let _ = self.ensure_open(PANEL_HISTORY, show_timeline, true);
+        if results_active && !self.is_open(PANEL_RESULTS) {
+            let _ = self.ensure_open(PANEL_RESULTS, true, false);
+        }
+        if inspector_active && !self.is_open(PANEL_INSPECTOR) {
+            let _ = self.ensure_open(PANEL_INSPECTOR, true, false);
+        }
+
+        let top_strip = show_timeline && self.history_dock == HistoryDock::Top && self.history_in_bottom_zone();
+        self.shared.borrow_mut().history_available = !top_strip;
+
+        let top_rect = if top_strip {
+            let cards = app.shell.cards.clone();
+            let rect = crate::timeline::top_strip_rect(render_domain, &cards);
+            if let Some(r) = rect {
+                app.shell.record_top_dock(r);
+            }
+            rect
+        } else {
+            None
+        };
+
+        if let Err(err) = self.reconcile_runtime() {
+            log::warn!("panel runtime reconcile failed: {err}");
+            return false;
+        }
+
+        let gap = kit::Container::new(ui.ctx(), kit::Surface::Panel).gap();
+        let _ = self.host.set_requested_opacity(None);
+        let _ = self.host.set_gap(gap);
+        let float_alpha = app.ui.browser_float.then_some((crate::browser::FLOAT_ALPHA * 255.0).round() as u8);
+        self.surface_alpha.set_surface_alpha(float_alpha);
+        let surface_scope = self.surface_alpha.begin(ui.ctx());
+        self.host.note_egui_context(ui.ctx(), !app.ui.browser_float);
+        drop(surface_scope);
+
+        if let Err(err) = self.host.capture_metrics(&self.runtime, &FieldCraftModels) {
+            log::warn!("panel capture_metrics failed: {err}");
+            return false;
+        }
+        if let Err(err) = self.host.capture_reservations(&self.runtime, &self.store) {
+            log::warn!("panel capture_reservations failed: {err}");
+            return false;
+        }
+
+        let mut placement = app.shell.panel_space(render_domain);
+        placement.min.x += gap.min(placement.width() / 2.0);
+        placement.max.x -= gap.min(placement.width());
+        placement.min.y += gap.min(placement.height() / 2.0);
+        placement.max.y -= gap.min(placement.height());
+
+        let chrome: Vec<LogicalRect> = app
+            .shell
+            .cards
+            .iter()
+            .copied()
+            .chain(top_rect)
+            .map(|r| r.intersect(render_domain))
+            .filter(|r| r.is_positive() && r.is_finite())
+            .map(logical_rect)
+            .collect();
+
+        if let Err(err) = self.host.prepare_in_domain(&self.runtime, logical_rect(render_domain), logical_rect(placement), &chrome) {
+            log::warn!("panel prepare_in_domain failed: {err}");
+            return false;
+        }
+
+        if let Some(frame) = self.host.frame() {
+            for section in &frame.layout.sections {
+                app.shell.set_panel_geometry(section.zone, to_egui_rect(section.outer));
+            }
+        }
+        true
+    }
+
+    /// Paint prepared `WorkspacePanelHost` surfaces above `viewport::show` and publish layout
+    /// regions and registry handles for automation/tests.
+    pub(crate) fn paint_and_finish(&mut self, app: &mut ModelApp, ui: &mut egui::Ui, render_domain: Rect) {
+        let top_strip = app.ui.show_timeline && self.history_dock == HistoryDock::Top && self.history_in_bottom_zone();
+        if top_strip {
+            let cards = app.shell.cards.clone();
+            crate::timeline::top_strip_contents(app, ui, render_domain, &cards);
+        }
+
+        {
+            let models = FieldCraftModels;
+            let mut commands = FieldCraftCommands;
+            let mut services = ContentServices { models: &models, commands: &mut commands, local: &mut self.local };
+            let mut content = FieldCraftFrameContent { app };
+            if let Err(err) = self.host.show_deferred_with_content(ui, &mut self.runtime, &mut self.native, &mut services, &mut content) {
+                log::warn!("panel show_deferred_with_content failed: {err}");
+                return;
+            }
+        }
+
+        {
+            let models = FieldCraftModels;
+            let mut commands = FieldCraftCommands;
+            let mut services = ContentServices { models: &models, commands: &mut commands, local: &mut self.local };
+            if let Err(err) = self.host.finish(ui, &mut self.runtime, &mut self.native, &mut services, &mut self.store) {
+                log::warn!("panel host finish failed: {err}");
+            }
+        }
+
+        // Publish zone geometry and legacy layout/test handles from the completed frame.
+        if let Some(frame) = self.host.frame() {
+            let committed = frame.events.iter().any(|e| matches!(e, HostEvent::Committed { .. } | HostEvent::PreparedCommitted { .. }));
+            let active_layout = frame.next_layout.as_ref().unwrap_or(&frame.layout);
+            for section in &active_layout.sections {
+                let outer = to_egui_rect(section.outer);
+                app.shell.set_panel_geometry(section.zone, outer);
+                match section.instance.0.as_str() {
+                    PANEL_BROWSER => {
+                        app.place("browser", outer);
+                        app.place("browser:header", to_egui_rect(section.header));
+                        if let Some(c) = section.collapse {
+                            app.place("browser:collapse", to_egui_rect(c));
+                        }
+                        if let Some(rail) = active_layout.controls.iter().find(|ctrl| {
+                            matches!(
+                                &ctrl.target,
+                                HostPointerTarget::Resize { section: sid, edge }
+                                    if *sid == section.section && matches!(edge, HostResizeEdge::Right | HostResizeEdge::Left)
+                            )
+                        }) {
+                            app.place("browser:rail", to_egui_rect(rail.bounds));
+                        }
+                    }
+                    PANEL_HISTORY => {
+                        app.place("timeline", outer);
+                        if let Some(title) = section.title {
+                            solidcraft_ui_registry::publish_handle("timeline:grip", to_egui_rect(title).center());
+                        }
+                        for (action_id, rect) in &section.actions {
+                            solidcraft_ui_registry::publish_handle(&format!("timeline:{}", action_id.0), to_egui_rect(*rect).center());
+                        }
+                    }
+                    PANEL_RESULTS => {
+                        app.place("context:results", outer);
+                        let merged = app.layout.get("context").copied().map_or(outer, |prev| prev.union(outer));
+                        app.place("context", merged);
+                    }
+                    PANEL_INSPECTOR => {
+                        if let Some(key) = crate::context::inspector_region_key(app) {
+                            app.place(key, outer);
+                            let merged = app.layout.get("context").copied().map_or(outer, |prev| prev.union(outer));
+                            app.place("context", merged);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if committed {
+                self.sync_read_through_to_app(app);
+            }
+        }
+    }
+
+    pub(crate) fn drain_commands(&mut self) -> Vec<PanelCommand> {
+        self.shared.borrow_mut().drain_commands()
+    }
+
+    fn sync_read_through_to_app(&mut self, app: &mut ModelApp) {
+        app.ui.browser_width = self.browser_width();
+        app.ui.browser_collapsed = self.browser_collapsed();
+        if !self.history_in_bottom_zone() && app.ui.history_dock == HistoryDock::Top {
+            self.history_dock = HistoryDock::Bottom;
+            app.ui.history_dock = HistoryDock::Bottom;
+        }
+    }
+
+    pub(crate) fn browser_width(&self) -> f32 {
+        let Ok(inst) = InstanceId::new(PANEL_BROWSER) else { return crate::browser::WIDTH };
+        let layout = self.runtime.layout().layout();
+        if let Ok(sec) = layout.containing(&inst) {
+            if let Some(col_id) = &sec.column
+                && let Some(col) = layout.columns.iter().find(|c| c.id == *col_id)
+            {
+                return crate::browser::width(col.width);
+            }
+            return crate::browser::width(sec.size.width);
+        }
+        layout.instance(&inst).map_or(crate::browser::WIDTH, |i| crate::browser::width(i.memory.column_width.unwrap_or(i.memory.size.width)))
+    }
+
+    pub(crate) fn set_browser_width(&mut self, width: f32) -> PanelResult<()> {
+        let clamped = crate::browser::width(width);
+        let inst = InstanceId::new(PANEL_BROWSER)?;
+        let layout = self.runtime.layout().layout().clone();
+        if let Ok(sec) = layout.containing(&inst) {
+            self.pending_browser_width = None;
+            let mutation = if let Some(col_id) = &sec.column {
+                Mutation::SetColumnWidth { column: col_id.clone(), width: clamped }
+            } else {
+                Mutation::SetSize { section: sec.id.clone(), size: Size { width: clamped, height: sec.size.height } }
+            };
+            self.apply_mutations(vec![mutation], true)
+        } else {
+            let registry = self.runtime.layout().registry();
+            if let Ok(entry) = layout.instance(&inst)
+                && let Some(sec) = layout.sections.iter().find(|s| s.id == entry.memory.section)
+            {
+                if let Some(col_id) = &sec.column {
+                    let (min, max) = column_bounds(&layout, registry, col_id)?;
+                    if clamped < min || clamped > max {
+                        return Err(error(Rule::Bounds, "browser width outside shared column bounds"));
+                    }
+                } else {
+                    let (min, max) = tab_bounds(&layout, registry, sec)?;
+                    if clamped < min.width || clamped > max.width {
+                        return Err(error(Rule::Bounds, "browser width outside shared section bounds"));
+                    }
+                }
+            }
+            let mut updated = layout;
+            if let Some(entry) = updated.instances.iter_mut().find(|i| i.id == inst) {
+                entry.memory.size.width = clamped;
+                if entry.memory.column.is_some() {
+                    entry.memory.column_width = Some(clamped);
+                }
+                if let Some(col_id) = &entry.memory.column
+                    && let Some(col) = updated.columns.iter_mut().find(|c| c.id == *col_id)
+                {
+                    col.width = clamped;
+                }
+            }
+            let models = FieldCraftModels;
+            let mut commands = FieldCraftCommands;
+            let mut services = ContentServices { models: &models, commands: &mut commands, local: &mut self.local };
+            self.runtime.dispatch(LayoutAction::Replace { expected_revision: None, layout: updated.clone() }, &mut self.native, &mut services)?;
+            self.store.replace_live(&updated, self.runtime.layout().registry(), true)?;
+            self.pending_browser_width = Some(clamped);
+            Ok(())
+        }
+    }
+
+    pub(crate) fn browser_collapsed(&self) -> bool {
+        let Ok(inst) = InstanceId::new(PANEL_BROWSER) else { return false };
+        let layout = self.runtime.layout().layout();
+        if let Ok(sec) = layout.containing(&inst) {
+            return sec.collapsed;
+        }
+        layout.instance(&inst).is_ok_and(|i| i.memory.collapsed)
+    }
+
+    pub(crate) fn set_browser_collapsed(&mut self, collapsed: bool) -> PanelResult<()> {
+        let inst = InstanceId::new(PANEL_BROWSER)?;
+        let layout = self.runtime.layout().layout().clone();
+        if let Ok(sec) = layout.containing(&inst) {
+            self.pending_browser_collapsed = None;
+            if sec.collapsed == collapsed {
+                return Ok(());
+            }
+            self.apply_mutations(vec![Mutation::Collapse { section: sec.id.clone(), collapsed }], true)
+        } else {
+            let mut updated = layout;
+            if let Some(entry) = updated.instances.iter_mut().find(|i| i.id == inst) {
+                entry.memory.collapsed = collapsed;
+            }
+            let models = FieldCraftModels;
+            let mut commands = FieldCraftCommands;
+            let mut services = ContentServices { models: &models, commands: &mut commands, local: &mut self.local };
+            self.runtime.dispatch(LayoutAction::Replace { expected_revision: None, layout: updated.clone() }, &mut self.native, &mut services)?;
+            self.store.replace_live(&updated, self.runtime.layout().registry(), true)?;
+            self.pending_browser_collapsed = Some(collapsed);
+            Ok(())
+        }
+    }
+
+    pub(crate) fn set_panel_visible(&mut self, id: &str, open: bool) -> PanelResult<()> {
+        self.ensure_open(id, open, true)
+    }
+
+    pub(crate) fn history_dock(&self) -> HistoryDock {
+        self.history_dock
+    }
+
+    pub(crate) fn set_history_dock(&mut self, dock: HistoryDock) -> PanelResult<()> {
+        self.history_dock = dock;
+        let inst = InstanceId::new(PANEL_HISTORY)?;
+        let layout = self.runtime.layout().layout().clone();
+        if let Ok(sec) = layout.containing(&inst) {
+            if sec.location.zone() != Zone::Bottom {
+                let section_id = SectionId::new("sec-history")?;
+                let size = Size { width: DEFAULT_HISTORY_WIDTH, height: crate::timeline::HEIGHT };
+                self.apply_mutations(
+                    vec![Mutation::Move {
+                        instance: inst,
+                        destination: solidcraft_panel_layout::Destination::NewSection {
+                            section: section_id,
+                            index: 0,
+                            location: SectionLocation::Dock { zone: Zone::Bottom },
+                            size,
+                        },
+                    }],
+                    true,
+                )?;
+            }
+        } else if layout.instance(&inst).is_ok_and(|i| i.memory.location.zone() != Zone::Bottom) {
+            let section_id = SectionId::new("sec-history")?;
+            let size = Size { width: DEFAULT_HISTORY_WIDTH, height: crate::timeline::HEIGHT };
+            let mut updated = layout;
+            if let Some(entry) = updated.instances.iter_mut().find(|i| i.id == inst) {
+                entry.memory.section = section_id;
+                entry.memory.location = SectionLocation::Dock { zone: Zone::Bottom };
+                entry.memory.section_index = 0;
+                entry.memory.tab_index = 0;
+                entry.memory.size = size;
+                entry.memory.column = None;
+                entry.memory.column_index = 0;
+                entry.memory.column_width = None;
+            }
+            let models = FieldCraftModels;
+            let mut commands = FieldCraftCommands;
+            let mut services = ContentServices { models: &models, commands: &mut commands, local: &mut self.local };
+            self.runtime.dispatch(LayoutAction::Replace { expected_revision: None, layout: updated.clone() }, &mut self.native, &mut services)?;
+            self.store.replace_live(&updated, self.runtime.layout().registry(), true)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn reset_layout(&mut self) -> PanelResult<()> {
+        let defaults = Prefs::default();
+        let registry = self.runtime.layout().registry().clone();
+        let fresh = seeded_default_layout(&registry, &defaults)?;
+        let models = FieldCraftModels;
+        let mut commands = FieldCraftCommands;
+        let mut services = ContentServices { models: &models, commands: &mut commands, local: &mut self.local };
+        self.runtime.dispatch(LayoutAction::Replace { expected_revision: None, layout: fresh.clone() }, &mut self.native, &mut services)?;
+        self.history_dock = HistoryDock::Bottom;
+        self.pending_browser_width = None;
+        self.pending_browser_collapsed = None;
+        self.store.replace_live(&fresh, &registry, true)?;
+        let _ = self.reconcile_runtime();
+        Ok(())
+    }
+
+    pub(crate) fn is_dirty(&self) -> bool {
+        self.store.is_dirty()
+    }
+
+    pub(crate) fn ack_dirty(&mut self) {
+        self.store.clear_dirty();
+    }
+
+    pub(crate) fn encode_prefs_layout(&self) -> store::EncodedLayout {
+        self.store.encode_prefs_layout(self.runtime.layout().layout(), self.runtime.layout().registry())
+    }
+
+    pub(crate) fn to_prefs_value(&self) -> Option<crate::files::RawJson> {
+        self.store.to_prefs_value(self.runtime.layout().layout(), self.runtime.layout().registry())
+    }
+
+    /// Deterministic `ui.inspect.panels` array sorted by `id` (`browser`, `history`, `inspector`, `results`).
+    pub(crate) fn inspect_panels(&self, app: &ModelApp) -> Vec<Value> {
+        let layout = self.runtime.layout().layout();
+        let frame = self.host.frame();
+        let frame_sections = frame.map(|f| f.next_layout.as_ref().unwrap_or(&f.layout).sections.as_slice()).unwrap_or(&[]);
+        let start_shown = app.start_shown();
+        let mut ids = ALL_PANEL_IDS;
+        ids.sort_unstable();
+        ids.into_iter()
+            .map(|id| {
+                let inst_id = InstanceId::new(id).ok();
+                let requested_open = inst_id.as_ref().is_some_and(|i| layout.instance(i).is_ok_and(|p| p.requested_open));
+                let has_content = match id {
+                    PANEL_BROWSER => true,
+                    PANEL_HISTORY => true,
+                    PANEL_RESULTS => crate::results::shown(&app.session).is_some(),
+                    PANEL_INSPECTOR => crate::context::inspector_active(app),
+                    _ => false,
+                };
+                let section = inst_id.as_ref().and_then(|i| layout.containing(i).ok());
+                let zone =
+                    if id == PANEL_HISTORY && self.history_dock == HistoryDock::Top && section.is_some_and(|s| s.location.zone() == Zone::Bottom) {
+                        "top"
+                    } else if let Some(s) = section {
+                        match s.location.zone() {
+                            Zone::Left => "left",
+                            Zone::Right => "right",
+                            Zone::Bottom => "bottom",
+                            Zone::Floating => "floating",
+                            Zone::Window => "native",
+                        }
+                    } else {
+                        "hidden"
+                    };
+                let is_top_history = id == PANEL_HISTORY && zone == "top";
+                let is_native = section.is_some_and(|s| s.location.zone() == Zone::Window);
+                let presented = frame_sections.iter().find(|s| s.instance.0 == id);
+                let visible = if start_shown {
+                    false
+                } else if is_top_history {
+                    requested_open && has_content
+                } else if is_native {
+                    requested_open && has_content && section.is_some_and(|s| s.active.0 == id)
+                } else if frame.is_some() {
+                    presented.is_some()
+                } else {
+                    requested_open && has_content && section.is_some_and(|s| s.active.0 == id)
+                };
+                let host = if !visible {
+                    "hidden"
+                } else if is_native {
+                    "native"
+                } else if section.is_some_and(|s| s.location.zone() == Zone::Floating) {
+                    "floating"
+                } else {
+                    "docked"
+                };
+                let rect = if !visible || is_native {
+                    None
+                } else if is_top_history {
+                    app.layout.get("timeline").copied().map(|r| json!([r.left(), r.top(), r.width(), r.height()]))
+                } else {
+                    presented.map(|s| json!([s.outer.origin.x, s.outer.origin.y, s.outer.size.width, s.outer.size.height]))
+                };
+                let active_title = match id {
+                    PANEL_BROWSER => tr("panel.browser").to_string(),
+                    PANEL_HISTORY => tr("panel.history").to_string(),
+                    PANEL_RESULTS => tr("panel.results").to_string(),
+                    PANEL_INSPECTOR => crate::context::inspector_heading(app).map_or_else(|| tr("panel.inspector").to_string(), |(_, t)| t),
+                    _ => id.to_string(),
+                };
+                json!({
+                    "id": id,
+                    "visible": visible,
+                    "has_content": has_content,
+                    "host": host,
+                    "zone": zone,
+                    "rect": rect,
+                    "active_title": active_title,
+                    "native_supported": self.native_windows,
+                })
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fieldcraft_engine::Session;
+    use solidcraft_panel_layout::Destination;
+
+    #[test]
+    fn default_layout_has_expected_zones_and_weights() {
+        let host = PanelHost::from_prefs(&Prefs::default(), false).unwrap();
+        let layout = host.runtime.layout().layout();
+        let zone_of = |id: &str| layout.containing(&InstanceId::new(id).unwrap()).unwrap().location.zone();
+        assert_eq!(zone_of(PANEL_BROWSER), Zone::Left);
+        assert_eq!(zone_of(PANEL_HISTORY), Zone::Bottom);
+        assert_eq!(zone_of(PANEL_INSPECTOR), Zone::Right);
+        assert_eq!(zone_of(PANEL_RESULTS), Zone::Right);
+    }
+
+    #[test]
+    fn history_rejects_left_and_right_docks() {
+        let mut host = PanelHost::from_prefs(&Prefs::default(), false).unwrap();
+        let history = InstanceId::new(PANEL_HISTORY).unwrap();
+        for forbidden in [Zone::Left, Zone::Right] {
+            let err = host.apply_mutations(
+                vec![Mutation::Move {
+                    instance: history.clone(),
+                    destination: Destination::NewSection {
+                        section: SectionId::new("sec-bad-hist").unwrap(),
+                        index: 0,
+                        location: SectionLocation::Dock { zone: forbidden },
+                        size: Size { width: 280.0, height: 320.0 },
+                    },
+                }],
+                true,
+            );
+            assert!(err.is_err(), "history must reject {forbidden:?}");
+        }
+    }
+
+    #[test]
+    fn browser_supports_dock_float_resize_and_inspector_results_tab_and_split() {
+        let mut host = PanelHost::from_prefs(&Prefs::default(), false).unwrap();
+        let browser = InstanceId::new(PANEL_BROWSER).unwrap();
+        let inspector = InstanceId::new(PANEL_INSPECTOR).unwrap();
+        let results = InstanceId::new(PANEL_RESULTS).unwrap();
+
+        // Float browser.
+        host.apply_mutations(
+            vec![Mutation::Move {
+                instance: browser.clone(),
+                destination: Destination::NewSection {
+                    section: SectionId::new("sec-browser-float").unwrap(),
+                    index: 0,
+                    location: SectionLocation::Floating { origin: Point { x: 40.0, y: 120.0 } },
+                    size: Size { width: 280.0, height: 480.0 },
+                },
+            }],
+            true,
+        )
+        .unwrap();
+        assert_eq!(host.runtime.layout().layout().containing(&browser).unwrap().location.zone(), Zone::Floating);
+
+        // Redock browser to Right.
+        host.apply_mutations(
+            vec![Mutation::Move {
+                instance: browser.clone(),
+                destination: Destination::NewSection {
+                    section: SectionId::new("sec-browser-right").unwrap(),
+                    index: 0,
+                    location: SectionLocation::Dock { zone: Zone::Right },
+                    size: Size { width: 290.0, height: 480.0 },
+                },
+            }],
+            true,
+        )
+        .unwrap();
+        assert_eq!(host.runtime.layout().layout().containing(&browser).unwrap().location.zone(), Zone::Right);
+
+        // Join inspector and results as tabs in the same section.
+        host.shared.borrow_mut().results_available = true;
+        host.shared.borrow_mut().inspector_available = true;
+        host.reconcile_runtime().unwrap();
+        let results_sec = host.runtime.layout().layout().containing(&results).unwrap().id.clone();
+        host.apply_mutations(
+            vec![Mutation::Move { instance: inspector.clone(), destination: Destination::JoinTab { section: results_sec.clone(), index: 0 } }],
+            true,
+        )
+        .unwrap();
+        assert_eq!(host.runtime.layout().layout().containing(&inspector).unwrap().tabs.len(), 2);
+
+        // Reset restores defaults and dirties store.
+        host.reset_layout().unwrap();
+        assert!(host.store.is_dirty());
+        assert_eq!(host.runtime.layout().layout().containing(&browser).unwrap().location.zone(), Zone::Left);
+    }
+
+    #[test]
+    fn clear_inspector_top_pops_one_item_at_a_time_and_keeps_lower_items() {
+        let mut app = ModelApp::new(Session::default());
+        app.run("model.material.create", json!({"name": "Steel", "elastic": {"type": "isotropic", "young": 210e9, "poisson": 0.3}})).unwrap();
+        app.select_definition(Some((crate::browser::Def::Material, "Steel".into())));
+        app.selected_mesh = true;
+        app.reply =
+            Some(crate::reply::Reply { command: "model.info".into(), label: "Model Info".into(), params: json!({}), value: json!({"nodes": 1}) });
+        assert!(crate::context::inspector_active(&app));
+        assert_eq!(crate::context::inspector_region_key(&app), Some("context:reply"));
+        crate::context::clear_inspector_top(&mut app);
+        assert!(app.reply.is_none());
+        assert_eq!(crate::context::inspector_region_key(&app), Some("context:properties"));
+        crate::context::clear_inspector_top(&mut app);
+        assert!(app.selected.is_none());
+        assert!(app.selected_mesh);
+        assert_eq!(crate::context::inspector_region_key(&app), Some("context:mesh"));
+        crate::context::clear_inspector_top(&mut app);
+        assert!(!app.selected_mesh);
+        assert!(!crate::context::inspector_active(&app));
+    }
+
+    #[test]
+    fn native_windows_false_hides_popout_capability() {
+        let mut app = ModelApp::new(Session::default());
+        let host = app.panels.as_ref().unwrap();
+        let panels = host.inspect_panels(&app);
+        assert_eq!(panels.len(), 4);
+        assert!(panels.iter().all(|p| p["native_supported"] == json!(false)));
+        // Force an unavailable panel open check does not crash.
+        app.selected_mesh = true;
+        let panels = host.inspect_panels(&app);
+        let insp = panels.iter().find(|p| p["id"] == "inspector").unwrap();
+        assert_eq!(insp["has_content"], json!(true));
+    }
+
+    #[test]
+    fn prepare_refreshes_results_and_inspector_availability_before_reopening() {
+        let mut app = ModelApp::new(Session::default());
+        app.open_sample("cantilever");
+        app.wait_loaded();
+        let ctx = egui::Context::default();
+        let draw = |app: &mut ModelApp| {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+            out.textures_delta.clear();
+        };
+
+        // Initial frame has no results and no inspector item.
+        draw(&mut app);
+        app.with_panels(|_, panels| {
+            let _ = panels.set_panel_visible(PANEL_RESULTS, false);
+            let _ = panels.set_panel_visible(PANEL_INSPECTOR, false);
+        });
+        assert!(!app.panels.as_ref().unwrap().is_open(PANEL_RESULTS));
+        assert!(!app.panels.as_ref().unwrap().is_open(PANEL_INSPECTOR));
+
+        // While content is still absent, prepare leaves both closed.
+        draw(&mut app);
+        assert!(!app.panels.as_ref().unwrap().is_open(PANEL_RESULTS));
+        assert!(!app.panels.as_ref().unwrap().is_open(PANEL_INSPECTOR));
+
+        // Supply results and an inspector selection: prepare reopens both on that same frame.
+        app.run("solve.static", json!({"step": "Load"})).unwrap();
+        app.selected_mesh = true;
+        draw(&mut app);
+        assert!(app.panels.as_ref().unwrap().is_open(PANEL_RESULTS));
+        assert!(app.panels.as_ref().unwrap().is_open(PANEL_INSPECTOR));
+    }
+
+    #[test]
+    fn set_history_dock_updates_placement_while_history_is_hidden() {
+        let mut host = PanelHost::from_prefs(&Prefs::default(), false).unwrap();
+        let history = InstanceId::new(PANEL_HISTORY).unwrap();
+        host.apply_mutations(
+            vec![Mutation::Move {
+                instance: history,
+                destination: Destination::NewSection {
+                    section: SectionId::new("sec-history-float").unwrap(),
+                    index: 0,
+                    location: SectionLocation::Floating { origin: Point { x: 80.0, y: 120.0 } },
+                    size: Size { width: 520.0, height: 180.0 },
+                },
+            }],
+            true,
+        )
+        .unwrap();
+        assert!(!host.history_in_bottom_zone());
+
+        host.set_panel_visible(PANEL_HISTORY, false).unwrap();
+        assert!(!host.is_open(PANEL_HISTORY));
+        host.set_history_dock(HistoryDock::Top).unwrap();
+        host.set_panel_visible(PANEL_HISTORY, true).unwrap();
+
+        assert!(host.history_in_bottom_zone());
+        assert_eq!(host.history_dock(), HistoryDock::Top);
+    }
+
+    #[test]
+    fn start_page_reports_panels_hidden_with_no_rect_without_losing_requested_open() {
+        let mut app = ModelApp::new(Session::default());
+        let ctx = egui::Context::default();
+        let draw = |app: &mut ModelApp| {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+            out.textures_delta.clear();
+        };
+
+        draw(&mut app);
+        let panels = app.panels.as_ref().unwrap().inspect_panels(&app);
+        let browser = panels.iter().find(|p| p["id"] == "browser").unwrap();
+        assert_eq!(browser["visible"], json!(true));
+        assert!(browser["rect"].is_array());
+
+        app.open_start();
+        draw(&mut app);
+        let panels = app.panels.as_ref().unwrap().inspect_panels(&app);
+        let browser = panels.iter().find(|p| p["id"] == "browser").unwrap();
+        assert_eq!(browser["visible"], json!(false));
+        assert_eq!(browser["host"], json!("hidden"));
+        assert_eq!(browser["rect"], Value::Null);
+        assert!(app.panels.as_ref().unwrap().is_open(PANEL_BROWSER));
+
+        app.close_start();
+        draw(&mut app);
+        let panels = app.panels.as_ref().unwrap().inspect_panels(&app);
+        let browser = panels.iter().find(|p| p["id"] == "browser").unwrap();
+        assert_eq!(browser["visible"], json!(true));
+        assert!(browser["rect"].is_array());
+    }
+
+    #[test]
+    fn view_menu_visibility_transitions_persist_across_reload() {
+        let dir = std::env::temp_dir().join(format!("fc-view-menu-vis-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("prefs.json");
+        let services = || crate::files::Services { prefs: Some(crate::files::PrefsStore::file(file.clone())), ..Default::default() };
+
+        let mut app = ModelApp::new(Session::default()).with_services(services());
+        let ctx = egui::Context::default();
+        let draw = |app: &mut ModelApp| {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+            out.textures_delta.clear();
+        };
+        draw(&mut app);
+
+        // Simulate View menu toggle directly changing UiState.
+        app.ui.show_tree = false;
+        app.ui.show_timeline = false;
+        draw(&mut app);
+
+        let reloaded = ModelApp::new(Session::default()).with_services(services());
+        assert!(!reloaded.ui.show_tree);
+        assert!(!reloaded.ui.show_timeline);
+        assert!(!reloaded.panels.as_ref().unwrap().is_open(PANEL_BROWSER));
+        assert!(!reloaded.panels.as_ref().unwrap().is_open(PANEL_HISTORY));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hidden_browser_edits_apply_when_rejoining_shared_floating_section() {
+        let mut host = PanelHost::from_prefs(&Prefs::default(), false).unwrap();
+        let browser = InstanceId::new(PANEL_BROWSER).unwrap();
+        let inspector = InstanceId::new(PANEL_INSPECTOR).unwrap();
+
+        host.shared.borrow_mut().inspector_available = true;
+        host.reconcile_runtime().unwrap();
+
+        // Put Inspector in a 310-pt expanded floating section, then join Browser as a tab.
+        host.apply_mutations(
+            vec![Mutation::Move {
+                instance: inspector.clone(),
+                destination: Destination::NewSection {
+                    section: SectionId::new("sec-shared-float").unwrap(),
+                    index: 0,
+                    location: SectionLocation::Floating { origin: Point { x: 60.0, y: 100.0 } },
+                    size: Size { width: 310.0, height: 420.0 },
+                },
+            }],
+            true,
+        )
+        .unwrap();
+        let shared_sec = host.runtime.layout().layout().containing(&inspector).unwrap().id.clone();
+        host.apply_mutations(
+            vec![Mutation::Move { instance: browser.clone(), destination: Destination::JoinTab { section: shared_sec.clone(), index: 0 } }],
+            true,
+        )
+        .unwrap();
+
+        // Hide and reopen without pending edits: existing shared section geometry stays unchanged.
+        host.set_panel_visible(PANEL_BROWSER, false).unwrap();
+        host.set_panel_visible(PANEL_BROWSER, true).unwrap();
+        let sec = host.runtime.layout().layout().containing(&browser).unwrap();
+        assert!((sec.size.width - 310.0).abs() < 1e-6);
+        assert!(!sec.collapsed);
+
+        // Hide Browser, edit width/collapsed (rejecting 170 since Inspector requires 180), then reopen.
+        host.set_panel_visible(PANEL_BROWSER, false).unwrap();
+        assert!(host.set_browser_width(170.0).is_err());
+        host.set_browser_width(400.0).unwrap();
+        host.set_browser_collapsed(true).unwrap();
+        host.set_panel_visible(PANEL_BROWSER, true).unwrap();
+
+        let sec = host.runtime.layout().layout().containing(&browser).unwrap();
+        assert_eq!(sec.id, shared_sec);
+        assert!((sec.size.width - 400.0).abs() < 1e-6);
+        assert!(sec.collapsed);
+    }
+
+    #[test]
+    fn inspect_panels_reports_only_presented_tab_visible_when_results_and_inspector_share_section() {
+        let mut app = ModelApp::new(Session::default());
+        app.open_sample("cantilever");
+        app.wait_loaded();
+        app.run("solve.static", json!({"step": "Load"})).unwrap();
+        app.selected_mesh = true;
+
+        let ctx = egui::Context::default();
+        let draw = |app: &mut ModelApp| {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+            out.textures_delta.clear();
+        };
+        draw(&mut app);
+
+        let results = InstanceId::new(PANEL_RESULTS).unwrap();
+        let inspector = InstanceId::new(PANEL_INSPECTOR).unwrap();
+        app.with_panels(|_, panels| {
+            let insp_sec = panels.runtime.layout().layout().containing(&inspector).unwrap().id.clone();
+            panels
+                .apply_mutations(
+                    vec![
+                        Mutation::Move { instance: results.clone(), destination: Destination::JoinTab { section: insp_sec, index: 1 } },
+                        Mutation::Activate { instance: inspector.clone() },
+                    ],
+                    true,
+                )
+                .unwrap();
+        });
+
+        draw(&mut app);
+
+        let panels = app.panels.as_ref().unwrap().inspect_panels(&app);
+        let insp_entry = panels.iter().find(|p| p["id"] == "inspector").unwrap();
+        let res_entry = panels.iter().find(|p| p["id"] == "results").unwrap();
+        assert_eq!(insp_entry["visible"], json!(true));
+        assert_eq!(insp_entry["has_content"], json!(true));
+        assert_eq!(insp_entry["host"], json!("docked"));
+        assert!(insp_entry["rect"].is_array());
+
+        assert_eq!(res_entry["visible"], json!(false));
+        assert_eq!(res_entry["has_content"], json!(true));
+        assert_eq!(res_entry["host"], json!("hidden"));
+        assert_eq!(res_entry["rect"], Value::Null);
+    }
 }
