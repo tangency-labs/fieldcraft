@@ -164,7 +164,7 @@ fn legend_layout(plot: &Plot, painter: &egui::Painter, view: Rect, rect: Rect, b
         lines.push((format!("{what} × {} (display interpolation)", number(a)), t.text_dim));
     }
     lines.push((step, t.overlay_text));
-    if !plot.is_fluid() {
+    if !plot.is_fluid() && !matches!(plot.result.kind(), Kind::Cavity(_)) {
         lines.push((deformation(plot), t.text_dim));
     }
     if plot.unavailable {
@@ -440,7 +440,8 @@ fn rows(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) {
     }
     if plot.is_fluid() {
         flow_rows(plot, ui, &mut run);
-    } else {
+    } else if !matches!(plot.result.kind(), Kind::Cavity(_)) {
+        // A cavity mode is a field, not a deformation.
         deformation_rows(plot, ui, &mut run);
     }
     kit::row(ui, "Show", |ui| {
@@ -498,25 +499,10 @@ fn rows(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) {
         });
         kit::status_line(ui, &format!("load factor {}", number(factor)), kit::StatusTone::Dim);
     } else if let Kind::Frequency(f) = plot.result.kind() {
-        kit::divider(ui, "fc_results_modes");
-        kit::text(ui, "Modes", kit::Text::Heading("fc_results_modes"));
-        egui::ScrollArea::vertical().id_salt("fc_results_modes").max_height(kit::row_height() * 5.0).show(ui, |ui| {
-            // Justified: the selected mode highlights across the panel, not only behind its text.
-            ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                for (i, m) in f.modes.iter().enumerate() {
-                    let mode = i + 1;
-                    if ui
-                        .selectable_label(
-                            plot.view.mode == mode,
-                            format!("{mode}   {}", crate::results::mode_value(f.buckling.is_some(), m.eigenvalue, m.frequency, &plot.units)),
-                        )
-                        .clicked()
-                    {
-                        run.push(("results.modes", json!({"mode": mode})));
-                    }
-                }
-            });
-        });
+        let labels = f.modes.iter().map(|m| crate::results::mode_value(f.buckling.is_some(), m.eigenvalue, m.frequency, &plot.units));
+        modes(ui, plot, labels, &mut run);
+    } else if let Kind::Cavity(c) = plot.result.kind() {
+        modes(ui, plot, c.modes.iter().map(|m| crate::results::mode_value(false, 0.0, m.frequency, &plot.units)), &mut run);
     } else if let Kind::Heat(h) = plot.result.kind() {
         kit::divider(ui, "fc_results_heat");
         heat_flows(ui, &fieldcraft_engine::results::heat_flows(h, &plot.units), &plot.units);
@@ -602,6 +588,24 @@ fn views_row(app: &ModelApp, ui: &mut egui::Ui, run: &mut Vec<(&'static str, Val
 fn column_number_field(ui: &mut egui::Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>, speed: f64, suffix: &str) -> egui::Response {
     ui.spacing_mut().interact_size.x = ui.available_width();
     kit::number_field(ui, value, range, speed, suffix)
+}
+
+/// The Modes list of a frequency, buckling or cavity result: each mode and its `labels` entry
+/// (frequency or load factor); a click shows it.
+fn modes(ui: &mut egui::Ui, plot: &Plot, labels: impl Iterator<Item = String>, run: &mut Vec<(&'static str, Value)>) {
+    kit::divider(ui, "fc_results_modes");
+    kit::text(ui, "Modes", kit::Text::Heading("fc_results_modes"));
+    egui::ScrollArea::vertical().id_salt("fc_results_modes").max_height(kit::row_height() * 5.0).show(ui, |ui| {
+        // Justified: the selected mode highlights across the panel, not only behind its text.
+        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+            for (i, label) in labels.enumerate() {
+                let mode = i + 1;
+                if ui.selectable_label(plot.view.mode == mode, format!("{mode}   {label}")).clicked() {
+                    run.push(("results.modes", json!({"mode": mode})));
+                }
+            }
+        });
+    });
 }
 
 /// The deformation rows of the results grid: Deformed (with its scale) and Animate.
@@ -732,7 +736,7 @@ fn probed(app: &ModelApp, plot: &Plot, ui: &mut egui::Ui) -> Option<Value> {
     }
     kit::button(ui, "Export CSV…", kit::Button::Normal).backing_on_hover_text("Write the node's results to a CSV file").clicked().then(|| {
         let mut params = json!({"what": "probe", "step": p.step, "nodes": [p.node]});
-        if matches!(plot.result.kind(), Kind::Frequency(_)) {
+        if plot.result.kind().modes().is_some() {
             params["mode"] = json!(p.mode);
         }
         if let Some(f) = p.frame {
