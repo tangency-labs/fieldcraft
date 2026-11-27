@@ -1,4 +1,4 @@
-# The `.fieldcraft` file (format `fieldcraft/4`)
+# The `.fieldcraft` file (format `fieldcraft/5`)
 
 A `.fieldcraft` file holds one model: its definition, its mesh, the geometry it is built on, the
 commands that built it and, unless a save leaves them out, its solved results. It is written and read by `fieldcraft-io` (`write`, `read`; bytes in,
@@ -12,11 +12,12 @@ uncompressed (so any unzip tool reads them: `unzip -p bracket.fieldcraft model.j
 
 | Part | Content |
 |---|---|
-| `fieldcraft.json` | Manifest: `format` (`"fieldcraft/4"`, [Versions](#versions-and-migration)), `generator` (`"FieldCraft 0.7.0"`), `geometry`, `view` (left out when empty), `run` (left out when empty), and `parts`: the byte size and SHA-256 of each other part. |
+| `fieldcraft.json` | Manifest: `format` (`"fieldcraft/5"`, [Versions](#versions-and-migration)), `generator` (`"FieldCraft 0.7.0"`), `geometry`, `view` (left out when empty), `run` (left out when empty), and `parts`: the byte size and SHA-256 of each other part. |
 | `model.json` | The model definition, every quantity in SI (docs/units.md): its display units (`display_units`, left out when the model has none of its own), sets, materials, sections, reference points, couplings, boundary conditions, loads, steps, datum planes, axes and points, and the partitions that cut the geometry (in order; applied again when the design is opened). Pretty-printed JSON with a fixed key order (maps sorted by name), so a change shows as a line diff. Its form is the model's own JSON form, which commands take as parameters. |
 | `mesh.bin` | Nodes, elements and geometry tags, binary (below). |
 | `journal.json` | The commands that built the model, `{"units": system, "commands": [{"command": id, "params": {...}}, ...]}`, one command per line, as they were typed: `units` names the display system their bare numbers are in (a number typed in another system carries its unit, `{"value", "unit"}`); a migrated journal also names `model_units`, the system its model-level numbers were in. It is a script `fieldcraft-cli run` replays (a plain list of commands is a script in the session's units). |
 | `geometry/<file>` | Optional: a copy of a geometry file the model is built on, when the file was saved with its geometry embedded (below). |
+| `external.bin` | Optional imported result frames with their sampling grids and point and cell arrays. Saving with `results: false` omits this part and its display settings. |
 | `results.bin` | Optional: every solved step's latest result, with the hash of the definition it was solved from (below). `file.save` writes it unless given `results: false`. |
 
 The same model gives the same bytes on every platform: entry times are fixed (1980-01-01),
@@ -185,7 +186,32 @@ built on. On opening, a result whose hash is the model's is current; any other i
 as stale, with a warning (`file.open`'s `results` lists each step with `stale`), and an edit that
 brings the model back to its definition makes it current again. Editing the model marks results
 stale as it does in a session. A solve is an unsaved change, since the file keeps results;
-autosaves, crash reports and bug reports keep none.
+autosaves, crash reports and bug reports omit these native solver results.
+
+## `external.bin`
+
+Imported VTU results and PVD time series carry one sampling grid per frame. The project keeps
+the reference coordinates in meters, the original VTK cell type and connectivity, field names,
+point and cell associations, tuple widths, values and timestamps. Duplicate points retain their
+separate field values. Reopening the project restores the results even after the source files
+are moved. The manifest's optional `external_view` records the selected frame, field,
+association, component, visibility, displacement vector, and deformation scale. Display
+deformation leaves the stored grid coordinates and the analysis model untouched. A named view saved
+while the imported grid is visible sets `external_camera` to true. Reopening that grid
+restores the saved camera target and zoom.
+
+A series in meters starts with the eight ASCII bytes `FCEXT001`. A series with an explicit non-meter unit uses `FCEXT002` and prefixes each frame with a u16 byte length and that UTF-8 unit symbol (zero length means meters). Coordinates are stored in meters. Other sample values keep their source units, including vector components that the view can interpret as displacements. Both encodings continue with a 32-bit frame count. All
+numbers are little-endian. Each frame holds its 64-bit floating-point time, a 32-bit point
+count, coordinate triples of 64-bit floats, a 32-bit cell count, then cells. A cell stores its
+8-bit VTK type followed by that type's fixed number of zero-based 32-bit point indices.
+The point fields and cell fields follow in separate groups, each with a 16-bit count.
+A field stores its UTF-8 name (16-bit byte length then text), an 8-bit component count, and
+64-bit floating-point values in tuple-major order. The number of tuples is the point or
+cell count for its group. Fields are sorted by name within each group.
+
+The decoder charges collection and value storage against the remaining budget before allocating.
+The storage budget is 256 MiB per frame and 512 MiB for the whole series. The reader checks cell
+types and indices, array counts, names, finite numbers, and strictly increasing times.
 
 ## Reading a file safely
 
@@ -194,7 +220,7 @@ Every file is treated as hostile:
 - The file is at most 8 GiB; the manifest, definition and journal parts at most 256 MiB each. No
   allocation is larger than the input.
 - Only the parts the manifest lists, each once: the four, and `results.bin` and `geometry/<file>`
-  parts when they are listed (format 3 and later; older formats list exactly the four). The ZIP CRC and the manifest's size and
+  parts when they are listed (format 3 and later), and the optional `external.bin` in format 5 and later. Older formats list exactly the four. The ZIP CRC and the manifest's size and
   SHA-256 are checked for every part.
 - The `format` is read first, before anything else in the file: a later `fieldcraft/N` is refused
   as a version error naming the program that wrote it, any value that is not `fieldcraft/<N>` as
@@ -226,11 +252,10 @@ format.
 | `fieldcraft/2` | FieldCraft after 0.7.0 | versioning and migration; the parts hold the same as format 1 |
 | `fieldcraft/3` | FieldCraft after 0.7.0 | SI storage (#579): `model.json` in SI with `display_units` in place of `units`, `mesh.bin` `MCMESH02` (coordinates in metres), the journal with a header naming its units. Step 2 → 3 scales by the file's declared `units` (`unspecified` as mm-t-s-N-MPa) with its own frozen field map and MCMESH01 codec; the journal's numbers are kept as typed. Before its first release it also gained optional parts and fields, each absent in a file without it (so every format 3 file written before them reads as it did): `results.bin` (#644), saved views (#645) and renders (#646) in `view`, embedded geometry parts (#647), `run` in the manifest (#648), and shear-dependent fluid viscosity in a material's `fluid` (`power_law`, `carreau_yasuda`, `cross`, `cross_wlf`, #156). |
 | `fieldcraft/4` | FieldCraft after 0.8.1 | an imported mesh's optional `unit` (#1049): the length unit a unitless mesh file (STL, OBJ, PLY) was read in. A format 3 file has none, which means millimetres, so step 3 → 4 changes only the tag. Format 3 was released (0.8.0), so the field comes with a new format: FieldCraft 0.8 refuses a file that may carry it with its "update FieldCraft" message rather than an unknown-field error. |
+| `fieldcraft/5` | FieldCraft with VTU result import | Optional imported frames in `external.bin` and display settings in `external_view`. Format 4 projects open with no imported frames. Step 4 → 5 changes only the tag. All new saves use format 5. Older readers report the required format and ask the user to update. |
 
-Format 3 was not yet written by a release when its optional parts were added, and every addition
-is optional (absent means what a file without it always meant), so they are part of format 3
-rather than a format 4 with a step that would only change the tag: no released FieldCraft reads
-format 3, and every format 3 file opens unchanged.
+The optional parts of format 3 were added before its first release. Earlier format 3
+projects open with the same content they had when saved.
 
 FieldCraft reads every format up to its own. A file of a later one is refused, before anything
 else in it is read, with a message naming what wrote it: "this model was made by FieldCraft
@@ -291,6 +316,12 @@ model's own file. After a crash, the next launch reports the entries; `file.reco
 lists them newest first, `file.recover` opens one as unsaved work under its original path, and
 `file.recovery.discard` deletes one or all of them (File › Recover… shows each with its name,
 age and counts, with Recover, Discard and Discard all).
+
+Autosaves embed imported VTU frames and the selected external result view. Importing another
+series or changing the frame, field, or displacement scale triggers the next autosave even
+when the analysis mesh is unchanged. After that autosave the project can be recovered without
+its source VTU files. Between autosaves, the local crash journal records imports and display
+commands for replay. Replaying an import from the journal requires its source files.
 
 Entries prune themselves: each launch deletes left-behind entries older than 14 days, and those
 whose model's own file was saved after the autosave (the file's modification time is later than

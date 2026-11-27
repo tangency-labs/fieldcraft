@@ -57,7 +57,7 @@ pub struct Parts {
 type Step = fn(&mut Parts) -> Result<()>;
 
 /// `STEPS[i]` takes format `i + 1` to `i + 2`.
-const STEPS: [Step; FORMAT_VERSION as usize - 1] = [v1_to_v2, v2_to_v3::v2_to_v3, v3_to_v4];
+const STEPS: [Step; FORMAT_VERSION as usize - 1] = [v1_to_v2, v2_to_v3::v2_to_v3, v3_to_v4, v4_to_v5];
 
 /// The format version a manifest declares, checked before anything else in it is read: a later
 /// format than this version reads is [`Error::Version`] (naming the program that wrote it), a
@@ -146,6 +146,12 @@ fn v3_to_v4(parts: &mut Parts) -> Result<()> {
     set_format(parts, 4)
 }
 
+/// Format 4 → 5. External result frames and their display parameters are optional. A format 4
+/// file has neither, so only the tag changes.
+fn v4_to_v5(parts: &mut Parts) -> Result<()> {
+    set_format(parts, 5)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -227,6 +233,16 @@ mod tests {
         assert_eq!(manifest, before.manifest);
         assert_eq!((&p.model, &p.mesh, &p.journal), (&before.model, &before.mesh, &before.journal));
         assert!(v3_to_v4(&mut Parts { manifest: json!([]), ..before }).is_err());
+    }
+
+    #[test]
+    fn v4_to_v5_changes_only_the_tag() {
+        let mut p = parts("fieldcraft/4");
+        p.manifest["geometry"] = json!({"meshes": [{"path": "plate.stl", "unit": "in"}]});
+        let mut expected = p.clone();
+        expected.manifest["format"] = json!("fieldcraft/5");
+        step(&mut p, 4).unwrap();
+        assert_eq!(p, expected);
     }
 
     #[test]

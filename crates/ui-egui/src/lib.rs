@@ -34,6 +34,7 @@ pub mod control;
 pub mod describe;
 mod document;
 pub mod elide;
+mod external_results;
 pub mod feature_graph;
 pub mod fields;
 pub mod files;
@@ -464,6 +465,10 @@ pub struct ModelApp {
     pub features_open: std::collections::BTreeSet<(String, u64)>,
     /// Whether results were shown last frame (the Results tab comes up when they appear).
     results_shown: bool,
+    external_fit: Option<(u64, usize, u64, Option<String>)>,
+    external_bounds: Aabb3,
+    external_clock: Option<(u64, f64, usize)>,
+    external_display_error: Option<String>,
     /// The step and mode shown last ([`fieldcraft_engine::results::ResultsView`]): another one
     /// is framed if part of it is out of view.
     shape_shown: Option<(String, usize)>,
@@ -630,6 +635,10 @@ impl ModelApp {
             reply: None,
             features_open: Default::default(),
             results_shown: false,
+            external_fit: None,
+            external_bounds: Aabb3::EMPTY,
+            external_clock: None,
+            external_display_error: None,
             shape_shown: None,
             reframe: None,
             camera_seen: 0,
@@ -753,6 +762,9 @@ impl ModelApp {
             }
             e => Failure { message: e.to_string(), refused: None },
         });
+        if r.is_ok() && matches!(id, "results.animate" | "results.import.vtu") {
+            self.external_clock = None;
+        }
         let changed = self.session.revision() != revision;
         // The definition selected in the browser keeps its selection under its new name.
         if id == "model.rename"
@@ -834,14 +846,24 @@ impl ModelApp {
         // A script waits for the background job, as a command does: the job's session would
         // replace what it changed.
         self.ensure_idle()?;
-        #[allow(clippy::disallowed_methods, reason = "scripts are not jobs yet")]
-        let r = self.session.run_script(script).map(|_| ()).map_err(|e| e.to_string());
+        let mut last_tab = None;
+        let r = self
+            .session
+            .run_script_with(script, |id| {
+                if matches!(id, "results.animate" | "results.import.vtu") {
+                    self.external_clock = None;
+                }
+                if let Some(tab) = catalogue::stage_tab(id) {
+                    last_tab = Some(tab);
+                }
+            })
+            .map(|_| ())
+            .map_err(|e| e.to_string());
         self.model_changed();
-        if r.is_ok() {
-            let commands = script.as_array().into_iter().flatten().filter_map(|step| step.get("command").and_then(Value::as_str));
-            if let Some(id) = commands.rev().find(|id| catalogue::stage_tab(id).is_some()) {
-                self.follow_stage(id);
-            }
+        if r.is_ok()
+            && let Some(tab) = last_tab
+        {
+            self.ui.select_tab(tab);
         }
         match &r {
             Ok(()) => self.set_status("Script done", false),
@@ -897,6 +919,11 @@ impl ModelApp {
             let e = u.to_string();
             self.refuse(u);
             return Err(e);
+        }
+        if interactive && spec.id == "results.external.view" {
+            self.dialog = None;
+            self.ui.select_tab(Tab::Results);
+            return self.run(spec.id, json!({"show":true})).map(|_| ());
         }
         if self.file_action(spec.id, &preset, interactive) {
             self.dialog = None;
@@ -1282,6 +1309,10 @@ impl ModelApp {
         let plot = self.plot.1.as_ref().map(|p| Arc::as_ptr(p) as usize);
         let marks = fieldcraft_engine::view::geometry_marks(&self.session).map(|m| m as *const _ as usize);
         (self.revision, self.ui.style, self.ui.show(), self.ui.dark, plot, self.selected_datum(), marks).hash(&mut h);
+        if let Some((_, view)) = fieldcraft_engine::external_view::visible(&self.session) {
+            (self.session.external_generation(), view.frame, view.association, &view.field, view.component, &view.displacement, view.scale.to_bits())
+                .hash(&mut h);
+        }
         format!("{:?}", self.datum_preview()).hash(&mut h);
         h.finish()
     }
@@ -1289,6 +1320,9 @@ impl ModelApp {
     /// What the results plot is built for: the model, the result, its view and the animation
     /// frame; `None` when no results are shown.
     fn plot_key(&self) -> Option<PlotKey> {
+        if fieldcraft_engine::external_view::visible(&self.session).is_some() {
+            return None;
+        }
         let (view, result, current) = results::shown(&self.session)?;
         let frame = results::frame(view, result, self.now);
         let pick = results::pick(view, result, frame);
@@ -1328,7 +1362,19 @@ impl ModelApp {
         self.display();
         self.plot();
         let key = self.scene_key();
+        if self.scene.0 != Some(key)
+            && let Some((frame, view)) = fieldcraft_engine::external_view::visible(&self.session)
+        {
+            let colors = theme::Tokens::get(self.ui.dark).palette();
+            let bands = self.session.external_bands();
+            let (scene, drawn, shown) = fieldcraft_engine::external_view::scene(frame, view, self.ui.style, self.ui.show(), &colors, bands, None);
+            self.external_bounds = drawn.bounds;
+            self.external_display_error = shown.failed.into_iter().next();
+
+            self.scene = (Some(key), scene, Aabb3::EMPTY);
+        }
         if self.scene.0 != Some(key) {
+            self.external_display_error = None;
             let t = theme::Tokens::get(self.ui.dark);
             let (style, show) = (self.ui.style, self.ui.show());
             let mut s = match &self.plot.1 {
@@ -1588,6 +1634,8 @@ impl ModelApp {
         self.plot();
         let unit = glyphs::unit_for(&self.cam, height, self.ui.symbol_size, pixels_per_point).and_then(glyphs::quantise_unit);
         let mut h = std::hash::DefaultHasher::new();
+        let external = fieldcraft_engine::external_view::visible(&self.session).is_some();
+        external.hash(&mut h);
         let plot = self.plot.1.as_ref().map(|p| Arc::as_ptr(p) as usize);
         let show = self.ui.show();
         (self.revision, show.loads, show.interactions, self.ui.result_symbols, self.ui.dark, plot, unit.map(|u| u.0), self.highlighted())
@@ -1607,7 +1655,7 @@ impl ModelApp {
             let drawn = self.plot.1.as_ref().map_or(&self.display.1, |p| &p.display);
             let mut s = Scene::default();
             let unit = unit.map_or(f64::NAN, |u| u.1);
-            let d = if step.is_some() && !self.ui.result_symbols {
+            let d = if external || step.is_some() && !self.ui.result_symbols {
                 Drawn::default()
             } else {
                 scene::symbols(&mut s, glyphs, |n| drawn.node_position(n), show, step.is_some(), unit, self.highlighted(), &t)
@@ -1621,6 +1669,9 @@ impl ModelApp {
     /// (deformed) shape and the reference points. Datums are never framed (#295): they are drawn
     /// at the model's extent, so framing them would only shrink the part.
     fn drawn_bounds(&self) -> Aabb3 {
+        if fieldcraft_engine::external_view::visible(&self.session).is_some() {
+            return self.external_bounds;
+        }
         let mut bounds = self.display.1.bounds;
         if let Some(p) = &self.plot.1 {
             bounds.union(p.display.bounds);
@@ -1694,6 +1745,19 @@ impl ModelApp {
     /// Run `f` with the picker of what the viewport draws: a results plot's elements, or the
     /// model's elements and its geometry where no element faces cover it (as [`scene::build`]).
     pub fn with_picker<R>(&mut self, f: impl FnOnce(&selection::Picker) -> R) -> R {
+        // An imported grid owns its point and cell numbers. They never address the model's
+        // nodes, faces or geometry, including in programmatic viewport selections.
+        if fieldcraft_engine::external_view::visible(&self.session).is_some() {
+            return f(&selection::Picker {
+                display: &DisplayMesh::default(),
+                names: &[],
+                model: &self.session.model,
+                index: &selection::Index::default(),
+                elements: false,
+                geometry: false,
+                curves: false,
+            });
+        }
         let index = self.pick_index();
         let plot = self.plot();
         let (show_mesh, show_geometry) = (self.ui.show_mesh, self.ui.show_geometry);
@@ -1721,6 +1785,9 @@ impl ModelApp {
     /// The nearest drawn point under window point `at`: the pick ray's first hit on the results
     /// plot when one shows, else on the shown elements' faces or the design's surfaces.
     pub fn surface_point(&mut self, at: egui::Pos2) -> Option<Vec3> {
+        if fieldcraft_engine::external_view::visible(&self.session).is_some() {
+            return None;
+        }
         let rect = self.viewport.rect.filter(|r| r.contains(at))?;
         let (o, d) = self.cam.ray(f64::from(at.x - rect.left()), f64::from(at.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
         let t = if let Some(plot) = self.plot() {
@@ -1832,6 +1899,12 @@ impl ModelApp {
             h.finish()
         };
         let scene = self.scene_key();
+        if fieldcraft_engine::external_view::visible(&self.session).is_some() {
+            if self.pick.overlay.0 != Some(scene) {
+                self.pick.overlay = (Some(scene), Arc::new(Scene::default()));
+            }
+            return (scene, self.pick.overlay.1.clone());
+        }
         let set = self.selected_set();
         let cut = self.partition_preview();
         let merge = self.merge_preview();
@@ -2222,7 +2295,10 @@ impl ModelApp {
     pub fn aim_camera(&mut self, aim: &fieldcraft_engine::view::Aim) -> Result<(), String> {
         let (aspect, _) = self.free_part();
         self.cam = fieldcraft_engine::view::aim(&self.session, aim, self.cam, aspect).map_err(|e| e.to_string())?;
+        // Preparing a newly opened model may itself request a fit. The explicit aim wins.
+        self.display();
         self.reframe = None;
+        self.viewport.recheck = 0;
         Ok(())
     }
 
@@ -2244,7 +2320,7 @@ impl ModelApp {
     /// viewport calls it when it knows its size and its overlays, before drawing.
     pub(crate) fn apply_reframe(&mut self) {
         let Some(r) = self.reframe else { return };
-        if self.display().bounds.is_empty() {
+        if fieldcraft_engine::external_view::visible(&self.session).is_none() && self.display().bounds.is_empty() {
             return;
         }
         self.reframe = None;
@@ -2278,10 +2354,7 @@ impl ModelApp {
         if self.poll_picker() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
-        // A new document's home framing first, so the saved view it opens showing turns the
-        // camera after it (and drops that framing) rather than being framed over.
         self.frame_new_document();
-        self.follow_camera();
         self.dropped_files(ctx);
         self.poll_updates(ctx);
         self.shortcuts(ctx);
@@ -2289,8 +2362,25 @@ impl ModelApp {
         if !self.synthetic.is_empty() {
             ctx.request_repaint();
         }
+        self.advance_external_playback(ctx);
         // Results coming up (a solve, a results command) bring the Results tab.
-        let shown = self.session.results_view.is_some();
+        let external = fieldcraft_engine::external_view::visible(&self.session)
+            .map(|(_, v)| (self.session.external_generation(), v.frame, v.scale.to_bits(), v.displacement.clone()));
+        if let Some((generation, ..)) = &external
+            && self.external_fit != external
+        {
+            let fit = if self.external_fit.as_ref().is_none_or(|(old, ..)| old != generation) {
+                framing::Reframe::Fit
+            } else {
+                framing::Reframe::IfOffscreen
+            };
+            self.reframe = framing::Reframe::merge(self.reframe, fit);
+            if fit == framing::Reframe::Fit {
+                self.ui.select_tab(Tab::Results);
+            }
+        }
+        self.external_fit = external;
+        let shown = self.session.results_view.is_some() || self.external_fit.is_some();
         if shown && !self.results_shown {
             self.ui.select_tab(Tab::Results);
             self.reframe = framing::Reframe::merge(self.reframe, framing::Reframe::IfOffscreen);
@@ -2302,6 +2392,8 @@ impl ModelApp {
             self.viewport.recheck = framing::RECHECK_FRAMES;
         }
         self.shape_shown = shape;
+        // A saved camera takes precedence over automatic framing on opening a document or showing results.
+        self.follow_camera();
         self.check_selection();
         self.follow_form_filter();
         // A refusal goes once the command can run.
@@ -2315,7 +2407,7 @@ impl ModelApp {
         if self.selected_seed.as_ref().is_some_and(|edge| self.seed(edge).is_none()) {
             self.selected_seed = None;
         }
-        if self.session.results_view.as_ref().is_some_and(|v| v.animate) {
+        if self.external_fit.is_none() && self.session.results_view.as_ref().is_some_and(|v| v.animate) {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(results::PERIOD / results::FRAMES as f64));
         }
         self.screenshots(ctx);
@@ -2891,6 +2983,45 @@ mod tests {
         }
         assert!((app.cam.yaw - (-60f64).to_radians()).abs() < 1e-9 && (app.cam.pitch - 25f64.to_radians()).abs() < 1e-9, "{:?}", app.cam);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opening_imported_results_preserves_the_saved_target_and_distance() {
+        let dir = std::env::temp_dir().join(format!("fieldcraft-ui-external-camera-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("external.fieldcraft");
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/recipes/vtu-bending-strip/bending.pvd");
+        let ctx = egui::Context::default();
+        let mut app = ModelApp::new(Session::default());
+        app.run("file.sample", json!({"name":"cantilever"})).unwrap();
+        app.run("solve.run", json!({})).unwrap();
+        assert!(app.session.results_view.is_some());
+        app.run("results.import.vtu", json!({"path":source})).unwrap();
+        draw(&mut app, &ctx, 1280.0, 800.0);
+        app.cam.target = Vec3::new(0.02, 0.03, 0.04);
+        app.cam.distance = 0.01;
+        let saved = app.cam;
+        app.follow_camera();
+        let captured = app.run("view.save", json!({"name":"Detail"})).unwrap();
+        assert!(captured["view"]["results"].is_null());
+        app.run("view.restore", json!({"name":"Detail"})).unwrap();
+        assert!(fieldcraft_engine::external_view::visible(&app.session).is_some());
+        app.run("file.save_as", json!({"path":path,"results":true})).unwrap();
+        app.run("file.new", json!({})).unwrap();
+        draw(&mut app, &ctx, 1280.0, 800.0);
+        app.run("file.open", json!({"path":path})).unwrap();
+        for _ in 0..3 {
+            draw(&mut app, &ctx, 1280.0, 800.0);
+            assert!(fieldcraft_engine::external_view::visible(&app.session).is_some());
+            assert!(app.cam.target.dist(saved.target) < 1e-12);
+            assert!((app.cam.distance - saved.distance).abs() < 1e-12);
+        }
+        let without_results = dir.join("model.fieldcraft");
+        app.run("file.save_as", json!({"path":without_results,"results":false})).unwrap();
+        let reopened = app.run("file.open", json!({"path":without_results})).unwrap();
+        assert!(app.session.external_results().is_none());
+        assert!(reopened["view"]["camera"].is_null());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Status lines say what changed, in words, whatever started the command (#333), and the

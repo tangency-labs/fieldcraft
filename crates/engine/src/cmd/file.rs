@@ -35,6 +35,8 @@ pub enum OpenFileKind {
     Mesh,
     /// A `.msh` orphan mesh replaces the mesh (`mesh.import.orphan`).
     Orphan,
+    /// A VTU result grid or PVD time series is displayed on its own sampling mesh.
+    Results,
 }
 
 impl OpenFileKind {
@@ -49,6 +51,7 @@ impl OpenFileKind {
         match Path::new(path).extension()?.to_str()?.to_ascii_lowercase().as_str() {
             "fieldcraft" => Some(OpenFileKind::Model),
             "msh" => Some(OpenFileKind::Orphan),
+            "vtu" | "pvtu" | "pvd" => Some(OpenFileKind::Results),
             _ => None,
         }
     }
@@ -60,6 +63,7 @@ impl OpenFileKind {
             OpenFileKind::Design => "geometry.open",
             OpenFileKind::Mesh => "geometry.import.mesh",
             OpenFileKind::Orphan => "mesh.import.orphan",
+            OpenFileKind::Results => "results.import.vtu",
         }
     }
 }
@@ -87,7 +91,7 @@ pub const OPEN: CommandSpec = CommandSpec {
 pub const SAVE: CommandSpec = CommandSpec {
     id: "file.save",
     label: "Save Model",
-    params: r#"{"path"?: "bracket.fieldcraft", "results"?: true, "geometry"?: "refer" | "embed"} — saves to `path`, else to the file the model was opened from or last saved to; written atomically, the previous version kept as `<file>.bak`. The file keeps every solved step's latest result with the definition it was solved from (`results: false` leaves them out: a smaller file, and one that diffs by its text parts). `"geometry": "embed"` also keeps a copy of the design and imported meshes inside the file (`geometry/<file>`, opened when a referenced file is missing: whoever gets the file gets the geometry too), `"refer"` only the references (the default, unless the model's file embeds them); the reply's `contents` says what the file holds. A file there that is not a model of the current format (one this model was migrated from, a later or damaged one, any other file) is first copied to `<stem>.v<N>.fieldcraft` (`<stem>.backup.<ext>` when it is not a model), never replaced later (`backup` in the reply)"#,
+    params: r#"{"path"?: "bracket.fieldcraft", "results"?: true, "geometry"?: "refer" | "embed"} — saves to `path`, else to the file the model was opened from or last saved to; written atomically, the previous version kept as `<file>.bak`. The file keeps every solved step's latest result with the definition it was solved from and any imported VTU/PVD frames (`results: false` leaves them out: a smaller file, and one that diffs by its text parts). `"geometry": "embed"` also keeps a copy of the design and imported meshes inside the file (`geometry/<file>`, opened when a referenced file is missing: whoever gets the file gets the geometry too), `"refer"` only the references (the default, unless the model's file embeds them); the reply's `contents` says what the file holds. A file there that is not a model of the current format (one this model was migrated from, a later or damaged one, any other file) is first copied to `<stem>.v<N>.fieldcraft` (`<stem>.backup.<ext>` when it is not a model), never replaced later (`backup` in the reply)"#,
     form: Some(super::forms::FILE_SAVE),
     kind: CommandKind::Session,
     requires: &[],
@@ -263,7 +267,7 @@ pub(crate) fn frame_geometry(model: &fieldcraft_model::Model) -> std::result::Re
 /// What a saved file keeps besides the model, its mesh, journal and view.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Keep {
-    /// The solved results (`results.bin`).
+    /// Solved and imported results (`results.bin` and `external.bin`).
     pub results: bool,
     /// Copies of the geometry files (`geometry/…`), besides the references to them.
     pub geometry: bool,
@@ -271,22 +275,41 @@ pub struct Keep {
 
 impl Session {
     /// The bytes of the `.fieldcraft` file holding this session's model, mesh, journal and view
-    /// (no results: what autosaves, crash and bug reports keep), with geometry paths inside
+    /// without result data (for example, in a bug report), with geometry paths inside
     /// `base` (the folder the file goes to) stored relative to it.
     pub fn file_bytes(&self, base: Option<&Path>) -> Result<Vec<u8>> {
         self.file_bytes_with(base, Keep::default())
     }
 
+    /// Recovery snapshots include imported frames, whose source may have moved or changed.
+    /// Native solver results follow the existing recovery policy and can be recomputed.
+    pub(crate) fn recovery_bytes(&self) -> Result<Vec<u8>> {
+        self.package_bytes(None, Keep::default(), self.external_results())
+    }
+
     /// [`Session::file_bytes`], keeping what `keep` says.
     pub fn file_bytes_with(&self, base: Option<&Path>, keep: Keep) -> Result<Vec<u8>> {
+        self.package_bytes(base, keep, if keep.results { self.external_results() } else { None })
+    }
+
+    fn package_bytes(&self, base: Option<&Path>, keep: Keep, external: Option<&fieldcraft_io::external::Series>) -> Result<Vec<u8>> {
         let stored = |s: &SourceFile| s.with_path(stored_path(s.path(), base));
         let geometry = Geometry {
             design: self.sources.design.as_ref().map(stored).transpose()?,
             meshes: self.sources.meshes.iter().map(stored).collect::<fieldcraft_io::Result<_>>()?,
         };
         let copies = if keep.geometry { self.geometry_copies()? } else { Vec::new() };
+        let external_view = match (external, self.external_view.as_ref()) {
+            (Some(series), Some(view)) => {
+                view.validate(series).map_err(EngineError::Params)?;
+                Some(serde_json::to_value(view).map_err(|e| EngineError::Params(format!("cannot save external result view: {e}")))?)
+            }
+            _ => None,
+        };
         let extras = fieldcraft_io::Extras {
             results: if keep.results { self.stored_results() } else { Vec::new() },
+            external,
+            external_view,
             embed: copies.iter().map(|(sha, b)| (sha.clone(), b.as_slice())).collect(),
             // The settings of steps the model still has.
             run: self.run.iter().filter(|(step, _)| self.model.step(step).is_some()).map(|(k, v)| (k.clone(), *v)).collect(),
@@ -402,8 +425,24 @@ impl Session {
             surfaces.extend(opened.into_iter().flatten().map(Arc::new));
             sources.meshes.push(source.without_embedded());
         }
+        let external_view = file.external.as_ref().map(|series| {
+            if let Some(params) = file.external_view {
+                let parsed = serde_json::from_value::<crate::external_view::ExternalView>(params).map_err(|e| e.to_string());
+                match parsed.and_then(|view| view.validate(series).map(|()| view)) {
+                    Ok(view) => return view,
+                    Err(e) => warnings.push(format!("the saved external result view could not be restored: {e}")),
+                }
+            }
+            crate::external_view::ExternalView::initial(series)
+        });
+        let external_generation = if file.external.is_some() { next_revision() } else { 0 };
         let mut session = Session {
             model,
+            saved_external_view: external_view.clone(),
+            external_view,
+            external_generation,
+            saved_external_generation: external_generation,
+            external: file.external.map(Arc::new),
             design,
             surfaces,
             sources,
@@ -461,6 +500,7 @@ fn summary(s: &Session, warnings: &[String]) -> Value {
         "design": s.design.as_ref().map(|d| d.name.clone()),
         "surfaces": s.surfaces.len(),
         "results": s.result_steps().map(|(step, current)| json!({"step": step, "stale": !current})).collect::<Vec<_>>(),
+        "external_frames": s.external_results().map_or(0, |data| data.frames.len()),
         "migrated_from": s.migrated_from,
         "warnings": warnings,
     })
@@ -493,7 +533,7 @@ fn load(s: &mut Session, bytes: &[u8], path: Option<String>, saved: bool) -> Res
     // The view the file was saved showing comes back (once its step is solved, when it is not).
     let mut warnings = warnings;
     let shown = match s.view.current.clone() {
-        Some(name) => match super::views::show(s, &name) {
+        Some(name) => match super::views::show_on_open(s, &name) {
             Ok(r) => {
                 warnings.extend(r["warnings"].as_array().into_iter().flatten().filter_map(|w| w.as_str().map(str::to_string)));
                 json!({"name": name, "pending": r["pending"], "camera": r["camera"]})
@@ -544,6 +584,12 @@ fn contents(s: &Session, keep: Keep) -> Vec<String> {
     if keep.results && !steps.is_empty() {
         let count = if steps.len() == 1 { "1 step".to_string() } else { format!("{} steps", steps.len()) };
         out.push(format!("the results of {count} ({})", steps.join(", ")));
+    }
+    if keep.results
+        && let Some(series) = s.external_results()
+    {
+        let count = series.frames.len();
+        out.push(format!("{count} imported result frame{}", if count == 1 { "" } else { "s" }));
     }
     let named: Vec<&str> = s.sources.design.iter().chain(&s.sources.meshes).map(|f| f.path()).collect();
     if !named.is_empty() && keep.geometry {
@@ -663,6 +709,75 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn imported_frames_and_selected_deformation_survive_a_project_round_trip() {
+        use fieldcraft_io::external::{Cell, Field, Frame, Grid, Series};
+        let frame = |time| Frame {
+            displacement_unit: None,
+            time,
+            grid: Grid { points: vec![[0.0; 3], [1.0, 0.0, 0.0]], cells: vec![Cell { vtk_type: 3, points: vec![0, 1] }] },
+            point_data: std::collections::BTreeMap::from([(
+                "deflection".into(),
+                Field { components: 3, values: vec![0.0, 0.0, 0.0, 0.0, time, 0.0] },
+            )]),
+            cell_data: Default::default(),
+        };
+        let series = Series { frames: vec![frame(0.0), frame(0.125)] };
+        let base = dir("imported-frames");
+        let path = base.join("result.fieldcraft");
+        let mut s = Session::default();
+        crate::cmd::solve::tests::cantilever(&mut s);
+        s.execute("solve.static", &json!({"step": "Bend"})).unwrap();
+        s.execute("results.contour", &json!({"step": "Bend", "field": "von_mises"})).unwrap();
+        s.execute("view.save", &json!({"name": "Native stress", "camera": {"yaw": 45.0, "pitch": 15.0, "fit": true}})).unwrap();
+        s.execute("file.save_as", &json!({"path": path})).unwrap();
+        let revision = s.revision();
+        s.set_external_results(series.clone()).unwrap();
+        assert!(s.is_dirty());
+        assert_eq!(s.revision(), revision);
+        assert!(s.result("Bend").is_some());
+        let view = s.external_view.as_mut().unwrap();
+        view.frame = 1;
+        view.displacement = Some("deflection".into());
+        view.scale = 8.0;
+        let selected = view.clone();
+        s.execute("file.save", &json!({})).unwrap();
+        assert!(!s.is_dirty());
+        let mut reopened = Session::default();
+        let summary = reopened.execute("file.open", &json!({"path": path})).unwrap();
+        assert_eq!(summary["external_frames"], 2);
+        assert_eq!(summary["view"]["name"], "Native stress");
+        assert!(summary["view"]["camera"].is_null(), "the imported display fits its own grid");
+        assert!(!reopened.is_dirty());
+        assert_eq!(reopened.external_results(), Some(&series));
+        assert_eq!(reopened.external_view.as_ref(), Some(&selected));
+        assert!(reopened.result("Bend").is_some());
+        let damaged = base.join("truncated.fieldcraft");
+        let bytes = with_part_edited(&std::fs::read(&path).unwrap(), "external.bin", |b| b.truncate(b.len() - 1));
+        std::fs::write(&damaged, bytes).unwrap();
+        assert!(reopened.execute("file.open", &json!({"path": damaged})).is_err());
+        assert_eq!(reopened.external_view.as_ref(), Some(&selected));
+        let design = base.join("different.solidcraft");
+        std::fs::write(&design, plate_design(&Plate::default()).unwrap()).unwrap();
+        reopened.execute("geometry.open", &json!({"path": design, "model": "new"})).unwrap();
+        assert!(reopened.external_results().is_none());
+        reopened.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(reopened.external_results(), Some(&series));
+        assert_eq!(reopened.external_view.as_ref(), Some(&selected));
+        reopened.external_view.as_mut().unwrap().scale = 4.0;
+        assert!(reopened.is_dirty());
+        let lean = base.join("mesh-only.fieldcraft");
+        reopened.execute("file.save_as", &json!({"path": lean, "results": false})).unwrap();
+        reopened.execute("file.open", &json!({"path": lean})).unwrap();
+        assert!(reopened.external_results().is_none() && reopened.external_view.is_none());
+        reopened.set_external_results(series).unwrap();
+        reopened.execute("file.new", &json!({})).unwrap();
+        assert!(reopened.external_results().is_none() && reopened.external_view.is_none());
+        assert_eq!(OpenFileKind::of("step.PvTu"), Some(OpenFileKind::Results));
+        assert_eq!(OpenFileKind::of("run.PvD"), Some(OpenFileKind::Results));
+        assert_eq!(OpenFileKind::of("run.VtU").unwrap().command(), "results.import.vtu");
     }
 
     fn defined(s: &mut Session) {
@@ -1521,8 +1636,8 @@ mod tests {
         u.execute("model.material.edit", &json!({"name": "Mat", "elastic": {"type": "isotropic", "young": 1000, "poisson": 0}, "density": 1}))
             .unwrap();
         assert_eq!(u.result_steps().collect::<Vec<_>>(), vec![("Bend", true), ("Modes", true)]);
-        // Autosaves keep no results.
-        assert!(fieldcraft_io::read(&u.file_bytes(None).unwrap()).unwrap().results.is_empty());
+        // Autosaves omit native solver results.
+        assert!(fieldcraft_io::read(&u.recovery_bytes().unwrap()).unwrap().results.is_empty());
 
         // Results of another results encoding: the model opens without them, saying why.
         let later = with_part_edited(&std::fs::read(&path).unwrap(), "results.bin", |b| b[6..8].copy_from_slice(b"77"));
@@ -1793,8 +1908,8 @@ mod tests {
     }
 
     /// The models FieldCraft 0.8.0 and 0.8.1 wrote (format 3, crates/io/tests/formats/v3) open
-    /// through the 3 → 4 step and say so, with their design, imported surface and results; saving
-    /// writes format 4 and keeps the format 3 file as it was.
+    /// through the migration chain with their design, imported surface and results. Saving
+    /// writes the current format and keeps the original format 3 file.
     #[test]
     fn format_3_models_open_migrated() {
         let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../io/tests/formats/v3");

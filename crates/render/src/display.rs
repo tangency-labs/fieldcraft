@@ -159,6 +159,62 @@ fn face_key(e: &[u32], face: &[usize]) -> Option<[u32; 4]> {
     Some(k)
 }
 
+type IndexedFace = [u32; 8];
+const DISPLAY_LIMIT: &str = "external grid exceeds the display memory budget";
+
+fn reserve_display<T>(output: &mut Vec<T>, n: usize, budget: &mut usize) -> Result<(), &'static str> {
+    let bytes = n.checked_mul(size_of::<T>()).ok_or(DISPLAY_LIMIT)?;
+    *budget = budget.checked_sub(bytes).ok_or(DISPLAY_LIMIT)?;
+    output.try_reserve_exact(n).map_err(|_| DISPLAY_LIMIT)
+}
+
+/// Start at the smallest corner ID and walk toward its smaller neighbor, retaining every
+/// mid-edge sample in its edge position. Return which direction this face was walked.
+fn indexed_face(nodes: &[u32], face: &[usize], canonical: &[u32]) -> Option<(IndexedFace, bool)> {
+    let n = face_corner_count(face.len());
+    if !matches!((n, face.len()), (3, 3 | 6) | (4, 4 | 8)) {
+        return None;
+    }
+    let id = |i: usize| canonical.get(*nodes.get(*face.get(i)?)? as usize).copied();
+    let mut corners = [u32::MAX; 4];
+    for (i, slot) in corners.iter_mut().take(n).enumerate() {
+        *slot = id(i)?;
+    }
+    let corners = corners.get(..n)?;
+    let (start, _) = corners.iter().enumerate().min_by_key(|(_, id)| *id)?;
+    let reversed = corners.get((start + n - 1) % n)? < corners.get((start + 1) % n)?;
+    let mut key = [u32::MAX; 8];
+    for i in 0..n {
+        let current = if reversed { (start + n - i) % n } else { (start + i) % n };
+        *key.get_mut(i)? = *corners.get(current)?;
+        if face.len() != n {
+            let edge = if reversed { (current + n - 1) % n } else { current };
+            *key.get_mut(n + i)? = id(n + edge)?;
+        }
+    }
+    Some((key, reversed))
+}
+
+/// Classify the deformed cell against the same triangle planes for both copies of an
+/// interface. A collapsed or folded cell with corners on both sides leaves the face visible.
+fn indexed_face_side(key: &IndexedFace, face: &[usize], corners: &[u32], positions: &[[f64; 3]]) -> Option<bool> {
+    let n = face_corner_count(face.len());
+    let pos = |id: u32| positions.get(id as usize).copied().map(Vec3::from);
+    let a = pos(*key.first()?)?;
+    let mut side = None;
+    for i in 1..n - 1 {
+        let normal = (pos(*key.get(i)?)? - a).cross(pos(*key.get(i + 1)?)? - a);
+        for (_, &corner) in corners.iter().enumerate().filter(|(local, _)| !face.contains(local)) {
+            let distance = normal.dot(pos(corner)? - a);
+            if distance == 0.0 || !distance.is_finite() || side.is_some_and(|s| s != (distance > 0.0)) {
+                return None;
+            }
+            side = Some(distance > 0.0);
+        }
+    }
+    side
+}
+
 /// Newell's normal of a polygon (robust for non-planar quads); `None` when degenerate.
 pub(crate) fn polygon_normal(p: &[Vec3]) -> Option<Vec3> {
     let mut n = Vec3::ZERO;
@@ -198,20 +254,6 @@ impl DisplayMesh {
             out.nodes.push(DisplayNode { label, p });
             out.bounds.add(p);
         }
-        // Faces two solid elements share are inside the mesh: sort every solid face's key and
-        // keep the ones that occur more than once.
-        let mut keys: Vec<[u32; 4]> = model
-            .elements()
-            .iter()
-            .filter(|(l, _)| shown(l))
-            .map(|(_, e)| e)
-            .filter(|e| e.kind.dimension() == 3)
-            .flat_map(|e| drawn_faces(e.kind).iter().filter_map(|f| face_key(&e.nodes, f)))
-            .collect();
-        keys.sort_unstable();
-        let mut inner: Vec<[u32; 4]> = keys.windows(2).filter(|w| w.first() == w.get(1)).filter_map(|w| w.first().copied()).collect();
-        inner.dedup();
-        drop(keys);
         // Element edges on geometry edges (by their corner nodes): the mesh's feature lines.
         let classification = model.classification();
         let mut features: Vec<(u32, u32)> = Vec::new();
@@ -228,33 +270,149 @@ impl DisplayMesh {
         }
         features.sort_unstable();
         features.dedup();
-        // (segment's nodes, the element edge's corners), each sorted.
-        let mut edges: Vec<((u32, u32), (u32, u32))> = Vec::new();
-        for (&label, e) in model.elements().iter().filter(|(l, _)| shown(l)) {
-            if e.kind.dimension() == 1 {
-                if let (Some(&na), Some(&nb)) = (e.nodes.first(), e.nodes.get(1))
+        let elements = model.elements().iter().filter(|(l, _)| shown(l)).map(|(&label, e)| (label, e.kind, e.nodes.as_slice()));
+        // The native mesh shares node IDs across adjacent elements.
+        let mut keys: Vec<[u32; 4]> = elements
+            .clone()
+            .filter(|(_, kind, _)| kind.dimension() == 3)
+            .flat_map(|(_, kind, nodes)| drawn_faces(kind).iter().filter_map(move |f| face_key(nodes, f)))
+            .collect();
+        keys.sort_unstable();
+        let mut inner: Vec<_> = keys.windows(2).filter(|w| w.first() == w.get(1)).filter_map(|w| w.first().copied()).collect();
+        inner.dedup();
+        drop(keys);
+        out.add_elements(elements, pos, &features, |nodes, f| face_key(nodes, f).is_some_and(|k| inner.binary_search(&k).is_ok()), Vec::new());
+        out
+    }
+
+    /// Construct drawable elements from a zero-based visualization grid. Separate IDs may
+    /// coincide across a solid interface. Only face visibility uses that coincidence; every
+    /// triangle keeps the source cell and point indices used for coloring and deformation.
+    pub fn from_indexed<'a>(
+        positions: &[[f64; 3]],
+        elements: impl Iterator<Item = (u32, ElementKind, &'a [u32])> + Clone,
+        max_bytes: usize,
+    ) -> Result<Self, &'static str> {
+        let mut budget = max_bytes;
+        let mut out = Self::default();
+        reserve_display(&mut out.nodes, positions.len(), &mut budget)?;
+        for (index, &xyz) in positions.iter().enumerate() {
+            let label = u32::try_from(index).map_err(|_| DISPLAY_LIMIT)?;
+            let p = Vec3::from(xyz);
+            out.nodes.push(DisplayNode { label, p });
+            out.bounds.add(p);
+        }
+
+        let face_count =
+            elements.clone().filter(|(_, kind, _)| kind.dimension() == 3).fold(0usize, |n, (_, kind, _)| n.saturating_add(drawn_faces(kind).len()));
+        let mut canonical = Vec::new();
+        let mut inner = Vec::new();
+        if face_count > 0 {
+            // Scratch allocations die before drawable triangles and edges are built. Retain
+            // the canonical IDs and paired face keys as the visibility lookup.
+            reserve_display(&mut canonical, positions.len(), &mut budget)?;
+            canonical.extend(0..u32::try_from(positions.len()).map_err(|_| DISPLAY_LIMIT)?);
+            let mut scratch_budget = budget;
+            let mut order = Vec::new();
+            reserve_display(&mut order, positions.len(), &mut scratch_budget)?;
+            order.extend_from_slice(&canonical);
+            let key = |i: &u32| positions.get(*i as usize).map(|xyz| xyz.map(|x| if x == 0.0 { 0 } else { x.to_bits() }));
+            order.sort_unstable_by_key(key);
+            for group in order.chunk_by(|a, b| key(a) == key(b)) {
+                if let Some(&id) = group.iter().min() {
+                    for &i in group {
+                        if let Some(slot) = canonical.get_mut(i as usize) {
+                            *slot = id;
+                        }
+                    }
+                }
+            }
+            drop(order);
+
+            let mut keys = Vec::new();
+            scratch_budget = budget;
+            reserve_display(&mut keys, face_count, &mut scratch_budget)?;
+            for (_, kind, nodes) in elements.clone().filter(|(_, kind, _)| kind.dimension() == 3) {
+                keys.extend(drawn_faces(kind).iter().filter_map(|face| {
+                    let (key, reversed) = indexed_face(nodes, face, &canonical)?;
+                    let side = indexed_face_side(&key, face, nodes.get(..kind.corner_count())?, positions);
+                    Some((key, reversed, side))
+                }));
+            }
+            keys.sort_unstable();
+            // Two oppositely wound faces cancel only if the deformed cells still lie on
+            // opposite sides. Exaggerated displacements can invert a cell across its neighbor.
+            let opposite =
+                |group: &[(IndexedFace, bool, Option<bool>)]| matches!(group, [a,b] if a.1 != b.1 && a.2.zip(b.2).is_some_and(|(s,t)| s != t));
+            let count = keys.chunk_by(|a, b| a.0 == b.0).filter(|g| opposite(g)).count();
+            reserve_display(&mut inner, count, &mut scratch_budget)?;
+            budget -= count * size_of::<IndexedFace>();
+            for group in keys.chunk_by(|a, b| a.0 == b.0).filter(|g| opposite(g)) {
+                if let Some(&(face, _, _)) = group.first() {
+                    inner.push(face);
+                }
+            }
+        }
+        let hidden = |nodes: &[u32], face: &[usize]| {
+            !inner.is_empty() && indexed_face(nodes, face, &canonical).is_some_and(|(k, _)| inner.binary_search(&k).is_ok())
+        };
+        let mut triangles = 0usize;
+        let mut sides = 0usize;
+        let mut lines = 0usize;
+        for (_, kind, nodes) in elements.clone() {
+            if kind.dimension() == 1 {
+                lines = lines.saturating_add(1);
+            } else {
+                for f in drawn_faces(kind) {
+                    if kind.dimension() != 3 || !hidden(nodes, f) {
+                        triangles = triangles.saturating_add(f.len().saturating_sub(2));
+                        sides = sides.saturating_add(f.len());
+                    }
+                }
+            }
+        }
+        let mut edges = Vec::new();
+        reserve_display(&mut edges, sides, &mut budget)?;
+        reserve_display(&mut out.edges, sides, &mut budget)?;
+        reserve_display(&mut out.tris, triangles, &mut budget)?;
+        reserve_display(&mut out.lines, lines, &mut budget)?;
+        out.add_elements(elements, |id| positions.get(id as usize).copied().map(Vec3::from), &[], hidden, edges);
+        Ok(out)
+    }
+
+    fn add_elements<'a>(
+        &mut self,
+        elements: impl Iterator<Item = (u32, ElementKind, &'a [u32])>,
+        pos: impl Fn(u32) -> Option<Vec3>,
+        features: &[(u32, u32)],
+        hidden: impl Fn(&[u32], &[usize]) -> bool,
+        mut edges: Vec<((u32, u32), (u32, u32))>,
+    ) {
+        for (label, kind, nodes) in elements {
+            if kind.dimension() == 1 {
+                if let (Some(&na), Some(&nb)) = (nodes.first(), nodes.get(1))
                     && let (Some(a), Some(b)) = (pos(na), pos(nb))
                 {
-                    out.lines.push(DisplayLine { a, b, nodes: [na, nb], kind: e.kind, element: label });
+                    self.lines.push(DisplayLine { a, b, nodes: [na, nb], kind, element: label });
                 }
                 continue;
             }
-            let Some(at) = e.nodes.iter().map(|&n| pos(n)).collect::<Option<Vec<Vec3>>>() else { continue };
-            if at.len() != e.kind.node_count() {
+            let Some(at) = nodes.iter().map(|&n| pos(n)).collect::<Option<Vec<Vec3>>>() else { continue };
+            if at.len() != kind.node_count() {
                 continue;
             }
-            let solid = e.kind.dimension() == 3;
-            let element_centre = centre(at.get(..e.kind.corner_count()).unwrap_or(&at));
-            for (number, f) in drawn_faces(e.kind).iter().enumerate() {
+            let solid = kind.dimension() == 3;
+            let element_centre = centre(at.get(..kind.corner_count()).unwrap_or(&at));
+            for (number, f) in drawn_faces(kind).iter().enumerate() {
                 let face = u8::try_from(number + 1).unwrap_or(u8::MAX);
-                if solid && face_key(&e.nodes, f).is_some_and(|k| inner.binary_search(&k).is_ok()) {
+                if solid && hidden(nodes, f) {
                     continue;
                 }
                 // The face's boundary: corner, mid-side node, corner, … (corners only when linear).
                 let corners = face_corner_count(f.len());
                 let ring: Vec<usize> = (0..corners).flat_map(|j| std::iter::once(j).chain((f.len() > corners).then_some(corners + j))).collect();
                 let Some(ring) =
-                    ring.iter().map(|&k| f.get(k).and_then(|&i| Some((*at.get(i)?, *e.nodes.get(i)?)))).collect::<Option<Vec<(Vec3, u32)>>>()
+                    ring.iter().map(|&k| f.get(k).and_then(|&i| Some((*at.get(i)?, *nodes.get(i)?)))).collect::<Option<Vec<(Vec3, u32)>>>()
                 else {
                     continue;
                 };
@@ -265,7 +423,7 @@ impl DisplayMesh {
                 }
                 for [a, b, c] in face_triangles(ring.len(), corners < ring.len()) {
                     if let (Some(&(pa, la)), Some(&(pb, lb)), Some(&(pc, lc))) = (ring.get(a), ring.get(b), ring.get(c)) {
-                        out.tris.push(DisplayTri { p: [pa, pb, pc], nodes: [la, lb, lc], normal, kind: e.kind, element: label, face });
+                        self.tris.push(DisplayTri { p: [pa, pb, pc], nodes: [la, lb, lc], normal, kind, element: label, face });
                     }
                 }
                 let step = ring.len() / corners.max(1);
@@ -278,14 +436,10 @@ impl DisplayMesh {
         }
         edges.sort_unstable();
         edges.dedup();
-        out.edges = edges
-            .into_iter()
-            .filter_map(|((a, b), corners)| {
-                let feature = features.binary_search(&corners).is_ok();
-                Some(DisplayEdge { p: [pos(a)?, pos(b)?], nodes: [a, b], corners: [corners.0, corners.1], feature })
-            })
-            .collect();
-        out
+        self.edges.extend(edges.into_iter().filter_map(|((a, b), corners)| {
+            let feature = features.binary_search(&corners).is_ok();
+            Some(DisplayEdge { p: [pos(a)?, pos(b)?], nodes: [a, b], corners: [corners.0, corners.1], feature })
+        }));
     }
 
     /// Add a triangulated geometry surface: `positions`, counter-clockwise `triangles` seen from
@@ -480,6 +634,49 @@ mod tests {
         // Euler on the skin: V - E + F = 2 (two nodes are inside).
         let skin_nodes = 4 * 3 * 3 - 2;
         assert_eq!(skin_nodes as i64 - d.edges.len() as i64 + 32, 2);
+    }
+
+    #[test]
+    fn cell_local_point_ids_keep_their_fields_across_a_hidden_solid_interface() {
+        let mut p = [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.], [-0., 0., 0.], [0., 1., 0.], [1., 0., 0.], [0., 0., -1.]];
+        let cells = [
+            (11, ElementKind::Tet4, [0, 1, 2, 3].as_slice()),
+            (12, ElementKind::Tet4, [4, 5, 6, 7].as_slice()),
+            (13, ElementKind::Tri3, [4, 5, 6].as_slice()),
+        ];
+        let view = DisplayMesh::from_indexed(&p, cells.into_iter(), 1 << 20).unwrap();
+        assert_eq!(view.tris.len(), 7, "six exterior faces plus the explicit shell");
+        assert_eq!(view.nodes.len(), 8);
+        assert!(view.tris.iter().filter(|t| t.element == 11).all(|t| t.nodes.iter().all(|n| *n < 4)));
+        assert!(view.tris.iter().filter(|t| t.element == 12).all(|t| t.nodes.iter().all(|n| *n >= 4)));
+        assert!(view.tris.iter().any(|t| t.element == 13 && t.nodes == [4, 5, 6]));
+        assert!(DisplayMesh::from_indexed(&p, cells.into_iter(), 128).is_err());
+        p[7][2] = 2.;
+        let inverted = DisplayMesh::from_indexed(&p, cells.into_iter(), 1 << 20).unwrap();
+        assert_eq!(inverted.tris.len(), 9, "both bases remain exposed when deformation puts the apices on the same side");
+        p[7][2] = -1.;
+        // A discontinuous displacement opens a gap. Both exposed solid faces return.
+        for point in &mut p[4..] {
+            point[2] -= 0.125;
+        }
+        let separated = DisplayMesh::from_indexed(&p, cells.into_iter(), 1 << 20).unwrap();
+        assert_eq!(separated.tris.len(), 9);
+    }
+
+    #[test]
+    fn quadratic_interfaces_require_matching_mid_edge_samples() {
+        let mut points = Vec::new();
+        for corners in [[[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]], [[0., 0., 0.], [0., 1., 0.], [1., 0., 0.], [0., 0., -1.]]] {
+            points.extend(corners);
+            for edge in ElementKind::Tet10.edges() {
+                points.push(std::array::from_fn(|axis| (corners[edge[0]][axis] + corners[edge[1]][axis]) * 0.5));
+            }
+        }
+        let ids: Vec<_> = (0_u32..20).collect();
+        let cells = [(0, ElementKind::Tet10, &ids[..10]), (1, ElementKind::Tet10, &ids[10..])];
+        assert_eq!(DisplayMesh::from_indexed(&points, cells.into_iter(), 1 << 20).unwrap().tris.len(), 24);
+        points[14][2] -= 0.1;
+        assert_eq!(DisplayMesh::from_indexed(&points, cells.into_iter(), 1 << 20).unwrap().tris.len(), 32);
     }
 
     /// Hidden elements (a hidden body's) are not drawn; the face they shared with a shown one

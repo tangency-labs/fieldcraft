@@ -174,11 +174,19 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     let name = view_name(p)?;
     let camera = camera_param(s, p)?.or_else(|| s.camera.clone());
     let with_results = super::opt::<bool>(p, "results")?.unwrap_or(true);
-    let results = if with_results { s.results_view.as_ref().and_then(|v| capture_results(s, v)) } else { None };
+    let external_shown = crate::external_view::visible(s).is_some();
+    let results = if with_results && !external_shown { s.results_view.as_ref().and_then(|v| capture_results(s, v)) } else { None };
     if camera.is_none() && results.is_none() {
         return Err(EngineError::Params("nothing to keep: give a `camera`, or show a result first".into()));
     }
-    let view = SavedView { name: name.clone(), units: s.units().clone(), camera: camera.and_then(|a| a.json().as_object().cloned()), results };
+    let external_camera = camera.is_some() && external_shown;
+    let view = SavedView {
+        name: name.clone(),
+        units: s.units().clone(),
+        camera: camera.and_then(|a| a.json().as_object().cloned()),
+        external_camera,
+        results,
+    };
     let replaced = match s.view.views.iter_mut().find(|v| v.name == name) {
         Some(v) => {
             *v = view.clone();
@@ -201,6 +209,21 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
 /// camera asked of the hosts. What no longer applies comes back as warnings; `pending` when its
 /// step has no result yet.
 pub(crate) fn show(s: &mut Session, name: &str) -> Result<Value> {
+    apply_saved(s, name, true)
+}
+
+/// Rebuild the native display state behind an imported grid when opening a project.
+/// A saved camera for the analysis mesh may not frame the independent imported grid.
+pub(super) fn show_on_open(s: &mut Session, name: &str) -> Result<Value> {
+    let external = s.external_view.take();
+    let external_shown = external.as_ref().is_some_and(|v| v.show);
+    let restore_camera = s.view.saved(name).is_some_and(|view| view.external_camera == external_shown);
+    let result = apply_saved(s, name, restore_camera);
+    s.external_view = external;
+    result
+}
+
+fn apply_saved(s: &mut Session, name: &str, restore_camera: bool) -> Result<Value> {
     let view = s.view.saved(name).cloned().ok_or_else(|| {
         let names: Vec<&str> = s.view.views.iter().map(|v| v.name.as_str()).collect();
         EngineError::Params(format!(
@@ -225,7 +248,7 @@ pub(crate) fn show(s: &mut Session, name: &str) -> Result<Value> {
         }
     }
     let mut camera = Value::Null;
-    if let Some(c) = &view.camera {
+    if restore_camera && let Some(c) = &view.camera {
         match crate::view::camera(&Value::Object(c.clone())) {
             Ok(aim) => {
                 let aim = aim_in(&aim, &view.units, s.units());

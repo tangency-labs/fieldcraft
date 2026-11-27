@@ -767,14 +767,10 @@ pub(crate) fn command_done(s: &Session, journaled: bool, changed: bool, id: &str
     let crashed = matches!(result, Err(EngineError::Internal { .. }));
     let kind = if crashed { "command_panic" } else { "recovered_panic" };
     let mut notes = Vec::new();
-    let model = match s.file_bytes(None) {
-        Ok(b) if b.len() <= MAX_MODEL_BYTES => Some(b),
-        Ok(b) => {
-            notes.push(format!("the model ({} MB) is larger than {} MB and was not copied", b.len() >> 20, MAX_MODEL_BYTES >> 20));
-            None
-        }
-        Err(e) => {
-            notes.push(format!("the model could not be written: {e}"));
+    let model = match report_model(s) {
+        Ok(bytes) => Some(bytes),
+        Err(note) => {
+            notes.push(note);
             None
         }
     };
@@ -793,6 +789,20 @@ pub(crate) fn command_done(s: &Session, journaled: bool, changed: bool, id: &str
         };
         write_report(state, kind, Some(&p), extra);
     }
+}
+
+/// Crash diagnostics have their own small snapshot budget. Refuse a large external dataset
+/// before encoding it, while leaving the independent full recovery autosave available.
+fn report_model(s: &Session) -> std::result::Result<Vec<u8>, String> {
+    let imported = s.external_results().map_or(0, |series| series.frames.iter().map(fieldcraft_io::external::Frame::storage_bytes).sum::<usize>());
+    if imported > MAX_MODEL_BYTES {
+        return Err(format!("the imported frames exceed the {} MiB crash snapshot budget and the model was not copied", MAX_MODEL_BYTES >> 20));
+    }
+    let bytes = s.recovery_bytes().map_err(|e| format!("the model could not be written: {e}"))?;
+    if bytes.len() > MAX_MODEL_BYTES {
+        return Err(format!("the model ({} MB) is larger than {} MB and was not copied", bytes.len() >> 20, MAX_MODEL_BYTES >> 20));
+    }
+    Ok(bytes)
 }
 
 /// An autosave just wrote the session to `file`: replays start from there.
@@ -815,15 +825,18 @@ fn rebase_on_session(j: &mut Journal, s: &Session) {
         j.rebase(&json!({ "file": p }), opened);
         return;
     }
-    if s.journal.is_empty() && s.model.nodes().is_empty() && s.model.elements().is_empty() && s.design.is_none() && s.surfaces.is_empty() {
+    if s.journal.is_empty()
+        && s.model.nodes().is_empty()
+        && s.model.elements().is_empty()
+        && s.design.is_none()
+        && s.surfaces.is_empty()
+        && s.external_results().is_none()
+    {
         j.rebase(&json!("new"), opened);
         return;
     }
     let base = j.path.as_deref().map(base_copy);
-    let copied = base.as_ref().is_some_and(|b| match s.file_bytes(None) {
-        Ok(bytes) if bytes.len() <= MAX_MODEL_BYTES => fieldcraft_io::fs::write_atomic(b, &bytes, false).is_ok(),
-        _ => false,
-    });
+    let copied = base.as_ref().is_some_and(|b| report_model(s).is_ok_and(|bytes| fieldcraft_io::fs::write_atomic(b, &bytes, false).is_ok()));
     match base.filter(|_| copied) {
         Some(b) => j.rebase(&json!({ "copy": b.to_string_lossy() }), opened),
         None => j.rebase(&json!("unknown"), opened),

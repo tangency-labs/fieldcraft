@@ -60,6 +60,7 @@
 - [Architecture](architecture.md)
 - [Control protocol](control-protocol.md)
 - [The .fieldcraft file](formats/fieldcraft.md)
+- [Import external solver results](formats/vtk-results.md)
 - [Face-tagged meshes](formats/tagged-mesh.md)
 - [Features](features.md)
 - [Units inventory](units-inventory.md)

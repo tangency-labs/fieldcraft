@@ -20,3 +20,8 @@ thiserror = { workspace = true }
 log = { workspace = true }
 zip = { workspace = true }
 sha2 = { workspace = true }
+# VTK XML metadata and binary DataArray encodings.
+roxmltree = { version = "0.21", default-features = false, features = ["std"] }
+quick-xml = { workspace = true }
+base64 = "0.22"
+flate2 = "1"

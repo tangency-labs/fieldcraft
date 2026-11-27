@@ -150,8 +150,8 @@ fn has_content(app: &ModelApp, stage: Stage) -> bool {
         Stage::BoundaryConditions => listed(Def::BoundaryCondition),
         Stage::Loads => listed(Def::Load),
         Stage::Step => listed(Def::Step),
-        // Solving and showing results both act on what Results lists.
-        Stage::Solve | Stage::Results => holds(app, "results"),
+        // Imported fields have their own grid and do not advance the native solve workflow.
+        Stage::Solve | Stage::Results => has_native_results(app),
     }
 }
 
@@ -161,9 +161,13 @@ fn holds(app: &ModelApp, node: &str) -> bool {
     match node {
         "geometry" => app.session.design.is_some() || !app.session.surfaces.is_empty() || !geometry_items(m).is_empty(),
         "mesh" => !m.nodes().is_empty() || !m.seeds().is_empty() || !mesh_items(m).is_empty(),
-        "results" => app.session.result_steps().next().is_some() || !saved_items(app).is_empty(),
+        "results" => app.session.external_results().is_some() || has_native_results(app),
         key => GROUPS.iter().find(|(k, ..)| *k == key).is_some_and(|(_, _, kinds)| !group_items(m, key, kinds).is_empty()),
     }
+}
+
+fn has_native_results(app: &ModelApp) -> bool {
+    app.session.result_steps().next().is_some() || !app.session.view.views.is_empty() || !app.session.view.renders.is_empty()
 }
 
 /// Whether the tree draws `node`: once it holds items, or once the workflow reaches one of its
@@ -987,7 +991,7 @@ enum Act {
     /// Select the item a right click opened its menu on (nothing for an item that cannot be).
     Focus(Target),
     ShowResult(String),
-    /// A ghost row's command.
+    /// The interactive command of a workflow or imported result row.
     Start(&'static str),
     /// An item menu's entry, or an item's eye.
     Menu(Target, Action),
@@ -1574,7 +1578,10 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
     // Results.
     if shown(app, &stages, "results") {
         let steps: Vec<(String, bool)> = app.session.result_steps().map(|(n, c)| (n.to_string(), c)).collect();
-        let displayed = app.session.results_view.as_ref().map(|v| v.step.clone());
+        let imported = app.session.external_results().map(|s| s.frames.len());
+        let count = steps.len() + usize::from(imported.is_some());
+        let external_shown = fieldcraft_engine::external_view::visible(&app.session).is_some();
+        let displayed = app.session.results_view.as_ref().filter(|_| !external_shown).map(|v| v.step.clone());
         let (mark, tip) = state("results");
         let r = draw_row(
             app,
@@ -1586,8 +1593,8 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
                 icon: Some("results.contour"),
                 label: "Results",
                 node: Some("results"),
-                note: Some(format!("{}", steps.len())),
-                dim: steps.is_empty(),
+                note: Some(count.to_string()),
+                dim: count == 0,
                 mark,
                 tip,
                 ..Default::default()
@@ -1608,6 +1615,24 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
                 );
                 if r.clicked {
                     acts.push(Act::ShowResult(step));
+                }
+            }
+            if let Some(frames) = imported {
+                let note = Some(format!("{frames} {}", if frames == 1 { "frame" } else { "frames" }));
+                let row = Row {
+                    depth: 2,
+                    icon: Some("results.import.vtu"),
+                    label: "Imported results",
+                    note,
+                    selected: external_shown,
+                    ..Default::default()
+                };
+                let r = draw_row(app, ui, egui::Id::unique("fc_row_external_results"), &row);
+                if let Some(resp) = r.response {
+                    app.place("browser/external_results", resp.rect);
+                }
+                if r.clicked {
+                    acts.push(Act::Start("results.external.view"));
                 }
             }
             for item in saved_items(app) {
@@ -2035,6 +2060,30 @@ pub(crate) mod tests {
         draw(app, ctx, size, vec![press(at, true)]);
         draw(app, ctx, size, vec![press(at, false)]);
         settle(app, ctx, size);
+    }
+
+    #[test]
+    fn imported_series_has_one_browser_row_and_reopens_its_saved_frame() {
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/recipes/vtu-bending-strip/bending.pvd");
+        let project = std::env::temp_dir().join(format!("fieldcraft-browser-series-{}.fieldcraft", std::process::id()));
+        let mut app = ModelApp::new(Session::default());
+        app.run("results.import.vtu", json!({"path":source})).unwrap();
+        app.run("results.external.view", json!({"frame":1,"show":false})).unwrap();
+        app.run("file.save_as", json!({"path":project})).unwrap();
+        let mut reopened = ModelApp::new(Session::default());
+        reopened.run("file.open", json!({"path":project})).unwrap();
+        let _ = std::fs::remove_file(project);
+        assert_eq!(shown_nodes(&mut reopened), ["geometry", "results"]);
+        assert!(reopened.session.model.steps().is_empty());
+        let size = vec2(1400., 1000.);
+        let ctx = egui::Context::default();
+        settle(&mut reopened, &ctx, size);
+        let row = region(&reopened, "browser/external_results");
+        click(&mut reopened, &ctx, size, row.center());
+        let (_, view) = fieldcraft_engine::external_view::visible(&reopened.session).unwrap();
+        assert_eq!(view.frame, 1);
+        assert_eq!(reopened.ui.tab, fieldcraft_engine::catalogue::Tab::Results);
+        assert!(reopened.dialog.is_none());
     }
 
     /// The browser is a card at the top left of the viewport, a gap from the ribbon and the

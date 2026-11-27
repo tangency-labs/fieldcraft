@@ -29,6 +29,9 @@ pub struct Field {
     pub label: &'static str,
     pub kind: Kind,
     pub required: bool,
+    /// An edited text box sends an empty string when cleared. Untouched optional fields
+    /// still omit the key, which patch commands use to preserve the current selection.
+    pub clearable: bool,
     /// The value the form starts with, as JSON text; `None` leaves the field empty.
     pub default: Option<&'static str>,
     /// What an empty field means ("every body", "1/25 of the diagonal"), or a short note.
@@ -537,10 +540,14 @@ impl Dim {
 // ---- Building fields (const, so schemas are static tables) ----
 
 const fn field(key: &'static str, label: &'static str, kind: Kind) -> Field {
-    Field { key, label, kind, required: false, default: None, hint: "", help: "", notes: &[], numbers: &[] }
+    Field { key, label, kind, required: false, clearable: false, default: None, hint: "", help: "", notes: &[], numbers: &[] }
 }
 
 impl Field {
+    pub const fn clearable(self) -> Field {
+        Field { clearable: true, ..self }
+    }
+
     /// Required.
     pub const fn req(self) -> Field {
         Field { required: true, ..self }

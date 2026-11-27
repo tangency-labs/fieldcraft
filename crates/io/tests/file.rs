@@ -93,6 +93,26 @@ fn with_manifest(bytes: &[u8], edit: impl FnOnce(&mut Value)) -> Vec<u8> {
     package(&ps)
 }
 
+/// A format 4 archive retains its model and geometry units on migration. The reader checks
+/// external parts and display settings against the version declared on disk.
+#[test]
+fn format_four_migrates_without_external_results() {
+    let mut model = sample();
+    model.geometry.meshes.push(SourceFile::of("plate.stl", b"mesh").unwrap().with_unit(Some("in".into())).unwrap());
+    let current = bytes_of(&model);
+    let older = with_manifest(&current, |m| m["format"] = json!("fieldcraft/4"));
+    let (restored, original_format) = fieldcraft_io::read_versioned(&older).unwrap();
+    assert_eq!(original_format, 4);
+    assert_eq!(restored, model);
+    assert_eq!(bytes_of(&restored), current);
+    assert_eq!(fieldcraft_io::format_of(Cursor::new(&current)), Some(fieldcraft_io::FORMAT_VERSION));
+
+    let with_display = with_manifest(&older, |m| m["external_view"] = json!({"frame": 0}));
+    assert!(read(&with_display).unwrap_err().to_string().contains("cannot carry external_view"));
+    let with_frames = with_manifest(&older, |m| m["parts"]["external.bin"] = json!({"bytes": 0, "sha256": fieldcraft_io::sha256_hex(&[])}));
+    assert!(read(&with_frames).unwrap_err().to_string().contains("unexpected part `external.bin`"));
+}
+
 /// Format 4: a mesh read in a unit of its own keeps it; millimetres write nothing; a unit symbol
 /// that cannot be one is refused.
 #[test]
@@ -476,6 +496,7 @@ fn saved_views_round_trip_and_are_checked() {
         name: "Cutaway".into(),
         units: DisplaySystem::default(),
         camera,
+        external_camera: false,
         results: Some(ResultsSetup { step: "Flow".into(), contour, slice, frame: Some(10), ..ResultsSetup::default() }),
     }];
     f.view.current = Some("Cutaway".into());

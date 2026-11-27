@@ -44,10 +44,10 @@ pub const MODES: CommandSpec = CommandSpec {
 pub const ANIMATE: CommandSpec = CommandSpec {
     id: "results.animate",
     label: "Animate",
-    params: r#"{"on": true} — animates shape and contours: a mode swings through positive and negative amplitudes, a linear static result interpolates a proportional load from zero to full and back with a fixed legend; absolute temperatures are unchanged. Nonlinear steps play their converged increments, each with its own stress and contact fields; explicit or fluid steps play their recorded fields in order"#,
+    params: r#"{"on": true} — plays a visible imported PVD by its recorded times, or animates native shape and contours: a mode swings through positive and negative amplitudes, a linear static result interpolates a proportional load from zero to full and back with a fixed legend; absolute temperatures are unchanged. Nonlinear steps play their converged increments, each with its own stress and contact fields; explicit or fluid steps play their recorded fields in order"#,
     form: Some(super::forms::ANIMATE),
     kind: CommandKind::Session,
-    requires: &[Requirement::Result],
+    requires: &[Requirement::AnimationSource],
     run: animate,
 };
 
@@ -203,6 +203,7 @@ fn view_of<'a>(s: &'a mut Session, step: &str) -> Result<&'a mut ResultsView> {
         let fresh = s.latest_result(step).map(|(r, _)| ResultsView::for_result(r, &s.model)).ok_or_else(|| EngineError::Params(solved_list(s)))?;
         s.results_view = Some(fresh);
     }
+    crate::external_view::hide(s);
     s.results_view.as_mut().ok_or_else(|| EngineError::Params("no results are shown".into()))
 }
 
@@ -343,6 +344,18 @@ fn modes(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn animate(s: &mut Session, p: &Value) -> Result<Value> {
     let on = opt::<bool>(p, "on")?.unwrap_or(true);
+    if let Some(mut view) = s.external_view.clone().filter(|v| v.show)
+        && let Some(series) = s.external_results()
+    {
+        view.animate = on;
+        if on && series.frames.len().checked_sub(1) == Some(view.frame) {
+            view.frame = 0;
+        }
+        view.validate(series).map_err(EngineError::Params)?;
+        let result = json!({"view":view});
+        s.external_view = Some(view);
+        return Ok(result);
+    }
     if !on {
         if let Some(v) = &mut s.results_view {
             v.animate = false;
@@ -622,6 +635,7 @@ fn set_fluid_field(view: &mut ResultsView, field: Option<Field>) {
 }
 
 fn clear(s: &mut Session, _: &Value) -> Result<Value> {
+    crate::external_view::hide(s);
     s.results_view = None;
     Ok(json!({"view": null}))
 }

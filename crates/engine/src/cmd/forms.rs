@@ -3238,6 +3238,27 @@ pub const RESULTS_LINEARIZE: &[Field] = &[
         .help("Odd number of equally spaced stations integrated with Simpson's rule.")
         .def("41"),
 ];
+pub const IMPORT_VTU: &[Field] = &[
+    path("path", "Results file", false)
+        .req()
+        .help("A VTU grid, a single-piece PVTU, or a PVD time series. Importing replaces the previous external result series."),
+    text("unit", "Length unit")
+        .hint("m")
+        .help("VTU carries no units. Enter the unit of the coordinates and displacement vectors, such as mm, m, or in. The default is meters."),
+];
+pub const EXTERNAL_VIEW: &[Field] = &[
+    int("frame", "Frame", 0, fieldcraft_io::external::MAX_FRAMES as i64 - 1).help("Frame index, starting at zero."),
+    choice("association", "Field location", &[("point", "Points"), ("cell", "Cells")]).help("Where the selected values are stored."),
+    text("field", "Contour field").clearable().hint("Current contour").help("Enter an array name, or choose Clear to turn contours off."),
+    choice("component", "Component", &[("value", "Scalar"), ("magnitude", "Magnitude"), ("x", "X"), ("y", "Y"), ("z", "Z")])
+        .help("Quantity to color."),
+    text("displacement", "Displacement field").clearable().hint("Current displacement").help(
+        "Enter the name of a two- or three-component point array in the length unit selected at import, or choose Clear to remove deformation.",
+    ),
+    range("scale", "Deformation scale", D::None, 0.0, crate::results::MAX_DEFORMATION_SCALE)
+        .help("Dimensionless multiplier. One shows the actual displacement."),
+    flag("show", "Show external results").help("Display the selected result grid. Turn off to return to the model."),
+];
 pub const EXPORT_VTU: &[Field] = &[
     path("path", "File", true).help("A .vtu file for one state, or a .pvd collection for every frame or mode.").req(),
     SOLVED,

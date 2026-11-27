@@ -150,10 +150,14 @@ journal ends, no report). A second signal ends the app at once.
 
 The app keeps a journal of the window's top-level commands (`crashes/sessions/*.jsonl`, at most
 512 KB, two small writes per command that changes the model, none for commands that only read),
-restarted from each autosave and each model opened. A clean exit deletes it; it is locked while its
-app runs, so a journal nobody holds belongs to an app that died. A crash is identified by its
-place and message, numbers ignored: repeats only raise `count`. At most 5 new reports per run,
-20 reports, 100 MB, 90 days; a model over 20 MB is not copied. Tests, the CLI and the browser build
-never install the hook.
+restarted from each autosave and each model opened. The journal also records external result imports
+and display changes. An autosave embeds the imported data. Before that snapshot, replay reads the
+original result files. A clean exit deletes the journal. Its lock is held while the app runs, so an
+unlocked journal belongs to an app that died. A crash is identified by its place and message,
+numbers ignored: repeats only raise `count`. At most 5 new reports per run, 20 reports, 100 MB,
+90 days. A diagnostic model copy is limited to 20 MiB. FieldCraft checks the size of an in-memory
+result series before encoding it for a report. The separate user recovery autosave can hold an
+imported series up to the usual 512 MiB limit. Tests, the CLI and the browser build never install
+the hook.
 
 Adapted from SolidCraft's crash reports (MIT OR Apache-2.0, see ATTRIBUTION.md).

@@ -17,6 +17,7 @@ pub mod bug_report;
 pub mod catalogue;
 pub mod cmd;
 pub mod crash;
+pub mod external_view;
 pub mod flow;
 pub mod logfile;
 pub mod machine;
@@ -383,6 +384,16 @@ pub struct Session {
     results_stored: u64,
     /// [`Session::results_stored`] as last saved (or opened).
     saved_results: u64,
+    /// Imported solution values belong to their own grids. Session snapshots share the data.
+    external: Option<Arc<fieldcraft_io::external::Series>>,
+    /// Changes when an import replaces the dataset even if the model revision stays current.
+    external_generation: u64,
+    saved_external_generation: u64,
+    /// Series-wide contour range shared by desktop and headless renderers.
+    external_range: Arc<std::sync::Mutex<Option<view::ExternalRange>>>,
+    /// Field, frame, and displacement shown on the imported grid.
+    pub external_view: Option<external_view::ExternalView>,
+    saved_external_view: Option<external_view::ExternalView>,
     /// What the results display shows (`results.*`); `None` shows the model.
     pub results_view: Option<results::ResultsView>,
     /// The default work caps of commands; a file replacing the session keeps them.
@@ -485,6 +496,7 @@ impl Session {
         let scope = crash::Scope::enter();
         let journaled = crash::command_begin(&scope, self, id, params);
         let (revision, opened) = (self.revision, self.opened);
+        let external = journaled.then(|| (self.external_generation, self.external_view.clone()));
         // Before format 3 the geometry and mesher commands read their numbers as millimetres in a
         // model built on a design or 3MF meshes, whatever it declared: a replayed journal from
         // then is read so. One that acted on a block typed in another unit cannot be replayed
@@ -526,7 +538,7 @@ impl Session {
         if let Some((mut before, document)) = before {
             // A command that makes the session another document (a new model) keeps the old
             // one in its undo step.
-            if self.document() != document {
+            if !document.matches(self) {
                 before.document = Some(document);
             }
             if result.is_err() {
@@ -551,7 +563,10 @@ impl Session {
             self.refresh_results();
         }
         drop(scope);
-        crash::command_done(self, journaled, self.revision != revision || self.opened != opened, id, params, &result);
+        let changed = self.revision != revision
+            || self.opened != opened
+            || external.is_some_and(|(generation, view)| generation != self.external_generation || view != self.external_view);
+        crash::command_done(self, journaled, changed, id, params, &result);
         result
     }
 
@@ -562,6 +577,12 @@ impl Session {
     /// Returns each step's output, in order. Other fields of a step (such as an `id` naming it)
     /// are left to the caller.
     pub fn run_script(&mut self, script: &Value) -> Result<Vec<Value>> {
+        self.run_script_with(script, |_| ())
+    }
+
+    /// Run a script and notify the caller after each successful command. If a later
+    /// command fails, the earlier notifications match the changes the session kept.
+    pub fn run_script_with(&mut self, script: &Value, mut succeeded: impl FnMut(&str)) -> Result<Vec<Value>> {
         let (steps, header) = match script {
             Value::Array(steps) => (steps, None),
             Value::Object(o) => {
@@ -604,7 +625,10 @@ impl Session {
                 fieldcraft_io::migrate::format_2_defaults(id, &mut params, system);
             }
             match self.execute(id, &params) {
-                Ok(v) => outputs.push(v),
+                Ok(v) => {
+                    outputs.push(v);
+                    succeeded(id);
+                }
                 Err(e) => {
                     failed = Some(EngineError::Params(format!("step {} ({id}): {e}", i + 1)));
                     break;
@@ -778,6 +802,8 @@ impl Session {
     pub fn is_dirty(&self) -> bool {
         self.saved_revision.unwrap_or(0) != self.revision
             || self.view != self.saved_view
+            || self.external_view != self.saved_external_view
+            || self.external_generation != self.saved_external_generation
             || self.results_stored != self.saved_results
             || self.run != self.saved_run
     }
@@ -788,6 +814,25 @@ impl Session {
         self.results.get(step).filter(|(revision, _)| *revision == self.revision).map(|(_, r)| r)
     }
 
+    /// The imported result frames, including their own sampling geometry.
+    pub fn external_results(&self) -> Option<&fieldcraft_io::external::Series> {
+        self.external.as_deref()
+    }
+
+    /// A revision for cached scenes of imported results, independent of the analysis model.
+    pub fn external_generation(&self) -> u64 {
+        self.external_generation
+    }
+
+    /// Replace the imported dataset after validating it in full. Existing solves stay current.
+    pub fn set_external_results(&mut self, series: fieldcraft_io::external::Series) -> Result<()> {
+        series.check()?;
+        self.external_view = Some(external_view::ExternalView::initial(&series));
+        self.external = Some(Arc::new(series));
+        self.external_generation = next_revision();
+        Ok(())
+    }
+
     /// The steps with a current result.
     pub fn solved_steps(&self) -> impl Iterator<Item = &str> {
         self.results.iter().filter(|(_, (revision, _))| *revision == self.revision).map(|(name, _)| name.as_str())
@@ -796,6 +841,7 @@ impl Session {
     /// Keep a step's result for the current state. With no results shown, the display shows it;
     /// a view of the same step stays as it is (on mode 1 and the last frame if its own are gone).
     pub(crate) fn store_result(&mut self, result: StepResult) {
+        external_view::hide(self);
         match &mut self.results_view {
             None => self.results_view = Some(results::ResultsView::for_result(&result, &self.model)),
             Some(v) if v.step == result.step() && results::displacements(&result, v.pick()).is_err() => {
@@ -902,6 +948,8 @@ impl Session {
         self.saved_revision = Some(self.revision);
         self.saved_view = self.view.clone();
         self.saved_results = self.results_stored;
+        self.saved_external_generation = self.external_generation;
+        self.saved_external_view = self.external_view.clone();
         self.saved_run = self.run.clone();
     }
 }
