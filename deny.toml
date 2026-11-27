@@ -47,11 +47,12 @@ allow = [
 ]
 
 # SolidCraft's UI kit, its theme and its look are under the SolidCraft Brand and Interface Licence
-# (not permissive). FieldCraft links and distributes exactly these three by the written permission
-# of SolidCraft's maintainer (requested by jyviko, approved by bherbruck in #872), recorded in
-# docs/adr/0001-libraries.md. Each crate's LICENSE is named
-# a LicenseRef, allowed for that crate only; it is not in the allow list above, and any other crate
-# under that licence fails.
+# (not permissive). FieldCraft links and distributes them by the written permission of SolidCraft's
+# maintainer (requested by jyviko, approved by bherbruck in #872), recorded in
+# docs/adr/0001-libraries.md, which also records the extension to solidcraft-icon-svg and to crates
+# later split from the same material. Each crate's LICENSE is named a LicenseRef, allowed for that
+# crate only; it is not in the allow list above, and any crate under that licence without its own
+# entry here fails.
 [[licenses.clarify]]
 crate = "solidcraft-ui-kit"
 expression = "LicenseRef-SolidCraft-Brand"

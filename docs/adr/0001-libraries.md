@@ -39,11 +39,39 @@ them from, or distribute them with, software that is not SolidCraft. *Permission
 to distribute them as part of FieldCraft. *Approval* by SolidCraft's maintainer bherbruck is
 recorded by their approving review of the pull request that adds this section,
 https://github.com/tangency-labs/fieldcraft/pull/872; FieldCraft does not ship these crates without
-it. The permission covers those three crates only: any other SolidCraft crate under the brand
-licence needs its own permission, recorded here, before FieldCraft depends on it. `deny.toml` accepts the licence for exactly these three crates (a
-`LicenseRef-SolidCraft-Brand` clarification and exception each), never in its global allow list.
+it. The permission covers those three crates, and the extension below covers SolidCraft's icon SVG
+parser and the crates split from the same material; any other SolidCraft material under the brand
+licence needs its own permission, recorded here, before FieldCraft depends on it. `deny.toml`
+accepts the licence for exactly the crates named in this record (a `LicenseRef-SolidCraft-Brand`
+clarification and exception each), never in its global allow list.
 FieldCraft does not use `solidcraft-look` yet: whether it draws SolidCraft's icons and themes or its
 own is still the owner's decision.
+
+**Extension: the icon SVG parser, and crates split from the same material.** SolidCraft has moved
+the SVG parsing its UI kit used for icons into a crate of its own, `solidcraft-icon-svg`, which the
+licence now lists as brand material (§1d). It also reaches FieldCraft outside the desktop UI:
+`solidcraft-engine`, which `fieldcraft-geometry` uses to run design scripts, depends on it, so
+FieldCraft's engine, command-line tool and MCP server would link and distribute it too.
+
+As SolidCraft and the apps that share its design language grow, more of what the UI kit, the
+theme and the look do is likely to be shared the same way: moved out into crates of its own, or
+written to support them, so each app uses one implementation instead of keeping its own copy. That
+is the reason FieldCraft uses the kit in the first place, and it is better served by one standing
+permission than by a request each time a crate is split.
+
+*Permission requested 2026-11-27* by FieldCraft's owner (GitHub `jyviko`) for FieldCraft to link
+and distribute, as part of FieldCraft and on the terms recorded above:
+
+- `solidcraft-icon-svg`, wherever it comes in, `solidcraft-engine` included;
+- any crate SolidCraft creates later from the UI kit, the theme, the look or the icon SVG parser,
+  or to support them, so that apps sharing SolidCraft's design language can share that
+  functionality.
+
+FieldCraft keeps the record complete: each such crate is named here, with the SolidCraft version
+it first arrived in, and given its own `deny.toml` entry in the pull request that first depends on
+it. The extension does not cover the SolidCraft name, logo, app icon or brand kit (§1e), nor any
+material unrelated to that shared design language. *Approval* by SolidCraft's maintainer
+bherbruck is recorded by their approving review of the pull request that adds this extension.
 
 **Meshing: our own**, implemented from published papers (`docs/meshing/literature.md`).
 Robust predicates follow Shewchuk's adaptive-precision arithmetic (the paper; his reference

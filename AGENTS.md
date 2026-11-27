@@ -89,8 +89,11 @@ section 1, which is where they change.
   theme and look (`solidcraft-ui-kit`, `solidcraft-theme`, `solidcraft-look`) are under the
   SolidCraft Brand and Interface Licence and are used only under the written permission recorded in
   docs/adr/0001-libraries.md (requested by jyviko, approved by SolidCraft's maintainer bherbruck in
-  #872). `deny.toml` accepts that licence for those three crates only; nothing else non-permissive
-  is allowed, and any other brand-licensed SolidCraft crate needs its own recorded permission.
+  #872). The same record extends that permission to `solidcraft-icon-svg` (also reached through
+  `solidcraft-engine`) and to crates SolidCraft later splits from, or builds to support, its UI kit,
+  theme, look and icon parser; each is named in the record and in `deny.toml` when FieldCraft first
+  depends on it. Nothing else non-permissive is allowed, and any other brand-licensed SolidCraft
+  material needs its own recorded permission.
 - **Assets — absolutely essential.** FieldCraft contains **no iconography, images, fonts or
   artwork from commercial CAE products — ever.** Icons are original artwork made with VectorCraft
   (commit the editable `.vectorcraft` source beside the exported SVG/PNG) or come from
