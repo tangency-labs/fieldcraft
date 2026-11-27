@@ -155,7 +155,8 @@ impl Model {
                     | B::Displacement { target, .. }
                     | B::Symmetry { target, .. }
                     | B::Temperature { target, .. }
-                    | B::PerfectConductor { target }) = b;
+                    | B::PerfectConductor { target }
+                    | B::Conductor { target, .. }) = b;
                     swap_target(target, kind, from, to);
                 }
                 for l in self.loads.values_mut() {

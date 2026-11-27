@@ -393,7 +393,7 @@ impl Model {
         }
 
         // Electromagnetic steps need every material in use to say how it acts on the fields, and a
-        // perfect conductor is a set of faces.
+        // conductor is a set of faces.
         if let Some(s) = self.steps.iter().find(|s| s.procedure.is_electromagnetic()) {
             for m in self.sections.values().map(|s| s.material.as_str()).collect::<BTreeSet<_>>() {
                 if self.materials.get(m).is_some_and(|m| m.electromagnetic.is_none()) {
@@ -405,12 +405,12 @@ impl Model {
             if let Some(set) = b.target().set()
                 && resolved.sets.get(set).is_some_and(|r| r.faces.is_empty())
             {
-                d.error(format!("boundary condition `{n}`"), format!("set `{set}` has no element faces for the perfect conductor to lie on"));
+                d.error(format!("boundary condition `{n}`"), format!("set `{set}` has no element faces for the conductor to lie on"));
             }
             for s in self.steps.iter().filter(|s| s.boundary_conditions.contains(n) && !s.procedure.is_electromagnetic()) {
                 d.warning(
                     format!("boundary condition `{n}`"),
-                    format!("is a perfect conductor, which has no effect in {} step `{}`", s.procedure.name(), s.name),
+                    format!("is a conductor, which has no effect in {} step `{}`", s.procedure.name(), s.name),
                 );
             }
         }

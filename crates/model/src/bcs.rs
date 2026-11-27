@@ -1,5 +1,6 @@
 //! Boundary conditions: prescribed degrees of freedom on a set's nodes or a reference point, and
-//! the perfectly conducting walls of electromagnetic steps on a set's faces.
+//! the conducting walls of electromagnetic steps on a set's faces (perfect, or good conductors by
+//! their surface impedance).
 //!
 //! Degrees of freedom are numbered 1–3 for translations along X, Y, Z and 4–6 for rotations about
 //! them, in the global axes. Which steps a boundary condition is active in is listed explicitly by
@@ -227,6 +228,25 @@ pub enum BoundaryCondition {
     /// those faces is held at zero (an edge is held because a face that holds it is, never
     /// because its two nodes are: docs/rfc/0001-electromagnetics.md §8.2).
     PerfectConductor { target: Target },
+    /// A good conductor on the faces of the target set, in electromagnetic steps, by its surface
+    /// impedance: the field inside the metal decays within the skin
+    /// depth δ = √(2 / (ω μ₀ μᵣ σ)), much thinner than the wavelength, so the metal is not meshed and
+    /// its faces carry Zₛ = (1 + j) Rₛ, Rₛ = √(ω μ₀ μᵣ / (2σ)) (D. M. Pozar, *Microwave
+    /// Engineering*, 4th ed., Wiley 2012, §1.7, eq. 1.131). Cavity steps hold the tangential field
+    /// on it as on a perfect conductor and give each mode's quality factor from the power the
+    /// walls absorb (Pozar 2012, §6.7, the perturbation method).
+    Conductor {
+        target: Target,
+        /// Electrical conductivity σ, S/m (copper ≈ 5.8e7).
+        conductivity: f64,
+        /// The metal's relative permeability μᵣ (1 for copper, aluminium, silver and gold).
+        #[serde(default = "one")]
+        permeability: f64,
+    },
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 /// The model's number of the temperature degree of freedom (the deck formats' convention).
@@ -239,14 +259,15 @@ impl BoundaryCondition {
             | BoundaryCondition::Displacement { target, .. }
             | BoundaryCondition::Symmetry { target, .. }
             | BoundaryCondition::Temperature { target, .. }
-            | BoundaryCondition::PerfectConductor { target } => target,
+            | BoundaryCondition::PerfectConductor { target }
+            | BoundaryCondition::Conductor { target, .. } => target,
         }
     }
 
     /// The constrained structural degrees of freedom (1–6); none for a temperature.
     pub fn dofs(&self) -> Dofs {
         match self {
-            BoundaryCondition::Temperature { .. } | BoundaryCondition::PerfectConductor { .. } => Dofs::none(),
+            BoundaryCondition::Temperature { .. } | BoundaryCondition::PerfectConductor { .. } | BoundaryCondition::Conductor { .. } => Dofs::none(),
             BoundaryCondition::Fixed { .. } => Dofs::all(),
             BoundaryCondition::Displacement { values, .. } => {
                 Dofs(values.iter().enumerate().filter(|(_, v)| v.is_some()).fold(0, |m, (i, _)| m | (1 << i)))
@@ -261,7 +282,10 @@ impl BoundaryCondition {
         match self {
             BoundaryCondition::Displacement { values, .. } => values.iter().flatten().any(|v| *v != 0.0),
             BoundaryCondition::Temperature { value, .. } => *value != 0.0,
-            BoundaryCondition::Fixed { .. } | BoundaryCondition::Symmetry { .. } | BoundaryCondition::PerfectConductor { .. } => false,
+            BoundaryCondition::Fixed { .. }
+            | BoundaryCondition::Symmetry { .. }
+            | BoundaryCondition::PerfectConductor { .. }
+            | BoundaryCondition::Conductor { .. } => false,
         }
     }
 
@@ -272,7 +296,7 @@ impl BoundaryCondition {
 
     /// Whether it holds the electric field (rather than motion or temperature).
     pub fn is_electromagnetic(&self) -> bool {
-        matches!(self, BoundaryCondition::PerfectConductor { .. })
+        matches!(self, BoundaryCondition::PerfectConductor { .. } | BoundaryCondition::Conductor { .. })
     }
 
     /// The prescribed value of a constrained degree of freedom (1–6, or [`TEMPERATURE_DOF`]);
@@ -280,15 +304,21 @@ impl BoundaryCondition {
     pub fn value(&self, dof: u8) -> Option<f64> {
         match self {
             BoundaryCondition::Temperature { value, .. } => (dof == TEMPERATURE_DOF).then_some(*value),
-            BoundaryCondition::PerfectConductor { .. } => None,
+            BoundaryCondition::PerfectConductor { .. } | BoundaryCondition::Conductor { .. } => None,
             BoundaryCondition::Displacement { values, .. } => values.get(usize::from(dof).checked_sub(1)?).copied().flatten(),
             _ => self.dofs().contains(dof).then_some(0.0),
         }
     }
 
     pub fn validate(&self) -> Result<()> {
-        if let BoundaryCondition::PerfectConductor { target: Target::ReferencePoint(r) } = self {
-            return Err(Error::Invalid(format!("a perfect conductor is a set of faces, not a reference point (`{r}`)")));
+        if let BoundaryCondition::PerfectConductor { target: Target::ReferencePoint(r) }
+        | BoundaryCondition::Conductor { target: Target::ReferencePoint(r), .. } = self
+        {
+            return Err(Error::Invalid(format!("a conductor is a set of faces, not a reference point (`{r}`)")));
+        }
+        if let BoundaryCondition::Conductor { conductivity, permeability, .. } = self {
+            crate::positive("conductivity", *conductivity)?;
+            crate::Electromagnetic { permittivity: 1.0, permeability: *permeability }.validate()?;
         }
         if let BoundaryCondition::Symmetry { plane, .. } = self {
             plane.validate()?;

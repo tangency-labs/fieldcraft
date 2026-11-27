@@ -320,7 +320,7 @@ definition_commands!(
     BoundaryCondition,
     "boundary_condition",
     "Boundary Condition",
-    r#"{"name": "clamp", "type": "fixed", "target": {"set": "root"} | {"reference_point": "RP"}} | {"name", "type": "displacement", "target", "values": [u1, u2, u3, ur1, ur2, ur3] (null leaves a degree of freedom free)} | {"name", "type": "symmetry", "target", "plane": "x|y|z" | {"normal": [nx, ny, nz]} (the plane's normal; an inclined plane holds n · u = 0 and the rotations about its in-plane axes)} — active in the steps that list it (model.step.activate)"#,
+    r#"{"name": "clamp", "type": "fixed", "target": {"set": "root"} | {"reference_point": "RP"}} | {"name", "type": "displacement", "target", "values": [u1, u2, u3, ur1, ur2, ur3] (null leaves a degree of freedom free)} | {"name", "type": "symmetry", "target", "plane": "x|y|z" | {"normal": [nx, ny, nz]} (the plane's normal; an inclined plane holds n · u = 0 and the rotations about its in-plane axes)} | {"name", "type": "perfect_conductor", "target": {"set": "…"} (element faces: E × n = 0)} | {"name", "type": "conductor", "target": {"set": "…"}, "conductivity": 5.8e7 (S/m), "permeability": 1 (relative, default 1)} (element faces of an unmeshed metal wall: held as a perfect conductor, with the power it absorbs through its surface resistance; cavity steps give each mode's quality factor) — active in the steps that list it (model.step.activate)"#,
     super::forms::BOUNDARY_CONDITION,
     super::forms::BOUNDARY_CONDITION_DELETE,
     add_boundary_condition,

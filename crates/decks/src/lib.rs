@@ -162,13 +162,13 @@ pub(crate) fn thermal_items(model: &Model) -> BTreeSet<String> {
     for name in model.boundary_conditions().iter().filter(|(_, b)| b.is_thermal()).map(|(n, _)| n) {
         out.insert(format!("boundary condition `{name}`: prescribed temperatures (not written to decks yet)"));
     }
-    // Electromagnetic steps and their perfect conductors: none of the structural deck formats
+    // Electromagnetic steps and their conductors: none of the structural deck formats
     // describes them.
     for step in model.steps().iter().filter(|s| s.procedure.is_electromagnetic()) {
         out.insert(format!("step `{}`: {} steps (no deck format describes them)", step.name, step.procedure.name()));
     }
     for name in model.boundary_conditions().iter().filter(|(_, b)| b.is_electromagnetic()).map(|(n, _)| n) {
-        out.insert(format!("boundary condition `{name}`: perfect conductors (no deck format describes them)"));
+        out.insert(format!("boundary condition `{name}`: conductors (no deck format describes them)"));
     }
     // A material's permittivity and permeability too: left out, a deck would drop them unsaid.
     for name in model.materials().iter().filter(|(_, m)| m.electromagnetic.is_some()).map(|(n, _)| n) {
