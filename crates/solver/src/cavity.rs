@@ -45,6 +45,20 @@
 //! normal jump at a change of material (RFC §8.5; element-nodal results come later). A mode is
 //! scaled so that its largest nodal |E| is 1, with its largest component positive.
 //!
+//! **Conductor losses.** A wall of a good conductor (a [`BoundaryCondition::Conductor`]) is held
+//! as a perfect conductor, and each mode's quality factor is the energy it stores over the power
+//! the walls absorb per radian (D. M. Pozar, *Microwave Engineering*, 4th ed., Wiley 2012, §6.7,
+//! the perturbation method): Q = ω W / P_c, with W = (ε₀/2) ∫ εᵣ |E|² dV the stored energy and
+//! P_c = (Rₛ/2) ∮ |H_t|² dS, Rₛ = √(ω μ₀ μ_c / (2σ)) (eq. 1.131) and H = j curl E / (ω μ₀ μᵣ)
+//! (Faraday's law for e^{jωt}), so
+//!
+//! Q = ω³ ε₀ μ₀² ∫ εᵣ |E|² dV / Σ_walls Rₛ ∮ |n × curl E|² / μᵣ² dS.
+//!
+//! The integral over the volume is xᵀ M x; over each wall face it takes the curl of the element
+//! behind it at the face's edge midpoints, exact for the quadratic |curl E|² of order 2. Its
+//! error falls as h² at both orders (the trace of curl E on the walls). The walls' small
+//! reactance Xₛ = Rₛ lowers each frequency by f / (2Q) as well; it is not applied.
+//!
 //! The elements are tetrahedra (`tet4`, and `tet10` whose edges are taken straight); every
 //! material in use has electromagnetic properties ([`fieldcraft_model::Electromagnetic`]).
 
@@ -65,6 +79,9 @@ use crate::{Error, Limits, Result};
 /// The speed of light in vacuum, m/s (exact by the SI's definition of the metre, 2019).
 pub const SPEED_OF_LIGHT: f64 = 299_792_458.0;
 
+/// The magnetic constant μ₀, H/m: measured since the SI of 2019, 4π × 10⁻⁷ to 1e-9.
+pub const VACUUM_PERMEABILITY: f64 = 1.256_637_062_12e-6;
+
 /// One resonant mode.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CavityMode {
@@ -73,6 +90,10 @@ pub struct CavityMode {
     /// The electric field at each node of [`CavityResult::nodes`], scaled to a largest |E| of 1;
     /// all zero (and a warning) for a mode with no field at the nodes.
     pub field: Vec<[f64; 3]>,
+    /// The quality factor of the conductors' losses, when a conductor is active. Not saved with
+    /// the results yet (it would change their encoding): a model read back has none until solved.
+    #[serde(skip)]
+    pub quality: Option<f64>,
 }
 
 /// What a cavity step computes.
@@ -164,18 +185,31 @@ fn tetrahedra(model: &Model, resolved: &Resolved, warnings: &mut Vec<String>) ->
     Ok(out)
 }
 
-/// The edges and faces the active perfect conductors hold, and the nodes on them grouped into
-/// connected conductors (by the held edges).
+/// The edges and faces the active conductors hold, the nodes on them grouped into connected
+/// conductors (by the held edges), and the faces that absorb power.
 struct Walls {
     edges: BTreeSet<[u32; 2]>,
     faces: BTreeSet<[u32; 3]>,
     conductors: Vec<Vec<u32>>,
+    lossy: Vec<LossyFace>,
+}
+
+/// A face of a good conductor: the tetrahedron behind it, its corners and the metal's σ and μᵣ.
+struct LossyFace {
+    element: u32,
+    nodes: [u32; 3],
+    conductivity: f64,
+    permeability: f64,
 }
 
 fn walls(model: &Model, resolved: &Resolved, bcs: &BTreeSet<String>, corners: &BTreeMap<u32, [u32; 4]>) -> Result<Walls> {
-    let (mut edges, mut faces) = (BTreeSet::new(), BTreeSet::new());
+    let (mut edges, mut faces, mut lossy) = (BTreeSet::new(), BTreeSet::new(), Vec::new());
     for name in bcs {
-        let Some(BoundaryCondition::PerfectConductor { target }) = model.boundary_condition(name) else { continue };
+        let (target, metal) = match model.boundary_condition(name) {
+            Some(BoundaryCondition::PerfectConductor { target }) => (target, None),
+            Some(BoundaryCondition::Conductor { target, conductivity, permeability }) => (target, Some((*conductivity, *permeability))),
+            _ => continue,
+        };
         let set = target
             .set()
             .and_then(|s| resolved.sets.get(s))
@@ -195,11 +229,14 @@ fn walls(model: &Model, resolved: &Resolved, bcs: &BTreeSet<String>, corners: &B
             };
             faces.insert([a, b, d]);
             edges.extend([[a, b], [a, d], [b, d]]);
+            if let Some((conductivity, permeability)) = metal {
+                lossy.push(LossyFace { element: f.element, nodes: [a, b, d], conductivity, permeability });
+            }
         }
     }
     // Conductors: the nodes of the held edges, joined by them.
     let conductors = connected(edges.iter().map(|[a, b]| (*a, *b))).into_values().collect();
-    Ok(Walls { edges, faces, conductors })
+    Ok(Walls { edges, faces, conductors, lossy })
 }
 
 /// The connected parts of a graph given by its links, by their smallest member, each part's
@@ -461,7 +498,7 @@ pub fn solve_cavity(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
     let corners: BTreeMap<u32, [u32; 4]> = tets.iter().map(|t| (t.label, t.corners)).collect();
     let walls = walls(model, &resolved, &step.boundary_conditions, &corners)?;
     if walls.faces.is_empty() {
-        warnings.push("no perfect conductor is active: every boundary is a magnetic wall (n × H = 0)".into());
+        warnings.push("no conductor is active: every boundary is a magnetic wall (n × H = 0)".into());
     }
 
     // The layout: every tetrahedron's edges (and faces at order 2).
@@ -684,10 +721,12 @@ pub fn solve_cavity(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
             }
         }
     }
+    let quality = conductor_quality(&walls.lossy, &tets, &element_slots, &layout, order, &mf, &row_of, &element, &found)?;
     let result_modes: Vec<CavityMode> = fields
         .into_iter()
         .zip(&found)
-        .map(|(field, (value, _))| {
+        .zip(quality)
+        .map(|((field, (value, _)), quality)| {
             let field: Vec<[f64; 3]> = field.into_iter().zip(&count).map(|(f, c)| f.map(|v| v / f64::from((*c).max(1)))).collect();
             // Largest |E| 1, its largest component positive (the first such, in node and axis order).
             let size = |f: &[f64; 3]| f.iter().map(|v| v * v).sum::<f64>();
@@ -696,7 +735,7 @@ pub fn solve_cavity(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
                 let c = b.iter().copied().fold(0.0f64, |a, v| if v.abs() > a.abs() { v } else { a });
                 c.signum() / size(b).sqrt()
             });
-            CavityMode { frequency: hz(*value), field: field.into_iter().map(|f| f.map(|v| v * scale)).collect() }
+            CavityMode { frequency: hz(*value), field: field.into_iter().map(|f| f.map(|v| v * scale)).collect(), quality }
         })
         .collect();
     for (k, mode) in result_modes.iter().enumerate() {
@@ -711,4 +750,90 @@ pub fn solve_cavity(model: &Model, step: Option<&str>, limits: &Limits) -> Resul
     fieldcraft_model::progress::check()?;
     let stats = Stats { dofs: layout.dofs(), equations: n, factor_entries, lanczos_vectors: pairs.basis };
     Ok(CavityResult { step: step.name.clone(), nodes, modes: result_modes, order: degree, null_space, stats, warnings })
+}
+
+/// Each mode's quality factor from the conductors' losses (the module's **Conductor losses**);
+/// `None` for every mode when no conductor absorbs power.
+#[allow(clippy::too_many_arguments)]
+fn conductor_quality(
+    lossy: &[LossyFace],
+    tets: &[Tet],
+    element_slots: &[Vec<usize>],
+    layout: &DofLayout,
+    order: Order,
+    mass: &Csr,
+    row_of: &dyn Fn(usize) -> Option<usize>,
+    element: &dyn Fn(&Tet) -> Result<EdgeTet>,
+    found: &[(f64, &Vec<f64>)],
+) -> Result<Vec<Option<f64>>> {
+    if lossy.is_empty() {
+        return Ok(vec![None; found.len()]);
+    }
+    let index: BTreeMap<u32, usize> = tets.iter().enumerate().map(|(i, t)| (t.label, i)).collect();
+    let omega = |k2: f64| k2.sqrt() * SPEED_OF_LIGHT;
+    // Σ Rₛ ∮ |n × curl E|² / μᵣ² dS per mode, face by face in the walls' order.
+    let mut loss = vec![0.0; found.len()];
+    for face in lossy {
+        fieldcraft_model::progress::check()?;
+        let i = index
+            .get(&face.element)
+            .copied()
+            .ok_or_else(|| Error::Internal(format!("conductor face on element {}, which is no tetrahedron", face.element)))?;
+        let (Some(t), Some(s)) = (tets.get(i), element_slots.get(i)) else {
+            return Err(Error::Internal(format!("element {}: no slots", face.element)));
+        };
+        let e = element(t)?;
+        let rows: Vec<Option<usize>> = layout.element_dofs(s, order.kinds()).unwrap_or_default().into_iter().map(row_of).collect();
+        // The face's corners in the element on its sorted corners; the opposite corner's coordinate is 0.
+        let mut sorted = t.corners;
+        sorted.sort_unstable();
+        let at = |n: u32| sorted.iter().position(|c| *c == n);
+        let [Some(a), Some(b), Some(c)] = face.nodes.map(at) else {
+            return Err(Error::Internal(format!("element {}: a conductor face is not one of its faces", face.element)));
+        };
+        let corners = e.corners();
+        let (Some(pa), Some(pb), Some(pc)) = (corners.get(a).copied(), corners.get(b).copied(), corners.get(c).copied()) else {
+            return Err(Error::Internal(format!("element {}: a corner out of range", face.element)));
+        };
+        let (u, v) = ([0, 1, 2].map(|k| pb[k] - pa[k]), [0, 1, 2].map(|k| pc[k] - pa[k]));
+        let cross = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        let twice_area = cross.iter().map(|x| x * x).sum::<f64>().sqrt();
+        if twice_area.is_nan() || twice_area <= 0.0 {
+            return Err(Error::Invalid(format!("element {}: a conductor face has no area", face.element)));
+        }
+        let n = cross.map(|x| x / twice_area);
+        // The edge midpoints, each a third of the area: exact for a quadratic integrand.
+        let points: [Barycentric; 3] = [(a, b), (b, c), (c, a)].map(|(i, j)| std::array::from_fn(|k| if k == i || k == j { 0.5 } else { 0.0 }));
+        let curls: Vec<Vec<[f64; 3]>> = points.iter().map(|l| e.curl_values(*l)).collect();
+        let weight = twice_area / 6.0 * t.nu * t.nu;
+        for (sum, (k2, x)) in loss.iter_mut().zip(found) {
+            let w = omega(*k2);
+            let rs = (w * VACUUM_PERMEABILITY * face.permeability / (2.0 * face.conductivity)).sqrt();
+            let integral: f64 = curls
+                .iter()
+                .map(|curl| {
+                    let h = rows.iter().zip(curl).fold([0.0; 3], |h, (r, c)| {
+                        let x = r.and_then(|r| x.get(r)).copied().unwrap_or(0.0);
+                        [0, 1, 2].map(|k| h[k] + x * c[k])
+                    });
+                    let t = [n[1] * h[2] - n[2] * h[1], n[2] * h[0] - n[0] * h[2], n[0] * h[1] - n[1] * h[0]];
+                    t.iter().map(|v| v * v).sum::<f64>()
+                })
+                .sum();
+            *sum += rs * weight * integral;
+        }
+    }
+    let mut mx = vec![0.0; mass.n];
+    Ok(found
+        .iter()
+        .zip(loss)
+        .map(|((k2, x), loss)| {
+            mass.mul(x, &mut mx);
+            let energy: f64 = x.iter().zip(&mx).map(|(a, b)| a * b).sum();
+            let w = omega(*k2);
+            // ω³ ε₀ μ₀² = ω³ μ₀ / c².
+            let q = w * w * w * VACUUM_PERMEABILITY / (SPEED_OF_LIGHT * SPEED_OF_LIGHT) * energy / loss;
+            (q.is_finite() && q > 0.0).then_some(q)
+        })
+        .collect())
 }

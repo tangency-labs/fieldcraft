@@ -610,7 +610,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Cavity",
         Steps,
         "Procedures",
-        "The resonant modes of an electromagnetic cavity inside perfect conductors",
+        "The resonant modes of an electromagnetic cavity inside its conductors, with their quality factors",
         "model.step.create",
         r#"{"procedure": {"type": "cavity"}}"#,
     ),

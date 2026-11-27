@@ -73,7 +73,7 @@ pub const FREQUENCY: CommandSpec = CommandSpec {
 pub const CAVITY: CommandSpec = CommandSpec {
     id: "solve.cavity",
     label: "Solve Cavity Step",
-    params: r#"{"step": "Modes", "max_dofs": 6000000, "max_factor_entries": 400000000, "max_iterations": 3000, "threads": 8} — the resonant modes of an electromagnetic cavity step (its modes, range and element order) on Nédélec edge elements of its tetrahedra, with perfect conductors on the faces of its active perfect_conductor boundary conditions: each mode's frequency and electric field (normalised to a largest |E| of 1); `max_iterations` caps the Lanczos vectors; the result stays in the session; `max_factor_entries` and `threads` as for solve.static"#,
+    params: r#"{"step": "Modes", "max_dofs": 6000000, "max_factor_entries": 400000000, "max_iterations": 3000, "threads": 8} — the resonant modes of an electromagnetic cavity step (its modes, range and element order) on Nédélec edge elements of its tetrahedra, with perfect conductors on the faces of its active perfect_conductor and conductor boundary conditions: each mode's frequency and electric field (normalised to a largest |E| of 1), and with conductors its `quality` factor from their surface resistance (kept in the session, not saved with the results yet); `max_iterations` caps the Lanczos vectors; the result stays in the session; `max_factor_entries` and `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_CAVITY),
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection, Requirement::Step],
@@ -464,7 +464,18 @@ fn run_cavity(s: &mut Session, p: &Value) -> Result<Value> {
         "equations": r.stats.equations,
         "null_space": r.null_space,
         "lanczos_vectors": r.stats.lanczos_vectors,
-        "modes": r.modes.iter().enumerate().map(|(i, m)| json!({"mode": i + 1, "frequency": m.frequency})).collect::<Vec<_>>(),
+        "modes": r
+            .modes
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let mut mode = json!({"mode": i + 1, "frequency": m.frequency});
+                if let Some(q) = m.quality {
+                    mode["quality"] = json!(q);
+                }
+                mode
+            })
+            .collect::<Vec<_>>(),
         "warnings": r.warnings,
     });
     s.store_result(StepResult::Implicit(ImplicitResult::Cavity(r)));
@@ -4279,6 +4290,37 @@ pub(crate) mod tests {
         // solve.run solves it as well.
         let all = s.execute("solve.run", &json!({})).unwrap();
         assert_eq!(all["steps"][0]["procedure"], "cavity", "{all}");
+    }
+
+    /// Copper walls through the commands: the reply and the results list each mode's quality
+    /// factor, which grows as √σ (crates/solver/tests/cavity.rs checks it against Pozar's);
+    /// hostile conductors are refused.
+    #[test]
+    fn a_conductor_gives_the_modes_their_quality_factor() {
+        let mut s = Session::default();
+        cavity_box(&mut s, "tet4", [2, 1, 2]);
+        let copper = json!({"name": "pec", "type": "conductor", "target": {"set": "walls"}, "conductivity": 5.8e7});
+        s.execute("model.boundary_condition.edit", &copper).unwrap();
+        let reply = s.execute("solve.cavity", &json!({})).unwrap();
+        let q = reply["modes"][0]["quality"].as_f64().unwrap_or_else(|| panic!("{reply}"));
+        let listed = s.execute("results.modes", &json!({"mode": 1})).unwrap();
+        assert_eq!(listed["modes"][0]["quality"].as_f64(), Some(q), "{listed}");
+        let mut silver = copper.clone();
+        silver["conductivity"] = json!(4.0 * 5.8e7);
+        s.execute("model.boundary_condition.edit", &silver).unwrap();
+        let reply = s.execute("solve.cavity", &json!({})).unwrap();
+        let ratio = reply["modes"][0]["quality"].as_f64().unwrap() / q;
+        assert!((ratio - 2.0).abs() < 1e-9, "{ratio}");
+        for bad in [
+            json!({"name": "c", "type": "conductor", "target": {"set": "walls"}, "conductivity": 0}),
+            json!({"name": "c", "type": "conductor", "target": {"set": "walls"}, "conductivity": -1}),
+            json!({"name": "c", "type": "conductor", "target": {"set": "walls"}, "conductivity": "copper"}),
+            json!({"name": "c", "type": "conductor", "target": {"set": "walls"}, "conductivity": 5.8e7, "permeability": 0}),
+            json!({"name": "c", "type": "conductor", "target": {"set": "walls"}}),
+            json!({"name": "c", "type": "conductor", "target": {"reference_point": "RP"}, "conductivity": 5.8e7}),
+        ] {
+            assert!(s.execute("model.boundary_condition.create", &bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

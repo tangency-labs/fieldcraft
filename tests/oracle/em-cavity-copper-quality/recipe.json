@@ -1,0 +1,10 @@
+[
+ {"command": "mesh.block", "params": {"body": "Box", "kind": "tet4", "corners": [[0, 0, 0], [20, 0, 0], [20, 10, 0], [0, 10, 0], [0, 0, 15], [20, 0, 15], [20, 10, 15], [0, 10, 15]], "divisions": [16, 8, 12], "faces": {"1": "z0", "2": "z1", "3": "y0", "4": "x1", "5": "y1", "6": "x0"}}},
+ {"command": "model.set.create", "params": {"name": "all", "geometry": [{"body": "Box"}]}},
+ {"command": "model.set.create", "params": {"name": "walls", "geometry": [{"body": "Box", "face": "x0"}, {"body": "Box", "face": "x1"}, {"body": "Box", "face": "y0"}, {"body": "Box", "face": "y1"}, {"body": "Box", "face": "z0"}, {"body": "Box", "face": "z1"}]}},
+ {"command": "model.material.create", "params": {"name": "Air", "electromagnetic": {"permittivity": 1.0, "permeability": 1.0}}},
+ {"command": "model.section.create", "params": {"name": "air", "set": "all", "material": "Air", "kind": {"type": "solid"}}},
+ {"command": "model.boundary_condition.create", "params": {"name": "copper", "type": "conductor", "target": {"set": "walls"}, "conductivity": 5.813e7}},
+ {"command": "model.step.create", "params": {"name": "Modes", "procedure": {"type": "cavity", "modes": 1, "order": 1}, "boundary_conditions": ["copper"]}},
+ {"command": "solve.cavity", "params": {"step": "Modes"}, "id": "modes"}
+]

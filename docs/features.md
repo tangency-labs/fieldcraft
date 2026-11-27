@@ -101,7 +101,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Procedures | Amplitude — Time and frequency amplitudes | coming soon (M7) |  |
 | Procedures | Nonlinear — A nonlinear static step: large deformation, increments and load paths | ready | `model.step.create {"procedure":{"type":"nonlinear_static"}}` |
 | Procedures | Explicit — An explicit dynamic step: impact and fast transients by central differences | ready | `model.step.create {"procedure":{"type":"explicit_dynamic"}}` |
-| Procedures | Cavity — The resonant modes of an electromagnetic cavity inside perfect conductors | ready | `model.step.create {"procedure":{"type":"cavity"}}` |
+| Procedures | Cavity — The resonant modes of an electromagnetic cavity inside its conductors, with their quality factors | ready | `model.step.create {"procedure":{"type":"cavity"}}` |
 | Procedures | Heat Transfer — A steady or transient heat transfer step | ready | `model.step.create {"procedure":{"type":"heat_transfer"}}` |
 
 ## Loads & BCs

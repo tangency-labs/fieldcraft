@@ -1,0 +1,20 @@
+{
+ "title": "Quality factor of a rectangular cavity with copper walls",
+ "kind": "theory",
+ "source": "Rectangular cavity, TE101 with lossy conducting walls, by the perturbation method: Q = (k a d)³ b η / (2π² Rₛ) / (2a³b + 2bd³ + a³d + ad³), Rₛ = √(ω μ₀ / (2σ)); D. M. Pozar, Microwave Engineering, 4th ed., Wiley 2012, §6.7, eq. 6.46, and §1.7, eq. 1.131",
+ "quantities": [
+  {
+   "id": "q1",
+   "quantity": "TE101's quality factor from the walls' losses",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/0/quality"
+   },
+   "value": 7649.586077363157,
+   "tolerance": {
+    "relative": 0.01
+   },
+   "reason": "mesh: the error of Q falls as h² (the losses take the curl's trace on the walls); on boxes of the same proportions at order 1 it is 1.4 % on 8 × 4 × 6 cells and 0.65 % on 12 × 6 × 9 (crates/solver/tests/cavity.rs), so about 0.35 % on these 16 × 8 × 12; 1 % is above it"
+  }
+ ]
+}
