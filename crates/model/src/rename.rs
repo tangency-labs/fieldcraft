@@ -151,7 +151,11 @@ impl Model {
                 }
                 for b in self.boundary_conditions.values_mut() {
                     use crate::BoundaryCondition as B;
-                    let (B::Fixed { target } | B::Displacement { target, .. } | B::Symmetry { target, .. } | B::Temperature { target, .. }) = b;
+                    let (B::Fixed { target }
+                    | B::Displacement { target, .. }
+                    | B::Symmetry { target, .. }
+                    | B::Temperature { target, .. }
+                    | B::PerfectConductor { target }) = b;
                     swap_target(target, kind, from, to);
                 }
                 for l in self.loads.values_mut() {

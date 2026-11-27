@@ -1389,7 +1389,7 @@ impl Deck {
                     self.line(&format!("{target}, {s}"));
                 }
                 // Refused up front (check_expressible).
-                BoundaryCondition::Temperature { .. } => {}
+                BoundaryCondition::Temperature { .. } | BoundaryCondition::PerfectConductor { .. } => {}
                 BoundaryCondition::Displacement { values, .. } => {
                     for (dof, v) in (1u8..).zip(values) {
                         if let Some(v) = v {
@@ -1715,7 +1715,10 @@ impl Deck {
                         self.comment("loads have no effect on natural frequencies and are not written");
                     }
                 }
-                Procedure::ExplicitDynamic(_) | Procedure::HeatTransfer { .. } | Procedure::CoupledTemperatureDisplacement {} => {
+                Procedure::ExplicitDynamic(_)
+                | Procedure::HeatTransfer { .. }
+                | Procedure::CoupledTemperatureDisplacement {}
+                | Procedure::Cavity { .. } => {
                     return Err(Error::Unsupported { format: FORMAT, what: format!("step `{}`: {} steps", step.name, step.procedure.name()) });
                 }
             }

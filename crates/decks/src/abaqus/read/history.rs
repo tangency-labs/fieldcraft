@@ -550,6 +550,7 @@ fn target_key(target: &Target) -> String {
 fn boundary_identity(boundary: &BoundaryCondition) -> String {
     match boundary {
         BoundaryCondition::Fixed { target } => format!("fixed:{}", target_key(target)),
+        BoundaryCondition::PerfectConductor { target } => format!("perfect_conductor:{}", target_key(target)),
         BoundaryCondition::Symmetry { target, plane } => {
             let plane = match plane {
                 Symmetry::X => "x".to_string(),
@@ -1320,6 +1321,7 @@ mod tests {
                 BoundaryCondition::Temperature { target, value } => {
                     format!("temperature:{:?}:{value:?}", roundtrip_target_nodes(model, target))
                 }
+                BoundaryCondition::PerfectConductor { target } => format!("perfect_conductor:{:?}", roundtrip_target_nodes(model, target)),
             })
             .collect()
     }
@@ -2175,6 +2177,7 @@ mod tests {
                     }
                     BoundaryCondition::Displacement { target, values } => (target, *values),
                     BoundaryCondition::Temperature { target, value } => (target, [Some(*value), None, None, None, None, None]),
+                    BoundaryCondition::PerfectConductor { .. } => continue,
                 };
                 for node in roundtrip_target_nodes(model, target) {
                     for (index, value) in values.into_iter().enumerate() {

@@ -19,6 +19,11 @@ pub const MAX_STEPS: usize = 1000;
 /// Most modes a frequency step extracts.
 pub const MAX_MODES: u32 = 100_000;
 
+/// The highest frequency a frequency or cavity step may name: below c₀ · f64::MAX^¼ / (2π)
+/// (about 1.8e76 Hz), so (2π f)² and k₀² = (2π f / c₀)² stay below the square root of the
+/// largest f64, and a shift of that size times a matrix entry of the same range is finite.
+pub const MAX_HZ: f64 = 1e76;
+
 /// Most time increments an explicit dynamic step may ask for.
 pub const MAX_INCREMENTS: u64 = 1_000_000_000;
 
@@ -36,6 +41,10 @@ pub const MAX_FLUID_STEPS: u64 = 1_000_000_000;
 
 /// Most output frames a fluid step writes.
 pub const MAX_FLUID_FRAMES: u32 = 1000;
+
+fn second_order() -> u8 {
+    2
+}
 
 fn default_frames() -> u32 {
     10
@@ -117,6 +126,20 @@ pub enum Procedure {
     HeatTransfer {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         transient: Option<Transient>,
+    },
+    /// The resonant modes of an electromagnetic cavity: the lowest `modes` frequencies at which
+    /// curl (1/μᵣ) curl E = k₀² εᵣ E has a field that vanishes tangentially on the perfect
+    /// conductors (k₀ = 2π f / c₀), optionally only those between `min_hz` and `max_hz`, on
+    /// Nédélec edge elements of `order` 1 or 2 (docs/rfc/0001-electromagnetics.md §3.3). The
+    /// elements are tetrahedra; every material in use has electromagnetic properties.
+    Cavity {
+        modes: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_hz: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_hz: Option<f64>,
+        #[serde(default = "second_order")]
+        order: u8,
     },
     /// Steady heat conduction and the static equilibrium of the thermal strains it causes,
     /// together: every boundary condition and load of the step acts.
@@ -1176,6 +1199,7 @@ impl Procedure {
             Procedure::CoupledTemperatureDisplacement {} => "coupled_temperature_displacement",
             Procedure::Fluid { .. } => "fluid",
             Procedure::NonlinearStatic(_) => "nonlinear_static",
+            Procedure::Cavity { .. } => "cavity",
         }
     }
 
@@ -1190,7 +1214,12 @@ impl Procedure {
     /// Whether the procedure solves for the motion of the solids (not pure heat transfer or
     /// fluid flow).
     pub fn is_structural(&self) -> bool {
-        !matches!(self, Procedure::HeatTransfer { .. } | Procedure::Fluid { .. })
+        !matches!(self, Procedure::HeatTransfer { .. } | Procedure::Fluid { .. } | Procedure::Cavity { .. })
+    }
+
+    /// Whether the procedure solves for the electric field.
+    pub fn is_electromagnetic(&self) -> bool {
+        matches!(self, Procedure::Cavity { .. })
     }
 
     /// Whether the procedure solves for temperatures.
@@ -1260,13 +1289,21 @@ impl Procedure {
                 finite("buckling shift", s)?;
             }
         }
-        if let Procedure::Frequency { modes, min_hz, max_hz } = *self {
+        if let Procedure::Cavity { order, .. } = *self
+            && !(1..=2).contains(&order)
+        {
+            return Err(Error::Invalid(format!("edge elements are of order 1 or 2, got {order}")));
+        }
+        if let Procedure::Frequency { modes, min_hz, max_hz } | Procedure::Cavity { modes, min_hz, max_hz, .. } = *self {
             if !(1..=MAX_MODES).contains(&modes) {
-                return Err(Error::Invalid(format!("a frequency step extracts 1 to {MAX_MODES} modes, got {modes}")));
+                return Err(Error::Invalid(format!("a {} step extracts 1 to {MAX_MODES} modes, got {modes}", self.name())));
             }
             for f in [min_hz, max_hz].into_iter().flatten() {
                 if finite("frequency", f)? < 0.0 {
                     return Err(Error::Invalid(format!("frequencies are not negative, got {f}")));
+                }
+                if f > MAX_HZ {
+                    return Err(Error::Invalid(format!("frequencies are at most {MAX_HZ:e} Hz, got {f}")));
                 }
             }
             if let (Some(lo), Some(hi)) = (min_hz, max_hz)
@@ -1287,6 +1324,7 @@ impl Procedure {
             // Velocity, pressure and wall forces, always.
             Procedure::Fluid { .. } => BTreeSet::new(),
             Procedure::HeatTransfer { .. } => [OutputVariable::Temperature, OutputVariable::HeatFlux].into_iter().collect(),
+            Procedure::Cavity { .. } => [OutputVariable::ElectricField].into_iter().collect(),
             Procedure::CoupledTemperatureDisplacement {} => {
                 OutputVariable::ALL.into_iter().chain([OutputVariable::Temperature, OutputVariable::HeatFlux]).collect()
             }
@@ -1308,6 +1346,8 @@ pub enum OutputVariable {
     Temperature,
     /// Heat flux at the integration points (heat transfer).
     HeatFlux,
+    /// The electric field of each mode (electromagnetic steps).
+    ElectricField,
 }
 
 impl OutputVariable {
@@ -1324,6 +1364,16 @@ impl OutputVariable {
             OutputVariable::Strain => "strain",
             OutputVariable::Temperature => "temperature",
             OutputVariable::HeatFlux => "heat_flux",
+            OutputVariable::ElectricField => "electric_field",
+        }
+    }
+
+    /// Whether a step of `procedure` computes it.
+    pub fn computed_by(self, procedure: &Procedure) -> bool {
+        match self {
+            OutputVariable::Temperature | OutputVariable::HeatFlux => procedure.is_thermal(),
+            OutputVariable::ElectricField => procedure.is_electromagnetic(),
+            _ => procedure.is_structural(),
         }
     }
 
@@ -1563,6 +1613,19 @@ fn switch(active: &mut BTreeSet<String>, name: &str, on: bool) {
 mod tests {
     use super::*;
     use crate::{BoundaryCondition, Set, Target};
+
+    #[test]
+    fn a_frequency_range_is_bounded() {
+        let cavity = |min_hz, max_hz| Procedure::Cavity { modes: 3, min_hz, max_hz, order: 1 };
+        let frequency = |min_hz, max_hz| Procedure::Frequency { modes: 3, min_hz, max_hz };
+        for p in [cavity(Some(1e9), Some(MAX_HZ)), frequency(None, Some(MAX_HZ))] {
+            assert!(p.validate().is_ok(), "{p:?}");
+        }
+        // 6.4e161 Hz makes k₀² overflow.
+        for p in [cavity(Some(6.4e161), None), cavity(None, Some(2.0 * MAX_HZ)), frequency(Some(1e300), None)] {
+            assert!(matches!(p.validate(), Err(Error::Invalid(_))), "{p:?}");
+        }
+    }
 
     #[test]
     fn an_inlet_ramp_is_a_positive_finite_time() {

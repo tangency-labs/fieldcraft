@@ -21,7 +21,21 @@ fn each(values: &mut [f64], q: Q, f: &mut dyn FnMut(Q, &mut f64)) {
 
 impl Quantities for Material {
     fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
-        let Material { elastic, hyperelastic, density, fluid, plastic, damage, erosion, thermal, pvt, phase_change, temperature_dependent } = self;
+        // Relative permittivity and permeability are dimensionless.
+        let Material {
+            elastic,
+            hyperelastic,
+            electromagnetic: _,
+            density,
+            fluid,
+            plastic,
+            damage,
+            erosion,
+            thermal,
+            pvt,
+            phase_change,
+            temperature_dependent,
+        } = self;
         match elastic {
             Some(Elastic::Isotropic { young, poisson: _ }) => f(Q::Pressure, young),
             Some(Elastic::EngineeringConstants { young, poisson: _, shear }) => {
@@ -225,7 +239,9 @@ impl Quantities for Spring {
 impl Quantities for BoundaryCondition {
     fn quantities(&mut self, f: &mut dyn FnMut(Q, &mut f64)) {
         match self {
-            BoundaryCondition::Fixed { target: _ } | BoundaryCondition::Symmetry { target: _, plane: _ } => {}
+            BoundaryCondition::Fixed { target: _ }
+            | BoundaryCondition::Symmetry { target: _, plane: _ }
+            | BoundaryCondition::PerfectConductor { target: _ } => {}
             // Three displacements, then three rotations.
             BoundaryCondition::Displacement { target: _, values } => {
                 for (i, v) in values.iter_mut().enumerate() {
@@ -400,7 +416,7 @@ impl Quantities for Step {
         let Step { name: _, procedure, output: _, boundary_conditions: _, loads: _ } = self;
         match procedure {
             Procedure::Static {} | Procedure::CoupledTemperatureDisplacement {} => {}
-            Procedure::Frequency { modes: _, min_hz, max_hz } => {
+            Procedure::Frequency { modes: _, min_hz, max_hz } | Procedure::Cavity { modes: _, min_hz, max_hz, order: _ } => {
                 for v in [min_hz, max_hz].into_iter().flatten() {
                     f(Q::Frequency, v);
                 }

@@ -656,7 +656,11 @@ fn largest_labels_longest_numbers_and_names_fit_a_line() {
     m.add_reference_point(&long, ReferencePoint { xyz: [ugly; 3], label: 0 }).unwrap();
     m.add_coupling(&long, Coupling { reference_point: long.clone(), set: long.clone(), kind: CouplingKind::Kinematic, dofs: Dofs::all() }).unwrap();
     m.add_boundary_condition(&long, BoundaryCondition::Fixed { target: Target::Set(long.clone()) }).unwrap();
-    m.add_step(step(&long, Procedure::Frequency { modes: 100_000, min_hz: Some(ugly.abs()), max_hz: Some(1e300) }, &[&long], &[]), None).unwrap();
+    m.add_step(
+        step(&long, Procedure::Frequency { modes: 100_000, min_hz: Some(ugly.abs()), max_hz: Some(fieldcraft_model::MAX_HZ) }, &[&long], &[]),
+        None,
+    )
+    .unwrap();
     let deck = abaqus::write(&m).unwrap();
     assert_lines_fit(&deck);
     let p = read(&deck);

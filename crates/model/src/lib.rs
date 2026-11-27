@@ -85,7 +85,10 @@ pub use geometry::{BodyMesh, Classification, Entity, GeometryRef};
 pub use geometry_names::NameUse;
 pub use initial::InitialField;
 pub use loads::{Distribution, Load, STEFAN_BOLTZMANN, SurfaceRadiation, centrifugal_acceleration};
-pub use materials::{Damage, Directional, Elastic, Erosion, Fluid, Hardening, HardeningPoint, Hyperelastic, Material, PhaseChange, Plastic, Thermal};
+pub use materials::{
+    Damage, Directional, Elastic, Electromagnetic, Erosion, Fluid, Hardening, HardeningPoint, Hyperelastic, MAX_RELATIVE, Material, PhaseChange,
+    Plastic, Thermal,
+};
 pub use mesh::{
     Element, ElementEdge, ElementFace, ElementKind, MIN_NORMALIZED_JACOBIAN, Node, admissible_jacobian, check_coordinates, normalized_jacobian,
     tet4_jacobian,
@@ -99,9 +102,9 @@ pub use sets::Set;
 pub use sizes::{SizeControl, SizeRegion};
 pub use steps::{
     ArcConstraint, ArcLength, Averaging, BulkViscosity, Collision, DEFAULT_HRR_SIGMA, DisplacementLimit, ExplicitDynamic, FlowMonitor, Hourglass,
-    HourglassKind, HrrSigma, Imperfection, InitialVelocity, MAX_LOAD_PATH_POINTS, MAX_LOAD_PATHS, MAX_NONLINEAR_INCREMENTS, MAX_NONLINEAR_ITERATIONS,
-    MassScaling, NonlinearStatic, OutputVariable, Procedure, RigidWall, Steady, Step, StepInputs, StressRate, Tolerances, Transient, Turbulence,
-    WallModel, WallTreatment,
+    HourglassKind, HrrSigma, Imperfection, InitialVelocity, MAX_HZ, MAX_LOAD_PATH_POINTS, MAX_LOAD_PATHS, MAX_NONLINEAR_INCREMENTS,
+    MAX_NONLINEAR_ITERATIONS, MassScaling, NonlinearStatic, OutputVariable, Procedure, RigidWall, Steady, Step, StepInputs, StressRate, Tolerances,
+    Transient, Turbulence, WallModel, WallTreatment,
 };
 pub use tie::Tie;
 pub use units::DisplaySystem;
