@@ -4,59 +4,6 @@
     "linux-x86_64": {
       "stages": {},
       "values": {}
-    },
-    "macos-aarch64": {
-      "stages": {},
-      "values": {
-        "boundary.feature_edges": {
-          "band": 0,
-          "value": 1420
-        },
-        "boundary.vertices": {
-          "band": 0,
-          "value": 2773
-        },
-        "build.triangles": {
-          "band": 0,
-          "value": 5426
-        },
-        "cdt.steiner": {
-          "band": 0,
-          "value": 108
-        },
-        "cdt.tets": {
-          "band": 0,
-          "value": 6921
-        },
-        "octree.mean_sj": {
-          "band": 9.090671834276827e-10,
-          "value": 0.9080671834276827
-        },
-        "octree.min_sj": {
-          "band": 1.1281160576199911e-10,
-          "value": 0.11181160576199911
-        },
-        "octree.volume_mm3": {
-          "band": 0.00003218037540375592,
-          "value": 32180.374403755915
-        },
-        "quality.max_dihedral_deg": {
-          "band": 1.3862326588858832e-7,
-          "value": 138.62226588858832
-        },
-        "quality.min_dihedral_deg": {
-          "band": 3.1243892681713884e-8,
-          "value": 31.242892681713883
-        },
-        "quality.slivers_cdt": {
-          "band": 0,
-          "value": 359
-        },
-        "quality.tets": {
-          "band": 0,
-          "value": 173871
-        }
-      }
     }
   },
   "stages": {
@@ -71,7 +18,7 @@
   "values": {
     "boundary.feature_edges": {
       "band": 0,
-      "value": 1421
+      "value": 1420
     },
     "boundary.genus": {
       "band": 0,
@@ -83,7 +30,7 @@
     },
     "boundary.vertices": {
       "band": 0,
-      "value": 2771
+      "value": 2773
     },
     "build.bodies": {
       "band": 0,
@@ -95,7 +42,7 @@
     },
     "build.triangles": {
       "band": 0,
-      "value": 5422
+      "value": 5426
     },
     "cdt.cavities": {
       "band": 0,
@@ -107,19 +54,19 @@
     },
     "cdt.steiner": {
       "band": 0,
-      "value": 106
+      "value": 108
     },
     "cdt.tets": {
       "band": 0,
-      "value": 6897
+      "value": 6921
     },
     "hex.elements": {
       "band": 0,
       "value": 4986
     },
     "hex.hex20_min_sj": {
-      "band": 7.058296336301669e-10,
-      "value": 0.7048296336301669
+      "band": 7.058296336301668e-10,
+      "value": 0.7048296336301668
     },
     "hex.hex8_min_sj": {
       "band": 7.058296336301692e-10,
@@ -134,24 +81,24 @@
       "value": 63442
     },
     "octree.mean_sj": {
-      "band": 9.078135281187913e-10,
-      "value": 0.9068135281187912
+      "band": 9.090671824100278e-10,
+      "value": 0.9080671824100278
     },
     "octree.min_sj": {
-      "band": 1.1274917120476767e-10,
-      "value": 0.11174917120476767
+      "band": 1.1281160576199911e-10,
+      "value": 0.11181160576199911
     },
     "octree.volume_mm3": {
-      "band": 0.000032189106675253266,
-      "value": 32189.105675253264
+      "band": 0.00003218037540372891,
+      "value": 32180.374403728907
     },
     "quality.max_dihedral_deg": {
-      "band": 1.374500429820193e-7,
-      "value": 137.44904298201928
+      "band": 1.3862326588858832e-7,
+      "value": 138.62226588858832
     },
     "quality.min_dihedral_deg": {
-      "band": 3.3836636753898495e-8,
-      "value": 33.83563675389849
+      "band": 3.1243892681713884e-8,
+      "value": 31.242892681713883
     },
     "quality.min_radius_ratio": {
       "band": 3.2528658392368423e-10,
@@ -163,19 +110,19 @@
     },
     "quality.slivers_cdt": {
       "band": 0,
-      "value": 345
+      "value": 359
     },
     "quality.tets": {
       "band": 0,
-      "value": 173003
+      "value": 173713
     },
     "surface.enclosed_mm3": {
-      "band": 0.0000321662814670251,
-      "value": 32166.280467025095
+      "band": 0.00003216628146702306,
+      "value": 32166.280467023054
     },
     "surface.enclosed_vs_exact": {
       "band": 1e-9,
-      "value": 0.0006688968704766592
+      "value": 0.0006688968704131682
     },
     "surface.solidcraft_mm3": {
       "band": 0.00003214477992538869,
