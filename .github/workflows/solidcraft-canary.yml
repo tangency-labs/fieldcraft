@@ -1,0 +1,212 @@
+# SolidCraft canary, nightly and on demand (#1141): builds FieldCraft against SolidCraft's newest
+# nightly tag, so drift shows up the day it lands instead of in one big repin. The pins in
+# Cargo.toml are SolidCraft tags (docs/architecture.md, "SolidCraft pin"); the canary job rewrites
+# them to the tag under test on the runner's checkout only. Nothing is committed.
+#
+# Two jobs. `canary` builds and tests, holds no write token, and reports the verdict as job
+# outputs. `report` runs after it, checks out and builds nothing, and is the only job with
+# `issues: write`. Only a scheduled run on develop opens, updates or closes the issue (labelled
+# `solidcraft-canary`); a manual run writes its verdict to its run summary only.
+#
+# Repin the real pin with docs/releasing.md, "Repinning SolidCraft"; try a tag without waiting for
+# the nightly with `gh workflow run solidcraft-canary.yml --ref <branch> -f tag=<tag>`.
+name: SolidCraft canary
+
+on:
+  schedule:
+    - cron: '43 5 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'SolidCraft tag to build against (vX.Y.Z or vX.Y.Z-nightly.YYYYMMDD.N.M); empty: its newest nightly'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solidcraft-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  canary:
+    name: FieldCraft against SolidCraft's newest nightly
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      failed: ${{ steps.verdict.outputs.failed }}
+      log: ${{ steps.verdict.outputs.log }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.99.1  # the version in rust-toolchain.toml
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: solidcraft-canary
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      - name: Resolve the SolidCraft tag under test
+        id: tag
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/canary"
+          echo "LOGS=$RUNNER_TEMP/canary" >>"$GITHUB_ENV"
+          repo=https://github.com/tangency-labs/solidcraft
+          if [ -n "$TAG_INPUT" ]; then
+            tag="$TAG_INPUT"
+          else
+            # Tags of the form v0.51.0-nightly.20261127.168.1; the highest version is the newest nightly.
+            tag=$(git ls-remote --tags --refs "$repo" | awk '{print $2}' | sed 's#^refs/tags/##' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          fi
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-nightly\.[0-9]+\.[0-9]+\.[0-9]+)?$ ]]; then
+            echo "not a SolidCraft tag: '$tag'" >&2
+            exit 1
+          fi
+          git ls-remote --exit-code --tags "$repo" "refs/tags/$tag" >/dev/null
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "### SolidCraft under test: \`$tag\`" >>"$GITHUB_STEP_SUMMARY"
+      # The runner's checkout is a scratch copy: these rewrites are never committed.
+      - name: Point the SolidCraft pins at the tag (runner copy, never committed)
+        id: pin
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          sed -i -E "/git = \"https:\/\/github\.com\/tangency-labs\/solidcraft\"/ s/tag = \"[^\"]*\"/tag = \"$TAG\"/" Cargo.toml
+          if grep 'git = "https://github.com/tangency-labs/solidcraft"' Cargo.toml | grep -vq "tag = \"$TAG\""; then
+            echo "a SolidCraft pin in Cargo.toml was not rewritten to $TAG" >&2
+            exit 1
+          fi
+      - name: Move the solidcraft crates to the tag (cargo update -p)
+        id: update
+        run: |
+          set -euo pipefail
+          cargo update \
+            -p solidcraft-ui-kit -p solidcraft-theme -p solidcraft-look -p solidcraft-ui-registry \
+            -p solidcraft-ui-text -p solidcraft-geom -p solidcraft-kernel -p solidcraft-doc \
+            -p solidcraft-io -p solidcraft-engine -p solidcore-record -p solidcore-tess \
+            -p egui-wgpu -p winit 2>&1 | tee "$LOGS/update.log"
+      - name: Install cargo-deny
+        id: deny_install
+        run: cargo install cargo-deny --version 0.20.2 --locked 2>&1 | tee "$LOGS/deny_install.log"
+      - name: "fieldcraft-geometry tests (scripts feature: design formats and names)"
+        id: geometry
+        run: cargo test --profile ci -p fieldcraft-geometry --features scripts 2>&1 | tee "$LOGS/geometry.log"
+      - name: fieldcraft-ui-egui library tests
+        id: ui
+        run: cargo test --profile ci -p fieldcraft-ui-egui --lib 2>&1 | tee "$LOGS/ui.log"
+      - name: cargo deny (licenses, bans)
+        id: deny
+        run: cargo deny check licenses bans 2>&1 | tee "$LOGS/deny.log"
+      - name: Meshing corpus against its fixtures
+        id: corpus
+        run: |
+          cargo test --profile ci -p fieldcraft-testkit --lib -- runner::tests::corpus_matches_its_fixtures --ignored 2>&1 \
+            | tee "$LOGS/corpus.log"
+      # Runs after every step, a timeout included. Names the first step that failed or was cancelled
+      # and passes its log tail to the report job. The step names are the verdict's vocabulary.
+      - name: Verdict (first failing step and its log tail)
+        id: verdict
+        if: always()
+        env:
+          LOGS: ${{ runner.temp }}/canary
+          OUTCOMES: >-
+            tag=${{ steps.tag.outcome }} pin=${{ steps.pin.outcome }} update=${{ steps.update.outcome }}
+            deny_install=${{ steps.deny_install.outcome }} geometry=${{ steps.geometry.outcome }}
+            ui=${{ steps.ui.outcome }} deny=${{ steps.deny.outcome }} corpus=${{ steps.corpus.outcome }}
+        run: |
+          set -uo pipefail
+          failed=""
+          for kv in $OUTCOMES; do
+            case "${kv#*=}" in
+              failure|cancelled) failed="${kv%%=*}"; break ;;
+            esac
+          done
+          {
+            echo "failed=$failed"
+            echo "log<<CANARY_LOG_END"
+            if [ -n "$failed" ] && [ -f "$LOGS/$failed.log" ]; then
+              sed 's/\x1b\[[0-9;]*m//g' "$LOGS/$failed.log" | tail -c 30000
+            else
+              echo "(no log: the step ended before it produced one)"
+            fi
+            echo "CANARY_LOG_END"
+          } >>"$GITHUB_OUTPUT"
+          echo "Verdict: ${failed:-passed}" >>"$GITHUB_STEP_SUMMARY"
+
+  report:
+    name: Report the canary verdict (no checkout, no build)
+    needs: canary
+    if: always()
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # The one write token of the canary. This job runs no code from the repository.
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EVENT: ${{ github.event_name }}
+      RESULT: ${{ needs.canary.result }}
+      TAG: ${{ needs.canary.outputs.tag }}
+      FAILED: ${{ needs.canary.outputs.failed }}
+      LOG: ${{ needs.canary.outputs.log }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Report
+        run: |
+          set -euo pipefail
+          label=solidcraft-canary
+          open=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --label "$label" --json number --jq '.[0].number // empty')
+          if [ "$EVENT" != schedule ]; then
+            echo "Manual run ($EVENT): verdict is in this run's summary; the issue is untouched." >>"$GITHUB_STEP_SUMMARY"
+            echo "Canary result: $RESULT, tag: ${TAG:-none}, failed step: ${FAILED:-none}" >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$RESULT" = success ]; then
+            if [ -n "$open" ]; then
+              gh issue comment "$open" -R "$GITHUB_REPOSITORY" --body "FieldCraft passes its canary on \`$TAG\`: $RUN_URL"
+              gh issue close "$open" -R "$GITHUB_REPOSITORY"
+            fi
+            exit 0
+          fi
+          # A step up to and including tag resolution is a setup failure: the tag may not be known.
+          case "$FAILED" in
+            tag|"") title="SolidCraft canary setup failed: ${FAILED:-unknown step}" ;;
+            *) title="SolidCraft canary: $TAG breaks FieldCraft" ;;
+          esac
+          body=$(mktemp)
+          {
+            echo "The canary failed in step \`${FAILED:-unknown}\` (tag: \`${TAG:-none}\`)."
+            echo
+            echo "Run: $RUN_URL"
+            echo
+            echo "Log tail:"
+            echo
+            echo '```text'
+            printf '%s\n' "$LOG"
+            echo '```'
+          } >"$body"
+          if ! gh label list -R "$GITHUB_REPOSITORY" --json name --jq '.[].name' | grep -qx "$label"; then
+            gh label create "$label" -R "$GITHUB_REPOSITORY" --color 5319e7 --description "SolidCraft canary verdicts"
+          fi
+          if [ -n "$open" ]; then
+            gh issue edit "$open" -R "$GITHUB_REPOSITORY" --title "$title" --body-file "$body"
+            gh issue comment "$open" -R "$GITHUB_REPOSITORY" --body "Still failing in step \`${FAILED:-unknown}\`: $RUN_URL"
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --label "$label" --body-file "$body" >>"$GITHUB_STEP_SUMMARY"
+          fi
