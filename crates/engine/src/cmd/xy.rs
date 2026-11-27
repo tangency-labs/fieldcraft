@@ -136,6 +136,7 @@ pub fn plottable(r: &StepResult) -> Vec<Field> {
         Kind::Static(_) | Kind::Frequency(_) => shapes.to_vec(),
         Kind::Explicit(_) => Field::available(r).collect(),
         Kind::Heat(_) => vec![Field::Temperature],
+        Kind::Cavity(_) => Field::available(r).collect(),
         Kind::Fluid(_) => Vec::new(),
     }
 }
@@ -207,6 +208,7 @@ fn series<'a>(s: &'a Session, step: &str, r: &'a StepResult, axis: Axis, y: &Val
             Kind::Explicit(e) => (e.frames.len(), true, Box::new(move |i| e.frames.get(i).map_or(f64::NAN, |f| f.time))),
             Kind::Heat(h) => (h.frames.len(), true, Box::new(move |i| h.times.get(i).copied().unwrap_or(f64::NAN))),
             Kind::Frequency(f) => (f.modes.len(), false, Box::new(|i| i as f64 + 1.0)),
+            Kind::Cavity(c) => (c.modes.len(), false, Box::new(|i| i as f64 + 1.0)),
             Kind::Fluid(_) => return Err(y_error(format!("step `{step}` is a fluid step: its fields are per cell (solve.probe)"))),
         };
         let point = move |i: usize| -> Result<(f64, f64)> {
@@ -417,7 +419,7 @@ fn natural(step: &str, r: &StepResult) -> Result<Axis> {
             "step `{step}` is a linear static step: one state, nothing to plot against (a nonlinear static step keeps a frame per increment)"
         ))),
         Kind::Explicit(_) | Kind::Heat(_) => Ok(Axis::Time),
-        Kind::Frequency(_) => Ok(Axis::Mode),
+        Kind::Frequency(_) | Kind::Cavity(_) => Ok(Axis::Mode),
         Kind::Fluid(_) => Err(EngineError::Params(format!("step `{step}` is a fluid step: it has no series to plot yet"))),
     }
 }

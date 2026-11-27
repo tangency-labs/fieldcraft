@@ -103,6 +103,7 @@ impl<'a> SolvedRef<'a> {
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(_)) => 2,
             SolvedRef::Explicit(_) => 3,
             SolvedRef::Fluid(_) => 4,
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Cavity(_)) => 5,
         }
     }
 
@@ -113,6 +114,7 @@ impl<'a> SolvedRef<'a> {
             SolvedRef::Implicit(fieldcraft_solver::StepResult::Heat(r)) => codec::encode_into(r, out),
             SolvedRef::Explicit(r) => codec::encode_into(r, out),
             SolvedRef::Fluid(r) => codec::encode_into(r, out),
+            SolvedRef::Implicit(fieldcraft_solver::StepResult::Cavity(r)) => codec::encode_into(r, out),
         }
     }
 }
@@ -271,6 +273,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
             2 => Solved::Implicit(fieldcraft_solver::StepResult::Heat(codec::decode(payload).map_err(damaged)?)),
             3 => Solved::Explicit(codec::decode(payload).map_err(damaged)?),
             4 => Solved::Fluid(Box::new(codec::decode(payload).map_err(damaged)?)),
+            5 => Solved::Implicit(fieldcraft_solver::StepResult::Cavity(codec::decode(payload).map_err(damaged)?)),
             k => return invalid(format!("{PART}: step `{name}` has a result of unknown kind {k}")),
         };
         if result.step() != name {
@@ -358,6 +361,15 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
             }
             for m in &f.modes {
                 lengths(f.nodes.len(), &[("a mode's shape", m.shape.len(), false), ("a mode's rotation", m.rotation.len(), true)])?;
+            }
+            Ok(())
+        }
+        Solved::Implicit(S::Cavity(c)) => {
+            if !ascending(&c.nodes) {
+                return Err("its nodes do not ascend".into());
+            }
+            for m in &c.modes {
+                lengths(c.nodes.len(), &[("a mode's field", m.field.len(), false)])?;
             }
             Ok(())
         }

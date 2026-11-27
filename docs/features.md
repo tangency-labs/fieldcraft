@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-99 ready, 27 coming soon.
+102 ready, 27 coming soon.
 
 ## Geometry
 
@@ -77,6 +77,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Materials | Hyperelastic — A rubber-like material for nonlinear steps: neo-Hookean, Mooney–Rivlin or Yeoh on the isotropic constants | ready | `model.material.create {"hyperelastic":{"type":"neo_hookean"}}` |
 | Materials | Damage — Johnson–Cook damage and element erosion | ready | `model.material.damage` |
 | Materials | Thermal — A material with conductivity, specific heat and expansion, for heat transfer and thermal stress | ready | `model.material.create {"thermal":{}}` |
+| Materials | Electromagnetic — A material's relative permittivity and permeability, for cavity steps | ready | `model.material.create {"elastic":null,"electromagnetic":{}}` |
 | Materials | Equation of State — Polynomial, ideal gas, Mie–Grüneisen, JWL and tabulated equations of state | coming soon (M11) |  |
 | Sections | Section — Solid, shell, beam, rod or 2D (plane stress, plane strain, axisymmetric) section assigned to a set, with its element formulation | ready | `model.section.create`, `model.section.edit`, `model.section.delete` |
 | Sections | Composite — Composite layups and continuum shells | coming soon (M8) |  |
@@ -100,6 +101,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Procedures | Amplitude — Time and frequency amplitudes | coming soon (M7) |  |
 | Procedures | Nonlinear — A nonlinear static step: large deformation, increments and load paths | ready | `model.step.create {"procedure":{"type":"nonlinear_static"}}` |
 | Procedures | Explicit — An explicit dynamic step: impact and fast transients by central differences | ready | `model.step.create {"procedure":{"type":"explicit_dynamic"}}` |
+| Procedures | Cavity — The resonant modes of an electromagnetic cavity inside perfect conductors | ready | `model.step.create {"procedure":{"type":"cavity"}}` |
 | Procedures | Heat Transfer — A steady or transient heat transfer step | ready | `model.step.create {"procedure":{"type":"heat_transfer"}}` |
 
 ## Loads & BCs
@@ -141,6 +143,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Decks | Read Deck — Read an Abaqus input deck's model data and the current writer's linear history: mesh, sets, materials, sections, static/frequency/buckling steps, boundary conditions and concentrated loads; unread keywords are listed, not kept | ready | `deck.read` |
 | Implicit | Static — Linear static (or coupled temperature–displacement) solve of a step with FieldCraft's own solver; nonlinear static, buckling and heat transfer in the drop-down | ready | `solve.static`, `solve.nonlinear`, `solve.buckle`, `solve.heat` |
 | Implicit | Frequency — Natural frequencies and mode shapes of a frequency step | ready | `solve.frequency` |
+| Implicit | Cavity — Resonant modes of an electromagnetic cavity step on Nédélec edge elements | ready | `solve.cavity` |
 | Explicit | Explicit — Transient dynamics of an explicit step by central differences (contact and erosion coming in M10) | ready | `solve.explicit` |
 | Explicit | Blast & Impact — EOS-driven fluids with fluid–structure contact (ALE or SPH) | coming soon (M14) |  |
 | Fluids | Lattice Boltzmann — Lattice Boltzmann flow of a fluid step on the CPU or a GPU, with wall forces, and the heat it carries | ready | `solve.fluid`, `solve.settings`, `solve.outlet_reflection` |

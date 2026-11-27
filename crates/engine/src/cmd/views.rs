@@ -113,7 +113,7 @@ fn capture_results(s: &Session, v: &ResultsView) -> Option<ResultsSetup> {
     if !fluid {
         out.deformed = object(json!({"show": v.deformed, "scale": v.scale.map_or(json!("auto"), |x| json!(x))}));
     }
-    if matches!(r.kind(), Kind::Frequency(_)) {
+    if r.kind().modes().is_some() {
         out.mode = Some(v.mode as u64);
     }
     let mut contour = json!({"field": v.contour.map_or("none", Field::id), "bands": v.bands});

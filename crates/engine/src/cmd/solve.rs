@@ -11,8 +11,8 @@ use fieldcraft_model::units::Quantity;
 use fieldcraft_model::{BoxFace, DisplaySystem};
 use fieldcraft_parallel as parallel;
 use fieldcraft_solver::{
-    FrequencyOptions, Limits, Location, MassKind, StaticResult, StepResult as ImplicitResult, solve_buckle, solve_frequency, solve_heat,
-    solve_nonlinear, solve_static,
+    FrequencyOptions, Limits, Location, MassKind, StaticResult, StepResult as ImplicitResult, solve_buckle, solve_cavity, solve_frequency,
+    solve_heat, solve_nonlinear, solve_static,
 };
 use serde_json::{Value, json};
 
@@ -68,6 +68,16 @@ pub const FREQUENCY: CommandSpec = CommandSpec {
     kind: CommandKind::Model,
     requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection, Requirement::Step],
     run: run_frequency,
+};
+
+pub const CAVITY: CommandSpec = CommandSpec {
+    id: "solve.cavity",
+    label: "Solve Cavity Step",
+    params: r#"{"step": "Modes", "max_dofs": 6000000, "max_factor_entries": 400000000, "max_iterations": 3000, "threads": 8} — the resonant modes of an electromagnetic cavity step (its modes, range and element order) on Nédélec edge elements of its tetrahedra, with perfect conductors on the faces of its active perfect_conductor boundary conditions: each mode's frequency and electric field (normalised to a largest |E| of 1); `max_iterations` caps the Lanczos vectors; the result stays in the session; `max_factor_entries` and `threads` as for solve.static"#,
+    form: Some(super::forms::SOLVE_CAVITY),
+    kind: CommandKind::Model,
+    requires: &[Requirement::Analysable, Requirement::ElementMaterial, Requirement::ElementSection, Requirement::Step],
+    run: run_cavity,
 };
 
 pub const BUCKLE: CommandSpec = CommandSpec {
@@ -393,11 +403,6 @@ fn run_nonlinear(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(summary)
 }
 
-/// Cavity steps are defined in the model, but not solved yet.
-fn run_cavity(_: &mut Session, _: &Value) -> Result<Value> {
-    Err(EngineError::Params("not supported yet: solving cavity steps".into()))
-}
-
 fn run_heat(s: &mut Session, p: &Value) -> Result<Value> {
     let limits = limits(p)?;
     let step = opt::<String>(p, "step")?;
@@ -444,6 +449,25 @@ fn run_frequency(s: &mut Session, p: &Value) -> Result<Value> {
         "warnings": r.warnings,
     });
     s.store_result(StepResult::Implicit(ImplicitResult::Frequency(r)));
+    Ok(summary)
+}
+
+fn run_cavity(s: &mut Session, p: &Value) -> Result<Value> {
+    let limits = limits(p)?;
+    let step = opt::<String>(p, "step")?;
+    let model = &s.model;
+    let r = with_threads(threads(s, p)?, || solve_cavity(model, step.as_deref(), &limits))?;
+    let summary = json!({
+        "step": r.step,
+        "order": r.order,
+        "dofs": r.stats.dofs,
+        "equations": r.stats.equations,
+        "null_space": r.null_space,
+        "lanczos_vectors": r.stats.lanczos_vectors,
+        "modes": r.modes.iter().enumerate().map(|(i, m)| json!({"mode": i + 1, "frequency": m.frequency})).collect::<Vec<_>>(),
+        "warnings": r.warnings,
+    });
+    s.store_result(StepResult::Implicit(ImplicitResult::Cavity(r)));
     Ok(summary)
 }
 
@@ -1720,6 +1744,23 @@ fn probe_implicit(model: &fieldcraft_model::Model, result: &ImplicitResult, step
                         }
                         Location::Node(i) => json!({"node": l, "shape": m.shape.get(i), "rotation": m.rotation.get(i)}),
                     })
+                })
+                .collect::<Result<_>>()?
+        }
+        ImplicitResult::Cavity(r) => {
+            if !elements.is_empty() {
+                return Err(EngineError::Params("element results are kept for static and explicit steps".into()));
+            }
+            let mode = opt::<usize>(p, "mode")?.unwrap_or(1);
+            let m = mode
+                .checked_sub(1)
+                .and_then(|k| r.modes.get(k))
+                .ok_or_else(|| EngineError::Params(format!("`mode` must be from 1 to {}", r.modes.len())))?;
+            nodes
+                .iter()
+                .map(|&l| {
+                    let i = r.nodes.binary_search(&l).map_err(|_| EngineError::Params(format!("node {l} has no field (it belongs to no tetrahedron)")))?;
+                    Ok(json!({"node": l, "electric_field": m.field.get(i)}))
                 })
                 .collect::<Result<_>>()?
         }
@@ -4173,5 +4214,131 @@ pub(crate) mod tests {
         s.execute("interaction.tie", &json!({"name": "back", "main": "pad_bottom", "secondary": "chip_top", "position_tolerance": 0.1})).unwrap();
         let e = s.execute("solve.heat", &json!({"step": "Steady"})).unwrap_err().to_string();
         assert!(e.contains("tie `back`") && e.contains("tie `chip`"), "{e}");
+    }
+
+    /// A 1 × 0.5 × 0.75 box of tetrahedra in air, its walls perfect conductors, and a cavity
+    /// step `Modes` of 3 modes at order 2 (`divisions` cells per axis, elements of `kind`).
+    fn cavity_box(s: &mut Session, kind: &str, divisions: [u32; 3]) {
+        let corners = json!([[0, 0, 0], [1, 0, 0], [1, 0.5, 0], [0, 0.5, 0], [0, 0, 0.75], [1, 0, 0.75], [1, 0.5, 0.75], [0, 0.5, 0.75]]);
+        let faces = json!({"1": "z0", "2": "z1", "3": "y0", "4": "x1", "5": "y1", "6": "x0"});
+        let walls: Vec<Value> = ["x0", "x1", "y0", "y1", "z0", "z1"].iter().map(|f| json!({"body": "Box", "face": f})).collect();
+        for (cmd, params) in [
+            ("mesh.block", json!({"body": "Box", "kind": kind, "corners": corners, "divisions": divisions, "faces": faces})),
+            ("model.set.create", json!({"name": "all", "geometry": [{"body": "Box"}]})),
+            ("model.set.create", json!({"name": "walls", "geometry": walls})),
+            ("model.material.create", json!({"name": "Air", "electromagnetic": {}})),
+            ("model.section.create", json!({"name": "air", "set": "all", "material": "Air", "kind": {"type": "solid"}})),
+            ("model.boundary_condition.create", json!({"name": "pec", "type": "perfect_conductor", "target": {"set": "walls"}})),
+            ("model.step.create", json!({"name": "Modes", "procedure": {"type": "cavity", "modes": 3, "order": 2}, "boundary_conditions": ["pec"]})),
+        ] {
+            s.execute(cmd, &params).unwrap_or_else(|e| panic!("{cmd}: {e}"));
+        }
+    }
+
+    /// A cavity through the commands, as an agent builds one: a block of tetrahedra with its six
+    /// faces named, a material with electromagnetic properties, a perfect conductor on the faces,
+    /// a cavity step, solve.cavity (and solve.run), the field's contours and a probe.
+    #[test]
+    fn a_cavity_is_built_and_solved_through_the_commands() {
+        let mut s = Session::default();
+        cavity_box(&mut s, "tet4", [4, 2, 3]);
+        let reply = s.execute("solve.cavity", &json!({})).unwrap();
+        assert_eq!(reply["modes"].as_array().map(Vec::len), Some(3), "{reply}");
+        assert_eq!(reply["warnings"], json!([]), "{reply}");
+        // TE101 of the box as the model holds it (SI): k² = (π/a)² + (π/d)².
+        let extent = |axis: usize| s.model.nodes().values().map(|n| n.xyz[axis]).fold(0.0, f64::max);
+        let k = (std::f64::consts::PI / extent(0)).hypot(std::f64::consts::PI / extent(2));
+        let exact = k * fieldcraft_solver::cavity::SPEED_OF_LIGHT / (2.0 * std::f64::consts::PI);
+        let first = match s.latest_result("Modes").map(|(r, _)| r.kind()) {
+            Some(crate::results::Kind::Cavity(c)) => c.modes[0].frequency,
+            _ => panic!("a cavity result"),
+        };
+        // The same cells and order as the solver's frozen cavity (crates/solver/tests/cavity.rs),
+        // whose six lowest k² are within 0.81 % of the closed form: TE101's frequency within half.
+        assert!((first / exact - 1.0).abs() < 0.0081 / 2.0, "{first} against {exact}");
+        // And it is the solver's result for the model the session holds.
+        let direct = fieldcraft_solver::solve_cavity(&s.model, Some("Modes"), &fieldcraft_solver::Limits::default()).unwrap();
+        assert_eq!(direct.modes.first().map(|m| m.frequency), Some(first));
+        // The field is what the results show, by mode, and what a probe reads.
+        let contour = s.execute("results.contour", &json!({"field": "electric_field_y"})).unwrap();
+        assert!(contour.to_string().contains("electric_field_y"), "{contour}");
+        let probe = s.execute("solve.probe", &json!({"step": "Modes", "mode": 1, "nodes": [1]})).unwrap();
+        assert!(probe.to_string().contains("electric_field"), "{probe}");
+        assert!(s.execute("results.contour", &json!({"field": "von_mises"})).is_err());
+        // Each mode is shown by results.modes, as a field (not a deformation).
+        let second = s.execute("results.modes", &json!({"mode": 2})).unwrap();
+        assert_eq!((second["view"]["mode"].as_u64(), second["view"]["deformed"].as_bool()), (Some(2), Some(false)), "{second}");
+        // A path plot and a saved view keep the mode they show.
+        let path = s
+            .execute("results.path", &json!({"step": "Modes", "field": "electric_field", "points": [[0.1, 0.25, 0.3], [0.9, 0.25, 0.3]], "mode": 2}))
+            .unwrap();
+        assert_eq!(path["mode"], 2, "{path}");
+        s.execute("view.save", &json!({"name": "second"})).unwrap();
+        let views = s.execute("view.list", &json!({})).unwrap();
+        assert!(views.to_string().contains(r#""mode":2"#), "{views}");
+        // solve.run solves it as well.
+        let all = s.execute("solve.run", &json!({})).unwrap();
+        assert_eq!(all["steps"][0]["procedure"], "cavity", "{all}");
+    }
+
+    #[test]
+    fn cavity_hostile_params_never_panic() {
+        let mut s = Session::default();
+        cavity_box(&mut s, "tet4", [2, 1, 2]);
+        // A node no tetrahedron uses.
+        s.execute("mesh.node.add", &json!({"label": 9999, "xyz": [5, 5, 5]})).unwrap();
+        s.execute("solve.cavity", &json!({})).unwrap();
+        let refused = [
+            ("solve.cavity", json!({"max_dofs": 0})),
+            ("solve.cavity", json!({"max_dofs": 3})),
+            ("solve.cavity", json!({"max_factor_entries": 10})),
+            ("solve.cavity", json!({"step": "Nope"})),
+            ("solve.cavity", json!({"step": 7})),
+            ("solve.cavity", json!({"threads": -3})),
+            ("solve.cavity", json!({"threads": 0})),
+            ("solve.cavity", json!({"threads": 1e300})),
+            ("solve.probe", json!({"step": "Modes", "nodes": [9999]})),
+            ("solve.cavity", json!({"threads": "all"})),
+            ("solve.probe", json!({"step": "Modes", "nodes": [1], "mode": 0})),
+            ("solve.probe", json!({"step": "Modes", "nodes": [1], "mode": 99})),
+            ("solve.probe", json!({"step": "Modes", "nodes": [1], "mode": 1e300})),
+            ("solve.probe", json!({"step": "Modes", "elements": [1]})),
+            ("solve.probe", json!({"step": "Modes", "nodes": [0, 99999999, 4294967296u64]})),
+        ];
+        let tolerated = [
+            ("solve.cavity", json!({"max_iterations": 1})),
+            // A frame is ignored, as for a frequency step's modes.
+            ("solve.probe", json!({"step": "Modes", "nodes": [1], "frame": 0})),
+        ];
+        for ((id, p), must) in refused.iter().map(|c| (c, true)).chain(tolerated.iter().map(|c| (c, false))) {
+            let mut t = s.clone();
+            let before = t.model.clone();
+            let results = t.solved_steps().count();
+            match t.execute(id, p) {
+                Err(_) => {
+                    assert_eq!(t.model, before, "{id} {p}");
+                    assert_eq!(t.solved_steps().count(), results, "{id} {p}");
+                }
+                Ok(reply) => assert!(!must, "{id} {p} was accepted: {reply}"),
+            }
+        }
+    }
+
+    /// Tet10 elements are taken with straight edges; their mid-side nodes carry the field too
+    /// (the element's field halfway along the edge), so the result has a value at every node.
+    #[test]
+    fn a_cavity_of_tet10_elements_has_its_field_at_every_node() {
+        let mut s = Session::default();
+        cavity_box(&mut s, "tet10", [2, 1, 2]);
+        s.execute("solve.cavity", &json!({})).unwrap();
+        let Some(crate::results::Kind::Cavity(c)) = s.latest_result("Modes").map(|(r, _)| r.kind()) else { panic!("a cavity result") };
+        let labels: Vec<u32> = s.model.nodes().keys().copied().collect();
+        assert_eq!(c.nodes, labels);
+        let field = &c.modes[0].field;
+        assert_eq!(field.len(), labels.len());
+        assert!(field.iter().flatten().all(|v| v.is_finite()));
+        // The mid-side nodes inside the box have a field: more than the corners alone carry.
+        let nonzero = field.iter().filter(|f| f.iter().any(|v| *v != 0.0)).count();
+        assert!(nonzero > labels.len() / 2, "{nonzero} of {}", labels.len());
     }
 }

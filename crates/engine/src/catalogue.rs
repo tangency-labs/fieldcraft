@@ -536,6 +536,16 @@ pub static CATALOGUE: &[Capability] = &[
         "model.material.create",
         r#"{"thermal": {}}"#,
     ),
+    variant(
+        "model.material.electromagnetic",
+        "Electromagnetic",
+        Properties,
+        "Materials",
+        "A material's relative permittivity and permeability, for cavity steps",
+        "model.material.create",
+        // No elastic constants: a cavity's materials need none.
+        r#"{"elastic": null, "electromagnetic": {}}"#,
+    ),
     soon(
         "model.material.eos",
         "Equation of State",
@@ -594,6 +604,15 @@ pub static CATALOGUE: &[Capability] = &[
         "An explicit dynamic step: impact and fast transients by central differences",
         "model.step.create",
         r#"{"procedure": {"type": "explicit_dynamic"}}"#,
+    ),
+    variant(
+        "model.step.cavity",
+        "Cavity",
+        Steps,
+        "Procedures",
+        "The resonant modes of an electromagnetic cavity inside perfect conductors",
+        "model.step.create",
+        r#"{"procedure": {"type": "cavity"}}"#,
     ),
     variant(
         "model.step.heat",
@@ -741,6 +760,7 @@ pub static CATALOGUE: &[Capability] = &[
         &["solve.nonlinear", "solve.buckle", "solve.heat"],
     ),
     ready("solve.frequency", "Frequency", Solve, "Implicit", "Natural frequencies and mode shapes of a frequency step"),
+    ready("solve.cavity", "Cavity", Solve, "Implicit", "Resonant modes of an electromagnetic cavity step on Nédélec edge elements"),
     ready(
         "solve.explicit",
         "Explicit",
@@ -1065,6 +1085,8 @@ mod tests {
             ("model.material.hyperelastic", "model.material.create", "hyperelastic", serde_json::json!({"elastic": elastic})),
             // The thermal group starts empty: one property is typed in it.
             ("model.material.thermal", "model.material.create", "thermal", serde_json::json!({"elastic": elastic, "thermal": {"conductivity": 50}})),
+            // The electromagnetic group starts at εᵣ = μᵣ = 1, with no elastic constants.
+            ("model.material.electromagnetic", "model.material.create", "electromagnetic", serde_json::json!({})),
             ("model.step.nonlinear", "model.step.create", "procedure", serde_json::json!({})),
             // An explicit step's end time is typed.
             ("model.step.explicit", "model.step.create", "procedure", serde_json::json!({"procedure": {"end_time": 0.001}})),

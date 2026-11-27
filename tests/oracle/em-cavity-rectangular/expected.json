@@ -1,0 +1,85 @@
+{
+ "title": "Resonant modes of a rectangular cavity with perfectly conducting walls",
+ "kind": "theory",
+ "source": "Rectangular cavity with perfectly conducting walls: f_mnl = (c₀/2)·√((m/a)² + (n/b)² + (l/d)²), a TE and a TM mode when no index is zero; D. M. Pozar, Microwave Engineering, 4th ed., Wiley 2012, §6.4",
+ "quantities": [
+  {
+   "id": "f1",
+   "quantity": "TE101, the lowest mode",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/0/frequency"
+   },
+   "value": 12491352416.666668,
+   "tolerance": {
+    "relative": 0.002
+   },
+   "reason": "mesh: order-2 edge elements, whose eigenvalue error falls as h⁴ (D. Boffi, Acta Numer. 19, 2010); on 4 × 2 × 3 cells of a box of the same proportions the largest k² error is 0.81 % (crates/solver/tests/cavity.rs), so on these 8 × 4 × 6 about 16 times less (0.05 % in k², 0.03 % in f); 0.2 % is well above it"
+  },
+  {
+   "id": "f2",
+   "quantity": "TE110",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/1/frequency"
+   },
+   "value": 16758907880.743767,
+   "tolerance": {
+    "relative": 0.002
+   },
+   "reason": "as f1"
+  },
+  {
+   "id": "f3",
+   "quantity": "(0, 1, 1) and (2, 0, 1), equal in the closed form: the first of the pair",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/2/frequency"
+   },
+   "value": 18015284655.273075,
+   "tolerance": {
+    "relative": 0.002
+   },
+   "reason": "as f1; the mesh splits the pair by less than its error"
+  },
+  {
+   "id": "f4",
+   "quantity": "the second of the (0, 1, 1) and (2, 0, 1) pair",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/3/frequency"
+   },
+   "value": 18015284655.273075,
+   "tolerance": {
+    "relative": 0.002
+   },
+   "reason": "as f3"
+  },
+  {
+   "id": "f5",
+   "quantity": "(1, 1, 1), its TE and TM modes: the first",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/4/frequency"
+   },
+   "value": 19512116232.78133,
+   "tolerance": {
+    "relative": 0.002
+   },
+   "reason": "as f3"
+  },
+  {
+   "id": "f6",
+   "quantity": "the second of the (1, 1, 1) pair",
+   "measure": {
+    "from": "modes",
+    "pointer": "/modes/5/frequency"
+   },
+   "value": 19512116232.78133,
+   "tolerance": {
+    "relative": 0.002
+   },
+   "reason": "as f3"
+  }
+ ]
+}

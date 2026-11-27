@@ -225,6 +225,15 @@ const THERMAL: Field = group(
     ],
 )
 .help("Heat conduction, specific heat and thermal expansion, for heat-transfer and thermal-stress steps.");
+const ELECTROMAGNETIC: Field = group(
+    "electromagnetic",
+    "Electromagnetic",
+    &[
+        positive("permittivity", "Relative permittivity", D::None).help("1 in vacuum and nearly so in air; PTFE ≈ 2.1, FR-4 ≈ 4.4.").hint("1"),
+        positive("permeability", "Relative permeability", D::None).help("1 for almost every material but a magnetic one.").hint("1"),
+    ],
+)
+.help("How the material acts on electric and magnetic fields, for cavity steps.");
 
 /// One domain's coefficients of the Tait equation (melt or solid).
 const TAIT_DOMAIN: &[Field] = &[
@@ -278,6 +287,7 @@ pub const MATERIAL: &[Field] = &[
     DAMAGE,
     EROSION,
     THERMAL,
+    ELECTROMAGNETIC,
     PVT,
     PHASE_CHANGE,
     variants(
@@ -615,9 +625,14 @@ pub const BOUNDARY_CONDITION: &[Field] = &[
                 ],
             ),
             variant("temperature", "Temperature", &[TARGET, num("value", "Temperature", D::Temperature).help("The prescribed temperature.").req()]),
+            variant(
+                "perfect_conductor",
+                "Perfect conductor",
+                &[target("target", "Faces").help("A set of element faces: the tangential electric field vanishes on them (cavity steps).").req()],
+            ),
         ],
     )
-    .help("What is held: everything fixed, given displacements, a symmetry plane or a temperature.")
+    .help("What is held: everything fixed, given displacements, a symmetry plane, a temperature or a perfect conductor.")
     .req()
     .def("\"fixed\""),
 ];
@@ -1252,6 +1267,18 @@ const PROCEDURE: Field = variants(
             .hint("steady state when off")],
         ),
         variant("coupled_temperature_displacement", "Coupled temperature–displacement", &[]),
+        variant(
+            "cavity",
+            "Electromagnetic cavity",
+            &[
+                int("modes", "Modes", 1, 10_000).help("How many resonant modes to find.").req().def("10"),
+                positive("min_hz", "Min frequency", D::Hertz).help("Lowest frequency of interest."),
+                positive("max_hz", "Max frequency", D::Hertz).help("Highest frequency of interest."),
+                int("order", "Element order", 1, 2)
+                    .help("The Nédélec edge elements' order: 1 (6 unknowns per tetrahedron) or 2 (20), far more accurate on the same mesh.")
+                    .def("2"),
+            ],
+        ),
         variant(
             "fluid",
             "Fluid (lattice Boltzmann)",
@@ -2913,6 +2940,8 @@ pub const SOLVE_FREQUENCY: &[Field] = &[
     int("max_iterations", "Max Lanczos vectors", 1, 3000).help("Cap on the Lanczos vectors.").hint("3000"),
     THREADS,
 ];
+pub const SOLVE_CAVITY: &[Field] =
+    &[STEP, MAX_DOFS, MAX_FACTOR, int("max_iterations", "Max Lanczos vectors", 1, 3000).help("Cap on the Lanczos vectors.").hint("3000"), THREADS];
 pub const SOLVE_BUCKLE: &[Field] =
     &[STEP, MAX_DOFS, MAX_FACTOR, int("max_iterations", "Max Lanczos vectors", 1, 3000).help("Cap on the Lanczos vectors.").hint("3000"), THREADS];
 pub const SOLVE_EXPLICIT: &[Field] = &[
@@ -3065,6 +3094,10 @@ const CONTOUR_FIELDS: &[(&str, &str)] = &[
     ("contact_status", "Contact status"),
     ("contact_shear", "Contact shear"),
     ("contact_slip", "Contact slip"),
+    ("electric_field", "Electric field magnitude"),
+    ("electric_field_x", "Electric field X"),
+    ("electric_field_y", "Electric field Y"),
+    ("electric_field_z", "Electric field Z"),
     ("none", "None"),
 ];
 /// The nodal fields, without "none": what a path plot or an XY series reads.

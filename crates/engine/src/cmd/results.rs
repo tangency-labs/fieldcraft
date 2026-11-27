@@ -145,7 +145,8 @@ fn solved_list(s: &Session) -> String {
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Want {
     Any,
-    Frequency,
+    /// Steps with modes: frequency, buckling and cavity.
+    Modes,
     /// Steps with frames: explicit dynamics, fluid and nonlinear static (one per converged
     /// increment).
     Frames,
@@ -155,16 +156,16 @@ pub(super) enum Want {
 impl Want {
     fn fits(self, s: &Session, step: &str) -> bool {
         s.latest_result(step).is_some_and(|(r, _)| match (self, r.kind()) {
-            (Want::Any, _) | (Want::Frequency, Kind::Frequency(_)) | (Want::Frames | Want::Fluid, Kind::Fluid(_)) => true,
+            (Want::Any, _) | (Want::Modes, Kind::Frequency(_) | Kind::Cavity(_)) | (Want::Frames | Want::Fluid, Kind::Fluid(_)) => true,
             (Want::Frames, Kind::Explicit(_)) => true,
             (Want::Frames, Kind::Static(r)) => r.nonlinear.is_some(),
-            (Want::Frequency | Want::Frames | Want::Fluid, _) => false,
+            (Want::Modes | Want::Frames | Want::Fluid, _) => false,
         })
     }
     fn name(self) -> &'static str {
         match self {
             Want::Any => "solved",
-            Want::Frequency => "frequency",
+            Want::Modes => "frequency, buckling or cavity",
             Want::Frames => "explicit, fluid or nonlinear static",
             Want::Fluid => "fluid",
         }
@@ -322,11 +323,10 @@ fn legend_range(r: &Value, value: &dyn Fn(&str, &Value) -> Option<Result<f64>>) 
 }
 
 fn modes(s: &mut Session, p: &Value) -> Result<Value> {
-    let step = step_for(s, p, Want::Frequency)?;
-    let count = match s.latest_result(&step).map(|(r, _)| r.kind()) {
-        Some(Kind::Frequency(f)) => f.modes.len(),
-        _ => 0,
-    };
+    let step = step_for(s, p, Want::Modes)?;
+    let count = s.latest_result(&step).and_then(|(r, _)| r.kind().modes()).unwrap_or(0);
+    // A mode shape is a deformation; a cavity mode is a field.
+    let shape = matches!(s.latest_result(&step).map(|(r, _)| r.kind()), Some(Kind::Frequency(_)));
     let mode = match p.get("mode") {
         None => s.results_view.as_ref().filter(|v| v.step == step).map_or(1, |v| v.mode),
         Some(m) => m
@@ -337,7 +337,7 @@ fn modes(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let v = view_of(s, &step)?;
     v.mode = mode;
-    v.deformed = true;
+    v.deformed = shape;
     Ok(s.results_report())
 }
 
@@ -780,6 +780,7 @@ fn export_vtu(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let states: Vec<State> = match r.kind() {
         Kind::Fluid(_) => return Err(EngineError::Params("fluid results are per cell; not supported yet".into())),
+        Kind::Cavity(_) => return Err(EngineError::Params("cavity results are not written to VTU files yet".into())),
         Kind::Static(st) => match &st.nonlinear {
             Some(h) if !h.frames.is_empty() => frames(h.frames.len(), "frames")?,
             _ => vec![State::Final],

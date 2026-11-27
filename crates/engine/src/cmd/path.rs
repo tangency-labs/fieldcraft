@@ -50,9 +50,17 @@ fn pick(result: &StepResult, field: Field, p: &Value) -> Result<Pick> {
                 return Err(EngineError::invalid("mode", format!("must be from 1 to {}", f.modes.len())));
             }
         }
+        Kind::Cavity(c) => {
+            if frame.is_some() {
+                return Err(EngineError::invalid("frame", "cavity results have modes, not frames"));
+            }
+            if pick.mode == 0 || pick.mode > c.modes.len() {
+                return Err(EngineError::invalid("mode", format!("must be from 1 to {}", c.modes.len())));
+            }
+        }
         Kind::Static(s) => {
             if mode.is_some() {
-                return Err(EngineError::invalid("mode", "only frequency results have modes"));
+                return Err(EngineError::invalid("mode", "only frequency and cavity results have modes"));
             }
             if let Some(k) = frame {
                 let history = s.nonlinear.as_ref().ok_or_else(|| {

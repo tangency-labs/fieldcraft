@@ -1091,6 +1091,11 @@ mod tests {
             json!({"name": "A", "type": "pipe_pressure", "set": "all", "internal": "high"}),
             json!({"name": "A", "procedure": {"type": "frequency", "modes": 4294967295u64, "min_hz": -1}}),
             json!({"name": "A", "procedure": {"type": "frequency", "modes": 5}, "output": ["everything"], "before": 3}),
+            // Electromagnetics: 1/μᵣ of 5e-324 overflows, and so does k₀² at 6.4e161 Hz.
+            json!({"name": "A", "electromagnetic": {"permittivity": 1, "permeability": 5e-324}}),
+            json!({"name": "A", "electromagnetic": {"permittivity": 1e300, "permeability": -1}}),
+            json!({"name": "A", "procedure": {"type": "cavity", "modes": 3, "min_hz": 6.4e161}}),
+            json!({"name": "A", "procedure": {"type": "cavity", "modes": 3, "max_hz": 1e300, "order": 9}}),
             json!({"name": "Bend", "procedure": {"type": "static"}, "loads": "push"}),
             json!({"step": "Bend", "loads": ["nope"], "active": "yes"}),
             json!({"step": "Bend", "boundary_conditions": [], "loads": []}),

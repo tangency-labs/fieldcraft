@@ -69,6 +69,10 @@ pub const ALIASES: &[(&str, &str, &str)] = &[
     ("results.export.vtu", "export", ""),
     ("results.animate", "play", ""),
     ("solve.probe", "measure", ""),
+    // A closed box, until a cavity icon of FieldCraft's own is drawn (`cargo xtask icons`).
+    ("solve.cavity", "box", ""),
+    ("model.step.cavity", "box", ""),
+    ("model.material.electromagnetic", "box", ""),
 ];
 
 /// SolidCraft's icons with FieldCraft's masters and aliases over them.

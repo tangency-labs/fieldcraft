@@ -783,6 +783,7 @@ pub enum StepResult {
     Static(StaticResult),
     Frequency(FrequencyResult),
     Heat(crate::heat::HeatResult),
+    Cavity(crate::cavity::CavityResult),
 }
 
 impl StepResult {
@@ -791,6 +792,7 @@ impl StepResult {
             StepResult::Static(r) => &r.step,
             StepResult::Frequency(r) => &r.step,
             StepResult::Heat(r) => &r.step,
+            StepResult::Cavity(r) => &r.step,
         }
     }
 
@@ -799,6 +801,7 @@ impl StepResult {
             StepResult::Static(r) => &r.nodes,
             StepResult::Frequency(r) => &r.nodes,
             StepResult::Heat(r) => &r.nodes,
+            StepResult::Cavity(r) => &r.nodes,
         }
     }
 
@@ -811,7 +814,7 @@ impl StepResult {
         match self {
             StepResult::Static(r) => r.reference_points.iter().position(|p| p.label == label),
             StepResult::Frequency(r) => r.reference_points.iter().position(|p| p.1 == label),
-            StepResult::Heat(_) => None,
+            StepResult::Heat(_) | StepResult::Cavity(_) => None,
         }
         .map(Location::Point)
     }
