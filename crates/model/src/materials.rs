@@ -592,12 +592,51 @@ impl PhaseChange {
     }
 }
 
+/// What a material does to electric and magnetic fields: its relative permittivity εᵣ and
+/// permeability μᵣ (dimensionless, both 1 in vacuum and nearly so in air), real and constant: a
+/// lossless, linear, isotropic medium (docs/rfc/0001-electromagnetics.md §1).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Electromagnetic {
+    #[serde(default = "one")]
+    pub permittivity: f64,
+    #[serde(default = "one")]
+    pub permeability: f64,
+}
+
+impl Default for Electromagnetic {
+    fn default() -> Electromagnetic {
+        Electromagnetic { permittivity: 1.0, permeability: 1.0 }
+    }
+}
+
+/// The largest relative permittivity or permeability, and the reciprocal of the smallest. It is
+/// more than a hundredfold above every material known (μᵣ of about 1e6 for supermalloy,
+/// R. M. Bozorth, *Ferromagnetism*, Van Nostrand 1951; εᵣ of about 1e5 for CaCu₃Ti₄O₁₂,
+/// M. A. Subramanian et al., J. Solid State Chem. 151:323–325, 2000), and it keeps 1/μᵣ, εᵣμᵣ
+/// and their quotients (within 1e±16) far from overflow and underflow.
+pub const MAX_RELATIVE: f64 = 1e8;
+
+impl Electromagnetic {
+    pub fn validate(&self) -> Result<()> {
+        for (what, v) in [("relative permittivity", self.permittivity), ("relative permeability", self.permeability)] {
+            if !(1.0 / MAX_RELATIVE..=MAX_RELATIVE).contains(&crate::positive(what, v)?) {
+                return Err(Error::Invalid(format!("{what} must be between {:e} and {MAX_RELATIVE:e}, got {v}", 1.0 / MAX_RELATIVE)));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// A material.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Material {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elastic: Option<Elastic>,
+    /// Relative permittivity and permeability, for electromagnetic steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub electromagnetic: Option<Electromagnetic>,
     /// Large-strain behaviour in nonlinear steps, built on the isotropic elastic constants.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hyperelastic: Option<Hyperelastic>,
@@ -633,8 +672,20 @@ pub struct Material {
 
 impl Material {
     pub fn validate(&self) -> Result<()> {
-        if self.elastic.is_none() && self.density.is_none() && self.fluid.is_none() && self.thermal.is_none() && self.pvt.is_none() {
-            return Err(Error::Invalid("a material needs elastic constants, a density, fluid behaviour, thermal properties or PVT behaviour".into()));
+        if self.elastic.is_none()
+            && self.density.is_none()
+            && self.fluid.is_none()
+            && self.thermal.is_none()
+            && self.pvt.is_none()
+            && self.electromagnetic.is_none()
+        {
+            return Err(Error::Invalid(
+                "a material needs elastic constants, a density, fluid behaviour, thermal properties, PVT behaviour or electromagnetic properties"
+                    .into(),
+            ));
+        }
+        if let Some(em) = &self.electromagnetic {
+            em.validate()?;
         }
         if let Some(f) = &self.fluid {
             f.validate()?;
@@ -774,6 +825,16 @@ mod tests {
 
     fn iso(young: f64, poisson: f64) -> Material {
         Material { elastic: Some(Elastic::Isotropic { young, poisson }), ..Material::default() }
+    }
+
+    #[test]
+    fn electromagnetic_properties_are_within_the_range_of_materials() {
+        let em = |permittivity, permeability| Electromagnetic { permittivity, permeability }.validate();
+        assert!(em(1.0, 1.0).is_ok() && em(1e5, 1e6).is_ok() && em(1e-8, 1e8).is_ok());
+        // 1/μᵣ of 5e-324 is infinite; 1e300 is no material.
+        for (e, m) in [(1.0, 5e-324), (1e300, 1.0), (1.0, 0.0), (f64::NAN, 1.0), (1.0, 1e9), (1e-9, 1.0)] {
+            assert!(matches!(em(e, m), Err(Error::Invalid(_))), "{e} {m}");
+        }
     }
 
     #[test]

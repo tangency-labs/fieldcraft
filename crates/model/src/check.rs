@@ -369,7 +369,8 @@ impl Model {
                     | Procedure::NonlinearStatic(_)
                     | Procedure::Fluid { .. }
                     | Procedure::HeatTransfer { transient: None }
-                    | Procedure::CoupledTemperatureDisplacement {} => {
+                    | Procedure::CoupledTemperatureDisplacement {}
+                    | Procedure::Cavity { .. } => {
                         return None;
                     }
                 };
@@ -388,6 +389,29 @@ impl Model {
                 if self.materials.get(m).is_some_and(|m| m.density.is_none()) {
                     d.error(format!("material `{m}`"), format!("has no density, and {why}"));
                 }
+            }
+        }
+
+        // Electromagnetic steps need every material in use to say how it acts on the fields, and a
+        // perfect conductor is a set of faces.
+        if let Some(s) = self.steps.iter().find(|s| s.procedure.is_electromagnetic()) {
+            for m in self.sections.values().map(|s| s.material.as_str()).collect::<BTreeSet<_>>() {
+                if self.materials.get(m).is_some_and(|m| m.electromagnetic.is_none()) {
+                    d.error(format!("material `{m}`"), format!("has no electromagnetic properties, and step `{}` is a cavity", s.name));
+                }
+            }
+        }
+        for (n, b) in self.boundary_conditions.iter().filter(|(_, b)| b.is_electromagnetic()) {
+            if let Some(set) = b.target().set()
+                && resolved.sets.get(set).is_some_and(|r| r.faces.is_empty())
+            {
+                d.error(format!("boundary condition `{n}`"), format!("set `{set}` has no element faces for the perfect conductor to lie on"));
+            }
+            for s in self.steps.iter().filter(|s| s.boundary_conditions.contains(n) && !s.procedure.is_electromagnetic()) {
+                d.warning(
+                    format!("boundary condition `{n}`"),
+                    format!("is a perfect conductor, which has no effect in {} step `{}`", s.procedure.name(), s.name),
+                );
             }
         }
 
@@ -607,7 +631,7 @@ impl Model {
                 if s.output.is_empty() {
                     d.warning(&subject, "requests no output, so it writes no results");
                 }
-                for v in s.output.iter().filter(|v| if v.is_thermal() { !s.procedure.is_thermal() } else { !s.procedure.is_structural() }) {
+                for v in s.output.iter().filter(|v| !v.computed_by(&s.procedure)) {
                     d.warning(&subject, format!("requests {}, which a {} step does not compute", v.name(), s.procedure.name()));
                 }
             }
@@ -621,6 +645,17 @@ impl Model {
                     if !s.loads.is_empty() {
                         d.warning(&subject, "loads have no effect on natural frequencies");
                     }
+                }
+                // A cavity's walls are its perfect conductors; loads and the other conditions do
+                // not act on the field.
+                Procedure::Cavity { .. } => {
+                    if !s.loads.is_empty() {
+                        d.warning(&subject, "loads have no effect on resonant modes");
+                    }
+                    for b in s.boundary_conditions.iter().filter(|b| self.boundary_conditions.get(*b).is_some_and(|c| !c.is_electromagnetic())) {
+                        d.warning(&subject, format!("boundary condition `{b}` holds no electric field, so it has no effect in a cavity step"));
+                    }
+                    continue;
                 }
                 Procedure::ExplicitDynamic(e) => {
                     let moves = e.initial_velocities.iter().any(|v| v.velocity.iter().any(|c| *c != 0.0));

@@ -152,6 +152,8 @@ pub(crate) fn unsupported(format: &'static str, items: BTreeSet<String>) -> Resu
 /// Heat transfer in a model, which no writer expresses yet: heat transfer and coupled
 /// temperature–displacement steps, temperature boundary conditions, heat loads, temperature
 /// fields and initial (temperature or stress) fields. Thermal material properties alone are left out of the decks (nothing uses them).
+/// Electromagnetics, which no deck format describes: its steps, perfect conductors and the
+/// materials with electromagnetic properties.
 pub(crate) fn thermal_items(model: &Model) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for step in model.steps().iter().filter(|s| s.procedure.is_thermal()) {
@@ -159,6 +161,18 @@ pub(crate) fn thermal_items(model: &Model) -> BTreeSet<String> {
     }
     for name in model.boundary_conditions().iter().filter(|(_, b)| b.is_thermal()).map(|(n, _)| n) {
         out.insert(format!("boundary condition `{name}`: prescribed temperatures (not written to decks yet)"));
+    }
+    // Electromagnetic steps and their perfect conductors: none of the structural deck formats
+    // describes them.
+    for step in model.steps().iter().filter(|s| s.procedure.is_electromagnetic()) {
+        out.insert(format!("step `{}`: {} steps (no deck format describes them)", step.name, step.procedure.name()));
+    }
+    for name in model.boundary_conditions().iter().filter(|(_, b)| b.is_electromagnetic()).map(|(n, _)| n) {
+        out.insert(format!("boundary condition `{name}`: perfect conductors (no deck format describes them)"));
+    }
+    // A material's permittivity and permeability too: left out, a deck would drop them unsaid.
+    for name in model.materials().iter().filter(|(_, m)| m.electromagnetic.is_some()).map(|(n, _)| n) {
+        out.insert(format!("material `{name}`: electromagnetic properties (no deck format describes them)"));
     }
     for (name, load) in model.loads().iter().filter(|(_, l)| l.is_thermal() || matches!(l, Load::Temperature { .. })) {
         out.insert(format!("load `{name}`: {} loads (not written to decks yet)", load.kind()));

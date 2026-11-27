@@ -266,6 +266,7 @@ fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
                 Procedure::ExplicitDynamic(_) => (run_explicit, "solve.explicit"),
                 Procedure::Fluid { .. } => (run_fluid, "solve.fluid"),
                 Procedure::NonlinearStatic(_) => (run_nonlinear, "solve.nonlinear"),
+                Procedure::Cavity { .. } => (run_cavity, "solve.cavity"),
             };
             (st.name.clone(), st.procedure.name(), solve, id)
         })
@@ -390,6 +391,11 @@ fn run_nonlinear(s: &mut Session, p: &Value) -> Result<Value> {
     });
     s.store_result(StepResult::Implicit(ImplicitResult::Static(r)));
     Ok(summary)
+}
+
+/// Cavity steps are defined in the model, but not solved yet.
+fn run_cavity(_: &mut Session, _: &Value) -> Result<Value> {
+    Err(EngineError::Params("not supported yet: solving cavity steps".into()))
 }
 
 fn run_heat(s: &mut Session, p: &Value) -> Result<Value> {

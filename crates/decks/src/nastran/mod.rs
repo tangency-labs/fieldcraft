@@ -773,8 +773,8 @@ impl<'m> Deck<'m> {
                     OutputVariable::ReactionForce => "SPCFORCES",
                     OutputVariable::Stress => "STRESS",
                     OutputVariable::Strain => "STRAIN",
-                    // Heat transfer steps are refused (thermal_items).
-                    OutputVariable::Temperature | OutputVariable::HeatFlux => continue,
+                    // Heat transfer and electromagnetic steps are refused (thermal_items).
+                    OutputVariable::Temperature | OutputVariable::HeatFlux | OutputVariable::ElectricField => continue,
                 };
                 let _ = writeln!(out, "  {request} = ALL");
             }

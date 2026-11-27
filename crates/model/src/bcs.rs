@@ -1,4 +1,5 @@
-//! Boundary conditions: prescribed degrees of freedom on a set's nodes or a reference point.
+//! Boundary conditions: prescribed degrees of freedom on a set's nodes or a reference point, and
+//! the perfectly conducting walls of electromagnetic steps on a set's faces.
 //!
 //! Degrees of freedom are numbered 1–3 for translations along X, Y, Z and 4–6 for rotations about
 //! them, in the global axes. Which steps a boundary condition is active in is listed explicitly by
@@ -221,6 +222,11 @@ pub enum BoundaryCondition {
     /// A prescribed temperature (degree of freedom [`TEMPERATURE_DOF`]) at the target's nodes,
     /// in heat transfer and coupled temperature–displacement steps.
     Temperature { target: Target, value: f64 },
+    /// A perfect electric conductor on the faces of the target set, in electromagnetic steps: the
+    /// tangential electric field vanishes there, E × n = 0, so every edge and face unknown on
+    /// those faces is held at zero (an edge is held because a face that holds it is, never
+    /// because its two nodes are: docs/rfc/0001-electromagnetics.md §8.2).
+    PerfectConductor { target: Target },
 }
 
 /// The model's number of the temperature degree of freedom (the deck formats' convention).
@@ -232,14 +238,15 @@ impl BoundaryCondition {
             BoundaryCondition::Fixed { target }
             | BoundaryCondition::Displacement { target, .. }
             | BoundaryCondition::Symmetry { target, .. }
-            | BoundaryCondition::Temperature { target, .. } => target,
+            | BoundaryCondition::Temperature { target, .. }
+            | BoundaryCondition::PerfectConductor { target } => target,
         }
     }
 
     /// The constrained structural degrees of freedom (1–6); none for a temperature.
     pub fn dofs(&self) -> Dofs {
         match self {
-            BoundaryCondition::Temperature { .. } => Dofs::none(),
+            BoundaryCondition::Temperature { .. } | BoundaryCondition::PerfectConductor { .. } => Dofs::none(),
             BoundaryCondition::Fixed { .. } => Dofs::all(),
             BoundaryCondition::Displacement { values, .. } => {
                 Dofs(values.iter().enumerate().filter(|(_, v)| v.is_some()).fold(0, |m, (i, _)| m | (1 << i)))
@@ -254,7 +261,7 @@ impl BoundaryCondition {
         match self {
             BoundaryCondition::Displacement { values, .. } => values.iter().flatten().any(|v| *v != 0.0),
             BoundaryCondition::Temperature { value, .. } => *value != 0.0,
-            BoundaryCondition::Fixed { .. } | BoundaryCondition::Symmetry { .. } => false,
+            BoundaryCondition::Fixed { .. } | BoundaryCondition::Symmetry { .. } | BoundaryCondition::PerfectConductor { .. } => false,
         }
     }
 
@@ -263,17 +270,26 @@ impl BoundaryCondition {
         matches!(self, BoundaryCondition::Temperature { .. })
     }
 
+    /// Whether it holds the electric field (rather than motion or temperature).
+    pub fn is_electromagnetic(&self) -> bool {
+        matches!(self, BoundaryCondition::PerfectConductor { .. })
+    }
+
     /// The prescribed value of a constrained degree of freedom (1–6, or [`TEMPERATURE_DOF`]);
     /// `None` when it is free.
     pub fn value(&self, dof: u8) -> Option<f64> {
         match self {
             BoundaryCondition::Temperature { value, .. } => (dof == TEMPERATURE_DOF).then_some(*value),
+            BoundaryCondition::PerfectConductor { .. } => None,
             BoundaryCondition::Displacement { values, .. } => values.get(usize::from(dof).checked_sub(1)?).copied().flatten(),
             _ => self.dofs().contains(dof).then_some(0.0),
         }
     }
 
     pub fn validate(&self) -> Result<()> {
+        if let BoundaryCondition::PerfectConductor { target: Target::ReferencePoint(r) } = self {
+            return Err(Error::Invalid(format!("a perfect conductor is a set of faces, not a reference point (`{r}`)")));
+        }
         if let BoundaryCondition::Symmetry { plane, .. } = self {
             plane.validate()?;
         }
