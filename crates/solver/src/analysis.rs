@@ -648,8 +648,9 @@ pub(crate) fn lanczos_basis(limits: &Limits, neq: usize) -> usize {
 /// diagonal (stiffness over mass): below the rigid-body modes, above round-off.
 const RIGID_SHIFT: f64 = 1e-6; // unit-factors: relative to the diagonal's ratio
 
-/// Relative residual of an accepted Ritz pair.
-pub(crate) const TOLERANCE: f64 = 1e-9; // unit-factors: a relative residual
+/// Relative residual of an accepted Ritz pair: a value θ of the shift-inverted problem is
+/// accepted at a residual below `TOLERANCE` · θ, which for a symmetric problem bounds θ's error.
+pub const TOLERANCE: f64 = 1e-9; // unit-factors: a relative residual
 
 /// Solve a frequency step (the step named `step`, or the model's only frequency step): the
 /// lowest natural modes within the step's frequency range.
