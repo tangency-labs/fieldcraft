@@ -187,10 +187,7 @@ pub fn encode(results: &[(&str, StoredRef<'_>)]) -> Result<Vec<u8>> {
         out.extend_from_slice(&(name.len() as u64).to_le_bytes());
         out.extend_from_slice(name.as_bytes());
         out.extend_from_slice(&stored.definition);
-        // What reading refuses is not written: a file that would not open is never saved.
-        if let SolvedRef::Fluid(f) = stored.result {
-            check_fluid(f).map_err(|why| Error::Invalid(format!("{PART}: the result of step `{name}`: {why}")))?;
-        }
+        check_ref(stored.result).map_err(|why| Error::Invalid(format!("{PART}: the result of step `{name}`: {why}")))?;
         out.push(stored.result.kind());
         // The payload is encoded in place, its length written before it once known.
         let at = out.len();
@@ -305,9 +302,13 @@ fn lengths(n: usize, lens: &[(&str, usize, bool)]) -> std::result::Result<(), St
 /// A stored result checked for what reading it relies on: ascending labels, arrays of the
 /// lengths of what they follow, and a fluid grid that is a grid.
 pub fn check(r: &Solved) -> std::result::Result<(), String> {
+    check_ref(r.as_ref())
+}
+
+fn check_ref(r: SolvedRef<'_>) -> std::result::Result<(), String> {
     use fieldcraft_solver::StepResult as S;
     match r {
-        Solved::Implicit(S::Static(s)) => {
+        SolvedRef::Implicit(S::Static(s)) => {
             if !ascending(&s.nodes) {
                 return Err("its nodes do not ascend".into());
             }
@@ -352,7 +353,7 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
             }
             Ok(())
         }
-        Solved::Implicit(S::Frequency(f)) => {
+        SolvedRef::Implicit(S::Frequency(f)) => {
             if !ascending(&f.nodes) {
                 return Err("its nodes do not ascend".into());
             }
@@ -361,7 +362,7 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
             }
             Ok(())
         }
-        Solved::Implicit(S::Heat(h)) => {
+        SolvedRef::Implicit(S::Heat(h)) => {
             if !ascending(&h.nodes) {
                 return Err("its nodes do not ascend".into());
             }
@@ -373,7 +374,7 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
             }
             lengths(h.nodes.len(), &[("the heat flux", h.flux.len(), true), ("the reaction", h.reaction.len(), true)])
         }
-        Solved::Explicit(e) => {
+        SolvedRef::Explicit(e) => {
             if !ascending(&e.nodes) || !ascending(&e.elements) {
                 return Err("its node or element labels do not ascend".into());
             }
@@ -393,7 +394,7 @@ pub fn check(r: &Solved) -> std::result::Result<(), String> {
             }
             Ok(())
         }
-        Solved::Fluid(f) => check_fluid(f),
+        SolvedRef::Fluid(f) => check_fluid(f),
     }
 }
 
