@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-99 ready, 27 coming soon.
+100 ready, 27 coming soon.
 
 ## Geometry
 
@@ -14,6 +14,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 |---|---|---|---|
 | Import | Open Design — Open a SolidCraft design or CAD file (STEP, IGES, FreeCAD, Rhino) with named faces and placed bodies | ready | `geometry.open` |
 | Import | Triangle Mesh — Read a triangle surface (3MF, STL, OBJ, PLY, glTF) | ready | `geometry.import.mesh` |
+| Export | Export Named STEP — Write placed CAD bodies and named geometry sets to a flat STEP file | ready | `geometry.export.step` |
 | Inspect | Bodies — List the open design's bodies, volumes and named faces, edges and vertices | ready | `geometry.bodies`, `geometry.centre`, `geometry.features` |
 | Inspect | Tessellate — Tessellate a body into a face-tagged boundary surface | ready | `geometry.tessellate` |
 | Inspect | Check Geometry — Short edges, small and sliver faces and near faces against the element size, located | ready | `geometry.check` |

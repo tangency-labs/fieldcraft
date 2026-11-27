@@ -18,6 +18,7 @@ mod image;
 mod initial;
 mod linearize;
 pub(crate) mod mesh;
+mod step;
 
 pub use datum::edit_params as datum_edit_params;
 pub use datum::preview as datum_preview;
@@ -74,6 +75,7 @@ pub static ALL: &[CommandSpec] = &[
     library::LIST,
     library::ADD,
     geometry::OPEN,
+    step::EXPORT,
     geometry::BODIES,
     geometry::FEATURES,
     geometry::CENTRE,

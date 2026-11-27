@@ -2303,6 +2303,9 @@ pub const TAG: &[Field] = &[
 
 // ---- Geometry and files ----
 
+pub const EXPORT_STEP: &[Field] =
+    &[path("path", "STEP file", true).help("Save the current bodies with their CAD and geometry set names to a new .step or .stp file.").req()];
+
 pub const OPEN_DESIGN: &[Field] = &[
     path("path", "Design", false).help("The SolidCraft, STEP or IGES file to open.").req(),
     choice("model", "Model", &[("keep", "Keep the current model"), ("new", "Start a new model")])

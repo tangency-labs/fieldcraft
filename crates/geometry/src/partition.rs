@@ -470,7 +470,7 @@ fn point_triangle(p: [f64; 3], a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
 }
 
 /// The name without a trailing piece number (`F2:top#1` → `F2:top`).
-pub(crate) fn base_name(name: &str) -> &str {
+pub fn base_name(name: &str) -> &str {
     match name.rsplit_once('#') {
         Some((b, k)) if !k.is_empty() && k.bytes().all(|c| c.is_ascii_digit()) => b,
         _ => name,

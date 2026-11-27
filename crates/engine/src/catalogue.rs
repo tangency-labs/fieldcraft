@@ -265,6 +265,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Open a SolidCraft design or CAD file (STEP, IGES, FreeCAD, Rhino) with named faces and placed bodies",
     ),
     ready("geometry.import.mesh", "Triangle Mesh", Geometry, "Import", "Read a triangle surface (3MF, STL, OBJ, PLY, glTF)"),
+    ready("geometry.export.step", "Export Named STEP", Geometry, "Export", "Write placed CAD bodies and named geometry sets to a flat STEP file"),
     ready_more(
         "geometry.bodies",
         "Bodies",

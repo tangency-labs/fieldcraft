@@ -51,6 +51,7 @@ pub const ALIASES: &[(&str, &str, &str)] = &[
     ("file.recover", "restore", ""),
     ("geometry.open", "import", ""),
     ("geometry.import.mesh", "mesh_body", ""),
+    ("geometry.export.step", "export", ""),
     ("geometry.bodies", "body", ""),
     ("geometry.face.split", "split_face", ""),
     ("assembly.instance", "component", ""),

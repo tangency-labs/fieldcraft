@@ -28,6 +28,8 @@ pub mod partition;
 pub mod sample;
 #[cfg(feature = "scripts")]
 mod script;
+mod step_export;
+pub use step_export::{StepBody, export_named_step};
 pub mod stitch;
 pub mod virtual_faces;
 

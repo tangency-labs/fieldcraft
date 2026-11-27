@@ -245,6 +245,7 @@ pub const BACKGROUND: &[&str] = &[
     "mesh.node.relax",
     "mesh.plan.apply",
     "mesh.cells",
+    "geometry.export.step",
     "geometry.partition",
     "results.path",
 ];
@@ -1426,6 +1427,13 @@ impl ModelApp {
             "solve.run" => self.solve_all(),
             "results.xy" => self.open_xy(),
             "results.path" => self.open_path_plot(),
+            "geometry.export.step" if can_save => {
+                let extensions = &["step", "stp"];
+                self.pick_file(
+                    FilePicker::Save { name: format!("{}-named.step", self.model_name()), filters: vec![Filter::new("STEP", extensions)] },
+                    PickerAction::Export { command: command.into(), params: json!({}), extension: "step", alternatives: extensions },
+                );
+            }
             "deck.write" if can_save => match preset.get("format").and_then(Value::as_str) {
                 Some(f) => self.write_deck(f),
                 None => return false,
@@ -1985,6 +1993,24 @@ pub(crate) mod tests {
         let mut kept = Session::default();
         kept.execute("file.open", &json!({"path": dir.join("kept.fieldcraft")})).unwrap();
         assert!(kept.model.node(1).is_some(), "replacement only follows a real save");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn named_step_picker_exports_the_open_design_without_a_mesh() {
+        let dir = temp("named-step");
+        let source = dir.join("plate.sc");
+        let output = dir.join("plate-named.STP");
+        std::fs::write(&source, fieldcraft_geometry::sample::plate_design(&fieldcraft_geometry::sample::Plate::default()).unwrap()).unwrap();
+        let mut app = ModelApp::new(Session::default());
+        app.run("geometry.open", json!({"path": source})).unwrap();
+        let chooser = deferred(&mut app);
+        app.start("geometry.export.step").unwrap();
+        assert!(matches!(&chooser.requests.borrow()[..], [FilePicker::Save { filters, .. }] if filters == &[Filter::new("STEP", &["step", "stp"])]));
+        *chooser.answer.borrow_mut() = Some(Some(output.to_string_lossy().into_owned()));
+        app.poll_picker();
+        app.wait_loaded();
+        assert!(std::fs::read_to_string(output).unwrap().contains("ADVANCED_FACE("));
         let _ = std::fs::remove_dir_all(dir);
     }
 
