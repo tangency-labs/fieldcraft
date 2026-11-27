@@ -192,6 +192,7 @@ the version instead.
 | Nightly (03:23 UTC) and `gh workflow run CI --ref <branch>` | Everything: the full `cargo xtask ci`, heavy and oracle on Linux, the oracle with its `nightly` cases (manual runs add the macOS oracle). |
 | Weekly (Sunday) | The oracle on macOS. |
 | Daily (06:07 UTC) and `gh workflow run solidcraft-compat.yml` | `SolidCraft compatibility`: SolidCraft's latest release saves the design test recipes and `fieldcraft-geometry`'s design tests open them (docs/architecture.md, "SolidCraft pin"). |
+| Nightly (05:43 UTC) and `gh workflow run solidcraft-canary.yml --ref <branch> [-f tag=<tag>]` | `SolidCraft canary` (`solidcraft-canary.yml`): rewrites the SolidCraft pins to SolidCraft's newest nightly tag (or the `tag` input) in the runner's checkout only, runs `cargo update -p` for the solidcraft crates, then `fieldcraft-geometry`'s tests with the scripts feature, `fieldcraft-ui-egui`'s library tests, `cargo deny check licenses bans` and the meshing corpus check. A scheduled run on develop opens, updates or closes the one issue labelled `solidcraft-canary` (on a failure: the failing step's log tail); a manual run writes its verdict to its run summary only. Two jobs: the check job on Blacksmith, 60 minutes at most, holds no write token and commits nothing; the report job checks out nothing and holds `issues: write` ([SolidCraft canary](#solidcraft-canary)). |
 | `gh workflow run corpus-bless.yml --ref <branch> -f parts=<names>` | `Corpus bless`: blesses the named meshing corpus parts on Linux x86_64 (the heavy job's runner and toolchain) and uploads the fixtures that changed as an artifact; it pushes nothing (docs/meshing/corpus.md, "Blessing"). |
 | Nightly (`release.yml`, when CI's nightly run on `develop` completes) | The packaging jobs and the `release` job, which publishes the nightly pre-release; no verify jobs, since the CI run that started it passed them ([Nightly builds](#nightly-builds)). Every other completed CI run on `develop` starts a `release.yml` run whose jobs are all skipped. |
 | Release (`release.yml`, push to `main` and dry runs) | `verify-ci` (full `cargo xtask ci`), `verify-heavy`, and `verify-oracle` on Linux and macOS, in parallel with the packaging jobs (macOS aarch64, Linux, Flatpak, Windows), which only upload workflow artifacts. The `release` job, the only one that signs `SHA256SUMS.txt` or creates/updates the draft, needs every verify and packaging job but Flatpak, which is not yet part of the release: a failing verify means no draft and no signature. The verify jobs restore develop's CI caches (shared keys); only `main` saves release caches. A run takes about as long as its slowest job, ~30 min with warm caches (the macOS package; it was ~55–60 min when packaging waited for verify). |
@@ -210,6 +211,49 @@ instead of skipping (lavapipe's own crash, #638, showed up this way). The heavy 
 lavapipe allows 128 MB. Bugs of real GPUs and their drivers (NVIDIA device loss #636, Windows
 DX12 #588, Metal) show up on none of these, so a change to `crates/gpu` or `crates/lbm-gpu` says
 in its pull request which real GPU it ran on (as #641 and #651 did).
+
+## SolidCraft canary
+
+FieldCraft's pins name a SolidCraft release tag (`tag = "v0.42.0"` in `Cargo.toml`, on every
+`solidcraft-*` and `solidcore-*` line and the two patches; docs/architecture.md, "SolidCraft pin").
+The canary (`.github/workflows/solidcraft-canary.yml`) builds against SolidCraft's newest nightly
+every night, so drift shows the day it lands instead of in one big repin.
+
+- **What it changes.** Only the runner's checkout: each SolidCraft `tag` line is rewritten to the
+  tag under test, then `cargo update -p` moves the solidcraft crates. Nothing is committed or
+  pushed. The check job's checkout keeps no token, and the code it builds runs in a VM that holds
+  no write token. Only the report job, which runs no repository code, holds `issues: write`.
+- **What it runs.** `cargo test --profile ci -p fieldcraft-geometry --features scripts` (the design
+  format and name tests among them), `cargo test --profile ci -p fieldcraft-ui-egui --lib`,
+  `cargo deny check licenses bans`, and `cargo test --profile ci -p fieldcraft-testkit --lib -- runner::tests::corpus_matches_its_fixtures --ignored`.
+- **When it goes red.** The first failing or cancelled step (a timeout included) decides the
+  report. A failure at or before tag resolution is a setup failure, titled "SolidCraft canary setup
+  failed: <step>"; any later one is titled "SolidCraft canary: <tag> breaks FieldCraft". Either
+  carries the step's log tail. A green scheduled run afterwards comments on the issue and closes it.
+- **Try a tag.** `gh workflow run solidcraft-canary.yml -R tangency-labs/fieldcraft --ref <branch> -f tag=<tag>`
+  (a release such as `v0.50.0`, or a nightly); empty means the newest nightly.
+
+### Repinning SolidCraft
+
+A repin is a pull request that moves the tag:
+
+1. Pick the tag the canary passes, or the release that supersedes it, and check it exists:
+   `git ls-remote --tags https://github.com/tangency-labs/solidcraft refs/tags/<tag>`.
+2. Set `tag = "<tag>"` on every SolidCraft line of the workspace `Cargo.toml` (the 14 lines the
+   canary rewrites); they must all name the same tag. Refresh `Cargo.lock` for the solidcraft crates.
+3. Adapt `fieldcraft-geometry` and the UI crate to the API changes until the build and the canary's
+   checks pass. Update the version named in docs/architecture.md ("SolidCraft pin").
+4. Designs: a release that raises the design format must still be read, since the pin decides which
+   designs FieldCraft opens. Add its saved designs as `crates/geometry/tests/designs/solidcraft-<version>/`
+   as the SolidCraft compatibility workflow describes.
+5. Meshing corpus: bless on macOS first, then Linux x86_64 in CI, as docs/meshing/corpus.md
+   ("Blessing") says. Re-bless only the parts whose results moved on purpose, and say in the pull
+   request what moved and why.
+6. The heavy tests and the oracle must stay as they are; a moved fixture is a finding to explain,
+   never a value to tune (AGENTS.md).
+7. Patch crates: a repin that adds SolidCraft patch crates (under `[patch.crates-io]`) adds them to
+   the pin check (the `tag` lines the canary rewrites) and to the `cargo update -p` list in
+   `.github/workflows/solidcraft-canary.yml`, or the canary would test an old copy of them.
 
 ## Verify and publish
 
