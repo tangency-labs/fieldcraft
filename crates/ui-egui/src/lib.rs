@@ -2540,7 +2540,7 @@ impl ModelApp {
         self.follow_units();
     }
 
-    /// Set the interface language preference (`system`, `en`, `he`) and save preferences.
+    /// Set the interface language preference (`i18n::validate_preference`) and save preferences.
     pub fn set_language(&mut self, language: String) {
         let normalized = crate::i18n::validate_preference(&language).unwrap_or_else(|_| crate::i18n::ENGLISH.into());
         if self.prefs.language != normalized {

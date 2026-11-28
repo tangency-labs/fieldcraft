@@ -355,7 +355,7 @@ pub struct Prefs {
     /// A preset or unit this version does not know reads as the default system.
     #[serde(deserialize_with = "known_or_default")]
     pub units: fieldcraft_model::DisplaySystem,
-    /// Interface language preference (`system`, `en`, `he`).
+    /// Interface language preference (`system` or a catalogue id: `i18n::validate_preference`).
     pub language: String,
     /// The browser card's width, in points.
     pub browser_width: f32,

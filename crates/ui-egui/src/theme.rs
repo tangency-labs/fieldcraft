@@ -502,9 +502,11 @@ static ENGLISH_SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(||
 });
 static ENGLISH: std::sync::LazyLock<solidcraft_ui_text::Catalog> =
     std::sync::LazyLock::new(|| solidcraft_ui_text::Catalog::new("en", "English", ENGLISH_SOURCE.as_str()));
+static FRENCH: std::sync::LazyLock<solidcraft_ui_text::Catalog> =
+    std::sync::LazyLock::new(|| solidcraft_ui_text::Catalog::new("fr", "Français", include_str!("../locales/fr.json")));
 static HEBREW: std::sync::LazyLock<solidcraft_ui_text::Catalog> =
     std::sync::LazyLock::new(|| solidcraft_ui_text::Catalog::new("he", "עברית", include_str!("../locales/he.json")));
-static MESSAGES: std::sync::LazyLock<[&'static solidcraft_ui_text::Catalog; 2]> = std::sync::LazyLock::new(|| [&*ENGLISH, &*HEBREW]);
+static MESSAGES: std::sync::LazyLock<[&'static solidcraft_ui_text::Catalog; 3]> = std::sync::LazyLock::new(|| [&*ENGLISH, &*FRENCH, &*HEBREW]);
 
 /// Noto Sans Hebrew Regular (SIL OFL 1.1, `fonts/NotoSansHebrew-OFL.txt`), embedded on every
 /// platform so Hebrew text draws the same on desktop and web.
