@@ -202,13 +202,73 @@ fn pipe_poiseuille_on_a_staircase_wall_converges() {
     assert!(l2[2] < l2[0] && l2[2] < 0.05, "{l2:?}");
 }
 
-/// A sphere of radius `r` cells at the centre of a periodic box of `l` cells, the fluid driven by
-/// a small body force (Re ≪ 1); returns the measured K over Hasimoto's, and the relative mass
-/// drift.
+/// One periodic Stokes sphere run: a sphere of radius `r` cells in a periodic box of `l` cells,
+/// the fluid driven by a small body force.
+#[derive(Clone, Copy)]
+struct SphereCase {
+    r: f64,
+    l: usize,
+    /// How far the sphere moves from the box centre, in cells. The cells have their centres at
+    /// half-integer positions, so a shift of 0 puts the sphere's centre on a cell corner and a
+    /// shift of (½, ½, ½) puts it on a cell centre. The box is periodic, so a shift moves the
+    /// sphere against the grid and nothing else.
+    shift: [f64; 3],
+    /// The icosahedron subdivisions of the sphere's surface.
+    levels: u32,
+    /// The kinematic viscosity in lattice units (τ = 3ν + ½).
+    nu: f64,
+    /// The TRT magic parameter Λ (`None`: the solver's 3/16).
+    magic: Option<f64>,
+    /// The body acceleration in lattice units; the Reynolds number grows with a L³ / ν².
+    a: f64,
+}
+
+impl SphereCase {
+    /// The sphere at 3/16 of the box side, so the solid fraction is 0.0276 at every radius, on a
+    /// cell corner, with τ = 3 and a body force that keeps the Reynolds number at about 3e-4.
+    fn new(r: usize) -> Self {
+        Self { r: r as f64, l: 16 * r / 3, shift: [0.0; 3], levels: 5, nu: 5.0 / 6.0, magic: None, a: 1e-6 * (3.0 / r as f64).powi(3) }
+    }
+
+    /// Twelve relaxation times ρ V / (6 π μ R K) of the mean flow: the error left in a steady
+    /// state is about e⁻¹², far below the errors the study measures.
+    fn steps(&self) -> u64 {
+        let cells = (self.l * self.l * self.l) as f64;
+        let c = 4.0 / 3.0 * std::f64::consts::PI * self.r.powi(3) / cells;
+        (12.0 * cells / (6.0 * std::f64::consts::PI * self.nu * self.r * hasimoto(c))).ceil() as u64
+    }
+}
+
+/// What one periodic Stokes sphere run measured.
+struct SphereRun {
+    /// The drag coefficient K = F / (6 π μ R U) of the sphere, from the momentum exchange.
+    k: f64,
+    /// The solid fraction of the sphere as designed, 4π R³ / (3 L³): the one Hasimoto's K is for.
+    c: f64,
+    /// The solid fraction of the voxelised sphere: the cells that are not fluid, over all cells.
+    c_voxel: f64,
+    /// The Reynolds number 2 R U / ν of the mean velocity U.
+    re: f64,
+    /// The largest speed of any cell over the lattice speed of sound.
+    mach: f64,
+    /// The relative change of the total mass.
+    mass_drift: f64,
+}
+
+/// A sphere of radius `r` cells at a cell corner in a periodic box of `l` cells, the fluid driven
+/// by a small body force (Re ≪ 1), τ = 3; returns the measured K over Hasimoto's, and the relative
+/// mass drift.
 fn sphere_drag(r: f64, l: usize, steps: u64) -> (f64, f64) {
     // τ = 3: with Λ = 3/16 the steady solution does not depend on τ, and a high viscosity
-    // reaches it sooner (the mean flow relaxes over ρ V / (6 π μ R K) steps).
-    let (nu, a) = (5.0 / 6.0, 1e-6);
+    // reaches it sooner.
+    let case = SphereCase { r, l, shift: [0.0; 3], levels: 4, nu: 5.0 / 6.0, magic: None, a: 1e-6 };
+    let run = sphere_drag_run(&case, steps);
+    (run.k / hasimoto(run.c), run.mass_drift)
+}
+
+/// Runs `case` for `steps` steps and measures its drag.
+fn sphere_drag_run(case: &SphereCase, steps: u64) -> SphereRun {
+    let SphereCase { r, l, shift, levels, nu, magic, a } = *case;
     let side = l as f64;
     let mut d = domain([0.0; 3], [side; 3], 1.0);
     for f in fieldcraft_model::BoxFace::ALL {
@@ -216,7 +276,8 @@ fn sphere_drag(r: f64, l: usize, steps: u64) -> (f64, f64) {
     }
     d.acceleration = [a, 0.0, 0.0];
     d.obstacles = vec!["Ball".into()];
-    let ball = obstacle("Ball", sphere([side / 2.0; 3], r, 4), &["skin"]);
+    let centre = [side / 2.0 + shift[0], side / 2.0 + shift[1], side / 2.0 + shift[2]];
+    let ball = obstacle("Ball", sphere(centre, r, levels), &["skin"]);
     let m = model(
         1.0,
         nu,
@@ -227,7 +288,7 @@ fn sphere_drag(r: f64, l: usize, steps: u64) -> (f64, f64) {
             steps: Some(steps),
             time_step: Some(1.0),
             frames: 1,
-            magic: None,
+            magic,
             sigma: None,
             collision: None,
             turbulence: None,
@@ -241,7 +302,9 @@ fn sphere_drag(r: f64, l: usize, steps: u64) -> (f64, f64) {
     let mass0 = flow.mass();
     run_all(&setup, &mut flow);
     let cells = (l * l * l) as f64;
-    let u: f64 = (0..l * l * l).filter_map(|c| flow.moments(c)).map(|(_, u)| u[0]).sum::<f64>() / cells;
+    let moments: Vec<[f64; 3]> = (0..l * l * l).filter_map(|c| flow.moments(c)).map(|(_, u)| u).collect();
+    let u: f64 = moments.iter().map(|u| u[0]).sum::<f64>() / cells;
+    let u_max = moments.iter().map(|u| (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt()).fold(0.0, f64::max);
     let skin = flow.groups().iter().position(|g| g.name == "skin").unwrap();
     let force = flow.forces()[skin][0];
     let fluid = flow.fluid_cells() as f64;
@@ -254,7 +317,7 @@ fn sphere_drag(r: f64, l: usize, steps: u64) -> (f64, f64) {
     let re = u * 2.0 * r / nu;
     println!("sphere array, R = {r}, L = {l}: c = {c:.4}, Re = {re:.1e}, K = {k:.4}, Hasimoto {:.4}", hasimoto(c));
     assert!(re < 0.1);
-    (k / hasimoto(c), (flow.mass() - mass0).abs() / mass0)
+    SphereRun { k, c, c_voxel: 1.0 - fluid / cells, re, mach: u_max * 3f64.sqrt(), mass_drift: (flow.mass() - mass0).abs() / mass0 }
 }
 
 #[test]
@@ -267,6 +330,103 @@ fn stokes_drag_of_a_sphere_array_matches_hasimoto() {
     assert!((fine.0 - 1.0).abs() < 0.05, "{}", fine.0);
     // Round-off: each step's rounding moves the sum by a few ulps at most.
     assert!(coarse.1 < 1500.0 * 1e-14 && fine.1 < 3000.0 * 1e-14, "mass is conserved to round-off with bounce-back walls: {} {}", coarse.1, fine.1);
+}
+
+/// `n` offsets in [0, 1)³ from a fixed xorshift sequence, so every run moves the sphere to the
+/// same places.
+fn grid_phases(n: usize) -> Vec<[f64; 3]> {
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 11) as f64 / (1u64 << 53) as f64
+    };
+    (0..n).map(|_| [next(), next(), next()]).collect()
+}
+
+/// The periodic Stokes sphere array over radius and over where the sphere sits on the grid
+/// (issue #940). The solid fraction is 0.0276 at every radius (box side 16 R / 3), τ = 3,
+/// Λ = 3/16, halfway bounce-back, and a body force that keeps Re at about 3e-4.
+///
+/// Measured on Apple silicon in f64 (K over Hasimoto's, less 1; the reference is the series
+/// evaluated at the designed solid fraction). "Corner" and "centre" put the sphere's centre on a
+/// cell corner (what the other sphere tests do) and on a cell centre; "mean" and "range" are over
+/// those two and six more positions from the fixed pseudo-random sequence of `grid_phases(6)`. The
+/// table is from that longer run, with R = 15 as well (about 2 minutes a position). This test
+/// repeats part of it, to keep the heavy job short: four positions up to R = 9 (the first two of
+/// that sequence) and the corner and the centre at R = 12.
+///
+/// | R | corner | centre | mean of 8 | range of 8 |
+/// |---|---|---|---|---|
+/// | 3 | +11.66 % | −12.06 % | +0.19 % | 23.7 points |
+/// | 6 | +1.66 % | +0.43 % | +1.35 % | 1.8 points |
+/// | 9 | +2.33 % | −0.76 % | +1.13 % | 3.1 points |
+/// | 12 | +0.80 % | −0.17 % | +0.91 % | 1.4 points |
+/// | 15 | +1.80 % | +0.25 % | +0.92 % | 1.6 points |
+///
+/// So the sphere's position moves the drag by ±12 % at 3 cells per radius, and the one-position
+/// errors of the other tests (+11.7 %, +1.7 %, +2.3 %) are single samples of that scatter. The
+/// scatter shrinks with R, but the mean error does not follow it: it stops falling at about
+/// +0.9 % from R = 12 to R = 15 (observed order about 0 between the two), below the order 1.5 of a
+/// second-order scheme. The same table at Re 3e-2 (a fixed force) is the same to 0.01 point,
+/// τ = 1, 2 and 3 give the same K to 5 digits, and a finer sphere surface (6 subdivisions) moves K
+/// by 0.01 %, so none of those is the cause. Λ = 1/4 and Λ = 1/12 move the R = 9 errors by about
+/// −0.45 and +1.0 points. The cause is open: the wall treatment, or the series' own accuracy at
+/// this solid fraction.
+///
+/// The assertions guard what was measured: the position matters at R = 3 and matters about 20
+/// times less at R = 12, the errors at R ≥ 6 stay inside ±3 % (the largest seen is 2.3 %), and the
+/// runs are Stokes flow with a conserved mass. They are not theoretical bounds.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn stokes_drag_of_a_sphere_array_over_radii_and_grid_phase() {
+    let random = grid_phases(2);
+    // R = 12 takes about 45 s a run, so it has two positions.
+    let runs: [(usize, Vec<[f64; 3]>); 4] = [
+        (3, vec![[0.0; 3], [0.5; 3], random[0], random[1]]),
+        (6, vec![[0.0; 3], [0.5; 3], random[0], random[1]]),
+        (9, vec![[0.0; 3], [0.5; 3], random[0], random[1]]),
+        (12, vec![[0.0; 3], [0.5; 3]]),
+    ];
+    let mut by_radius: Vec<(usize, Vec<f64>)> = vec![];
+    for (r, shifts) in runs {
+        let mut errors = vec![];
+        for shift in shifts {
+            let case = SphereCase { shift, ..SphereCase::new(r) };
+            let steps = case.steps();
+            let run = sphere_drag_run(&case, steps);
+            let error = run.k / hasimoto(run.c) - 1.0;
+            println!(
+                "R = {r:>2}, L = {}, shift ({:.3}, {:.3}, {:.3}): K = {:.5}, {:+.3} % of Hasimoto's (against the voxelised solid fraction {:+.3} %), Re = {:.1e}, Ma = {:.1e}, mass drift {:.1e}",
+                case.l,
+                shift[0],
+                shift[1],
+                shift[2],
+                run.k,
+                100.0 * error,
+                100.0 * (run.k / hasimoto(run.c_voxel) - 1.0),
+                run.re,
+                run.mach,
+                run.mass_drift
+            );
+            assert!(run.re < 1e-3 && run.mach < 1e-3, "Stokes flow: Re {}, Ma {}", run.re, run.mach);
+            // Round-off only: a leak would be many orders larger.
+            assert!(run.mass_drift < 1e-9, "mass drift {}", run.mass_drift);
+            errors.push(error);
+        }
+        by_radius.push((r, errors));
+    }
+    // The position matters at R = 3: on a cell corner the drag reads high, on a cell centre low.
+    let (corner3, centre3) = (by_radius[0].1[0], by_radius[0].1[1]);
+    assert!(corner3 > 0.10 && centre3 < -0.10, "R = 3: corner {corner3}, centre {centre3}");
+    // And it matters far less at R = 12 (the spread of the two positions falls 20 times).
+    let spread = |i: usize| (by_radius[i].1[0] - by_radius[i].1[1]).abs();
+    assert!(spread(3) < spread(0) / 10.0, "spread {} at R = 12, {} at R = 3", spread(3), spread(0));
+    // Measured band (largest 2.3 %), a regression guard and not a bound of the method.
+    for (r, errors) in by_radius.iter().filter(|(r, _)| *r >= 6) {
+        assert!(errors.iter().all(|e| e.abs() < 0.03), "R = {r}: {errors:?}");
+    }
 }
 
 #[test]
