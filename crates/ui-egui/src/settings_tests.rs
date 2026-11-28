@@ -412,3 +412,144 @@ fn language_preference_switches_to_hebrew_and_restores_on_cancel() {
     assert_eq!(app.prefs.language, "en");
     assert_eq!(prefs.saved().language, "en");
 }
+
+#[test]
+fn reset_layout_in_settings_persists_across_cancel_and_history_dock_syncs() {
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let prefs = Temp::new("reset-layout");
+    let ctx = egui::Context::default();
+    let mut app = app(&prefs);
+
+    // Non-default layout + Settings fields before opening Settings.
+    app.ui.browser_width = 340.0;
+    app.with_panels(|_, panels| {
+        let _ = panels.set_browser_width(340.0);
+    });
+    app.set_history_dock(HistoryDock::Top);
+    app.ui.browser_float = true;
+    app.save_prefs();
+
+    app.open_settings();
+    let drawn = frames(&mut app, &ctx, 3);
+    assert!(!window::apply_pending(&app));
+
+    // Modify status_bar in Settings, then click the immediate Reset Layout button.
+    let drawn = click_label(&mut app, &ctx, &drawn, "Status bar");
+    assert!(app.ui.status_bar);
+    let window_rect = app.layout.get("settings").copied().expect("Settings is drawn");
+    let reset_at = drawn
+        .iter()
+        .filter(|d| d.label == "Reset Layout" && window_rect.contains(d.at))
+        .max_by(|a, b| a.at.x.total_cmp(&b.at.x))
+        .expect("Reset Layout button drawn")
+        .at;
+    click_at(&mut app, &ctx, reset_at);
+
+    assert_eq!(app.ui.history_dock, HistoryDock::Bottom);
+    assert!(!app.ui.browser_float);
+    assert_eq!(app.ui.browser_width, crate::browser::WIDTH);
+    assert_eq!(app.panels.as_ref().unwrap().history_dock(), HistoryDock::Bottom);
+
+    // Cancel reverts status_bar (edited in Settings) while Reset Layout persists.
+    click(&mut app, &ctx, "prefs:cancel");
+    assert!(!app.ui.status_bar, "status_bar reverts on Cancel");
+    assert_eq!(app.ui.history_dock, HistoryDock::Bottom, "Reset Layout persists across Cancel");
+    assert!(!app.ui.browser_float, "browser_float reset persists across Cancel");
+    assert_eq!(app.ui.browser_width, crate::browser::WIDTH);
+    let saved = prefs.saved();
+    assert_eq!(saved.history_dock, HistoryDock::Bottom);
+    assert!(!saved.browser_float);
+
+    // Changing history_dock via Settings control updates PanelHost and Cancel puts it back.
+    from_control(&mut app, &json!({"page": "general", "set": {"history_dock": "top"}})).unwrap();
+    assert_eq!(app.panels.as_ref().unwrap().history_dock(), HistoryDock::Top);
+    from_control(&mut app, &json!({"press": "cancel"})).unwrap();
+    assert_eq!(app.panels.as_ref().unwrap().history_dock(), HistoryDock::Bottom);
+}
+
+#[test]
+fn reset_layout_baseline_survives_subsequent_history_and_float_edits_on_cancel() {
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let prefs = Temp::new("reset-layout-cancel-baseline");
+    let ctx = egui::Context::default();
+    let mut app = app(&prefs);
+
+    app.set_history_dock(HistoryDock::Top);
+    app.ui.browser_float = true;
+    app.save_prefs();
+
+    app.open_settings();
+    let drawn = frames(&mut app, &ctx, 3);
+
+    // Click Reset Layout (now Bottom, false).
+    let window_rect = app.layout.get("settings").copied().expect("Settings is drawn");
+    let reset_at = drawn
+        .iter()
+        .filter(|d| d.label == "Reset Layout" && window_rect.contains(d.at))
+        .max_by(|a, b| a.at.x.total_cmp(&b.at.x))
+        .expect("Reset Layout button drawn")
+        .at;
+    click_at(&mut app, &ctx, reset_at);
+    assert_eq!(app.ui.history_dock, HistoryDock::Bottom);
+    assert!(!app.ui.browser_float);
+
+    // Edit History dock and browser_float after Reset Layout, then Cancel:
+    // Cancel must restore to the post-reset baseline (Bottom, false), not the pre-reset values.
+    from_control(&mut app, &json!({"page": "general", "set": {"history_dock": "top", "browser_float": true}})).unwrap();
+    assert_eq!(app.ui.history_dock, HistoryDock::Top);
+    assert!(app.ui.browser_float);
+
+    click(&mut app, &ctx, "prefs:cancel");
+    assert_eq!(app.ui.history_dock, HistoryDock::Bottom);
+    assert_eq!(app.panels.as_ref().unwrap().history_dock(), HistoryDock::Bottom);
+    assert!(!app.ui.browser_float);
+    let saved = prefs.saved();
+    assert_eq!(saved.history_dock, HistoryDock::Bottom);
+    assert!(!saved.browser_float);
+}
+
+#[test]
+fn cancel_restores_floating_history_placement_after_dock_change() {
+    use solidcraft_panel_layout::{Destination, InstanceId, Mutation, Point, SectionId, SectionLocation, Size, Zone};
+
+    let _g = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let prefs = Temp::new("cancel-floating-history");
+    let ctx = egui::Context::default();
+    let mut app = app(&prefs);
+
+    let history = InstanceId::new(crate::panels::PANEL_HISTORY).unwrap();
+    app.with_panels(|_, panels| {
+        panels
+            .apply_mutations(
+                vec![Mutation::Move {
+                    instance: history.clone(),
+                    destination: Destination::NewSection {
+                        section: SectionId::new("sec-history-float-test").unwrap(),
+                        index: 0,
+                        location: SectionLocation::Floating { origin: Point { x: 90.0, y: 140.0 } },
+                        size: Size { width: 520.0, height: 180.0 },
+                    },
+                }],
+                true,
+            )
+            .unwrap();
+    });
+    app.save_prefs();
+
+    app.open_settings();
+    frames(&mut app, &ctx, 2);
+
+    from_control(&mut app, &json!({"page": "general", "set": {"history_dock": "top"}})).unwrap();
+    assert_eq!(app.ui.history_dock, HistoryDock::Top);
+    app.with_panels(|_, panels| {
+        let snap = panels.history_placement_snapshot().unwrap();
+        assert_eq!(snap.section.unwrap().1.zone(), Zone::Bottom);
+    });
+
+    click(&mut app, &ctx, "prefs:cancel");
+    assert_eq!(app.ui.history_dock, HistoryDock::Bottom);
+    app.with_panels(|_, panels| {
+        let snap = panels.history_placement_snapshot().unwrap();
+        assert_eq!(snap.section.unwrap().1, SectionLocation::Floating { origin: Point { x: 90.0, y: 140.0 } });
+    });
+}

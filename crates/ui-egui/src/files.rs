@@ -304,7 +304,7 @@ impl Recent {
 }
 
 /// Largest preferences file read.
-const MAX_PREFS_BYTES: u64 = 64 * 1024;
+pub(crate) const MAX_PREFS_BYTES: u64 = 64 * 1024;
 
 /// Where the preferences are kept: reads their JSON (`None` when there is none) and writes it.
 pub struct PrefsStore {
@@ -373,6 +373,50 @@ pub struct Prefs {
     /// The title bar shows the Donate and the Discord pills ([`crate::links`]).
     pub show_donate_button: bool,
     pub show_discord_button: bool,
+    /// Saved panel layout envelope (`solidcraft-panel-layout`), kept as unparsed JSON text so
+    /// malformed numbers (such as `1e400`) or future payloads never drop other preferences.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel_layout: Option<RawJson>,
+}
+
+/// Raw JSON text kept unparsed by [`Prefs`] so malformed numbers or unknown schemas inside
+/// `panel_layout` never cause [`Prefs::load`] to discard other preferences.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct RawJson(Box<serde_json::value::RawValue>);
+
+impl RawJson {
+    /// Validate and wrap a JSON text fragment.
+    pub fn from_json_string(json: String) -> Result<Self, serde_json::Error> {
+        serde_json::value::RawValue::from_string(json).map(Self)
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.get()
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.get().as_bytes()
+    }
+}
+
+impl PartialEq for RawJson {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.get() == other.0.get()
+    }
+}
+
+impl Eq for RawJson {}
+
+/// Outcome of [`Prefs::save`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrefsSaveOutcome {
+    NoStore,
+    Saved,
+    /// The complete JSON exceeded [`MAX_PREFS_BYTES`], so `panel_layout` was omitted and the
+    /// remaining preferences were written within the desktop read limit.
+    SavedWithoutLayout,
+    Failed,
 }
 
 /// A preference as saved, or its default when this version cannot read it (a value a newer
@@ -402,6 +446,7 @@ impl Default for Prefs {
             history_dock: crate::shell::HistoryDock::default(),
             show_donate_button: true,
             show_discord_button: true,
+            panel_layout: None,
         }
     }
 }
@@ -414,13 +459,62 @@ impl Prefs {
         prefs
     }
 
-    /// Write them to `store`; a failure is logged (the preferences stay for this run).
-    pub fn save(&self, store: Option<&PrefsStore>) {
-        let Some(store) = store else { return };
-        if let Err(e) = (store.save)(&serde_json::to_vec_pretty(self).unwrap_or_default()) {
-            log::warn!("preferences: {e}");
+    /// Write them to `store`, enforcing [`MAX_PREFS_BYTES`] on the serialized bytes actually
+    /// written: pretty JSON normally, compact JSON if pretty formatting pushes a valid payload
+    /// past the limit, and omitting `panel_layout` only when even compact JSON exceeds the limit.
+    pub fn save(&self, store: Option<&PrefsStore>) -> PrefsSaveOutcome {
+        let Some(store) = store else { return PrefsSaveOutcome::NoStore };
+        match serialize_within_limit(self) {
+            Ok(Some(bytes)) => {
+                return match (store.save)(&bytes) {
+                    Ok(()) => PrefsSaveOutcome::Saved,
+                    Err(e) => {
+                        log::warn!("preferences: {e}");
+                        PrefsSaveOutcome::Failed
+                    }
+                };
+            }
+            Ok(None) => {}
+            Err(e) => {
+                log::warn!("preferences: {e}");
+                return PrefsSaveOutcome::Failed;
+            }
         }
+        if self.panel_layout.is_some() {
+            log::warn!("preferences exceed {} bytes; omitting panel_layout so other settings stay within read limit", MAX_PREFS_BYTES);
+            let mut without_layout = self.clone();
+            without_layout.panel_layout = None;
+            let fallback_bytes = match serialize_within_limit(&without_layout) {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => {
+                    log::warn!("preferences exceed {} bytes even without panel_layout; skipping write", MAX_PREFS_BYTES);
+                    return PrefsSaveOutcome::Failed;
+                }
+                Err(e) => {
+                    log::warn!("preferences: {e}");
+                    return PrefsSaveOutcome::Failed;
+                }
+            };
+            return match (store.save)(&fallback_bytes) {
+                Ok(()) => PrefsSaveOutcome::SavedWithoutLayout,
+                Err(e) => {
+                    log::warn!("preferences: {e}");
+                    PrefsSaveOutcome::Failed
+                }
+            };
+        }
+        log::warn!("preferences exceed {} bytes; skipping write", MAX_PREFS_BYTES);
+        PrefsSaveOutcome::Failed
     }
+}
+
+fn serialize_within_limit(prefs: &Prefs) -> Result<Option<Vec<u8>>, serde_json::Error> {
+    let pretty = serde_json::to_vec_pretty(prefs)?;
+    if pretty.len() <= MAX_PREFS_BYTES as usize {
+        return Ok(Some(pretty));
+    }
+    let compact = serde_json::to_vec(prefs)?;
+    Ok((compact.len() <= MAX_PREFS_BYTES as usize).then_some(compact))
 }
 
 /// A command running in the background on a copy of the session: a file opening, a solve, a
@@ -1383,7 +1477,10 @@ impl ModelApp {
         let go = match answer {
             Answer::Save => self.save(),
             Answer::Discard => true,
-            Answer::Cancel => false,
+            Answer::Cancel => {
+                self.quit_requested = false;
+                false
+            }
         };
         if !go {
             return;
@@ -2137,6 +2234,96 @@ pub(crate) mod tests {
         std::fs::write(&file, format!(r#"{{"reverse_zoom": true, "units": {}}}"#, serde_json::to_string(&si).unwrap())).unwrap();
         let prefs = Prefs::load(Some(&store));
         assert_eq!((prefs.reverse_zoom, prefs.units), (true, si), "known units are read");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn corrupt_or_unknown_panel_layout_keeps_other_preferences() {
+        let dir = temp("prefs-panel-layout");
+        let file = dir.join("prefs.json");
+        let store = PrefsStore::file(file.clone());
+        for bad in [
+            r#""not-an-object""#,
+            r#"[1, 2, 3]"#,
+            r#"{"format":"wrong","version":999,"x":1e40}"#,
+            r#"{"format":"wrong","version":999,"x":1e400}"#,
+            r#"{"x":1e400}"#,
+            r#"{"unknown_future_key":true}"#,
+        ] {
+            std::fs::write(
+                &file,
+                format!(r#"{{"nav_preset":"solidworks","reverse_zoom":true,"history_dock":"top","browser_float":true,"panel_layout":{bad}}}"#),
+            )
+            .unwrap();
+            let loaded = Prefs::load(Some(&store));
+            assert_eq!(loaded.nav_preset, "solidworks");
+            assert!(loaded.reverse_zoom);
+            assert_eq!(loaded.history_dock, crate::shell::HistoryDock::Top);
+            assert!(loaded.browser_float);
+            assert!(loaded.panel_layout.is_some());
+        }
+        // Pre-PR 4a compatibility: unknown top-level keys are ignored safely.
+        std::fs::write(&file, br#"{"nav_preset":"fusion","future_flag":123}"#).unwrap();
+        let loaded = Prefs::load(Some(&store));
+        assert_eq!(loaded.nav_preset, "fusion");
+        assert_eq!(loaded.panel_layout, None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn oversized_panel_layout_is_omitted_on_save_within_read_limit() {
+        let dir = temp("prefs-budget");
+        let file = dir.join("prefs.json");
+        let store = PrefsStore::file(file.clone());
+        let huge = "a".repeat(65_400);
+        let compact = format!(r#"{{"reverse_zoom":true,"panel_layout":"{huge}"}}"#);
+        assert!(compact.len() <= MAX_PREFS_BYTES as usize, "compact fixture fits under desktop read limit");
+        std::fs::write(&file, compact).unwrap();
+
+        let mut loaded = Prefs::load(Some(&store));
+        assert!(loaded.reverse_zoom);
+        assert!(loaded.panel_layout.is_some());
+        loaded.status_bar = true;
+        assert_eq!(loaded.save(Some(&store)), PrefsSaveOutcome::SavedWithoutLayout);
+        assert!(std::fs::metadata(&file).unwrap().len() <= MAX_PREFS_BYTES);
+
+        let reloaded = Prefs::load(Some(&store));
+        assert!(reloaded.reverse_zoom);
+        assert!(reloaded.status_bar);
+        assert_eq!(reloaded.panel_layout, None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn compact_fallback_preserves_valid_panel_layout_near_read_limit() {
+        let dir = temp("prefs-compact-fallback");
+        let file = dir.join("prefs.json");
+        let store = PrefsStore::file(file.clone());
+
+        let reg = crate::panels::build_registry().unwrap();
+        let seed_prefs = Prefs { browser_width: 340.0, browser_collapsed: true, ..Prefs::default() };
+        let (seeded_layout, layout_store) = crate::panels::store::FieldCraftLayoutStore::load_from_prefs(&seed_prefs, &reg, false).unwrap();
+        let raw_layout = layout_store.to_prefs_value(&seeded_layout, &reg).unwrap();
+
+        let mut prefs = Prefs { panel_layout: Some(raw_layout), ..Prefs::default() };
+        let base_compact = serde_json::to_vec(&prefs).unwrap().len();
+        let pad = (MAX_PREFS_BYTES as usize).saturating_sub(base_compact).saturating_sub(64);
+        prefs.install_id = "x".repeat(pad);
+
+        assert!(serde_json::to_vec(&prefs).unwrap().len() <= MAX_PREFS_BYTES as usize);
+        assert!(serde_json::to_vec_pretty(&prefs).unwrap().len() > MAX_PREFS_BYTES as usize);
+
+        prefs.status_bar = true;
+        assert_eq!(prefs.save(Some(&store)), PrefsSaveOutcome::Saved);
+        assert!(std::fs::metadata(&file).unwrap().len() <= MAX_PREFS_BYTES);
+
+        let reloaded = Prefs::load(Some(&store));
+        assert!(reloaded.status_bar);
+        assert!(reloaded.panel_layout.is_some());
+        let (reloaded_layout, _) = crate::panels::store::FieldCraftLayoutStore::load_from_prefs(&reloaded, &reg, false).unwrap();
+        let browser = reloaded_layout.containing(&solidcraft_panel_layout::InstanceId::new(crate::panels::PANEL_BROWSER).unwrap()).unwrap();
+        assert!((browser.size.width - 340.0).abs() < 1e-6);
+        assert!(browser.collapsed);
         let _ = std::fs::remove_dir_all(dir);
     }
 

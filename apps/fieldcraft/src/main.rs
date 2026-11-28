@@ -86,6 +86,9 @@ struct App {
     autosaved_at: f64,
     /// Frames drawn so far, up to 2 (the second means the first was presented: the app is up).
     frames: u8,
+    /// Cached winit global-coordinate capability (`outer_position().is_ok()`), avoiding a
+    /// synchronous X11 `TranslateCoordinates` round trip on every `logic` pass.
+    global_coords_ok: Option<bool>,
     /// Sends the anonymous usage events, when this run may (docs/privacy.md).
     usage: Option<usage::Sender>,
 }
@@ -101,7 +104,7 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.frames < 2 {
             if self.frames == 0 {
                 fit_first_window(ctx);
@@ -113,6 +116,37 @@ impl eframe::App for App {
                 crash::phase(crash::RUNNING);
             }
         }
+        if let Some(window) = frame.winit_window() {
+            let outer_ok = if ctx.input(|i| i.viewport().outer_rect.is_some()) {
+                self.global_coords_ok = Some(true);
+                true
+            } else {
+                *self.global_coords_ok.get_or_insert_with(|| window.outer_position().is_ok())
+            };
+            let global_coords = outer_ok && !ctx.embed_viewports();
+            self.app.refresh_panel_monitors(
+                || {
+                    let primary = window.primary_monitor();
+                    window
+                        .available_monitors()
+                        .map(|monitor| {
+                            let position = monitor.position();
+                            let size = monitor.size();
+                            fieldcraft_ui_egui::NativeMonitor {
+                                name: monitor.name(),
+                                bounds: egui::Rect::from_min_size(
+                                    egui::pos2(position.x as f32, position.y as f32),
+                                    egui::vec2(size.width as f32, size.height as f32),
+                                ),
+                                scale: monitor.scale_factor() as f32,
+                                primary: primary.as_ref() == Some(&monitor),
+                            }
+                        })
+                        .collect()
+                },
+                global_coords,
+            );
+        }
         self.app.logic(ctx);
         if self.app.now - self.autosaved_at >= AUTOSAVE_SECONDS {
             self.autosaved_at = self.app.now;
@@ -123,6 +157,7 @@ impl eframe::App for App {
         }
     }
     fn on_exit(&mut self) {
+        self.app.mark_exiting();
         if let Some(a) = self.autosaver.take()
             && let Err(e) = a.close(&self.app.session)
         {
@@ -395,7 +430,7 @@ fn main() -> eframe::Result {
             });
             app.announce_crashes(&crashed);
             crash::phase("first frame");
-            Ok(Box::new(App { app, autosaver, autosaved_at: 0.0, frames: 0, usage }))
+            Ok(Box::new(App { app, autosaver, autosaved_at: 0.0, frames: 0, global_coords_ok: None, usage }))
         }),
     )
 }
@@ -464,5 +499,44 @@ mod tests {
             _ => env!("CARGO_PKG_VERSION"),
         };
         assert_eq!(version_line(), format!("fieldcraft {packaged}"));
+    }
+
+    #[test]
+    fn panel_monitors_canonicalize_deterministically() {
+        let raw = vec![
+            fieldcraft_ui_egui::NativeMonitor {
+                name: Some("BadNaN".into()),
+                bounds: egui::Rect::from_min_size(egui::pos2(f32::NAN, 0.0), egui::vec2(1920.0, 1080.0)),
+                scale: 1.0,
+                primary: false,
+            },
+            fieldcraft_ui_egui::NativeMonitor {
+                name: Some("BadScale".into()),
+                bounds: egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1920.0, 1080.0)),
+                scale: 0.0,
+                primary: false,
+            },
+            fieldcraft_ui_egui::NativeMonitor {
+                name: Some("Right".into()),
+                bounds: egui::Rect::from_min_size(egui::pos2(1920.0, 0.0), egui::vec2(2560.0, 1440.0)),
+                scale: 1.0,
+                primary: false,
+            },
+            fieldcraft_ui_egui::NativeMonitor {
+                name: Some("Left".into()),
+                bounds: egui::Rect::from_min_size(egui::pos2(-1920.0, 0.0), egui::vec2(1920.0, 1080.0)),
+                scale: 1.0,
+                primary: false,
+            },
+            fieldcraft_ui_egui::NativeMonitor {
+                name: Some("Primary".into()),
+                bounds: egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1920.0, 1080.0)),
+                scale: 1.0,
+                primary: true,
+            },
+        ];
+        let sorted = fieldcraft_ui_egui::canonicalize_monitors(raw);
+        let names: Vec<_> = sorted.iter().map(|m| m.name.as_deref().unwrap_or("")).collect();
+        assert_eq!(names, vec!["Primary", "Left", "Right"]);
     }
 }

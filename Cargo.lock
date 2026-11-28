@@ -2254,6 +2254,7 @@ dependencies = [
  "serde_json",
  "skrifa",
  "solidcraft-look",
+ "solidcraft-panel-layout",
  "solidcraft-theme",
  "solidcraft-ui-kit",
  "solidcraft-ui-registry",

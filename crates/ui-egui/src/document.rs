@@ -100,6 +100,7 @@ impl ModelApp {
             recent: _,
             start_page: _,
             prefs: _,
+            prefs_retry: _,
             // The Preferences window: the user's settings, not the document's.
             settings: _,
             usage: _,
@@ -137,6 +138,8 @@ impl ModelApp {
             properties: _,
             mesh_made: _,
             search,
+            panels: _,
+            settings_edited: _,
         } = self;
         ui.document_replaced(tab);
         *dialog = None;
