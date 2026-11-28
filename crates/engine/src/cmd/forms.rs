@@ -630,9 +630,20 @@ pub const BOUNDARY_CONDITION: &[Field] = &[
                 "Perfect conductor",
                 &[target("target", "Faces").help("A set of element faces: the tangential electric field vanishes on them (cavity steps).").req()],
             ),
+            variant(
+                "conductor",
+                "Conductor",
+                &[
+                    target("target", "Faces")
+                        .help("A set of element faces on a metal wall, which is not meshed: it absorbs power through its surface resistance (cavity steps: each mode's quality factor).")
+                        .req(),
+                    positive("conductivity", "Conductivity", D::None).help("Electrical conductivity in S/m: copper ≈ 5.8e7, aluminium ≈ 3.8e7, brass ≈ 1.6e7.").req().hint("S/m"),
+                    positive("permeability", "Relative permeability", D::None).help("The metal's relative permeability: 1 for copper, aluminium, silver and gold.").hint("1"),
+                ],
+            ),
         ],
     )
-    .help("What is held: everything fixed, given displacements, a symmetry plane, a temperature or a perfect conductor.")
+    .help("What is held: everything fixed, given displacements, a symmetry plane, a temperature, a perfect conductor or a conductor.")
     .req()
     .def("\"fixed\""),
 ];

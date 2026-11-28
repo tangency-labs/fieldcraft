@@ -24,6 +24,11 @@
 //!   constant potential is left out of the null space on its own. With the box's walls
 //!   conducting, the first mode is the part 0 < x < 0.5's, conducting at x = 0 and magnetic at
 //!   x = 0.5: E = ŷ sin(πx) sin(πz/d), k² = π² + (π/d)².
+//! - **Copper walls** (a conductor of σ on every wall): TE₁₀₁'s quality factor
+//!   Q = (k a d)³ b η / (2π² Rₛ) / (2a³b + 2bd³ + a³d + ad³), Rₛ = √(ω μ₀ / (2σ)) (Pozar §6.7,
+//!   eq. 6.46, and eq. 1.131); Q grows as √σ and falls as 1/√μ_c of the metal; the walls' losses
+//!   add, 1/Q = Σ 1/Q_wall; filling the cavity with εᵣ and μᵣ scales Q by μᵣ^¾ εᵣ^-¼ (the same
+//!   formula with the medium's k, η = η₀ √(μᵣ/εᵣ) and Rₛ at the lower frequency).
 //! - **A cube** has degenerate modes (on its mesh of 2 × 2 × 2 cells at order 2, the second and
 //!   third agree to round-off): asking for the second alone is no missed mode.
 
@@ -36,7 +41,7 @@ use common::*;
 use fieldcraft_fem::nedelec::{EdgeTet, Order, Potential, declare, gradient, slots};
 use fieldcraft_model::*;
 use fieldcraft_solver::analysis::TOLERANCE;
-use fieldcraft_solver::cavity::SPEED_OF_LIGHT;
+use fieldcraft_solver::cavity::{SPEED_OF_LIGHT, VACUUM_PERMEABILITY};
 use fieldcraft_solver::sparse::{NodeGraph, add_block};
 use fieldcraft_solver::{CavityResult, Limits, solve_cavity};
 
@@ -502,4 +507,93 @@ fn what_a_cavity_step_refuses() {
     // Steps of order 3 and of no modes are invalid.
     assert!(Procedure::Cavity { modes: 1, min_hz: None, max_hz: None, order: 3 }.validate().is_err());
     assert!(Procedure::Cavity { modes: 0, min_hz: None, max_hz: None, order: 1 }.validate().is_err());
+}
+
+/// Copper, S/m (Pozar 2012, appendix F).
+const COPPER: f64 = 5.813e7;
+
+/// The box's walls where `wall(axis, side)` holds made a conductor of `conductivity` and `permeability`.
+fn conducting(mut g: Grid, conductivity: f64, permeability: f64) -> Grid {
+    let bc = BoundaryCondition::Conductor { target: Target::Set("walls".into()), conductivity, permeability };
+    g.model.replace_boundary_condition("walls", bc).unwrap();
+    g
+}
+
+/// The lowest mode's quality factor.
+fn quality(g: &Grid) -> f64 {
+    let r = solve(g);
+    r.modes[0].quality.unwrap_or_else(|| panic!("no quality factor: {:?}", r.warnings))
+}
+
+/// Pozar's eq. 6.46: TE₁₀₁ of an empty a × b × d box with walls of σ.
+fn te101_quality(sides: [f64; 3], sigma: f64) -> f64 {
+    let [a, b, d] = sides;
+    let k = PI * (1.0 / (a * a) + 1.0 / (d * d)).sqrt();
+    let omega = k * SPEED_OF_LIGHT;
+    let rs = (omega * VACUUM_PERMEABILITY / (2.0 * sigma)).sqrt();
+    let eta = VACUUM_PERMEABILITY * SPEED_OF_LIGHT;
+    (k * a * d).powi(3) * b * eta / (2.0 * PI * PI * rs) / (2.0 * a.powi(3) * b + 2.0 * b * d.powi(3) + a.powi(3) * d + a * d.powi(3))
+}
+
+#[test]
+fn copper_walls_give_te101_its_quality_factor() {
+    // TE₁₀₁ is the lowest mode of 1 × 0.5 × 0.75 (k² = π² (1 + 1/0.75²), then TE₁₁₀ at 5π²).
+    // On 8 × 4 × 6 cells at order 1 Q is 1.4 % above the closed form (see the convergence below).
+    let exact = te101_quality(SIDES, COPPER);
+    let q = quality(&conducting(cavity([8, 4, 6], SIDES, 1, 1, vacuum, every_wall), COPPER, 1.0));
+    assert!((q / exact - 1.0).abs() < 0.02, "Q {q} against {exact}");
+    // A perfect conductor absorbs nothing: no quality factor.
+    assert!(solve(&cavity([2, 1, 2], SIDES, 1, 1, vacuum, every_wall)).modes[0].quality.is_none());
+}
+
+/// The quality factor's error converges as h² at both orders: the losses take the curl's trace on
+/// the walls. Measured on 4 × 2 × 3 → 8 × 4 × 6: order 1 5.4 % → 1.4 %, order 2 −7.4 % → −2.2 %.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn the_quality_factor_converges_to_pozars() {
+    let exact = te101_quality(SIDES, COPPER);
+    for order in [1, 2] {
+        let error =
+            |n: usize| (quality(&conducting(cavity([2 * n, n, 3 * n / 2], SIDES, order, 1, vacuum, every_wall), COPPER, 1.0)) / exact - 1.0).abs();
+        let (coarse, fine) = (error(2), error(4));
+        assert!(fine < coarse / 3.0 && fine < 0.025, "order {order}: {coarse} → {fine}");
+    }
+}
+
+#[test]
+fn the_quality_factor_scales_with_the_metal() {
+    // Q ∝ 1/Rₛ ∝ √(σ/μ_c), on the same mesh and mode: exact to rounding.
+    let q = |sigma, mu| quality(&conducting(cavity([2, 1, 2], SIDES, 1, 1, vacuum, every_wall), sigma, mu));
+    let base = q(COPPER, 1.0);
+    assert!((q(4.0 * COPPER, 1.0) / base - 2.0).abs() < 1e-9);
+    assert!((q(COPPER, 9.0) / base - 1.0 / 3.0).abs() < 1e-9);
+}
+
+#[test]
+fn the_walls_losses_add() {
+    // 1/Q of every wall conducting = the sum over the walls each conducting alone (the rest
+    // perfect): the same field, its losses wall by wall.
+    let lossy = |pick: &dyn Fn(usize, usize) -> bool| {
+        let mut g = cavity([2, 1, 2], SIDES, 1, 1, vacuum, every_wall);
+        let mut faces = Vec::new();
+        for (a, side) in (0..3).flat_map(|a| [(a, 0), (a, 1)]) {
+            if pick(a, side) {
+                faces.extend(g.faces_where(|p| p[a] == side as f64));
+            }
+        }
+        g.model.add_set("metal", Set { faces, ..Set::default() }).unwrap();
+        g.bc("metal", BoundaryCondition::Conductor { target: Target::Set("metal".into()), conductivity: COPPER, permeability: 1.0 });
+        quality(&g)
+    };
+    let all = lossy(&|_, _| true);
+    let sum: f64 = (0..3).flat_map(|a| [(a, 0), (a, 1)]).map(|w| 1.0 / lossy(&|a, s| (a, s) == w)).sum();
+    assert!((all * sum - 1.0).abs() < 1e-9, "1/Q {} against Σ {sum}", 1.0 / all);
+}
+
+#[test]
+fn a_filled_cavitys_quality_factor_scales_with_its_medium() {
+    let q = |eps, mu| quality(&conducting(cavity([2, 1, 2], SIDES, 2, 1, |_| (eps, mu), every_wall), COPPER, 1.0));
+    let (empty, filled) = (q(1.0, 1.0), q(2.0, 3.0));
+    let expected = 3.0f64.powf(0.75) * 2.0f64.powf(-0.25);
+    assert!((filled / empty / expected - 1.0).abs() < 1e-9, "{} against {expected}", filled / empty);
 }

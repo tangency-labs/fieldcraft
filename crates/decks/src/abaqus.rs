@@ -1389,7 +1389,7 @@ impl Deck {
                     self.line(&format!("{target}, {s}"));
                 }
                 // Refused up front (check_expressible).
-                BoundaryCondition::Temperature { .. } | BoundaryCondition::PerfectConductor { .. } => {}
+                BoundaryCondition::Temperature { .. } | BoundaryCondition::PerfectConductor { .. } | BoundaryCondition::Conductor { .. } => {}
                 BoundaryCondition::Displacement { values, .. } => {
                     for (dof, v) in (1u8..).zip(values) {
                         if let Some(v) = v {

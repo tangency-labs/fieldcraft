@@ -502,7 +502,15 @@ fn rows(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) {
         let labels = f.modes.iter().map(|m| crate::results::mode_value(f.buckling.is_some(), m.eigenvalue, m.frequency, &plot.units));
         modes(ui, plot, labels, &mut run);
     } else if let Kind::Cavity(c) = plot.result.kind() {
-        modes(ui, plot, c.modes.iter().map(|m| crate::results::mode_value(false, 0.0, m.frequency, &plot.units)), &mut run);
+        // With conductors, each mode's quality factor beside its frequency.
+        let labels = c.modes.iter().map(|m| {
+            let f = crate::results::mode_value(false, 0.0, m.frequency, &plot.units);
+            match m.quality {
+                Some(q) => format!("{f} · Q {}", number(q)),
+                None => f,
+            }
+        });
+        modes(ui, plot, labels, &mut run);
     } else if let Kind::Heat(h) = plot.result.kind() {
         kit::divider(ui, "fc_results_heat");
         heat_flows(ui, &fieldcraft_engine::results::heat_flows(h, &plot.units), &plot.units);

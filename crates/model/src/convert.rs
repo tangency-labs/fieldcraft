@@ -242,6 +242,9 @@ impl Quantities for BoundaryCondition {
             BoundaryCondition::Fixed { target: _ }
             | BoundaryCondition::Symmetry { target: _, plane: _ }
             | BoundaryCondition::PerfectConductor { target: _ } => {}
+            // Conductivity has no quantity of its own (the units carry no electric current): it is
+            // given and stored in S/m; the permeability is a ratio.
+            BoundaryCondition::Conductor { target: _, conductivity: _, permeability: _ } => {}
             // Three displacements, then three rotations.
             BoundaryCondition::Displacement { target: _, values } => {
                 for (i, v) in values.iter_mut().enumerate() {

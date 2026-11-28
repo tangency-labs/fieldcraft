@@ -813,7 +813,13 @@ impl Session {
                     .modes
                     .iter()
                     .enumerate()
-                    .map(|(i, m)| json!({"mode": i + 1, "frequency": shown(Quantity::Frequency, m.frequency, display)}))
+                    .map(|(i, m)| {
+                        let mut mode = json!({"mode": i + 1, "frequency": shown(Quantity::Frequency, m.frequency, display)});
+                        if let Some(q) = m.quality {
+                            mode["quality"] = json!(q);
+                        }
+                        mode
+                    })
                     .collect();
             }
             Kind::Frequency(fr) => {
