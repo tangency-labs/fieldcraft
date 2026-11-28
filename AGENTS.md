@@ -115,9 +115,9 @@ section 1, which is where they change.
   L3 `fsi` (later) → L4 `doc` → L5 `io` → L6 `engine` → L7 `ui-egui`, `mcp` → apps. Nothing below
   L7 depends on egui/eframe/winit/wgpu/rfd. **Only
   `crates/geometry` may use `solidcraft-*`**, with one exception: `crates/ui-egui` draws with
-  SolidCraft's UI kit and look (`solidcraft-ui-kit`, `solidcraft-theme`, `solidcraft-look`, and the
-  kit's widget registry `solidcraft-ui-registry` and message catalogues `solidcraft-ui-text`) and
-  uses nothing else of SolidCraft's.
+  SolidCraft's UI kit and look (`solidcraft-ui-kit`, `solidcraft-theme`, `solidcraft-look`, the
+  kit's widget registry `solidcraft-ui-registry`, message catalogues `solidcraft-ui-text`, and
+  panel layout core `solidcraft-panel-layout`) and uses nothing else of SolidCraft's.
 - **Determinism.** The same input gives the same mesh, deck and CPU solver result, bit for bit, on
   every platform: no hash-order iteration into output, no thread-count-dependent results (threads
   go through `fieldcraft-parallel`: fixed blocks, sums in a fixed order, docs/adr/0001). GPU

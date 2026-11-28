@@ -1,16 +1,14 @@
-//! The cards on the right: shown only while there is context, as in the other Craft apps. Each is
-//! a fixed floating kit card over the viewport, as the browser is on the left, with the kit's
-//! header (its icon, title and close button) and its body scrolling inside. At most two show,
-//! stacked by the kit (`Panel::stack_first_bounds`, then `stack_next_bounds`; sharing the column
-//! among more is solidcraft#17464): first the newest of the open command's form (the kit's feature
-//! card, with what a command misses to run), the reply of a report (Check Model, Model Info) and
-//! the properties of the definition, seed or mesh selected (with Edit and Delete), the one it
-//! displaced closed ([`opened`]); second the results controls while results are shown, or a
-//! report run while a form is open (a form is never displaced). Cards do not move until the kit's
-//! panels do (solidcraft#17363). Everything acts through commands.
+//! Transient right-side cards (`app.dialog` command forms and `app.refused` "not yet" notices)
+//! plus Inspector content helpers hosted inside `panel_runtime`.
+//!
+//! Persistent contextual panels (`inspector` showing `reply`, `selected`, `selected_seed`,
+//! `selected_mesh`; `results` showing plot controls) live in `panel_runtime`'s `Zone::Right`
+//! (`panels::PanelHost`). Transient forms and refused notices render above `panel_runtime` at
+//! `right_dock_left - SHELL_GAP` when at least `MIN_VIEWPORT_WIDTH` remains for the 3D viewport,
+//! or overlap `Zone::Right` at `space.right()` on narrow windows.
 
 use egui::{Rect, RichText, Vec2, pos2, vec2};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::browser::Def;
 use crate::theme::Tokens;
@@ -21,46 +19,121 @@ use solidcraft_ui_kit::BackingTooltipExt as _;
 /// The cards' width.
 pub const WIDTH: f32 = 310.0;
 
+/// Minimum horizontal 3D viewport clearance preserved before transient cards overlap `Zone::Right`.
+const MIN_VIEWPORT_WIDTH: f32 = 320.0;
+
 /// The form card's region in `ui.inspect`'s layout.
 const FORM: &str = "context:form";
 
-/// Whether there is a card to show.
+/// Clear stale form and feature-graph hover highlights before panels draw (Step 1 of `ModelApp::shell`).
+pub(crate) fn clear_stale_hover(app: &mut ModelApp) {
+    if app.dialog.is_none() && app.pick.form_hover {
+        app.pick.form_hover = false;
+        app.set_hover(None);
+    }
+    if app.reply.as_ref().is_none_or(|r| r.command != "geometry.features") {
+        app.set_feature_hover(Vec::new());
+    }
+}
+
+/// Whether the persistent `inspector` panel currently has an active item to display.
+pub(crate) fn inspector_active(app: &ModelApp) -> bool {
+    inspector_top(app).is_some()
+}
+
+/// Dynamic `(icon, title)` heading for the active `inspector` item, if any.
+pub(crate) fn inspector_heading(app: &ModelApp) -> Option<(String, String)> {
+    Some(inspector_top(app)?.heading(app))
+}
+
+/// Legacy `app.place(...)` key for the active `inspector` item, if any.
+pub(crate) fn inspector_region_key(app: &ModelApp) -> Option<&'static str> {
+    Some(inspector_top(app)?.key())
+}
+
+/// Clear only the highest-precedence active `inspector` item (`reply` -> `selected` -> `selected_seed`
+/// -> `selected_mesh`) without displacing lower items.
+pub(crate) fn clear_inspector_top(app: &mut ModelApp) {
+    match inspector_top(app) {
+        Some(Info::Reply) => app.reply = None,
+        Some(Info::Properties(..)) => app.select_definition(None),
+        Some(Info::Seed(_)) => app.selected_seed = None,
+        Some(Info::Mesh) => app.selected_mesh = false,
+        Some(Info::Refused) | None => {}
+    }
+}
+
+/// Highest-precedence persistent inspector item, matching `opened` displacement precedence.
+fn inspector_top(app: &ModelApp) -> Option<Info> {
+    if app.reply.is_some() {
+        return Some(Info::Reply);
+    }
+    if let Some((kind, name)) = &app.selected
+        && crate::browser::definition_exists(&app.session.model, *kind, name)
+    {
+        return Some(Info::Properties(*kind, name.clone()));
+    }
+    if let Some(edge) = app.selected_seed.clone().filter(|e| app.seed(e).is_some()) {
+        return Some(Info::Seed(edge));
+    }
+    if app.selected_mesh {
+        return Some(Info::Mesh);
+    }
+    None
+}
+
+/// Render the active `inspector` panel body inside `panel_runtime`.
+pub(crate) fn inspector_body(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
+    let Some(item) = inspector_top(app) else { return };
+    let k = solidcraft_theme::Tokens::get();
+    let salt = item.key();
+    egui::ScrollArea::vertical().id_salt(salt).min_scrolled_height(0.0).auto_shrink([false, false]).show(ui, |ui| {
+        egui::Frame::NONE.inner_margin(egui::Margin::same(k.space_12 as i8)).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = k.form_gap_y;
+            match item {
+                Info::Reply => crate::reply::show(app, ui, t),
+                Info::Properties(kind, name) => {
+                    if let Some(rows) = property_rows(app, kind, &name) {
+                        properties(app, ui, kind, &name, &rows);
+                    }
+                }
+                Info::Seed(edge) => seed_card(app, ui, edge),
+                Info::Mesh => mesh_card(app, ui, t),
+                Info::Refused => refused(app, ui, t),
+            }
+        });
+    });
+}
+
+/// Whether there is a transient card (`dialog` or `refused`) or persistent inspector item active.
 pub fn has_context(app: &mut ModelApp) -> bool {
-    app.dialog.is_some()
-        || app.refused.is_some()
-        || app.selected.is_some()
-        || app.selected_seed.is_some()
-        || app.selected_mesh
-        || app.reply.is_some()
-        || app.plot().is_some()
+    app.dialog.is_some() || app.refused.is_some() || inspector_active(app) || app.plot().is_some()
 }
 
-/// A card the right side may show: the open command's form, which draws itself, or another.
-enum Card {
+/// A transient card shown in the right rail above `panel_runtime`.
+enum Transient {
+    Refused,
     Form,
-    Info(Info),
 }
 
-/// A card other than the form, on the kit's floating card with its header and a body.
+impl Transient {
+    fn key(&self) -> &'static str {
+        match self {
+            Transient::Refused => "context:refused",
+            Transient::Form => FORM,
+        }
+    }
+}
+
+/// Card contents shared across Inspector and transient refused notices.
 enum Info {
     /// A command that cannot run yet.
     Refused,
     Reply,
-    /// The definition selected in the browser, by its rows.
-    Properties(Def, String, std::sync::Arc<Vec<(String, String)>>),
+    /// The definition selected in the browser.
+    Properties(Def, String),
     Seed(fieldcraft_model::GeometryRef),
     Mesh,
-    Results(std::sync::Arc<crate::results::Plot>),
-}
-
-impl Card {
-    /// Its region in `ui.inspect`'s layout, and the id of its card.
-    fn key(&self) -> &'static str {
-        match self {
-            Card::Form => FORM,
-            Card::Info(info) => info.key(),
-        }
-    }
 }
 
 impl Info {
@@ -71,7 +144,6 @@ impl Info {
             Info::Properties(..) => "context:properties",
             Info::Seed(_) => "context:seed",
             Info::Mesh => "context:mesh",
-            Info::Results(_) => "context:results",
         }
     }
 
@@ -82,10 +154,9 @@ impl Info {
                 app.refused.as_ref().map(|u| (u.command.to_string(), format!("{}: not yet", crate::command_label(u.command)))).unwrap_or_default()
             }
             Info::Reply => app.reply.as_ref().map(|r| (r.command.clone(), r.label.clone())).unwrap_or_default(),
-            Info::Properties(kind, name, _) => (kind.icon().to_string(), format!("{}: {name}", kind.label())),
+            Info::Properties(kind, name) => (kind.icon().to_string(), format!("{}: {name}", kind.label())),
             Info::Seed(_) => ("mesh.seed.edge".into(), "Seed".into()),
             Info::Mesh => ("mesh.tet.generate".into(), "Mesh".into()),
-            Info::Results(_) => ("results.deformed".into(), "Results".into()),
         }
     }
 }
@@ -102,11 +173,8 @@ pub(crate) enum Opened {
 
 /// The newest card leads, so the card it displaces closes, not hidden behind it (review2 of
 /// pr/ux-right-cards): a form closes the reply; a reply closes the "not yet" card; a selection
-/// closes both. A form is never displaced, so its typed fields stay: a reply takes the other place
-/// beside it ([`cards`]), and a selection feeds its Target row. Closing a card never deselects: a
-/// form over a selection takes the first place and the selection stays (the item a Rename… or
-/// Edit… form acts on). A card's own row selecting what it names (a report's Show) opens nothing,
-/// so that card stays ([`mark_selected`]).
+/// closes both. A form is never displaced, so its typed fields stay: a reply takes the `inspector`
+/// slot beside it, and a selection feeds its Target row.
 pub(crate) fn opened(app: &mut ModelApp, what: Opened) {
     match what {
         Opened::Form => app.reply = None,
@@ -129,74 +197,33 @@ pub(crate) fn mark_selected(app: &mut ModelApp, selected: Option<(Def, String)>)
     app.selected = selected;
 }
 
-/// The cards shown, top down: the first place's card (what a command misses, the form, the reply,
-/// else the selection's properties: [`opened`] closed what a newer card displaced, and a selection
-/// under a form or a reply stays selected), then the reply when the form holds the first place,
-/// else Results while results are shown, else the next of those. The kit stacks two
-/// (solidcraft#17464).
-fn cards(app: &mut ModelApp) -> Vec<Card> {
-    let mut ranked = Vec::new();
+/// Draw transient cards (`app.refused` stacked above `app.dialog`) above `panel_runtime` in Step 4 of
+/// `ModelApp::shell`. Anchors beside `Zone::Right` when at least `MIN_VIEWPORT_WIDTH` remains for
+/// the 3D viewport, and overlaps `Zone::Right` at `space.right()` on narrow windows.
+pub fn panel(app: &mut ModelApp, ui: &mut egui::Ui) {
+    clear_stale_hover(app);
+    let mut shown = Vec::new();
     if app.refused.is_some() {
-        ranked.push(Card::Info(Info::Refused));
+        shown.push(Transient::Refused);
     }
     if app.dialog.is_some() {
-        ranked.push(Card::Form);
+        shown.push(Transient::Form);
     }
-    if app.reply.is_some() {
-        ranked.push(Card::Info(Info::Reply));
-    }
-    if let Some((kind, name)) = app.selected.clone()
-        && let Some(rows) = property_rows(app, kind, &name)
-    {
-        ranked.push(Card::Info(Info::Properties(kind, name, rows)));
-    }
-    if let Some(edge) = app.selected_seed.clone().filter(|e| app.seed(e).is_some()) {
-        ranked.push(Card::Info(Info::Seed(edge)));
-    }
-    if app.selected_mesh {
-        ranked.push(Card::Info(Info::Mesh));
-    }
-    let mut ranked = ranked.into_iter();
-    let first = ranked.next();
-    // A reply under the form is newer than it (a form opening closes the reply).
-    let reply_beside_form = matches!(first, Some(Card::Form)) && app.reply.is_some();
-    let mut out: Vec<Card> = first.into_iter().collect();
-    match app.plot() {
-        Some(plot) if !reply_beside_form => out.push(Card::Info(Info::Results(plot))),
-        _ => out.extend(ranked.next()),
-    }
-    out
-}
-
-/// The cards on the right, floating over `ui`'s rect (the viewport) at its right edge, stacked by
-/// the kit.
-pub fn panel(app: &mut ModelApp, ui: &mut egui::Ui) {
-    // A form's row hovered last frame no longer is once the form is gone.
-    if app.dialog.is_none() && app.pick.form_hover {
-        app.pick.form_hover = false;
-        app.set_hover(None);
-    }
-    // A Feature Graph row hovered last frame no longer is once the graph is not shown.
-    if app.reply.as_ref().is_none_or(|r| r.command != "geometry.features") {
-        app.set_feature_hover(Vec::new());
-    }
-    if !has_context(app) {
+    if shown.is_empty() {
         return;
     }
     let t = Tokens::get(app.ui.dark);
     let ctx = ui.ctx().clone();
     let gap = kit::Container::new(&ctx, kit::Surface::Panel).gap();
-    // The view's room between the top cards and History; the cards keep a shell gap from its
-    // top and left, and the kit's feature card its own from its right and bottom.
     let space = app.shell.panel_space(ui.available_rect_before_wrap());
     let area = Rect::from_min_max(space.min + vec2(gap, gap), space.max.max(space.min + vec2(gap, gap)));
-    // The column's right edge where the kit's feature card docks, so every card lines up with
-    // the form.
-    let right = kit::Panel::new("", egui::Id::NULL, pos2(space.right(), area.top()), space, kit::frame::Side::Right, egui::Frame::NONE)
+    let (left_dock, right_dock) = app.shell.side_bounds(space);
+    let preferred_right =
+        if right_dock - left_dock >= MIN_VIEWPORT_WIDTH + WIDTH + 2.0 * gap { (right_dock - gap).min(space.right()) } else { space.right() };
+    let right = kit::Panel::new("", egui::Id::NULL, pos2(preferred_right, area.top()), space, kit::frame::Side::Right, egui::Frame::NONE)
         .width(WIDTH)
         .bounded_anchor(&ctx)
         .x;
-    let shown = cards(app);
     let mut drawn: Vec<Rect> = Vec::new();
     for card in &shown {
         let bounds = match drawn.last() {
@@ -206,16 +233,15 @@ pub fn panel(app: &mut ModelApp, ui: &mut egui::Ui) {
         };
         let anchor = pos2(right, bounds.top());
         let rect = match card {
-            Card::Form => form(app, ui, &t, bounds, anchor),
-            Card::Info(info) => Some(info_card(app, &ctx, &t, info, bounds, anchor)),
+            Transient::Form => form(app, ui, &t, bounds, anchor),
+            Transient::Refused => Some(info_card(app, &ctx, &t, &Info::Refused, bounds, anchor)),
         };
         if let Some(rect) = rect {
             app.place(card.key(), rect);
+            app.shell.add_transient(rect);
             drawn.push(rect);
         }
     }
-    // The viewport's overlays and framing keep clear of them.
-    app.shell.right = drawn.clone();
     if let Some(all) = drawn.into_iter().reduce(|a, b| a.union(b)) {
         app.place("context", all);
     }
@@ -228,17 +254,14 @@ pub(crate) fn inner_width() -> f32 {
     WIDTH - 2.0 * solidcraft_theme::Tokens::get().space_12
 }
 
-/// A card other than the form, on the kit's floating card as the form is (so their edges line
-/// up), its top right corner at `anchor` and held to `bounds`; its header stays and its body
-/// scrolls. Returns where it was drawn.
+/// A transient info card (`app.refused`) on the kit's floating card (`Order::Middle`), its top
+/// right corner at `anchor` and held to `bounds`. Returns where it was drawn.
 fn info_card(app: &mut ModelApp, ctx: &egui::Context, t: &Tokens, card: &Info, bounds: Rect, anchor: egui::Pos2) -> Rect {
     let k = solidcraft_theme::Tokens::get();
     let key = card.key();
     let side = kit::frame::Side::Right;
     let frame = kit::Panel::feature_frame(ctx, kit::LayoutMode::current(ctx), side);
     let panel = kit::Panel::new(key, egui::Id::unique(("fc_card", key)), anchor, bounds, side, frame).width(WIDTH);
-    // The room the kit's window gives the card under its anchor, inside its frame: egui sizes a
-    // window from its last frame, so the body is told its room or it never grows back.
     let gap = kit::Container::new(ctx, kit::Surface::Feature).gap();
     let room = (bounds.bottom() - gap - panel.bounded_anchor(ctx).y - panel.positioned_frame(ctx).total_margin().sum().y).max(0.0);
     let (icon, title) = card.heading(app);
@@ -265,10 +288,13 @@ fn info_card(app: &mut ModelApp, ctx: &egui::Context, t: &Tokens, card: &Info, b
 fn body(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, card: &Info) {
     match card {
         Info::Refused => refused(app, ui, t),
-        Info::Properties(kind, name, rows) => properties(app, ui, *kind, name, rows),
+        Info::Properties(kind, name) => {
+            if let Some(rows) = property_rows(app, *kind, name) {
+                properties(app, ui, *kind, name, &rows);
+            }
+        }
         Info::Seed(edge) => seed_card(app, ui, edge.clone()),
         Info::Mesh => mesh_card(app, ui, t),
-        Info::Results(plot) => crate::results_panel::controls(app, plot, ui, t),
         Info::Reply => crate::reply::show(app, ui, t),
     }
 }
@@ -280,10 +306,6 @@ fn close(app: &mut ModelApp, card: &Info) {
         Info::Properties(..) => app.select_definition(None),
         Info::Seed(_) => app.selected_seed = None,
         Info::Mesh => app.selected_mesh = false,
-        // Errors show in the status bar.
-        Info::Results(_) => {
-            let _ = app.run("results.clear", json!({}));
-        }
         Info::Reply => app.reply = None,
     }
 }
@@ -687,6 +709,8 @@ fn words(v: &Value, depth: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     /// One frame of a 1280 × 800 window with `events`.
@@ -745,10 +769,9 @@ mod tests {
         frame(app, ctx, vec![]);
     }
 
-    /// The right side is floating kit cards, as the browser on the left (R1): with a form and
-    /// Results open, each card is inside the viewport a shell gap from its right edge, under the
-    /// ribbon and above History, they do not overlap, and the viewport reaches the window's right
-    /// edge. The Results rows start where the form's fields do.
+    /// The right side places persistent Results in `Zone::Right` and the transient form side-by-side
+    /// beside it, each inside the viewport between the ribbon and History, while the viewport
+    /// reaches the window's right edge.
     #[test]
     fn the_right_side_is_floating_cards() {
         let ctx = egui::Context::default();
@@ -763,20 +786,18 @@ mod tests {
         assert!((view.right() - 1280.0).abs() < 1.0, "the viewport reaches the window's right edge: {view:?}");
         let gap = kit::Container::new(&ctx, kit::Surface::Panel).gap();
         let (ribbon, history) = (region(&app, "ribbon"), region(&app, "timeline"));
-        let cards = ["context:form", "context:results"].map(|r| region(&app, r));
-        for (i, c) in cards.iter().enumerate() {
-            assert!(
-                view.contains_rect(*c) && (c.right() - cards[0].right()).abs() < 0.5 && view.right() - c.right() >= gap - 0.5,
-                "card {i}: {c:?} in {view:?}"
-            );
+        let form = region(&app, "context:form");
+        let results = region(&app, "context:results");
+        for (i, c) in [form, results].iter().enumerate() {
+            assert!(view.contains_rect(*c) && view.right() - c.right() >= gap - 0.5, "card {i}: {c:?} in {view:?}");
             assert!(c.top() >= ribbon.bottom() + gap - 0.5 && c.bottom() <= history.top() - gap + 0.5, "card {i}: {c:?}, {ribbon:?} {history:?}");
         }
-        assert!(cards[1].top() > cards[0].bottom(), "Results under the form: {cards:?}");
-        // The Results rows start where the form's fields do (shot 06: 17 pt off).
-        let form =
-            solidcraft_ui_registry::rect_of("dialog:body:viewport").expect("the form's body").left() + solidcraft_theme::Tokens::get().space_12;
-        let step = solidcraft_ui_registry::rect_of("dialog:label:Step").expect("the Results card's Step row").left();
-        assert!((step - form).abs() < 0.5, "{step} vs the form's {form}");
+        assert!((results.right() - (view.right() - gap)).abs() < 1.0, "Results docked at right gap: {results:?} {view:?}");
+        assert!((form.right() - (results.left() - gap)).abs() < 1.0, "Form placed side-by-side left of Results: {form:?} {results:?}");
+        let form_indent = solidcraft_ui_registry::rect_of("dialog:body:viewport").expect("the form's body").left() - form.left()
+            + solidcraft_theme::Tokens::get().space_12;
+        let step_indent = solidcraft_ui_registry::rect_of("dialog:label:Step").expect("the Results card's Step row").left() - results.left();
+        assert!((step_indent - form_indent).abs() <= 4.0, "{step_indent} vs {form_indent}");
     }
 
     /// The right cards' regions as `ui.inspect` names them, top down.
@@ -824,10 +845,8 @@ mod tests {
         }
     }
 
-    /// With every kind of card asked for, two show (until the kit shares a column among more,
-    /// solidcraft#17464): the active one, the form, then Results; in a tall window and a short
-    /// one, both above History with their whole headers, neither on the other (review of
-    /// pr/ux-right-cards: five cards piled on one another).
+    /// Both persistent Zone::Right cards and transient right-side form stay inside the room
+    /// between ribbon and History, without overlapping each other in a standard window.
     #[test]
     fn two_cards_at_most_the_active_one_then_results() {
         for height in [800.0, 420.0] {
@@ -835,10 +854,18 @@ mod tests {
             let mut app = everything();
             app.start("model.load.create").expect("New Load");
             frames_at(&mut app, &ctx, vec2(1280.0, height), 3);
-            let cards = drawn(&app);
-            let keys: Vec<&str> = cards.iter().map(|c| c.0).collect();
-            assert_eq!(keys, ["context:form", "context:results"], "at {height} high");
-            in_the_room(&app, &cards);
+            let form = app.layout["context:form"];
+            in_the_room(&app, &[("context:form", form)]);
+            let right_cards: Vec<_> = drawn(&app).into_iter().filter(|(k, _)| *k != "context:form").collect();
+            assert!(!right_cards.is_empty(), "at least one Zone::Right panel at {height}");
+            in_the_room(&app, &right_cards);
+            for (k, r) in &right_cards {
+                assert!(form.right() <= r.left() + 0.5, "form beside {k} at {height}: {form:?} {r:?}");
+            }
+            if height >= 800.0 {
+                let keys: Vec<_> = right_cards.iter().map(|(k, _)| *k).collect();
+                assert_eq!(keys, ["context:properties", "context:results"]);
+            }
         }
     }
 
@@ -859,8 +886,8 @@ mod tests {
         assert!(results.contains_rect(step), "Step {step:?} shows in Results {results:?}");
     }
 
-    /// Without a form the reply is the active card, and without a reply the selection's
-    /// properties; Results stays second.
+    /// Without a form the reply is the active inspector item, and without a reply the selection's
+    /// properties; Results stays below in Zone::Right.
     #[test]
     fn without_a_form_the_reply_then_the_properties_lead() {
         let ctx = egui::Context::default();
@@ -914,12 +941,12 @@ mod tests {
         app.start("model.load.create").expect("New Load");
         assert_eq!(shown(&mut app, &ctx), ["context:form", "context:results"]);
         app.select_definition(steel());
-        assert_eq!(shown(&mut app, &ctx), ["context:form", "context:results"]);
+        assert_eq!(shown(&mut app, &ctx), ["context:form", "context:properties", "context:results"]);
         assert!(app.dialog.is_some() && app.selected == steel(), "the form stays and Steel is selected");
     }
 
-    /// A form opened over a selection's properties takes their place; the definition stays
-    /// selected (closing a card never deselects).
+    /// A form opened over a selection's properties takes the transient slot while the definition
+    /// stays selected in Inspector.
     #[test]
     fn a_form_after_a_selection_takes_its_place() {
         let ctx = egui::Context::default();
@@ -927,7 +954,7 @@ mod tests {
         app.select_definition(steel());
         assert_eq!(shown(&mut app, &ctx), ["context:properties", "context:results"]);
         app.start("model.load.create").expect("New Load");
-        assert_eq!(shown(&mut app, &ctx), ["context:form", "context:results"]);
+        assert_eq!(shown(&mut app, &ctx), ["context:form", "context:properties", "context:results"]);
         assert_eq!(app.selected, steel(), "the definition stays selected");
     }
 
@@ -940,17 +967,14 @@ mod tests {
         frame(app, ctx, vec![]);
     }
 
-    /// A report arriving while a form is open takes the other place: the form is never
-    /// displaced, and what was typed in it stays (review of pr/ux-right-cards 8da16a22: Check
-    /// Model cancelled New Load and its typed name).
+    /// A report arriving while a form is open shows in Inspector while the form stays in its
+    /// transient slot with what was typed in it.
     #[test]
     fn a_reply_leaves_an_open_form_and_what_was_typed_in_it() {
         let ctx = egui::Context::default();
         let mut app = with_results();
         app.start("model.load.create").expect("New Load");
         assert_eq!(shown(&mut app, &ctx), ["context:form", "context:results"]);
-        // The keyboard on its Name field, as a click there puts it (the form keys its widgets by
-        // its opening and each field's path).
         let opening = app.dialog.as_ref().map(|d| d.opening).expect("the form");
         let name = egui::Id::unique(("fc_form", egui::Id::unique(("fc_form", "model.load.create", opening)), "name"));
         ctx.memory_mut(|m| m.request_focus(name));
@@ -962,13 +986,12 @@ mod tests {
         assert!(before.is_some_and(|(_, _, pushed)| pushed), "typed into the form: {:?}", app.dialog.as_ref().map(|d| &d.text));
         for report in ["model.check", "model.info"] {
             app.run(report, json!({})).expect("the report");
-            assert_eq!(shown(&mut app, &ctx), ["context:form", "context:reply"], "{report}");
+            assert_eq!(shown(&mut app, &ctx), ["context:form", "context:reply", "context:results"], "{report}");
             assert_eq!(typed(&app), before, "{report}: the form stays, with what was typed in it");
         }
     }
 
-    /// Show on a row of Check Model selects what it names and the report stays open, its other
-    /// rows still there to show (review of pr/ux-right-cards 8da16a22: Show closed the report).
+    /// Show on a row of Check Model selects what it names and the report stays open in Inspector.
     #[test]
     fn show_on_a_reports_row_keeps_the_report_open() {
         let ctx = egui::Context::default();
@@ -989,9 +1012,7 @@ mod tests {
         click(&mut app, &ctx, first[0].center());
         assert_eq!(app.selected, Some((Def::Set, "A".to_string())), "Show selects the set its row names");
         assert!(app.reply.as_ref().is_some_and(|r| r.command == "model.check"), "the report stays open");
-        assert_eq!(shown(&mut app, &ctx), ["context:reply", "context:properties"]);
-        // Every row is still laid out in the report's body (it scrolls in its share of the
-        // column), the one shown in view.
+        assert_eq!(shown(&mut app, &ctx), ["context:reply"]);
         let report = app.layout["context:reply"];
         let rest = shows();
         assert_eq!(rest.len(), first.len(), "every row stays in the report");
@@ -1012,43 +1033,93 @@ mod tests {
         assert!(app.refused.is_none(), "the \"not yet\" card is closed");
     }
 
-    /// A press-drag on a card's header moves nothing (the cards are fixed, as the browser is,
-    /// until the kit's movable panels, solidcraft#17363), and another context, as `ui.capture`
-    /// draws in, puts it in the same place.
+    /// A transient form stays fixed where it opened, and persistent panels restore at identical
+    /// coordinates on a fresh context.
     #[test]
     fn a_card_stays_where_it_is() {
         let ctx = egui::Context::default();
         let mut app = everything();
         app.reply = None;
+        app.start("model.material.create").unwrap();
         frames_at(&mut app, &ctx, vec2(1280.0, 800.0), 3);
         let before = drawn(&app);
-        let props = app.layout["context:properties"];
-        let grip = props.center_top() + egui::vec2(-40.0, kit::header_height() / 2.0);
+        let form = app.layout["context:form"];
+        let grip = form.center_top() + egui::vec2(-40.0, kit::header_height() / 2.0);
         drag(&mut app, &ctx, grip, grip + egui::vec2(-300.0, 120.0));
-        assert_eq!(drawn(&app), before, "a drag of the header moves nothing");
-        assert!(app.selected.is_some(), "a drag of the header is no click on its close");
+        assert_eq!(drawn(&app), before, "dragging a transient form header moves nothing");
         let fresh = egui::Context::default();
         frames_at(&mut app, &fresh, vec2(1280.0, 800.0), 3);
         assert_eq!(drawn(&app), before, "another context draws them in the same place");
     }
 
+    /// On a 1440×900 window with docked Zone::Right panels, a transient form places side-by-side
+    /// at `right_dock_left - SHELL_GAP`, preserving >= 320 pt for the 3D viewport.
+    #[test]
+    fn wide_window_places_transient_form_side_by_side_with_right_dock() {
+        let ctx = egui::Context::default();
+        let mut app = with_results();
+        app.start("model.material.create").unwrap();
+        frames_at(&mut app, &ctx, vec2(1440.0, 900.0), 3);
+        let form = app.layout["context:form"];
+        let results = app.layout["context:results"];
+        let left_dock = app.shell.left_dock_right.unwrap_or(0.0);
+        let right_dock = app.shell.right_dock_left.expect("Zone::Right docked");
+        let gap = kit::Container::new(&ctx, kit::Surface::Panel).gap();
+        assert!((form.right() - (right_dock - gap)).abs() < 1.0, "{form:?} beside {results:?}");
+        assert!(form.left() - left_dock >= MIN_VIEWPORT_WIDTH - 1.0, "viewport clearance preserved: {form:?} left_dock={left_dock}");
+    }
+
+    /// On a narrow 960×600 window, a transient form overlaps `Zone::Right` at the right edge
+    /// rather than squeezing the 3D viewport below 320 pt.
+    #[test]
+    fn narrow_window_overlaps_right_dock_to_preserve_viewport_floor() {
+        let ctx = egui::Context::default();
+        let mut app = with_results();
+        app.start("model.material.create").unwrap();
+        frames_at(&mut app, &ctx, vec2(960.0, 600.0), 3);
+        let form = app.layout["context:form"];
+        let right_dock = app.shell.right_dock_left.expect("Zone::Right docked");
+        assert!(form.right() > right_dock, "overlaps Zone::Right on 960×600: {form:?} vs {right_dock}");
+    }
+
+    /// When both `app.refused` and `app.dialog` are active, `app.refused` stacks above `app.dialog`
+    /// without overlapping.
+    #[test]
+    fn dual_refused_and_form_stack_without_overlap() {
+        let ctx = egui::Context::default();
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        app.start("model.material.create").unwrap();
+        let refused = fieldcraft_engine::find_command("results.xy").and_then(|spec| fieldcraft_engine::Session::default().availability(spec).err());
+        app.refuse(refused.expect("XY Plot cannot run on an empty model"));
+        frames_at(&mut app, &ctx, vec2(1280.0, 800.0), 3);
+        let refused_rect = app.layout["context:refused"];
+        let form_rect = app.layout["context:form"];
+        assert!(refused_rect.bottom() <= form_rect.top(), "refused above form: {refused_rect:?} {form_rect:?}");
+    }
+
     /// New Load beside Results: its header, OK and Cancel show whole in its card, and its fields
-    /// scroll inside its body, every one reachable (W1 "Right cards").
+    /// scroll inside its body when the window is shorter, every one reachable (W1 "Right cards").
     #[test]
     fn new_load_beside_results_keeps_its_header_and_buttons() {
-        let ctx = egui::Context::default();
-        let mut app = ModelApp::new(crate::results::tests::solved_cantilever());
-        app.run("results.deformed", json!({"step": "Load"})).expect("results");
-        app.start("model.load.create").expect("New Load");
-        frames_at(&mut app, &ctx, vec2(1280.0, 800.0), 3);
-        let form = app.layout["context:form"];
-        let history = app.layout["timeline"];
-        for part in ["dialog:header", "dialog:ok", "dialog:cancel", "dialog:body:viewport"] {
-            let rect = solidcraft_ui_registry::rects(part).first().map(|r| r.1).unwrap_or_else(|| panic!("{part} is drawn"));
-            assert!(form.contains_rect(rect) && rect.bottom() <= history.top(), "{part} {rect:?} in {form:?}");
+        for height in [800.0, 500.0] {
+            let ctx = egui::Context::default();
+            let mut app = ModelApp::new(crate::results::tests::solved_cantilever());
+            app.run("results.deformed", json!({"step": "Load"})).expect("results");
+            app.start("model.load.create").expect("New Load");
+            frames_at(&mut app, &ctx, vec2(1280.0, height), 3);
+            let form = app.layout["context:form"];
+            let history = app.layout["timeline"];
+            for part in ["dialog:header", "dialog:ok", "dialog:cancel"] {
+                let rect = solidcraft_ui_registry::rects(part).first().map(|r| r.1).unwrap_or_else(|| panic!("{part} is drawn at {height}"));
+                assert!(form.contains_rect(rect) && rect.bottom() <= history.top(), "{part} {rect:?} in {form:?} at {height}");
+            }
+            let body = solidcraft_ui_registry::rect_of("dialog:body:viewport").expect("the form's body");
+            assert!(body.height() >= solidcraft_theme::Tokens::get().control_height, "the fields have room to scroll in: {body:?}");
+            assert!(
+                body.bottom() <= history.top() && form.x_range().contains(body.left()) && form.x_range().contains(body.right()),
+                "{body:?} in {form:?}"
+            );
         }
-        let body = solidcraft_ui_registry::rect_of("dialog:body:viewport").expect("the form's body");
-        assert!(body.height() >= solidcraft_theme::Tokens::get().control_height, "the fields have room to scroll in: {body:?}");
     }
 
     /// The Target row's note sits under its button on a line of its own, never wrapped beside
@@ -1178,6 +1249,17 @@ mod tests {
             let text = value_text(&v);
             assert!(!text.contains(['{', '}', '[', ']', '"']), "{v} → {text}");
         }
+    }
+
+    #[test]
+    fn inspector_active_rejects_stale_definition_without_building_rows() {
+        let mut app = ModelApp::new(fieldcraft_engine::Session::default());
+        app.run("model.material.create", json!({"name": "Steel", "elastic": {"type": "isotropic", "young": 210e9, "poisson": 0.3}})).unwrap();
+        app.select_definition(Some((Def::Material, "Steel".into())));
+        assert!(inspector_active(&app));
+
+        app.run("model.material.delete", json!({"name": "Steel"})).unwrap();
+        assert!(!inspector_active(&app));
     }
 
     #[test]

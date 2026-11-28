@@ -267,57 +267,61 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
             wrap(app.run_script(steps).map(|()| json!({"journal": app.session.journal.len()})))
         }
         "engine.commands" => ok(Value::Array(fieldcraft_engine::commands().iter().map(fieldcraft_engine::CommandSpec::listing).collect())),
-        "ui.inspect" => ok(json!({
-            "ui": app.ui,
-            "camera": fieldcraft_engine::view::camera_shown(&app.cam, &app.session),
-            "viewport": app.viewport.rect.map(|r| json!([r.left(), r.top(), r.width(), r.height()])),
-            "renderer": if app.viewport.gpu.is_some() { "gpu" } else { "cpu" },
-            "gpu": app.gpu_info,
-            "dialog": app.dialog.as_ref().map(|d| json!({"command": d.command, "text": d.text, "error": d.error})),
-            "file_picker": app.picker.is_some(),
-            "status": app.status,
-            "model": {"nodes": app.session.model.nodes().len(), "elements": app.session.model.elements().len()},
-            "results": app.session.results_report(),
-            "probe": app.probe,
-            "busy": app.busy(),
-            "job": app.loading.as_ref().map(|l| l.to_json()),
-            "solve": solve_json(app),
-            "selected": app.selected.as_ref().map(|(k, n)| json!({"kind": k, "name": n})).or_else(|| app.selected_seed.as_ref().map(|on| {
-                let mut v = json!({"kind": "seed"});
-                v[on.entity.kind()] = json!(on);
-                v
-            })),
-            "browser": crate::browser::describe(app),
-            "nav": app.nav,
-            "layout": app.layout.iter().map(|(k, r)| (k.to_string(), json!([r.left(), r.top(), r.width(), r.height()]))).collect::<serde_json::Map<String, Value>>(),
-            "prompt": app.prompt.as_ref().map(|p| match p {
-                crate::files::Prompt::Unsaved(next) => json!({"unsaved": match next {
-                    crate::files::Replace::File(p) => p.clone(),
-                    crate::files::Replace::Deck(p) => p.get("path").and_then(Value::as_str).unwrap_or("Abaqus deck").to_string(),
-                    crate::files::Replace::Sample(n) => format!("sample {n}"),
-                    crate::files::Replace::Update => "update".to_string(),
-                    crate::files::Replace::New => "new".to_string(),
-                }}),
-                crate::files::Prompt::Recover => json!("recover"),
-                crate::files::Prompt::Samples => json!("samples"),
-                crate::files::Prompt::Design(p) => json!({"design": p}),
-                crate::files::Prompt::ReplaceMesh(r) => json!({"replace_mesh": r.question, "warnings": r.warnings}),
-                crate::files::Prompt::Delete(d) => {
-                    json!({"delete": d.question(), "kind": d.kind, "name": d.name, "users": d.users, "allowed": d.allowed(), "deactivate": d.deactivate_label()})
-                }
-                crate::files::Prompt::Crashed(r) => json!({"crashed": r}),
-                crate::files::Prompt::CrashReports(r) => json!({"crash_reports": r}),
-                crate::files::Prompt::ReportBug => json!({"report_bug": app.report.as_ref().and_then(|f| f.drafted_json())}),
-                crate::files::Prompt::Consent => json!({"consent": crate::privacy::QUESTION}),
-                crate::files::Prompt::Update => json!({"update": app.update_json()}),
-            }),
-            "privacy": privacy_json(app),
-            "settings": crate::settings::describe(app),
-            "updates": app.update_json(),
-            "recent": app.recent.paths,
-            "version": crate::VERSION,
-            "path_plot":app.path_editor.as_ref().map(|e|json!({"params":e.params(&app.session).ok(),"picking":e.picking,"selected":e.selected})),
-        })),
+        "ui.inspect" => {
+            let panels = app.with_panels(|app, panels| panels.inspect_panels(app)).unwrap_or_default();
+            ok(json!({
+                "ui": app.ui,
+                "panels": panels,
+                "camera": fieldcraft_engine::view::camera_shown(&app.cam, &app.session),
+                "viewport": app.viewport.rect.map(|r| json!([r.left(), r.top(), r.width(), r.height()])),
+                "renderer": if app.viewport.gpu.is_some() { "gpu" } else { "cpu" },
+                "gpu": app.gpu_info,
+                "dialog": app.dialog.as_ref().map(|d| json!({"command": d.command, "text": d.text, "error": d.error})),
+                "file_picker": app.picker.is_some(),
+                "status": app.status,
+                "model": {"nodes": app.session.model.nodes().len(), "elements": app.session.model.elements().len()},
+                "results": app.session.results_report(),
+                "probe": app.probe,
+                "busy": app.busy(),
+                "job": app.loading.as_ref().map(|l| l.to_json()),
+                "solve": solve_json(app),
+                "selected": app.selected.as_ref().map(|(k, n)| json!({"kind": k, "name": n})).or_else(|| app.selected_seed.as_ref().map(|on| {
+                    let mut v = json!({"kind": "seed"});
+                    v[on.entity.kind()] = json!(on);
+                    v
+                })),
+                "browser": crate::browser::describe(app),
+                "nav": app.nav,
+                "layout": app.layout.iter().map(|(k, r)| (k.to_string(), json!([r.left(), r.top(), r.width(), r.height()]))).collect::<serde_json::Map<String, Value>>(),
+                "prompt": app.prompt.as_ref().map(|p| match p {
+                    crate::files::Prompt::Unsaved(next) => json!({"unsaved": match next {
+                        crate::files::Replace::File(p) => p.clone(),
+                        crate::files::Replace::Deck(p) => p.get("path").and_then(Value::as_str).unwrap_or("Abaqus deck").to_string(),
+                        crate::files::Replace::Sample(n) => format!("sample {n}"),
+                        crate::files::Replace::Update => "update".to_string(),
+                        crate::files::Replace::New => "new".to_string(),
+                    }}),
+                    crate::files::Prompt::Recover => json!("recover"),
+                    crate::files::Prompt::Samples => json!("samples"),
+                    crate::files::Prompt::Design(p) => json!({"design": p}),
+                    crate::files::Prompt::ReplaceMesh(r) => json!({"replace_mesh": r.question, "warnings": r.warnings}),
+                    crate::files::Prompt::Delete(d) => {
+                        json!({"delete": d.question(), "kind": d.kind, "name": d.name, "users": d.users, "allowed": d.allowed(), "deactivate": d.deactivate_label()})
+                    }
+                    crate::files::Prompt::Crashed(r) => json!({"crashed": r}),
+                    crate::files::Prompt::CrashReports(r) => json!({"crash_reports": r}),
+                    crate::files::Prompt::ReportBug => json!({"report_bug": app.report.as_ref().and_then(|f| f.drafted_json())}),
+                    crate::files::Prompt::Consent => json!({"consent": crate::privacy::QUESTION}),
+                    crate::files::Prompt::Update => json!({"update": app.update_json()}),
+                }),
+                "privacy": privacy_json(app),
+                "settings": crate::settings::describe(app),
+                "updates": app.update_json(),
+                "recent": app.recent.paths,
+                "version": crate::VERSION,
+                "path_plot":app.path_editor.as_ref().map(|e|json!({"params":e.params(&app.session).ok(),"picking":e.picking,"selected":e.selected})),
+            }))
+        }
         "ui.toolbar" => ok(crate::toolbar::describe(app)),
         "ui.path" => wrap(path_action(app, p)),
         "ui.settings" => wrap(crate::settings::from_control(app, p)),
@@ -339,6 +343,15 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
             }
         }
         "ui.set" => {
+            if let Some(raw_width) = p.get("browser_width") {
+                let Some(w) = raw_width.as_f64() else {
+                    return err("`browser_width` must be a number");
+                };
+                let w = w as f32;
+                if !w.is_finite() || !(crate::browser::MIN_WIDTH..=crate::browser::MAX_WIDTH).contains(&w) {
+                    return err(format!("`browser_width` must be finite and within {}–{}", crate::browser::MIN_WIDTH, crate::browser::MAX_WIDTH));
+                }
+            }
             let mut cur = serde_json::to_value(&app.ui).unwrap_or(json!({}));
             if let (Some(o), Some(src)) = (cur.as_object_mut(), p.as_object()) {
                 for (k, v) in src {
@@ -357,7 +370,50 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     } else if p.get("workspace").is_some() {
                         u.select_workspace(u.workspace);
                     }
+                    let prev_ui = app.ui.clone();
+                    let sync_show_tree = p.get("show_tree").is_some();
+                    let sync_show_timeline = p.get("show_timeline").is_some();
+                    let sync_width = p.get("browser_width").is_some();
+                    let sync_collapsed = p.get("browser_collapsed").is_some();
+                    let sync_history_dock = p.get("history_dock").is_some();
+
                     app.ui = u;
+                    if sync_width && !sync_show_tree {
+                        let width_err = app.with_panels(|app, panels| panels.set_browser_width(app.ui.browser_width).err()).flatten();
+                        if let Some(e) = width_err {
+                            app.ui = prev_ui;
+                            return err(format!("`browser_width`: {e}"));
+                        }
+                    }
+                    if sync_history_dock {
+                        app.set_history_dock(app.ui.history_dock);
+                    }
+                    let panel_err = app.with_panels(|app, panels| -> Result<(), String> {
+                        if sync_show_tree {
+                            let _ = panels.set_panel_visible(crate::panels::PANEL_BROWSER, app.ui.show_tree);
+                        }
+                        if sync_show_timeline {
+                            let _ = panels.set_panel_visible(crate::panels::PANEL_HISTORY, app.ui.show_timeline);
+                        }
+                        if sync_width
+                            && sync_show_tree
+                            && let Err(e) = panels.set_browser_width(app.ui.browser_width)
+                        {
+                            app.ui.browser_width = panels.browser_width();
+                            return Err(format!("`browser_width`: {e}"));
+                        }
+                        if sync_width {
+                            app.ui.browser_width = panels.browser_width();
+                        }
+                        if sync_collapsed {
+                            let _ = panels.set_browser_collapsed(app.ui.browser_collapsed);
+                            app.ui.browser_collapsed = panels.browser_collapsed();
+                        }
+                        Ok(())
+                    });
+                    if let Some(Err(e)) = panel_err {
+                        return err(e);
+                    }
                     ok(json!(app.ui))
                 }
                 Err(e) => err(e),
@@ -1246,6 +1302,105 @@ mod tests {
         for bad in [json!({"width": "x"}), json!({"width": 1e9}), json!({"scale": 0}), json!({"height": -1})] {
             assert_eq!(call(&mut app, "ui.capture", bad.clone())["ok"], false, "{bad}");
         }
+    }
+
+    #[test]
+    fn ui_inspect_reports_deterministic_panels_schema() {
+        let mut app = ModelApp::new(Session::default());
+        let r = call(&mut app, "ui.inspect", json!({}));
+        assert_eq!(r["ok"], true, "{r}");
+        let panels = r["result"]["panels"].as_array().expect("ui.inspect.panels array");
+        let ids: Vec<&str> = panels.iter().filter_map(|p| p["id"].as_str()).collect();
+        assert_eq!(ids, vec!["browser", "history", "inspector", "results"]);
+        for panel in panels {
+            for key in ["id", "visible", "has_content", "host", "zone", "rect", "active_title", "native_supported"] {
+                assert!(panel.get(key).is_some(), "missing {key} in {panel}");
+            }
+        }
+    }
+
+    #[test]
+    fn ui_set_validates_browser_width_and_syncs_panels() {
+        let mut app = ModelApp::new(Session::default());
+        let initial_width = app.ui.browser_width;
+        for bad in [json!({"browser_width": "wide"}), json!({"browser_width": 50.0}), json!({"browser_width": 9999.0})] {
+            let r = call(&mut app, "ui.set", bad.clone());
+            assert_eq!(r["ok"], false, "{bad}: {r}");
+            assert_eq!(app.ui.browser_width, initial_width);
+        }
+
+        let r = call(
+            &mut app,
+            "ui.set",
+            json!({
+                "browser_width": 320.0,
+                "browser_collapsed": true,
+                "show_tree": false,
+                "show_timeline": false,
+                "history_dock": "top"
+            }),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        let panels = app.panels.as_ref().unwrap();
+        assert_eq!(panels.browser_width(), 320.0);
+        assert!(panels.browser_collapsed());
+        assert_eq!(panels.history_dock(), crate::shell::HistoryDock::Top);
+        let inspect = call(&mut app, "ui.inspect", json!({}));
+        let entries = inspect["result"]["panels"].as_array().unwrap();
+        let browser = entries.iter().find(|p| p["id"] == "browser").unwrap();
+        let history = entries.iter().find(|p| p["id"] == "history").unwrap();
+        assert_eq!(browser["visible"], false);
+        assert_eq!(history["visible"], false);
+    }
+
+    #[test]
+    fn ui_set_propagates_shared_section_browser_width_error() {
+        use solidcraft_panel_layout::{Destination, InstanceId, Mutation, Point, SectionId, SectionLocation, Size};
+
+        let mut app = ModelApp::new(Session::default());
+        // Browser alone accepts 170.
+        let r = call(&mut app, "ui.set", json!({"browser_width": 170.0}));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(app.ui.browser_width, 170.0);
+
+        // Join Browser and Inspector in a 310-pt floating section (Inspector min_width is 180).
+        app.selected_mesh = true;
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))), ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+        out.textures_delta.clear();
+
+        app.with_panels(|app, panels| {
+            let insp = InstanceId::new(crate::panels::PANEL_INSPECTOR).unwrap();
+            let browser = InstanceId::new(crate::panels::PANEL_BROWSER).unwrap();
+            panels
+                .apply_mutations(
+                    vec![
+                        Mutation::Move {
+                            instance: insp.clone(),
+                            destination: Destination::NewSection {
+                                section: SectionId::new("sec-ctrl-float").unwrap(),
+                                index: 0,
+                                location: SectionLocation::Floating { origin: Point { x: 80.0, y: 100.0 } },
+                                size: Size { width: 310.0, height: 420.0 },
+                            },
+                        },
+                        Mutation::Move {
+                            instance: browser,
+                            destination: Destination::JoinTab { section: SectionId::new("sec-ctrl-float").unwrap(), index: 0 },
+                        },
+                    ],
+                    true,
+                )
+                .unwrap();
+            app.ui.browser_width = panels.browser_width();
+        });
+        assert_eq!(app.ui.browser_width, 310.0);
+
+        let err_reply = call(&mut app, "ui.set", json!({"browser_width": 170.0}));
+        assert_eq!(err_reply["ok"], false, "{err_reply}");
+        assert_eq!(app.ui.browser_width, 310.0);
+        assert_eq!(app.panels.as_ref().unwrap().browser_width(), 310.0);
     }
 
     #[test]

@@ -35,7 +35,7 @@ fieldcraft-mesh-gpu = { path = "crates/mesh-gpu" }
 # foundation
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }
 log = "0.4"
 # Complex scalars for the complex-symmetric solves (MIT OR Apache-2.0; docs/adr/0001-libraries.md).
 num-complex = "0.4"
@@ -83,6 +83,9 @@ solidcraft-ui-registry = { git = "https://github.com/tangency-labs/solidcraft", 
 # The kit's message catalogues (MIT OR Apache-2.0): FieldCraft installs its own English text for
 # the kit's message ids (crates/ui-egui/locales/en.json).
 solidcraft-ui-text = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
+# Panel placement core used by solidcraft-ui-kit::panel_runtime (MIT OR Apache-2.0): layouts,
+# zones, persistence envelopes, and validation.
+solidcraft-panel-layout = { git = "https://github.com/tangency-labs/solidcraft", tag = "v0.51.0" }
 # native file pickers (the desktop app only; the UI crate takes them as services)
 rfd = "0.17"
 # The installed fonts, for a character the interface's faces lack (the desktop only, #991; MIT,

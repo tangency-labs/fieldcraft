@@ -234,6 +234,10 @@ fn display_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
     crate::frame::menu_separator(ui);
     toggle_row(ui, "Browser", &mut app.ui.show_tree);
     toggle_row(ui, "Timeline", &mut app.ui.show_timeline);
+    if crate::frame::menu_row(ui, "reset_layout", solidcraft_ui_text::tr("menu.view.reset_layout"), None, true).clicked() {
+        app.reset_panel_layout();
+        app.ui.menu = None;
+    }
     crate::frame::menu_separator(ui);
     crate::frame::menu_heading(ui, "Navigation");
     kit::scope(ui, |ui| {
@@ -489,10 +493,11 @@ mod tests {
         (0..3).for_each(|_| frame(&mut app));
         let at = |app: &ModelApp, k: &str| app.layout.get(k).copied().unwrap_or_else(|| panic!("{k} not drawn"));
         let (view, bar) = (at(&app, "viewport"), at(&app, "nav_bar"));
-        assert!(app.shell.browser.is_some_and(|b| b.intersects(view)), "the browser card is over the view");
+        let browser = at(&app, "browser");
+        assert!(browser.intersects(view), "the browser card is over the view");
         assert!((bar.center().x - view.center().x).abs() <= 0.5, "{bar:?} centred on {view:?}");
-        if let Some(history) = app.shell.history {
-            assert!(bar.bottom() < history.top(), "{bar:?} above History {history:?}");
+        if let Some(bottom) = app.shell.bottom_dock_top {
+            assert!(bar.bottom() < bottom, "{bar:?} above History {bottom:?}");
         }
         // A card on the right that leaves room keeps it where it is; a card it would run under
         // moves it only as far as it must.

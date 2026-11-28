@@ -581,15 +581,21 @@ mod tests {
         });
         out.textures_delta.clear();
         let nodes = out.platform_output.accesskit_update.iter().flat_map(|u| u.nodes.iter().map(|(_, n)| n));
-        let (mut hovers, mut labels) = (Vec::new(), Vec::new());
+        let (mut hovers, mut interactive, mut passive) = (Vec::new(), Vec::new(), Vec::new());
         for node in nodes {
             hovers.extend(node.description().map(str::to_string));
             if let (Some(label), Some(b)) = (node.label().or(node.value()), node.bounds()) {
                 let ppp = f64::from(ctx.pixels_per_point());
-                labels.push((label.to_string(), egui::pos2(((b.x0 + b.x1) / 2.0 / ppp) as f32, ((b.y0 + b.y1) / 2.0 / ppp) as f32)));
+                let entry = (label.to_string(), egui::pos2(((b.x0 + b.x1) / 2.0 / ppp) as f32, ((b.y0 + b.y1) / 2.0 / ppp) as f32));
+                if node.role() == egui::accesskit::Role::Label {
+                    passive.push(entry);
+                } else {
+                    interactive.push(entry);
+                }
             }
         }
-        (hovers, labels)
+        interactive.extend(passive);
+        (hovers, interactive)
     }
 
     /// A click with `button` at `at`: the press, then the release a frame later.

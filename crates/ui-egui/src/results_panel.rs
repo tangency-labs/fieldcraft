@@ -381,6 +381,18 @@ fn probe(app: &ModelApp, plot: &Plot, painter: &egui::Painter, rect: Rect, legen
     label_beside(painter, at, p.lines.join("\n"), rect, legend, placed, t);
 }
 
+/// Results panel body inside the hosted card: vertical scroll area with shared card padding.
+pub(crate) fn body(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens) {
+    let Some(plot) = app.plot() else { return };
+    let k = solidcraft_theme::Tokens::get();
+    egui::ScrollArea::vertical().id_salt("fc_results_scroll").min_scrolled_height(0.0).auto_shrink([false, false]).show(ui, |ui| {
+        egui::Frame::NONE.inner_margin(egui::Margin::same(k.space_12 as i8)).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = k.form_gap_y;
+            controls(app, &plot, ui, t);
+        });
+    });
+}
+
 /// The results controls (the Results card): step, contour field,
 /// deformation, modes, animation, what the viewport marks, reaction sums and the probed node.
 /// Every control runs a command or a view setting.

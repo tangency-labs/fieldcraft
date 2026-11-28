@@ -147,18 +147,20 @@ pub(crate) fn beside_card(app: &ModelApp, rect: Rect) -> Rect {
     for card in app.shell.cards.iter().filter(|c| c.intersects(rect)) {
         content.min.y = kit::within(card.bottom() + gap, content.top(), content.bottom());
     }
-    if let Some(card) = app.shell.browser.filter(|c| c.intersects(rect)) {
-        content.min.x = kit::within(card.right() + gap, content.left(), content.right());
+    if let Some(top) = app.shell.top_dock_bottom {
+        content.min.y = kit::within(top + gap, content.top(), content.bottom());
     }
-    // The cards on the right (the form, properties, Results…), as the browser on the left.
-    if let Some(left) = app.shell.right.iter().filter(|c| c.intersects(rect)).map(|c| c.left()).reduce(f32::min) {
+    if let Some(bottom) = app.shell.bottom_dock_top {
+        content.max.y = kit::within(bottom - gap, content.top(), content.bottom());
+    }
+    if let Some(left) = app.shell.left_dock_right {
+        content.min.x = kit::within(left + gap, content.left(), content.right());
+    }
+    if let Some(right) = app.shell.right_dock_left {
+        content.max.x = kit::within(right - gap, content.left(), content.right());
+    }
+    if let Some(left) = app.shell.transient.iter().filter(|c| c.intersects(rect)).map(|c| c.left()).reduce(f32::min) {
         content.max.x = kit::within(left - gap, content.left(), content.right());
-    }
-    if let Some(history) = app.shell.history.filter(|h| h.intersects(rect)) {
-        match app.shell.history_dock {
-            crate::shell::HistoryDock::Bottom => content.max.y = kit::within(history.top() - gap, content.top(), content.bottom()),
-            crate::shell::HistoryDock::Top => content.min.y = kit::within(history.bottom() + gap, content.top(), content.bottom()),
-        }
     }
     content
 }
@@ -803,11 +805,13 @@ mod tests {
         let gap = solidcraft_ui_kit::SHELL_GAP;
         app.shell.clear(crate::shell::HistoryDock::Top);
         app.shell.cards = vec![egui::Rect::from_min_max(egui::pos2(7.0, 47.0), egui::pos2(1393.0, 157.0))];
-        app.shell.history = Some(egui::Rect::from_min_max(egui::pos2(7.0, 164.0), egui::pos2(1393.0, 204.0)));
+        app.shell.record_top_dock(egui::Rect::from_min_max(egui::pos2(7.0, 164.0), egui::pos2(1393.0, 204.0)));
         let top = super::beside_card(&app, view);
         assert_eq!((top.top(), top.bottom()), (204.0 + gap, 900.0));
-        app.shell.history_dock = crate::shell::HistoryDock::Bottom;
-        app.shell.history = Some(egui::Rect::from_min_max(egui::pos2(7.0, 853.0), egui::pos2(1393.0, 893.0)));
+        app.shell.clear(crate::shell::HistoryDock::Bottom);
+        app.shell.cards = vec![egui::Rect::from_min_max(egui::pos2(7.0, 47.0), egui::pos2(1393.0, 157.0))];
+        app.shell
+            .set_panel_geometry(solidcraft_panel_layout::Zone::Bottom, egui::Rect::from_min_max(egui::pos2(7.0, 853.0), egui::pos2(1393.0, 893.0)));
         let bottom = super::beside_card(&app, view);
         assert_eq!((bottom.top(), bottom.bottom()), (157.0 + gap, 853.0 - gap));
     }

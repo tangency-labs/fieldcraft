@@ -692,6 +692,35 @@ impl Def {
     }
 }
 
+/// Whether a definition of `kind` named `name` still exists in `m`, without serializing it.
+pub fn definition_exists(m: &Model, kind: Def, name: &str) -> bool {
+    match kind {
+        Def::SizeControl => m.size_controls().contains_key(name),
+        Def::FaceMerge => m.face_merges().iter().any(|f| f.name == name),
+        Def::FaceSplit => m.face_splits().iter().any(|f| f.name == name),
+        Def::Stitch => m.stitches().iter().any(|f| f.name == name),
+        Def::Defeature => m.defeatures().iter().any(|f| f.name == name),
+        Def::InitialField => m.initial_field(name).is_some(),
+        Def::MeshPlan => m.mesh_plan(name).is_some(),
+        Def::Relaxation => m.relaxation(name).is_some(),
+        Def::Mass => m.mass(name).is_some(),
+        Def::Spring => m.spring(name).is_some(),
+        Def::Set => m.sets().contains_key(name),
+        Def::Material => m.materials().contains_key(name),
+        Def::Section => m.sections().contains_key(name),
+        Def::Step => m.step(name).is_some(),
+        Def::BoundaryCondition => m.boundary_conditions().contains_key(name),
+        Def::Load => m.loads().contains_key(name),
+        Def::ReferencePoint => m.reference_points().contains_key(name),
+        Def::Coupling => m.couplings().contains_key(name),
+        Def::Contact => m.contacts().contains_key(name),
+        Def::Tie => m.tie(name).is_some(),
+        Def::FluidDomain => m.fluid_domain(name).is_some(),
+        Def::Datum => m.datum(name).is_some(),
+        Def::Partition => m.partitions().iter().any(|p| p.name == name),
+    }
+}
+
 /// A definition as JSON (its command parameters' shape, with its name); `None` when it is gone.
 pub fn definition(m: &Model, kind: Def, name: &str) -> Option<Value> {
     let v = match kind {
@@ -1030,12 +1059,8 @@ fn json_name<T: serde::Serialize>(v: &T) -> String {
 /// The browser card's default width (Settings keeps the one the user drags it to).
 pub const WIDTH: f32 = 250.0;
 /// How narrow and how wide the card may be dragged (the viewport keeps the rest).
-const MIN_WIDTH: f32 = 170.0;
-const MAX_WIDTH: f32 = 620.0;
-/// The card's inner margin: the header's hover tint sits this far from the card's top, left and
-/// right edges, so its corners are concentric with the card's.
-const CARD_INSET: f32 = 4.0;
-const HEADER_H: f32 = 26.0;
+pub(crate) const MIN_WIDTH: f32 = 170.0;
+pub(crate) const MAX_WIDTH: f32 = 620.0;
 /// How opaque the translucent card is (`UiState::browser_float`); the view shows through the rest.
 pub(crate) const FLOAT_ALPHA: f32 = 0.4;
 
@@ -1045,64 +1070,24 @@ pub(crate) fn width(remembered: f32) -> f32 {
     if remembered.is_finite() { remembered.clamp(MIN_WIDTH, MAX_WIDTH) } else { WIDTH }
 }
 
-/// Where the card may be in `available` (the viewport's space below the top cards, above
-/// History and left of the context panel, [`crate::shell::State::panel_space`]): `width` wide
-/// from the left, a `gap` from the edges it meets.
-pub(crate) fn panel_bounds(available: Rect, width: f32, gap: f32) -> Rect {
-    let min = available.min + vec2(gap, gap);
-    let right = (available.right() - gap).max(min.x);
-    let bottom = (available.bottom() - gap).max(min.y);
-    Rect::from_min_max(min, pos2((min.x + width).min(right), bottom))
-}
-
-/// The browser: a card at the top left of the viewport, as SolidCraft's, laid out by the kit's
-/// shared `Container`. It fills its column (below the top cards, down to History or the
-/// viewport's bottom) whatever its row count, scrolls its rows inside, folds to its header, is as wide as the user dragged it, and is translucent over the view when the user
-/// chose so. The viewport is drawn under it and keeps the space beside it.
-pub fn browser(app: &mut ModelApp, ui: &mut egui::Ui) {
-    let t = Tokens::get(app.ui.dark);
+/// The browser tree body rendered inside the shared `panel_runtime` host card: scrolls its rows
+/// inside the allocated body rect and dispatches browser actions to `ModelApp`.
+pub(crate) fn body(app: &mut ModelApp, ui: &mut egui::Ui) {
     let mut acts: Vec<Act> = Vec::new();
-    let available = ui.available_rect_before_wrap();
-    let container = kit::Container::new(ui.ctx(), kit::Surface::Panel).joined(kit::DockEdges { left: true, top: true, ..Default::default() });
-    let rail_id = egui::Id::unique("fc_browser_rail");
-    let dragged = ui.ctx().data(|d| d.get_temp::<f32>(rail_id));
-    let width = width(dragged.unwrap_or(app.ui.browser_width));
-    let bounds = panel_bounds(app.shell.panel_space(available), width, container.gap());
-    let fill = if container.floating() && app.ui.browser_float { t.panel.gamma_multiply(FLOAT_ALPHA) } else { t.panel };
-    let frame = container.frame(ui.ctx(), fill, kit::frame::Side::Left).inner_margin(CARD_INSET as i8);
-    if !(bounds.is_positive() && bounds.height() >= HEADER_H + frame.total_margin().sum().y) {
-        return;
-    }
-    let inner = bounds.size() - frame.total_margin().sum();
-    let limits = Rect::from_min_max(available.min, pos2(available.right(), bounds.bottom()));
-    let card = container.area(egui::Id::unique("fc_browser_card")).fixed_pos(bounds.min).show(ui.ctx(), |ui| {
-        let shown = container.show_frame(ui, frame, limits, |ui| {
-            ui.set_width(inner.x.max(0.0));
-            ui.set_max_height(inner.y.max(0.0));
-            header(app, ui);
-            if app.ui.browser_collapsed {
-                return;
-            }
-            let k = solidcraft_theme::Tokens::get();
-            k.secondary_hline(ui.painter(), ui.max_rect().x_range(), ui.cursor().top() + 1.0, k.toolbar.lerp_to_gamma(k.border, 0.5));
-            ui.add_space(k.space_3);
-            egui::ScrollArea::vertical()
-                .id_salt("fc_browser_scroll")
-                // The rows fill the card's column whatever their count, so nodes appearing as the
-                // setup is reached never resize the card; more rows than fit scroll. A short
-                // column may leave the rows no height at all.
-                .min_scrolled_height(0.0)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    rows(app, ui, &mut acts);
-                });
+    let k = solidcraft_theme::Tokens::get();
+    egui::ScrollArea::vertical()
+        .id_salt("fc_browser_scroll")
+        // The rows fill the card's column whatever their count, so nodes appearing as the
+        // setup is reached never resize the card; more rows than fit scroll. A short
+        // column may leave the rows no height at all.
+        .min_scrolled_height(0.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Frame::NONE.inner_margin(egui::Margin::symmetric(k.space_4 as i8, 0)).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                rows(app, ui, &mut acts);
+            });
         });
-        resize(app, ui, rail_id, shown.response.rect, width);
-    });
-    let rect = card.response.rect;
-    app.shell.browser = Some(rect);
-    app.place("browser", rect);
     for a in acts {
         match a {
             Act::Fold(key) => {
@@ -1139,27 +1124,10 @@ pub fn browser(app: &mut ModelApp, ui: &mut egui::Ui) {
     }
 }
 
-/// Drag the card's right edge to make it wider or narrower. The width is kept for the session
-/// and remembered once the drag ends.
-fn resize(app: &mut ModelApp, ui: &egui::Ui, id: egui::Id, card: Rect, width: f32) {
-    // The grip the card's right edge offers, counted inwards from the edge.
-    let rail = Rect::from_x_y_ranges(card.right() - solidcraft_theme::Tokens::get().space_6..=card.right(), card.y_range());
-    app.place("browser:rail", rail);
-    let response = ui.interact(rail, id, Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-    let delta = ui.input(|i| i.pointer.delta().x);
-    if response.dragged() && delta.is_finite() {
-        let next = (width + delta).clamp(MIN_WIDTH, MAX_WIDTH);
-        ui.ctx().data_mut(|d| d.insert_temp(id, next));
-    }
-    if response.drag_stopped() {
-        app.ui.browser_width = width;
-        ui.ctx().data_mut(|d| d.remove::<f32>(id));
-    }
-}
-
 /// What the header counts: the parts the view shows, as SolidCraft's header counts the bodies it
 /// places. The design's bodies and imported surfaces when the model has geometry, else the mesh's
 /// elements (a deck or a mesh read on its own); nothing for an empty model.
+#[cfg(test)]
 fn header_count(app: &ModelApp) -> String {
     use crate::feature_graph::plural;
     let bodies = app.session.design.as_ref().map_or(0, |d| d.bodies.len()) + app.session.surfaces.len();
@@ -1170,32 +1138,6 @@ fn header_count(app: &ModelApp) -> String {
         plural(elements, "element", "elements")
     } else {
         String::new()
-    }
-}
-
-/// The header: the title, what the model holds (`header_count`) and a chevron that folds the card to just this
-/// row. The whole row is the button.
-fn header(app: &mut ModelApp, ui: &mut egui::Ui) {
-    let k = solidcraft_theme::Tokens::get();
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
-    let response = ui.interact(rect, egui::Id::unique("fc_browser_header"), Sense::click());
-    app.place("browser:header", rect);
-    let collapsed = app.ui.browser_collapsed;
-    if response.hovered() || response.has_focus() {
-        kit::panel_header_hover(ui.painter(), rect);
-    }
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Browser"));
-    let painter = ui.painter();
-    let title = painter.layout_no_wrap("Browser".into(), kit::type_face::semibold(k.font_heading), k.text);
-    painter.galley(pos2(rect.left() + k.space_6, rect.center().y - title.size().y / 2.0), title, k.text);
-    let right = rect.right() - k.space_6;
-    kit::disclosure(painter, pos2(right - k.form_section_icon_size / 2.0, rect.center().y), !collapsed, k.text_dim);
-    let count = painter.layout_no_wrap(header_count(app), FontId::proportional(k.font_body), k.text_dim);
-    let right = right - k.form_section_icon_size - k.space_6;
-    painter.galley(pos2(right - count.size().x, rect.center().y - count.size().y / 2.0), count, k.text_dim);
-    let tip = if collapsed { "Expand the browser" } else { "Collapse the browser" };
-    if response.on_hover_cursor(egui::CursorIcon::PointingHand).backing_on_hover_text(tip).clicked() {
-        app.ui.browser_collapsed = !collapsed;
     }
 }
 
@@ -2057,23 +1999,23 @@ pub(crate) mod tests {
         let (ribbon, view) = (region(&app, "ribbon"), region(&app, "viewport"));
         assert!((empty.left() - gap).abs() < 0.5 && (empty.top() - (ribbon.bottom() + gap)).abs() < 1.0, "{empty:?} {ribbon:?}");
         assert!((empty.width() - WIDTH).abs() < 0.5, "{empty:?}");
-        let floor = app.shell.history.map_or(view.bottom(), |h| h.top());
+        let floor = app.shell.bottom_dock_top.unwrap_or(view.bottom());
         assert!((empty.bottom() - (floor - gap)).abs() < 1.0, "an empty model's card fills its column: {empty:?} {floor}");
         assert!(view.left() <= 0.5 && view.contains_rect(empty), "{view:?} {empty:?}");
-        assert_eq!(app.shell.browser, Some(empty));
+        assert_eq!(app.shell.left_dock_right, Some(empty.right()));
         // Nodes appearing as the setup is reached leave the card as it is.
         open_plate(&mut app, "the_card_fills_its_column_above_history");
         assert_eq!(card_at(&mut app), empty, "after opening a design");
         mesh_plate(&mut app);
         assert_eq!(card_at(&mut app), empty, "after meshing");
         // History docked at the top: the column runs from below it to the viewport's bottom.
-        app.ui.history_dock = crate::shell::HistoryDock::Top;
+        app.set_history_dock(crate::shell::HistoryDock::Top);
         let top = card_at(&mut app);
-        let (history, view) = (app.shell.history.unwrap(), region(&app, "viewport"));
+        let (history, view) = (region(&app, "timeline"), region(&app, "viewport"));
         assert!((top.top() - (history.bottom() + gap)).abs() < 1.0, "{top:?} {history:?}");
         assert!((top.bottom() - (view.bottom() - gap)).abs() < 1.0, "{top:?} {view:?}");
         let mut empty_app = ModelApp::new(Session::default());
-        empty_app.ui.history_dock = crate::shell::HistoryDock::Top;
+        empty_app.set_history_dock(crate::shell::HistoryDock::Top);
         assert_eq!(card_at(&mut empty_app), top, "the same column on an empty model");
         // More rows than fit a short window: the card stops a gap above History.
         let size = vec2(1400.0, 560.0);
@@ -2082,7 +2024,7 @@ pub(crate) mod tests {
         app.tree_open.extend(GROUPS.iter().map(|(key, _, _)| key.to_string()));
         settle(&mut app, &ctx, size);
         let card = region(&app, "browser");
-        let floor = app.shell.history.map_or(region(&app, "viewport").bottom(), |h| h.top());
+        let floor = app.shell.bottom_dock_top.unwrap_or(region(&app, "viewport").bottom());
         assert!(card.bottom() < floor && floor - card.bottom() < gap + 1.0, "{card:?} {floor}");
     }
 
@@ -2151,14 +2093,15 @@ pub(crate) mod tests {
         let mut app = every_kind();
         settle(&mut app, &ctx, size);
         let open = region(&app, "browser");
-        let header = region(&app, "browser:header");
-        assert!(open.height() > 4.0 * HEADER_H, "{open:?}");
-        click(&mut app, &ctx, size, header.center());
+        let collapse = region(&app, "browser:collapse");
+        assert!(open.height() > 120.0, "{open:?}");
+        click(&mut app, &ctx, size, collapse.center());
         assert!(app.ui.browser_collapsed);
         let folded = region(&app, "browser");
         assert_eq!((folded.min, folded.width()), (open.min, open.width()));
-        assert!(folded.height() < 2.0 * HEADER_H, "{folded:?}");
-        click(&mut app, &ctx, size, header.center());
+        assert!(folded.height() < 60.0, "{folded:?}");
+        let collapse = region(&app, "browser:collapse");
+        click(&mut app, &ctx, size, collapse.center());
         assert!(!app.ui.browser_collapsed);
         assert_eq!(region(&app, "browser"), open);
     }
@@ -2228,7 +2171,7 @@ pub(crate) mod tests {
         settle(&mut app, &ctx, size);
         assert_eq!(region(&app, "browser"), card);
         let float = app.capture(capture).unwrap();
-        assert_eq!(pixel(&opaque, inside), Tokens::get(app.ui.dark).panel);
+        assert_eq!(pixel(&opaque, inside), Tokens::get(app.ui.dark).toolbar);
         assert_ne!(pixel(&float, inside), pixel(&opaque, inside), "the view shows through");
         assert_eq!(pixel(&float, beside), pixel(&opaque, beside));
     }

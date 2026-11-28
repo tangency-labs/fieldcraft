@@ -80,6 +80,9 @@ impl ModelApp {
         // The UI pass draws with the offscreen context's own textures and a viewport with no GPU
         // target, which renders the model on the CPU into an offscreen texture.
         std::mem::swap(&mut self.viewport, &mut off.viewport);
+        let mut capture_panels = self.panels.as_ref().and_then(|p| p.headless_snapshot(&self.prefs).ok());
+        std::mem::swap(&mut self.panels, &mut capture_panels);
+        let shell = std::mem::take(&mut self.shell);
         let toolbar = std::mem::take(&mut self.toolbar_rects);
         let layout = std::mem::take(&mut self.layout);
         let panels = std::mem::take(&mut self.panel_rects);
@@ -96,36 +99,48 @@ impl ModelApp {
         }
         // A capture is one still frame: windows and menus appear without fading in.
         off.ctx.global_style_mut(|s| s.animation_time = 0.0);
-        let mut shapes = Vec::new();
-        let mut ppp = size.scale;
-        // Textures freed by the frame painted, released after it is painted.
-        let mut free = Vec::new();
-        for _ in 0..WARMUP_FRAMES {
-            let mut raw = egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(size.width, size.height))),
-                time: Some(self.now),
-                ..Default::default()
-            };
-            raw.viewports.insert(ViewportId::ROOT, ViewportInfo { native_pixels_per_point: Some(size.scale), ..Default::default() });
-            let mut out = off.ctx.run_ui(raw, |ui| self.ui(ui));
-            off.free(free.drain(..));
-            let mut delta = std::mem::take(&mut out.textures_delta);
-            for (id, deltas) in &delta.set {
-                for d in deltas {
-                    off.set_texture(*id, d);
+        let rendered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut shapes = Vec::new();
+            let mut ppp = size.scale;
+            // Textures freed by the frame painted, released after it is painted.
+            let mut free = Vec::new();
+            for _ in 0..WARMUP_FRAMES {
+                let mut raw = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(size.width, size.height))),
+                    time: Some(self.now),
+                    ..Default::default()
+                };
+                raw.viewports.insert(ViewportId::ROOT, ViewportInfo { native_pixels_per_point: Some(size.scale), ..Default::default() });
+                let mut out = off.ctx.run_ui(raw, |ui| self.ui(ui));
+                off.free(free.drain(..));
+                let mut delta = std::mem::take(&mut out.textures_delta);
+                for (id, deltas) in &delta.set {
+                    for d in deltas {
+                        off.set_texture(*id, d);
+                    }
                 }
+                free.extend(delta.free.iter().copied());
+                // Every delta is applied (egui checks that none is dropped unhandled).
+                delta.clear();
+                shapes = out.shapes;
+                ppp = out.pixels_per_point;
             }
-            free.extend(delta.free.iter().copied());
-            // Every delta is applied (egui checks that none is dropped unhandled).
-            delta.clear();
-            shapes = out.shapes;
-            ppp = out.pixels_per_point;
-        }
+            (shapes, ppp, free)
+        }));
         std::mem::swap(&mut self.viewport, &mut off.viewport);
+        std::mem::swap(&mut self.panels, &mut capture_panels);
         self.capturing = false;
+        self.shell = shell;
         self.toolbar_rects = toolbar;
         self.layout = layout;
         self.panel_rects = panels;
+        let (shapes, ppp, mut free) = match rendered {
+            Ok(out) => out,
+            Err(payload) => {
+                self.offscreen = Some(off);
+                std::panic::resume_unwind(payload);
+            }
+        };
         let primitives = off.ctx.tessellate(shapes, ppp);
         let mut canvas = Canvas::new(w, h, Tokens::get(self.ui.dark).panel)?;
         for p in &primitives {
@@ -345,7 +360,7 @@ mod tests {
         assert_eq!(image.size, [900, 600]);
         let t = Tokens::dark();
         // The title bar along the top, the timeline near the bottom (their own colours).
-        assert!((520..600).any(|y| pixel(&image, 450, y) == t.timeline), "timeline");
+        assert!((520..600).any(|y| pixel(&image, 450, y) == t.toolbar), "timeline");
         assert_eq!(pixel(&image, 899, 1), t.app_bar, "title bar");
         // The viewport shows the model: the middle is neither panel nor background.
         let middle = pixel(&image, 450, 330);
@@ -358,6 +373,28 @@ mod tests {
         // A second capture reuses the offscreen context; at scale 2 it doubles the pixels.
         let twice = app.capture(CaptureSize { width: 450.0, height: 300.0, scale: 2.0 }).unwrap();
         assert_eq!(twice.size, [900, 600]);
+    }
+
+    #[test]
+    fn offscreen_capture_at_different_size_preserves_live_panel_host() {
+        let mut app = ModelApp::new(Session::default());
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 800.0))), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+            out.textures_delta.clear();
+        }
+        let browser_rect_before = app.layout.get("browser").copied();
+        let timeline_rect_before = app.layout.get("timeline").copied();
+        let prefs_before = app.panels.as_ref().and_then(|p| p.to_prefs_value());
+
+        let image = app.capture(size(640.0, 420.0)).unwrap();
+        assert_eq!(image.size, [640, 420]);
+        assert!(!app.capturing);
+        assert_eq!(app.layout.get("browser").copied(), browser_rect_before);
+        assert_eq!(app.layout.get("timeline").copied(), timeline_rect_before);
+        assert_eq!(app.panels.as_ref().and_then(|p| p.to_prefs_value()), prefs_before);
+        assert!(!app.panels.as_ref().unwrap().is_dirty());
     }
 
     #[test]
